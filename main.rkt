@@ -23,7 +23,8 @@
       [else
        ;; TODO: rename this function. A better name will help me with the general terminology with
        ;; which I describe my technique
-       (match (analyze-state-pair-transitions (head to-visit))
+       (match-define (cons prog spec) (head to-visit))
+       (match (check-immediate-transitions prog spec)
          [#f #f] ; if any state pair analysis fails, then the whole thing fails
 
          ;; TODO: figure out what it looks like here when we try all possible combinations of the
@@ -33,18 +34,17 @@
           (loop (append new-pairs-to-visit (tail to-visit))
                 (set-add visited (head to-visit)))])])))
 
-;; TODO: make this purpose statement more precise. This is probably a function that will be described
-;; in the paper
 
 (define pattern-group-pattern car)
 (define pattern-group-exps cdr)
 
-;; Returns #f if conformance fails for this state pair, or returns a list of state pairs to check
-;; otherwise
-(define (analyze-state-pair-transitions current-pair)
-  (define current-prog (car current-pair))
-  (define current-spec-instance (cdr current-pair))
-
+;; Returns #f if any of prog's immediate transitions violate conformance to spec (by sending/failing
+;; to send some message); otherwise, it returns the list of program/specification configuration pairs
+;; remaining to check to prove conformance for the given pair
+;;
+;; prog: program configuration
+;; spec: specification configuration
+(define (check-immediate-transitions prog spec)
   ;; Gather all possible inputs according to the spec (including non-specified ones) and run each one
   ;; abstractly through the handler. For each result, check if it satisfies a transition, and add the
   ;; next state to the to-visit queue if it's not there already (or add it anyway, I think...)
@@ -54,13 +54,13 @@
   ;; TODO: figure out the actual source of input patterns here
   ;; TODO: also process the unobserved patterns
   (for/fold ([next-state-pairs null])
-            ([input-pattern-group (spec-input-pattern-groups current-spec-instance)]
+            ([input-pattern-group (spec-input-pattern-groups spec)]
              #:break (not next-state-pairs))
     ;; TODO: add in the real address and message here
     (define result-configs
       ;; TODO: replace 'sample-value with (pattern-group-pattern input-pattern-group), to use the
       ;; actual pattern (requires a new language in csa/model)
-      (handle-message current-prog '(addr 1) ''sample-value))
+      (handle-message prog '(addr 1) ''sample-value))
     (for/fold ([next-state-pairs null])
               ([config result-configs]
                #:break (not next-state-pairs))
