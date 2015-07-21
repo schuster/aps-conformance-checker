@@ -56,6 +56,7 @@
   (for/fold ([next-state-pairs null])
             ([input-pattern-group (spec-input-pattern-groups spec)]
              #:break (not next-state-pairs))
+    ;; (printf "group: ~s\n" input-pattern-group)
     ;; TODO: add in the real address and message here
 
     ;; TODO: replace 'sample-value with (pattern-group-pattern input-pattern-group), to use the
@@ -85,7 +86,7 @@
       (define possible-transitions (pattern-group-exps input-pattern-group))
       (define match-results (match-sends-to-commitments external-packets possible-transitions))
       ;; TODO: remove this debug line and inline match-results definition
-      (printf "match results: ~s\n" match-results)
+      ;; (printf "match results: ~s\n" match-results)
       (match match-results
         [#f #f] ; if matching up the outputs failed, then the whole transition definitely fails
         [(list)
@@ -97,7 +98,7 @@
 ;; Returns #f if any of the given message packets does not have a matching commitment in the given
 ;; transitions; otherwise, returns the list of remaining (unmatched) commitments.
 (define (match-sends-to-commitments external-packets possible-transitions)
-  (printf "external packets: ~s\n" external-packets)
+
   ;; TODO: make this handle more than 1 transition
 
   ;; TODO: make this handle all possible orderings of matches
@@ -108,17 +109,22 @@
 
   ;; TODO: also get the pre-existing commitments from the spec config
 
-  (printf "commitments: ~s\n" (get-spec-commitments (car possible-transitions)))
+  ;; TODO: figure out what to do when the spec is mal-formed and doesn't give us a proper list of
+  ;; commitments
+
+  ;; (printf "external packets: ~s\n" external-packets)
+  ;; (printf "commitments: ~s\n" (get-spec-commitments (car possible-transitions)))
   (define-values (conformance-violated? remaining-commitments)
     (for/fold ([conformance-violated? #f]
                [remaining-commitments (get-spec-commitments (car possible-transitions))])
         ([packet external-packets]
          #:break conformance-violated?)
-      (match-define (cons packet-address packet-message) packet)
+      (match-define `(,packet-address <= ,packet-message) packet)
+      ;; (printf "address: ~s, message: ~s\n" packet-address packet-message)
       (match (findf
               (lambda (commitment)
-                (define commitment-address (car commitment))
-                (define pattern (cdr commitment))
+                (match-define `(,commitment-address ,pattern) commitment)
+                ;; (printf "commitment address: ~s, pattern: ~s\n" commitment-address pattern)
 
                 ;; TODO: make pattern matching also do the variable-binding thing
                 (and (equal? commitment-address packet-address)
@@ -240,7 +246,7 @@
     (term (extract-external-sends/mf ,config)))
 
   (define-metafunction csa-eval
-    extract-external-sends/mf : K -> (((a v) ...) K)
+    extract-external-sends/mf : K -> ((m ...) K)
     [(extract-external-sends/mf (α μ ρ χ))
      (μ_external (α μ_internal ρ χ))
      (where μ_external ,(filter (curryr external-packet? (term χ)) (term μ)))
@@ -256,17 +262,17 @@
 
   ;; Returns true if the packet is destined for one of the external addresses; false otherwise
   (define-metafunction csa-eval
-    external-packet?/mf : (a v) χ -> boolean
-    [(external-packet?/mf (a _) (_ ... a _ ...)) #t]
+    external-packet?/mf : m χ -> boolean
+    [(external-packet?/mf (a <= _) (_ ... a _ ...)) #t]
     [(external-packet?/mf _ _) #f])
 
   (module+ test
     (require rackunit)
-    (check-false (external-packet? (term ((addr 1) 'a)) (term ())))
-    (check-true  (external-packet? (term ((addr 1) 'a)) (term ((addr 1)))))
-    (check-false (external-packet? (term ((addr 1) 'a)) (term ((addr 2)))))
-    (check-true  (external-packet? (term ((addr 1) 'a)) (term ((addr 1) (addr 2)))))
-    (check-false (external-packet? (term ((addr 1) 'a)) (term ((addr 3) (addr 2)))))))
+    (check-false (external-packet? (term ((addr 1) <= 'a)) (term ())))
+    (check-true  (external-packet? (term ((addr 1) <= 'a)) (term ((addr 1)))))
+    (check-false (external-packet? (term ((addr 1) <= 'a)) (term ((addr 2)))))
+    (check-true  (external-packet? (term ((addr 1) <= 'a)) (term ((addr 1) (addr 2)))))
+    (check-false (external-packet? (term ((addr 1) <= 'a)) (term ((addr 3) (addr 2)))))))
 
 ;;      (match-define (list external-packets wiped-config) (extract-external-sends config))
 
@@ -284,22 +290,15 @@
     (require redex/reduction-semantics
            csa/model)
 
-
-  ;; (provide spec-config-transitions)
-  ;; ;; TODO: eventually this will depend on having an address for the instance, etc.
-  ;; (define (spec-config-transitions config)
-
-  ;;   )
-
-  ;; TODO: implement this
-  ;; Returns the transitions of the spec instance's current state, grouped by input pattern
+  ;; Returns the transitions of the spec instance's current state with the state parameters
+  ;; substituted in, grouped by input pattern
   (define (spec-input-pattern-groups instance)
     (term (spec-input-pattern-groups/mf ,instance)))
 
   (define-metafunction aps-eval
     spec-input-pattern-groups/mf : z -> ((p (e-hat ...)) ...)
-    [(spec-input-pattern-groups/mf ((_ ... (define-state (s _ ...) (ε -> e-hat) ...) _ ...) (goto s _ ...) _))
-     (spec-input-pattern-groups/acc ((ε -> e-hat) ...) ())])
+    [(spec-input-pattern-groups/mf ((_ ... (define-state (s x ...) (ε -> e-hat) ...) _ ...) (goto s a ...) _))
+     (spec-input-pattern-groups/acc ((ε -> (subst-n/aps e-hat (x a) ...)) ...) ())])
 
   ;; Inserts the given transitions (except the unobs ones) into the given pattern/expression grouping
   (define-metafunction aps-eval
@@ -339,8 +338,21 @@
   ;; Returns the list of commitments generated by the given spec expression
   (define (get-spec-commitments e)
     (match (apply-reduction-relation* spec-step `(,e ()))
-      [(list `(,_ ,commitments))
+      [(list `((goto ,_ ...) ,commitments))
        commitments]))
+
+  (module+ test
+    (check-equal? (get-spec-commitments (term (goto S1))) null)
+    (check-equal? (get-spec-commitments (term (with-outputs ([(addr 1) *] [(addr 2) 't]) (goto S1))))
+                  (list (term [(addr 1) *]) (term [(addr 2) 't])))
+    (check-equal? (get-spec-commitments
+                   (term (with-outputs ([(addr 1) *] [(addr 2) 't])
+                           (with-outputs ([(addr 3) *] [(addr 4) 't])
+                             (goto S1)))))
+                  (list (term [(addr 1) *])
+                        (term [(addr 2) 't])
+                        (term [(addr 3) *])
+                        (term [(addr 4) 't]))))
 
   (define (matches-output-pattern? value pattern)
     (term (matches-output-pattern?/mf ,value ,pattern)))
