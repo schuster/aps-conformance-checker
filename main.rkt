@@ -59,11 +59,11 @@
     ;; (printf "group: ~s\n" input-pattern-group)
     ;; TODO: add in the real address and message here
 
-    ;; TODO: replace 'sample-value with (pattern-group-pattern input-pattern-group), to use the
-    ;; actual pattern (requires a new language in csa/model)
     (for/fold ([next-state-pairs null])
               ([result-config (handle-message prog '(addr 1) ''sample-value)]
+               ;; [result-config (handle-message prog '(addr 1) (pattern-group-pattern input-pattern-group))]
                #:break (not next-state-pairs))
+
       ;; Check all of its outputs and see if it matches *some* transition
 
       ;; TODO: check that we're not in a stuck state (or maybe I just do this ahead of time with a
@@ -205,6 +205,60 @@
   (check-false (analyze (make-single-agent-config static-double-response-agent) static-response-spec))
   (check-false (analyze ignore-all-config static-response-spec))
 
+  ;; Pattern matching tests, without dynamic channels
+  ;; TODO: uncomment and implement the stuff for these tests
+  ;; (define pattern-match-spec
+  ;;   '(((define-state (Matching r)
+  ;;        ['a -> (with-outputs ([r 'a]) (goto Matching r))]
+  ;;        [(list 'b *) -> (with-outputs ([r (list 'b *)]) (goto Matching r))]))
+  ;;     (goto Matching (addr 2))
+  ;;     (addr 1)))
+
+  ;; (define pattern-matching-agent
+  ;;   '((addr 1)
+  ;;     (((define-state (Always r) (m)
+  ;;         (match m
+  ;;           ['a (begin (send r 'a) (goto Always r))]
+  ;;           [(list 'b *) (begin (send r (list 'b *)) (goto Always r))]
+  ;;           [_ (goto Always r)])))
+  ;;      (rcv (m)
+  ;;           (match m
+  ;;           ['a (begin (send (addr 2) 'a) (goto Always (addr 2)))]
+  ;;           [(list 'b *) (begin (send (addr 2) (list 'b *)) (goto Always (addr 2)))]
+  ;;           [_ (goto Always (addr 2))])))))
+
+  ;; (define reverse-pattern-matching-agent
+  ;;   '((addr 1)
+  ;;     (((define-state (Always r) (m)
+  ;;         (match m
+  ;;           ['a (begin (send r (list 'b *)) (goto Always r))]
+  ;;           [(list 'b *) (begin (send r 'a) (goto Always r))]
+  ;;           [_ (goto Always r)])))
+  ;;      (rcv (m)
+  ;;           (match m
+  ;;           ['a (begin (send (addr 2) (list 'b *)) (goto Always (addr 2)))]
+  ;;           [(list 'b *) (begin (send (addr 2) 'a) (goto Always (addr 2)))]
+  ;;           [_ (goto Always (addr 2))])))))
+
+  ;; (define partial-pattern-matching-agent
+  ;;   '((addr 1)
+  ;;     (((define-state (Always r) (m)
+  ;;         (match m
+  ;;           ['a (begin (send r 'a) (goto Always r))]
+  ;;           [(list 'b *) (goto Always r)]
+  ;;           [_ (goto Always r)])))
+  ;;      (rcv (m)
+  ;;           (match m
+  ;;           ['a (begin (send (addr 2) 'a) (goto Always (addr 2)))]
+  ;;           [(list 'b *) (goto Always (addr 2))]
+  ;;           [_ (goto Always (addr 2))])))))
+  ;;
+  ;; (check-true (analyze (make-single-agent-config pattern-matching-agent) pattern-match-spec))
+  ;; (check-false (analyze (make-single-agent-config partial-pattern-matching-agent) pattern-match-spec))
+  ;; (check-false (analyze (make-single-agent-config reverse-pattern-matching-agent) pattern-match-spec))
+
+  ;; TODO: write a test where the unobs input messages for pattern matching matter
+
   ;; TODO: test 2: program outputs on static observable channel, spec does not
   ;; TODO: test 3: spec outputs, program does not
   ;; TODO: test 4: program and spec output
@@ -221,6 +275,75 @@
   (provide handle-message
            extract-external-sends)
 
+  ;; ;; Abstract interpretation version of CSA
+  ;; TODO: uncomment this whole thing and get it to work
+  ;; (define-extended-language csa# csa-eval
+  ;;   (K# (α# μ# ρ χ)) ; TODO: update this
+  ;;   (α# ((a# ((S# ...) e#)) ...))
+  ;;   (μ# μ) ; TODO: update this
+  ;;   (S# (define-state (s x ...) (x) e#)
+  ;;       (define-state (s x ...) (x) e# [(timeout Nat) e#]))
+  ;;   ;; TODO: these probably should be sets of values, right?
+  ;;   (v# Nat
+  ;;       t
+  ;;       a ; TODO: replace this one with a special pattern
+  ;;       (list v# ...)
+  ;;       *)
+  ;;   (e# (spawn e# S ...)
+  ;;       (goto s e# ...)
+  ;;       (send e# e#)
+  ;;       self
+  ;;       (begin e# ... e#)
+  ;;       (let ([x e#] ...) e#)
+  ;;       (match e# [p e#] ...)
+  ;;       (list e# ...)
+  ;;       t
+  ;;       a#
+  ;;       x
+  ;;       Nat
+  ;;       *)
+  ;;   (a# a) ; TODO: change this one
+  ;;   (A# ((any_1 ... hole any_2 ...) () ρ χ)) ; TODO: update this
+  ;;   (E# hole
+  ;;       (goto s v# ... E# e# ...)
+  ;;       (send E# e#)
+  ;;       (send v# E#)
+  ;;       (begin E# e# ...)
+  ;;       (let ([x E#] [x e#] ...) e#)
+  ;;       (match E# [p e#] ...)
+  ;;       (list v# ... E# e# ...)))
+
+  ;; (define-metafunction csa#
+  ;;   abstract : K -> K#
+  ;;   ;; TODO: handle messages already in the queue
+  ;;   ;;
+  ;;   ;; TODO: handle ρ and χ
+  ;;   [(abstract (α () ρ χ))
+  ;;    (α# () ρ χ)
+  ;;    (where  ((a ((S ...) e)) ...) α)
+  ;;    (where α# ((a (((abstract/S S) ...) (abstract/e e))) ...))])
+
+  ;; (define-metafunction csa#
+  ;;   abstract/e : e -> e#
+  ;;   [(abstract/e n) Nat]
+  ;;   ;; TODO: do something different for addresses (probably need a dictionary of things to substitute
+  ;;   ;; for them?)
+  ;;   [(abstract/e a) a]
+  ;;   ;; TODO: do something more clever for lists
+  ;;   [(abstract/e (list e ...)) (list (abstract/e e ...))]
+  ;;   [(abstract/e (rcv (x) e) [(timeout Nat)]) (rcv (x) (abstract/e e))]
+  ;;   ;; The rest of these from here just do the normal tree-walking thing
+  ;;   [(abstract/e (spawn e S ...)) (spawn (abstract/e e) (abstract/S S) ...)]
+  ;;   [(abstract/e (goto s e ...)) (goto s (abstract/e e) ...)]
+  ;;   [(abstract/e (send e_1 e_2)) (send (abstract/e e_1) (abstract/e e_2))]
+  ;;   [(abstract/e self) self]
+  ;;   [(abstract/e (begin e ...)) (begin (abstract/e e ...))]
+  ;;   ;; TODO: let
+  ;;   [(abstract/e (match e_1 [p e_2] ...)) (match (abstract/e e) [p (abstract/e e)] ...)]
+  ;;   [(abstract/e t) t]
+  ;;   [(abstract/e x) x]
+  ;;   [(abstract/e (rcv (x) e)) (rcv (x) (abstract/e e))])
+
   ;; Injects the given message into the config and runs the appropriate handler for it to completion,
   ;; returning all possible resulting configurationsn
   (define (handle-message prog-config address message)
@@ -233,6 +356,9 @@
     ;; (printf "config: ~s\n" prog-config)
 
     (apply-reduction-relation* handler-step (term (inject-message ,prog-config ,address ,message))))
+  ;; TODO: use this version instead (from stash)
+    ;; (apply-reduction-relation* handler-step# (term (inject-message ,prog-config ,address ,message)))
+  )
 
   ;; TODO: define this method
   ;;
@@ -272,9 +398,44 @@
     (check-true  (external-packet? (term ((addr 1) <= 'a)) (term ((addr 1)))))
     (check-false (external-packet? (term ((addr 1) <= 'a)) (term ((addr 2)))))
     (check-true  (external-packet? (term ((addr 1) <= 'a)) (term ((addr 1) (addr 2)))))
-    (check-false (external-packet? (term ((addr 1) <= 'a)) (term ((addr 3) (addr 2)))))))
+    (check-false (external-packet? (term ((addr 1) <= 'a)) (term ((addr 3) (addr 2))))))
 
-;;      (match-define (list external-packets wiped-config) (extract-external-sends config))
+  ;; (define handler-step#
+  ;;   (reduction-relation csa#
+  ;;    #:domain K#
+  ;;    (--> (in-hole A# (a# ((S# ...) (in-hole E (goto s v# ..._n)))))
+  ;;         (in-hole A# (a# ((S# ...) (rcv (x_h) (subst-n e# (x_s v#) ...)))))
+  ;;         (where (_ ... (define-state (s x_s ..._n) (x_h) e#) _ ...) (S# ...))
+  ;;         Goto)
+  ;;    ;; TODO: extend subst-n to work on the abstract language
+
+  ;;    ;; TODO: goto with timeout
+
+  ;;    ;; let, match, begin, send, goto
+  ;;    (==> (begin v# e# e#_rest ...)
+  ;;         (begin e# e#_rest ...)
+  ;;         Begin1)
+  ;;    (==> (begin v#)
+  ;;         v#
+  ;;         Begin2)
+
+  ;;    ;; TODO: do the ρ/χ updates
+  ;;    (--> ((any_a1 ... (a# ((S# ...) (in-hole E# (send a#_2 v#)))) any_a2 ...)
+  ;;          (any_packets ...)
+  ;;          ρ χ)
+  ;;         ((any_a1 ... (a# ((S# ...) (in-hole E# v#)))            any_a2 ...)
+  ;;          (any_packets ... (a#_2 <= v#)) ; TODO: figure out how to do send rule here...
+  ;;          ρ χ)
+  ;;         Send)
+
+  ;;    ;; TODO: let
+  ;;    ;; TODO: match
+
+  ;;    with
+  ;;    [(--> (in-hole A (a# ((S# ...) (in-hole E# e#_old))))
+  ;;          (in-hole A (a# ((S# ...) (in-hole E# e#_new)))))
+  ;;     (==> e#_old e#_new)]))
+)
 
 (require 'language-eval)
 
