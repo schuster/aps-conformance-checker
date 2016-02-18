@@ -1,3 +1,14 @@
+#|
+
+Remaining big challenges I see in the analysis:
+* how to verify output commitments that are satisfied in a different handler than they were incurred (esp. if commitment is delegated to another actor, e.g. the session child in the TCP example)
+* how to verify multi-actor programs (no clue on this one yet - need more good examples) (disjoint lemma can help, but won't always be possible)
+* how to verify outputs when there's ambiguity as to which send matches which commitment
+* how to verify cases where the transmission match is ambiguous (need constraint solver instead of BFS?)
+
+|#
+
+
 #lang racket
 
 ;; TODO: test 1: the actor that just loops on itself conforms to the spec that does the same thing
@@ -10,7 +21,9 @@
 (define tail cdr)
 
 ;; TODO: make this handle full configs, not just a single spec instance and agent instance
-;;
+
+;; TODO: rename "analyze" to something like "check" or "verify" or "model-check"
+
 ;; TODO: test this method separately, apart from the idea of visiting a transition (just check the BFS
 ;; implementation
 (define (analyze initial-prog-config initial-spec-config)
@@ -60,6 +73,7 @@
     ;; TODO: add in the real address and message here
 
     (for/fold ([next-state-pairs null])
+              ;; TODO: change the address and message here to be *real* values
               ([result-config (handle-message prog '(addr 1) ''sample-value)]
                ;; [result-config (handle-message prog '(addr 1) (pattern-group-pattern input-pattern-group))]
                #:break (not next-state-pairs))
@@ -99,7 +113,8 @@
 ;; transitions; otherwise, returns the list of remaining (unmatched) commitments.
 (define (match-sends-to-commitments external-packets possible-transitions)
 
-  ;; TODO: make this handle more than 1 transition
+  ;; TODO: make this handle more than 1 possible transition in the spec (may require a constraint
+  ;; solver instead of BFS, to allow for backtracking)
 
   ;; TODO: make this handle all possible orderings of matches
 
@@ -357,8 +372,7 @@
 
     (apply-reduction-relation* handler-step (term (inject-message ,prog-config ,address ,message))))
   ;; TODO: use this version instead (from stash)
-    ;; (apply-reduction-relation* handler-step# (term (inject-message ,prog-config ,address ,message)))
-  )
+    ;; (apply-reduction-relation* handler-step# (term (inject-message ,prog-config ,address ,message))))
 
   ;; TODO: define this method
   ;;
