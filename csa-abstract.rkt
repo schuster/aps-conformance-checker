@@ -235,21 +235,24 @@
   (check-equal? (csa#-match (term (Always ADDR-HOLE 0 MOST-RECENT)) (term x))
                 (list (term ([x (Always ADDR-HOLE 0 MOST-RECENT)])))))
 
+
+(define (config-actor-by-address config addr)
+  (term (config-actor-by-address/mf ,config ,addr)))
+
+(define-metafunction csa#
+  config-actor-by-address/mf : K# a#int -> α#n
+  [(config-actor-by-address/mf ((_ ... (name the-agent (a#int _)) _ ...) _ _ _) a#int)
+   the-agent])
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
 
 ;; Outputs is a list of abstract-addr/abstract-message pairs
 (struct program-transition (message observed? outputs goto-exp))
 
-;; (csa#-eval-transition prog (actor-address the-actor) message)
-
 (define (csa#-eval-transition prog-config actor-address message)
-  ;; (config-actor-by-address prog-config actor-address)
-  (redex-let csa# ([(((SINGLE-ACTOR-ADDR (τ (_ ... (define-state (s x_s ..._n) (x_m) e#) _ ...) (in-hole E# (goto s v# ..._n)))))
-                     ()
-                     (SINGLE-ACTOR-ADDR)
-                     ())
-                    prog-config])
+  (redex-let csa# ([(_ (τ (_ ... (define-state (s x_s ..._n) (x_m) e#) _ ...) (in-hole E# (goto s v# ..._n))))
+                    (config-actor-by-address prog-config actor-address)])
              ;; TODO: deal with the case where x_m shadows an x_s
              (define results
                (apply-reduction-relation*
@@ -283,8 +286,8 @@
          v#
          Begin2)
 
-    (--> ((in-hole E (send a# v#)) (any_outputs ...))
-         ((in-hole E v#)           (any_outputs ... [a# v#]))
+    (--> ((in-hole E# (send a# v#)) (any_outputs ...))
+         ((in-hole E# v#)           (any_outputs ... [a# v#]))
          Send)
 
     ;; TODO: let

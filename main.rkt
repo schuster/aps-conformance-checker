@@ -33,6 +33,9 @@ Remaining big challenges I see in the analysis:
 ;; TODO: test this method separately, apart from the idea of visiting a transition (just check the BFS
 ;; implementation
 
+;; TODO: add some sort of typechecker that runs ahead of the analyzer (but perhaps as part of it, for
+;; the sake of tests) to prevent things like a goto to a state that doesn't exist
+
 ;; TODO: add an initial mapping between the program and the spec (maybe? might need new definition of
 ;; conformance for that)
 
@@ -43,42 +46,45 @@ Remaining big challenges I see in the analysis:
 ;; NOTE: this currently handles only programs consisting of a single actor that does not spawn other
 ;; actors. Also assumes that the spec starts in a state in which it has no state parameters.
 (define (analyze initial-prog-config initial-spec-instance state-matches)
+  (let/cc return-early
   ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
-  (let loop ([to-visit (queue (cons (α-config initial-prog-config) initial-spec-instance))]
-             [visited (set)])
-    (cond
-      [(queue-empty? to-visit) #t]
-      [else
-       (define next-pair (dequeue! to-visit))
-       (cond
-         [(set-member? visited next-pair)
-          (loop to-visit visited)]
-         [else
-          ;; TODO: rename this function. A better name will help me with the general terminology with
-          ;; which I describe my technique
-          (match-define (cons prog spec) next-pair)
-          (define the-actor (config-only-actor prog))
-          ;; TODO: rename this idea of transition: there's some other "thing" that this is, like a
-          ;; transmission result. Define this data definition in the code somewhere, because it should
-          ;; really be a type (it's a new kind of data in my domain that needs to be defined and
-          ;; named)
-          (define possible-transitions
-            ;; TODO: figure out where to abstract the addresses
-            ;; TODO: get the max depth from somewhere
-            (for/fold ([eval-results null])
-                      ([message (generate-abstract-messages (actor-message-type the-actor) (actor-current-state the-actor) 0)])
-              (append eval-results (csa#-eval-transition prog (actor-address the-actor) message))))
-          (for ([possible-transition possible-transitions])
-            (match (find-matching-spec-transition possible-transition spec state-matches)
-              [(list) (error "couldn't find any match") ;; TODO: call a continuation to return #f here instead
-               ]
-              [(list spec-goto-exp)
-               (enqueue! to-visit
-                         (cons (step-prog-with-goto prog (program-transition-goto-exp possible-transition))
-                               (step-spec-with-goto spec spec-goto-exp)))]
-              [_ (error "too many possible matches") ;; TODO: call a continuation instead
-                 ]))
-          (loop to-visit (set-add visited next-pair))])])))
+    (let loop ([to-visit (queue (cons (α-config initial-prog-config) initial-spec-instance))]
+               [visited (set)])
+      (cond
+        [(queue-empty? to-visit) #t]
+        [else
+         (define next-pair (dequeue! to-visit))
+         (cond
+           [(set-member? visited next-pair)
+            (loop to-visit visited)]
+           [else
+            ;; TODO: rename this function. A better name will help me with the general terminology with
+            ;; which I describe my technique
+            (match-define (cons prog spec) next-pair)
+            (define the-actor (config-only-actor prog))
+            ;; TODO: rename this idea of transition: there's some other "thing" that this is, like a
+            ;; transmission result. Define this data definition in the code somewhere, because it should
+            ;; really be a type (it's a new kind of data in my domain that needs to be defined and
+            ;; named)
+            (define possible-transitions
+              ;; TODO: figure out where to abstract the addresses
+              ;; TODO: get the max depth from somewhere
+              (for/fold ([eval-results null])
+                        ([message (generate-abstract-messages (actor-message-type the-actor) (actor-current-state the-actor) 0)])
+                (append eval-results (csa#-eval-transition prog (actor-address the-actor) message))))
+            (for ([possible-transition possible-transitions])
+              (match (find-matching-spec-transition possible-transition spec state-matches)
+                [(list)
+                 ;; (printf "couldn't find any match\n")
+                 (return-early #f)]
+                [(list spec-goto-exp)
+                 (enqueue! to-visit
+                           (cons (step-prog-with-goto prog (program-transition-goto-exp possible-transition))
+                                 (step-spec-with-goto spec spec-goto-exp)))]
+                [_ (error "too many possible matches") ;; TODO: call a continuation instead
+                   ]))
+            (loop to-visit (set-add visited next-pair))])])))
+)
 
 ;; TODO: hide this function in a separate module and make it less susceptible to breaking because of changes in the config's structure
 (define (step-prog-with-goto prog-config goto-exp)
@@ -119,52 +125,57 @@ Remaining big challenges I see in the analysis:
 ;; Returns #f for no match, or the spec's goto expression with prog values if there is a match
 (define (prog-transition-matches-spec-transition? prog-trans spec-trans state-matches)
   ;; so, prog transition must have: message received, obs vs unobs, outputs, and the goto
-  (redex-let aps# ([(p_spec-pat -> e-hat) spec-trans])
-             ;; 1. Check pattern vs. received message
-             ;; TODO: check for obs vs. unobs
-    (match (csa#-match (program-transition-message prog-trans) (term p_spec-pat))
-      [(list)
-       ;; No matches, so the whole predicate fails
-       (printf "Found no matches for received message ~s to pattern ~s\n" (program-transition-message prog-trans) (term p_spec-pat))
-       #f]
-      [(list subst1 subst2 subst-rest ...)
-       (error "too many matches for value ~s and pattern ~s" (program-transition-message prog-trans) (term p_spec-pat))]
-      [(list some-subst)
-       (redex-let* aps#
-                   ([([x a#ext] ...) some-subst]
-                    [e-hat (term (subst-n/aps# e-hat (x a#ext) ...))]
-                    [((goto s_spec v# ...) ([a#ext po] ...)) (aps#-eval (term e-hat))])
-                   ;; 2. Check outputs (check each prog output aginst commitments and check there are
-                   ;; no commitments left)
-                   ;;
-                   ;; NOTE: this does not check for multiple possible ways to match the outputs
-                   (let ([unmatched-commitments
-                          (for/fold ([remaining-commitments (term ([a#ext po] ...))])
-                                    ([output (program-transition-outputs prog-trans)])
-                            ;; TODO: test this function separately
-                            (define (satisfied? commitment)
-                              (redex-let aps# ([[a#ext_prog v#] output]
-                                               [[a#ext_spec po] commitment]
-                                               )
-                                         (and (equal? (term a#ext_prog) (term a#ext_spec))
-                                              (aps-matches-po? (term v#) (term po)))))
-                            (match (findf satisfied? remaining-commitments)
-                              ;; TODO: figure out how to deal with addresses that are precisely abstracted but not observed by the spec
-                              [#f (error "No match for output in the commitments")]
-                              [commitment (remove commitment remaining-commitments)]))])
-                     (match unmatched-commitments
-                       [(list c1 c-rest ...)
-                        (displayln "Found unmatched commitments")
-                        #f]
-                       [_
-                        ;; 3. Check the gotos (annotated)
-                        (redex-let aps# ([(in-hole E# (goto s_prog _ ...)) (program-transition-goto-exp prog-trans)])
-                                   (if (equal? (hash-ref state-matches (term s_prog)) (term s_spec))
-                                       ;; 4. Return transitioned spec config
-                                       (term (goto s_spec v# ...))
-                                       (begin
-                                         (printf "State names didn't match: ~s ~s ~s\n" (term s_prog) (hash-ref state-matches (term s_prog)) (term s_spec))
-                                         #f)))])))])))
+  (let/cc return-early
+    (redex-let aps# ([(p_spec-pat -> e-hat) spec-trans])
+               ;; 1. Check pattern vs. received message
+               ;; TODO: check for obs vs. unobs
+               (match (csa#-match (program-transition-message prog-trans) (term p_spec-pat))
+                 [(list)
+                  ;; No matches, so the whole predicate fails
+                  (printf "Found no matches for received message ~s to pattern ~s\n" (program-transition-message prog-trans) (term p_spec-pat))
+                  #f]
+                 [(list subst1 subst2 subst-rest ...)
+                  (error "too many matches for value ~s and pattern ~s" (program-transition-message prog-trans) (term p_spec-pat))]
+                 [(list some-subst)
+                  (redex-let* aps#
+                              ([([x a#ext] ...) some-subst]
+                               [e-hat (term (subst-n/aps# e-hat (x a#ext) ...))]
+                               [((goto s_spec v# ...) ([a#ext po] ...)) (aps#-eval (term e-hat))])
+                              ;; 2. Check outputs (check each prog output aginst commitments and check there are
+                              ;; no commitments left)
+                              ;;
+                              ;; NOTE: this does not check for multiple possible ways to match the outputs
+                              (let ([unmatched-commitments
+                                     (for/fold ([remaining-commitments (term ([a#ext po] ...))])
+                                               ([output (program-transition-outputs prog-trans)])
+                                       ;; TODO: test this function separately
+                                       (define (satisfied? commitment)
+                                         (redex-let aps# ([[a#ext_prog v#] output]
+                                                          [[a#ext_spec po] commitment]
+                                                          )
+                                                    (and (equal? (term a#ext_prog) (term a#ext_spec))
+                                                         (aps-matches-po? (term v#) (term po)))))
+                                       (match (findf satisfied? remaining-commitments)
+                                         ;; TODO: figure out how to deal with addresses that are precisely abstracted but not observed by the spec
+                                         [#f ;; (printf "No match for output in the commitments.\nOutput: ~s\nCommitments: ~s\n"
+                                             ;;         output
+                                             ;;         remaining-commitments)
+                                             (return-early #f)]
+                                         [commitment (remove commitment remaining-commitments)]))])
+                                (match unmatched-commitments
+                                  [(list c1 c-rest ...)
+                                   (displayln "Found unmatched commitments")
+                                   #f]
+                                  [_
+                                   ;; 3. Check the gotos (annotated)
+                                   (redex-let aps# ([(in-hole E# (goto s_prog _ ...)) (program-transition-goto-exp prog-trans)])
+                                              (if (equal? (hash-ref state-matches (term s_prog)) (term s_spec))
+                                                  ;; 4. Return transitioned spec config
+                                                  (term (goto s_spec v# ...))
+                                                  (begin
+                                                    (printf "State names didn't match: ~s ~s ~s\n" (term s_prog) (hash-ref state-matches (term s_prog)) (term s_spec))
+                                                    #f)))])))])))
+)
 
 ;; TODO: tests for the above transition matching predicates/search functions
 
@@ -420,7 +431,7 @@ Remaining big challenges I see in the analysis:
             (send response-target (* Nat))
             ;; TODO: also try the case where we save new-response-target instead
             (goto HaveAddr response-target))))
-       (goto Always))))
+       (goto Init))))
   ;; (define static-double-response-agent
   ;;   `((addr 1)
   ;;     (((define-state (Always response-dest) (m)
