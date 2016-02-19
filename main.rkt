@@ -11,14 +11,20 @@ Remaining big challenges I see in the analysis:
 
 #lang racket
 
+(require
+ data/queue
+ redex/reduction-semantics
+ "queue-helpers.rkt"
+ "aps-abstract.rkt"
+ "csa-abstract.rkt"
+ "csa-helpers.rkt")
+
+;; TODO: take the dependency on Redex out of this file
+
 ;; TODO: test 1: the actor that just loops on itself conforms to the spec that does the same thing
 ;; (all observable actions)
 
 (struct spec-config (instances commitments))
-
-;; TODO: probably avoid using these unofficial aliases
-(define head car)
-(define tail cdr)
 
 ;; TODO: make this handle full configs, not just a single spec instance and agent instance
 
@@ -26,26 +32,134 @@ Remaining big challenges I see in the analysis:
 
 ;; TODO: test this method separately, apart from the idea of visiting a transition (just check the BFS
 ;; implementation
-(define (analyze initial-prog-config initial-spec-config)
-  (let loop ([to-visit (list (cons initial-prog-config initial-spec-config))]
+
+;; TODO: add an initial mapping between the program and the spec (maybe? might need new definition of
+;; conformance for that)
+
+;; Given a concrete program configuration, a concrete specification configuration, and a list of pairs
+;; that specify the expected prog-state/spec-state matches, returns #t if the conformance check
+;; algorithm can prove conformance, #f otherwise.
+;;
+;; NOTE: this currently handles only programs consisting of a single actor that does not spawn other
+;; actors. Also assumes that the spec starts in a state in which it has no state parameters.
+(define (analyze initial-prog-config initial-spec-instance state-matches)
+  ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
+  (let loop ([to-visit (queue (cons initial-prog-config initial-spec-instance))]
              [visited (set)])
     (cond
-      [(empty? to-visit) #t]
-      [(set-member? visited (head to-visit))
-       (loop (tail to-visit) visited)]
+      [(queue-empty? to-visit) #t]
       [else
-       ;; TODO: rename this function. A better name will help me with the general terminology with
-       ;; which I describe my technique
-       (match-define (cons prog spec) (head to-visit))
-       (match (check-immediate-transitions prog spec)
-         [#f #f] ; if any state pair analysis fails, then the whole thing fails
+       (define next-pair (dequeue! to-visit))
+       (cond
+         [(set-member? visited next-pair)
+          (loop to-visit visited)]
+         [else
+          ;; TODO: rename this function. A better name will help me with the general terminology with
+          ;; which I describe my technique
+          (match-define (cons prog spec) next-pair)
+          (define the-actor (config-only-actor prog))
+          ;; TODO: rename this idea of transition: there's some other "thing" that this is, like a
+          ;; transmission result. Define this data definition in the code somewhere, because it should
+          ;; really be a type (it's a new kind of data in my domain that needs to be defined and
+          ;; named)
+          (define possible-transitions
+            ;; TODO: figure out where to abstract the addresses
+            ;; TODO: get the max depth from somewhere
+            (for/list ([message (generate-abstract-messages (actor-message-type the-actor) 0)])
+              (csa#-eval-transition prog (actor-address the-actor) message)))
+          (for ([possible-transition possible-transitions])
+            (match (find-matching-spec-transition possible-transition spec state-matches)
+              [(list) (error "couldn't find any match") ;; TODO: call a continuation to return #f here instead
+               ]
+              [(list spec-goto-exp)
+               (enqueue! to-visit
+                         (cons (step-prog-with-goto prog (program-transition-goto-exp possible-transition))
+                               (step-spec-with-goto spec spec-goto-exp)))]
+              [_ (error "too many possible matches") ;; TODO: call a continuation instead
+                 ]))
+          (loop to-visit (set-add visited next-pair))])])))
 
-         ;; TODO: figure out what it looks like here when we try all possible combinations of the
-         ;; possible program/spec transition pairs. This currently assumes only one possible way to
-         ;; match everything
-         [(list new-pairs-to-visit ...)
-          (loop (append new-pairs-to-visit (tail to-visit))
-                (set-add visited (head to-visit)))])])))
+(define (step-prog-with-goto prog-config goto-exp)
+  (redex-let csa# ([(((SINGLE-ACTOR-ADDR ((S# ...) _)))
+                     ()
+                     (SINGLE-ACTOR-ADDR)
+                     ;; TODO: update χ# or just get rid of it
+                     ())
+                    prog-config])
+             (term
+              (((SINGLE-ACTOR-ADDR ((S# ...) ,goto-exp)))
+               ()
+               (SINGLE-ACTOR-ADDR)
+               ;; TODO: update χ# or just get rid of it
+               ()))))
+
+(define (step-spec-with-goto spec-instance goto-exp)
+  (redex-let aps# ([((S-hat ...) _ σ) spec-instance])
+             (term ((S-hat ...) ,goto-exp σ))))
+
+;; TODO: I probably need some canonical representation of program and spec configs so that otherwise
+;; equivalent configs are not considered different by the worklist algorithm
+
+;; NOTE: only supports spec configs with a single actor/spec
+;;
+;; Given a program transition, the current spec config, and the hash table mapping prog states to spec
+;; states, returns the list of spec gotos for all possible matching transitions
+(define (find-matching-spec-transition prog-transition spec-instance state-matches)
+  (define match-results
+    (map
+     (lambda (spec-transition)
+       (prog-transition-matches-spec-transition? prog-transition spec-transition state-matches))
+     (aps#-current-transitions spec-instance)))
+  (filter values match-results))
+
+;; Prog-trans is the above struct, spec-trans is the syntax of the expression
+;;
+;; Returns #f for no match, or the spec's goto expression with prog values if there is a match
+(define (prog-transition-matches-spec-transition? prog-trans spec-trans state-matches)
+  ;; so, prog transition must have: message received, obs vs unobs, outputs, and the goto
+  (redex-let aps# ([(p_spec-pat -> e-hat) spec-trans])
+             ;; 1. Check pattern vs. received message
+             ;; TODO: check for obs vs. unobs
+    (match (csa#-match (program-transition-message prog-trans) (term p_spec-pat))
+      [(list)
+       ;; No matches, so the whole predicate fails
+       #f]
+      [(list subst1 subst-rest ...)
+       (error "too many matches")]
+      [(list some-subst)
+       (redex-let* aps#
+                   ([([x a#ext] ...) some-subst]
+                    [e-hat (term (subst-n/aps# e-hat (x a#ext) ...))]
+                    [((goto s_spec v# ...) ([a#ext po] ...)) (aps#-eval (term e-hat))])
+                   ;; 2. Check outputs (check each prog output aginst commitments and check there are
+                   ;; no commitments left)
+                   ;;
+                   ;; NOTE: this does not check for multiple possible ways to match the outputs
+                   (let ([unmatched-commitments
+                          (for/fold ([remaining-commitments (term ([a#ext po] ...))])
+                                    ([output (program-transition-outputs prog-trans)])
+                            ;; TODO: test this function separately
+                            (define (satisfied? commitment)
+                              (redex-let aps# ([[a#ext_prog v#] output]
+                                               [[a#ext_spec po] commitment]
+                                               )
+                                         (and (equal? (term a#ext_prog) (term a#ext_spec))
+                                              (aps-matches-po? (term v#) (term po)))))
+                            (match (findf satisfied? remaining-commitments)
+                              ;; TODO: figure out how to deal with addresses that are precisely abstracted but not observed by the spec
+                              [#f (error "No match for output in the commitments")]
+                              [commitment (remove commitment remaining-commitments)]))])
+                     (match unmatched-commitments
+                       [(list) #f]
+                       [_
+                        ;; 3. Check the gotos (annotated)
+                        (redex-let aps# ([(goto s_prog _ ...) (program-transition-goto-exp prog-trans)])
+                                   (if (equal? (hash-ref state-matches (term s_prog)) (term s_spec))
+                                       ;; 4. Return transitioned spec config
+                                       (term (goto s_spec v# ...))
+                                       #f))])))])))
+
+;; TODO: tests for the above transition matching predicates/search functions
 
 (define pattern-group-pattern car)
 (define pattern-group-exps cadr)
@@ -57,98 +171,98 @@ Remaining big challenges I see in the analysis:
 ;;
 ;; prog: program configuration
 ;; spec: specification configuration
-(define (check-immediate-transitions prog spec)
-  ;; Gather all possible inputs according to the spec (including non-specified ones) and run each one
-  ;; abstractly through the handler. For each result, check if it satisfies a transition, and add the
-  ;; next state to the to-visit queue if it's not there already (or add it anyway, I think...)
+;; (define (check-immediate-transitions prog spec)
+;;   ;; Gather all possible inputs according to the spec (including non-specified ones) and run each one
+;;   ;; abstractly through the handler. For each result, check if it satisfies a transition, and add the
+;;   ;; next state to the to-visit queue if it's not there already (or add it anyway, I think...)
 
-  ;; TODO: deal with commitments from previous transitions
+;;   ;; TODO: deal with commitments from previous transitions
 
-  ;; TODO: figure out the actual source of input patterns here
-  ;; TODO: also process the unobserved patterns
-  (for/fold ([next-state-pairs null])
-            ([input-pattern-group (spec-input-pattern-groups spec)]
-             #:break (not next-state-pairs))
-    ;; (printf "group: ~s\n" input-pattern-group)
-    ;; TODO: add in the real address and message here
+;;   ;; TODO: figure out the actual source of input patterns here
+;;   ;; TODO: also process the unobserved patterns
+;;   (for/fold ([next-state-pairs null])
+;;             ([input-pattern-group (spec-input-pattern-groups spec)]
+;;              #:break (not next-state-pairs))
+;;     ;; (printf "group: ~s\n" input-pattern-group)
+;;     ;; TODO: add in the real address and message here
 
-    (for/fold ([next-state-pairs null])
-              ;; TODO: change the address and message here to be *real* values
-              ([result-config (handle-message prog '(addr 1) ''sample-value)]
-               ;; [result-config (handle-message prog '(addr 1) (pattern-group-pattern input-pattern-group))]
-               #:break (not next-state-pairs))
+;;     (for/fold ([next-state-pairs null])
+;;               ;; TODO: change the address and message here to be *real* values
+;;               ([result-config (handle-message prog '(addr 1) ''sample-value)]
+;;                ;; [result-config (handle-message prog '(addr 1) (pattern-group-pattern input-pattern-group))]
+;;                #:break (not next-state-pairs))
 
-      ;; Check all of its outputs and see if it matches *some* transition
+;;       ;; Check all of its outputs and see if it matches *some* transition
 
-      ;; TODO: check that we're not in a stuck state (or maybe I just do this ahead of time with a
-      ;; type-system-like thing
+;;       ;; TODO: check that we're not in a stuck state (or maybe I just do this ahead of time with a
+;;       ;; type-system-like thing
 
-      ;; TODO: add primitive predicates to match patterns to check if something is an address, a
-      ;; symbol, a number, or some other primitive
+;;       ;; TODO: add primitive predicates to match patterns to check if something is an address, a
+;;       ;; symbol, a number, or some other primitive
 
-      ;; TODO: check each result to see if it matches a spec transition, and if so, add the next
-      ;; state to the to-visit list
+;;       ;; TODO: check each result to see if it matches a spec transition, and if so, add the next
+;;       ;; state to the to-visit list
 
-      ;; TODO: change this code to account for more than one possible transition
-      ;;
-      ;; TODO: change this code to allow for multiple possible ways to match the outputs against the
-      ;; available commitments
-      (match-define (list external-packets wiped-config) (extract-external-sends result-config))
-      ;; TODO: deal with spec instance addresses communicated to the outside world
+;;       ;; TODO: change this code to account for more than one possible transition
+;;       ;;
+;;       ;; TODO: change this code to allow for multiple possible ways to match the outputs against the
+;;       ;; available commitments
+;;       (match-define (list external-packets wiped-config) (extract-external-sends result-config))
+;;       ;; TODO: deal with spec instance addresses communicated to the outside world
 
-      ;; Returns the list of commitments still unsatisfied in the spec
-      (define possible-transitions (pattern-group-exps input-pattern-group))
-      (define match-results (match-sends-to-commitments external-packets possible-transitions))
-      ;; TODO: remove this debug line and inline match-results definition
-      ;; (printf "match results: ~s\n" match-results)
-      (match match-results
-        [#f #f] ; if matching up the outputs failed, then the whole transition definitely fails
-        [(list)
-         ;; TODO: get the list of new state pairs that we've transitioned to and now want to check
-         (list)]
-        ;; TODO: find a way to check on the commitments that aren't immediately satisfied
-        [_ #f]))))
+;;       ;; Returns the list of commitments still unsatisfied in the spec
+;;       (define possible-transitions (pattern-group-exps input-pattern-group))
+;;       (define match-results (match-sends-to-commitments external-packets possible-transitions))
+;;       ;; TODO: remove this debug line and inline match-results definition
+;;       ;; (printf "match results: ~s\n" match-results)
+;;       (match match-results
+;;         [#f #f] ; if matching up the outputs failed, then the whole transition definitely fails
+;;         [(list)
+;;          ;; TODO: get the list of new state pairs that we've transitioned to and now want to check
+;;          (list)]
+;;         ;; TODO: find a way to check on the commitments that aren't immediately satisfied
+;;         [_ #f]))))
 
 ;; Returns #f if any of the given message packets does not have a matching commitment in the given
 ;; transitions; otherwise, returns the list of remaining (unmatched) commitments.
-(define (match-sends-to-commitments external-packets possible-transitions)
+;; (define (match-sends-to-commitments external-packets possible-transitions)
 
-  ;; TODO: make this handle more than 1 possible transition in the spec (may require a constraint
-  ;; solver instead of BFS, to allow for backtracking)
+;;   ;; TODO: make this handle more than 1 possible transition in the spec (may require a constraint
+;;   ;; solver instead of BFS, to allow for backtracking)
 
-  ;; TODO: make this handle all possible orderings of matches
+;;   ;; TODO: make this handle all possible orderings of matches
 
-  ;; TODO: make this work with abstract address values
+;;   ;; TODO: make this work with abstract address values
 
-  ;; TODO: make this allow for unobserved communication
+;;   ;; TODO: make this allow for unobserved communication
 
-  ;; TODO: also get the pre-existing commitments from the spec config
+;;   ;; TODO: also get the pre-existing commitments from the spec config
 
-  ;; TODO: figure out what to do when the spec is mal-formed and doesn't give us a proper list of
-  ;; commitments
+;;   ;; TODO: figure out what to do when the spec is mal-formed and doesn't give us a proper list of
+;;   ;; commitments
 
-  ;; (printf "external packets: ~s\n" external-packets)
-  ;; (printf "commitments: ~s\n" (get-spec-commitments (car possible-transitions)))
-  (define-values (conformance-violated? remaining-commitments)
-    (for/fold ([conformance-violated? #f]
-               [remaining-commitments (get-spec-commitments (car possible-transitions))])
-        ([packet external-packets]
-         #:break conformance-violated?)
-      (match-define `(,packet-address <= ,packet-message) packet)
-      ;; (printf "address: ~s, message: ~s\n" packet-address packet-message)
-      (match (findf
-              (lambda (commitment)
-                (match-define `(,commitment-address ,pattern) commitment)
-                ;; (printf "commitment address: ~s, pattern: ~s\n" commitment-address pattern)
+;;   ;; (printf "external packets: ~s\n" external-packets)
+;;   ;; (printf "commitments: ~s\n" (get-spec-commitments (car possible-transitions)))
+;;   (define-values (conformance-violated? remaining-commitments)
+;;     (for/fold ([conformance-violated? #f]
+;;                [remaining-commitments (get-spec-commitments (car possible-transitions))])
+;;         ([packet external-packets]
+;;          #:break conformance-violated?)
+;;       (match-define `(,packet-address <= ,packet-message) packet)
+;;       ;; (printf "address: ~s, message: ~s\n" packet-address packet-message)
+;;       (match (findf
+;;               (lambda (commitment)
+;;                 (match-define `(,commitment-address ,pattern) commitment)
+;;                 ;; (printf "commitment address: ~s, pattern: ~s\n" commitment-address pattern)
 
-                ;; TODO: make pattern matching also do the variable-binding thing
-                (and (equal? commitment-address packet-address)
-                     (matches-output-pattern? packet-message pattern)))
-              remaining-commitments)
-        [#f (values #t remaining-commitments)]
-        [pattern (values #f (remove pattern remaining-commitments))])))
+;;                 ;; TODO: make pattern matching also do the variable-binding thing
+;;                 (and (equal? commitment-address packet-address)
+;;                      (matches-output-pattern? packet-message pattern)))
+;;               remaining-commitments)
+;;         [#f (values #t remaining-commitments)]
+;;         [pattern (values #f (remove pattern remaining-commitments))])))
 
-  (if conformance-violated? #f remaining-commitments))
+;;   (if conformance-violated? #f remaining-commitments))
 
 ;; TODO: write tests for analyze-state-pair-transitions
 
@@ -158,27 +272,30 @@ Remaining big challenges I see in the analysis:
            csa/model
 
            ;; also run the submodule tests here
-           (submod ".." language-eval test)
-           (submod ".." spec-eval test))
+           ;; TODO: remove these?
+           ;; (submod ".." language-eval test)
+           ;; (submod ".." spec-eval test)
+           )
 
   (define (make-single-agent-config agent)
-    `((,agent) () ((addr 1)) ((addr 2))))
+    `((,agent) () (SINGLE-ACTOR-ADDR) ()))
 
   (define ignore-all-agent
-    '((addr 1)
-      (((define-state (Always) (m) (goto Always)))
-       (rcv (m) (goto Always)))))
+    '(SINGLE-ACTOR-ADDR
+      (Nat
+       ((define-state (Always) (m) (goto Always)))
+       (goto Always))))
   (define ignore-all-config (make-single-agent-config ignore-all-agent))
   (define ignore-all-spec-instance
     '(((define-state (Always) [* -> (goto Always)]))
       (goto Always)
-      (addr 1)))
+      SINGLE-ACTOR-ADDR))
 
-  (check-not-false (redex-match csa-eval (a ((S ...) e)) ignore-all-agent))
-  (check-not-false (redex-match csa-eval K ignore-all-config))
-  (check-not-false (redex-match aps-eval z ignore-all-spec-instance))
+  (check-not-false (redex-match csa# (a# (τ (S# ...) e#)) ignore-all-agent))
+  (check-not-false (redex-match csa# K# ignore-all-config))
+  (check-not-false (redex-match aps# z ignore-all-spec-instance))
 
-  (check-true (analyze ignore-all-config ignore-all-spec-instance))
+  (check-true (analyze ignore-all-config ignore-all-spec-instance (hash 'Always 'Always)))
 
   ;; TODO: remove the redundancy between the state defs and the current expression
   (define static-response-agent
@@ -213,12 +330,12 @@ Remaining big challenges I see in the analysis:
   (check-not-false (redex-match csa-eval (a ((S ...) e)) static-double-response-agent))
   (check-not-false (redex-match aps-eval z static-response-spec))
 
-  (check-true (analyze (make-single-agent-config static-response-agent) static-response-spec))
+  ;; (check-true (analyze (make-single-agent-config static-response-agent) static-response-spec))
 
   ;; all 3 of these fail; let's check double/single first
-  (check-false (analyze (make-single-agent-config static-response-agent) ignore-all-spec-instance))
-  (check-false (analyze (make-single-agent-config static-double-response-agent) static-response-spec))
-  (check-false (analyze ignore-all-config static-response-spec))
+  ;; (check-false (analyze (make-single-agent-config static-response-agent) ignore-all-spec-instance))
+  ;; (check-false (analyze (make-single-agent-config static-double-response-agent) static-response-spec))
+  ;; (check-false (analyze ignore-all-config static-response-spec))
 
   ;; Pattern matching tests, without dynamic channels
   ;; TODO: uncomment and implement the stuff for these tests
@@ -290,74 +407,6 @@ Remaining big challenges I see in the analysis:
   (provide handle-message
            extract-external-sends)
 
-  ;; ;; Abstract interpretation version of CSA
-  ;; TODO: uncomment this whole thing and get it to work
-  ;; (define-extended-language csa# csa-eval
-  ;;   (K# (α# μ# ρ χ)) ; TODO: update this
-  ;;   (α# ((a# ((S# ...) e#)) ...))
-  ;;   (μ# μ) ; TODO: update this
-  ;;   (S# (define-state (s x ...) (x) e#)
-  ;;       (define-state (s x ...) (x) e# [(timeout Nat) e#]))
-  ;;   ;; TODO: these probably should be sets of values, right?
-  ;;   (v# Nat
-  ;;       t
-  ;;       a ; TODO: replace this one with a special pattern
-  ;;       (list v# ...)
-  ;;       *)
-  ;;   (e# (spawn e# S ...)
-  ;;       (goto s e# ...)
-  ;;       (send e# e#)
-  ;;       self
-  ;;       (begin e# ... e#)
-  ;;       (let ([x e#] ...) e#)
-  ;;       (match e# [p e#] ...)
-  ;;       (list e# ...)
-  ;;       t
-  ;;       a#
-  ;;       x
-  ;;       Nat
-  ;;       *)
-  ;;   (a# a) ; TODO: change this one
-  ;;   (A# ((any_1 ... hole any_2 ...) () ρ χ)) ; TODO: update this
-  ;;   (E# hole
-  ;;       (goto s v# ... E# e# ...)
-  ;;       (send E# e#)
-  ;;       (send v# E#)
-  ;;       (begin E# e# ...)
-  ;;       (let ([x E#] [x e#] ...) e#)
-  ;;       (match E# [p e#] ...)
-  ;;       (list v# ... E# e# ...)))
-
-  ;; (define-metafunction csa#
-  ;;   abstract : K -> K#
-  ;;   ;; TODO: handle messages already in the queue
-  ;;   ;;
-  ;;   ;; TODO: handle ρ and χ
-  ;;   [(abstract (α () ρ χ))
-  ;;    (α# () ρ χ)
-  ;;    (where  ((a ((S ...) e)) ...) α)
-  ;;    (where α# ((a (((abstract/S S) ...) (abstract/e e))) ...))])
-
-  ;; (define-metafunction csa#
-  ;;   abstract/e : e -> e#
-  ;;   [(abstract/e n) Nat]
-  ;;   ;; TODO: do something different for addresses (probably need a dictionary of things to substitute
-  ;;   ;; for them?)
-  ;;   [(abstract/e a) a]
-  ;;   ;; TODO: do something more clever for lists
-  ;;   [(abstract/e (list e ...)) (list (abstract/e e ...))]
-  ;;   [(abstract/e (rcv (x) e) [(timeout Nat)]) (rcv (x) (abstract/e e))]
-  ;;   ;; The rest of these from here just do the normal tree-walking thing
-  ;;   [(abstract/e (spawn e S ...)) (spawn (abstract/e e) (abstract/S S) ...)]
-  ;;   [(abstract/e (goto s e ...)) (goto s (abstract/e e) ...)]
-  ;;   [(abstract/e (send e_1 e_2)) (send (abstract/e e_1) (abstract/e e_2))]
-  ;;   [(abstract/e self) self]
-  ;;   [(abstract/e (begin e ...)) (begin (abstract/e e ...))]
-  ;;   ;; TODO: let
-  ;;   [(abstract/e (match e_1 [p e_2] ...)) (match (abstract/e e) [p (abstract/e e)] ...)]
-  ;;   [(abstract/e t) t]
-  ;;   [(abstract/e x) x]
-  ;;   [(abstract/e (rcv (x) e)) (rcv (x) (abstract/e e))])
 
   ;; Injects the given message into the config and runs the appropriate handler for it to completion,
   ;; returning all possible resulting configurationsn
@@ -516,19 +565,21 @@ Remaining big challenges I see in the analysis:
       [(list `((goto ,_ ...) ,commitments))
        commitments]))
 
-  (module+ test
-    (check-equal? (get-spec-commitments (term (goto S1))) null)
-    (check-equal? (get-spec-commitments (term (with-outputs ([(addr 1) *] [(addr 2) 't]) (goto S1))))
-                  (list (term [(addr 1) *]) (term [(addr 2) 't])))
-    (check-equal? (get-spec-commitments
-                   (term (with-outputs ([(addr 1) *] [(addr 2) 't])
-                           (with-outputs ([(addr 3) *] [(addr 4) 't])
-                             (goto S1)))))
-                  (list (term [(addr 1) *])
-                        (term [(addr 2) 't])
-                        (term [(addr 3) *])
-                        (term [(addr 4) 't]))))
+  ;; TODO: deprecate this code
+  ;; (module+ test
+  ;;   (check-equal? (get-spec-commitments (term (goto S1))) null)
+  ;;   (check-equal? (get-spec-commitments (term (with-outputs ([(addr 1) *] [(addr 2) 't]) (goto S1))))
+  ;;                 (list (term [(addr 1) *]) (term [(addr 2) 't])))
+  ;;   (check-equal? (get-spec-commitments
+  ;;                  (term (with-outputs ([(addr 1) *] [(addr 2) 't])
+  ;;                          (with-outputs ([(addr 3) *] [(addr 4) 't])
+  ;;                            (goto S1)))))
+  ;;                 (list (term [(addr 1) *])
+  ;;                       (term [(addr 2) 't])
+  ;;                       (term [(addr 3) *])
+  ;;                       (term [(addr 4) 't]))))
 
+  ;; TODO: deprecate this function; port the tests over
   (define (matches-output-pattern? value pattern)
     (term (matches-output-pattern?/mf ,value ,pattern)))
 
@@ -546,17 +597,18 @@ Remaining big challenges I see in the analysis:
        (term (po ...)))]
     [(matches-output-pattern?/mf _ _) #f])
 
-  (module+ test
-    (check-true (matches-output-pattern? 42 '*))
-    (check-true (matches-output-pattern? 42 'z))
-    (check-true (matches-output-pattern? ''foo '*))
-    (check-true (matches-output-pattern? ''foo 'foo))
-    (check-false (matches-output-pattern? ''foo ''bar))
-    (check-false (matches-output-pattern? 42 ''bar))
-    (check-true (matches-output-pattern? '(list 42 'foo) '(list a *)))
-    (check-false (matches-output-pattern? '(list 42 'foo) '(list 'bar *)))
-    (check-false (matches-output-pattern? '(list 42 'foo) '(list * 'bar)))
-    (check-false (matches-output-pattern? '(list 42 'foo) '(list 'a 'b))))
+  ;; TODO: deprecate this code, or something
+  ;; (module+ test
+  ;;   (check-true (matches-output-pattern? 42 '*))
+  ;;   (check-true (matches-output-pattern? 42 'z))
+  ;;   (check-true (matches-output-pattern? ''foo '*))
+  ;;   (check-true (matches-output-pattern? ''foo 'foo))
+  ;;   (check-false (matches-output-pattern? ''foo ''bar))
+  ;;   (check-false (matches-output-pattern? 42 ''bar))
+  ;;   (check-true (matches-output-pattern? '(list 42 'foo) '(list a *)))
+  ;;   (check-false (matches-output-pattern? '(list 42 'foo) '(list 'bar *)))
+  ;;   (check-false (matches-output-pattern? '(list 42 'foo) '(list * 'bar)))
+  ;;   (check-false (matches-output-pattern? '(list 42 'foo) '(list 'a 'b))))
 
   (define spec-step
     (reduction-relation aps-eval
@@ -565,51 +617,53 @@ Remaining big challenges I see in the analysis:
            (e-hat (any_commits ... [a po] ...)))))
 
 
-  (module+ test
-    (require rackunit)
+  ;; TODO: deprecate this code, or something
+  ;; (module+ test
+  ;;   (require rackunit)
 
-    ;; A check that succeeds if and only if each list does not contain duplicate members, and the two
-    ;; lists have the same elements (possibly in different orders)
-    (define-simple-check (check-same-distinct-members? l1 l2)
-      (equal? (list->set l1) (list->set l2)))
+  ;;   ;; A check that succeeds if and only if each list does not contain duplicate members, and the two
+  ;;   ;; lists have the same elements (possibly in different orders)
+  ;;   (define-simple-check (check-same-distinct-members? l1 l2)
+  ;;     (equal? (list->set l1) (list->set l2)))
 
-    ;; no patterns
-    ;; 2 distinct patterns
-    ;; 2 similar patterns, 1 distinct
-    ;; 2 different patterns, 2 other patterns in another state
-    (check-same-distinct-members?
-     (term (spec-input-patterns/mf
-            (((define-state (S1))) (goto S1) null)))
-     null)
+  ;;   ;; no patterns
+  ;;   ;; 2 distinct patterns
+  ;;   ;; 2 similar patterns, 1 distinct
+  ;;   ;; 2 different patterns, 2 other patterns in another state
+  ;;   (check-same-distinct-members?
+  ;;    (term (spec-input-patterns/mf
+  ;;           (((define-state (S1))) (goto S1) null)))
+  ;;    null)
 
-    (check-same-distinct-members?
-     (term (spec-input-patterns/mf
-            (((define-state (S1)
-                [(list 'a) -> (goto S1)]
-                ['b -> (goto S1)]))
-             (goto S1)
-             null)))
-     (list (term (list 'a)) (term 'b)))
+  ;;   (check-same-distinct-members?
+  ;;    (term (spec-input-patterns/mf
+  ;;           (((define-state (S1)
+  ;;               [(list 'a) -> (goto S1)]
+  ;;               ['b -> (goto S1)]))
+  ;;            (goto S1)
+  ;;            null)))
+  ;;    (list (term (list 'a)) (term 'b)))
 
-    (check-same-distinct-members?
-     (term (spec-input-patterns/mf
-            (((define-state (S1)
-                [(list 'a) -> (goto S1)]
-                ['b -> (goto S1)]
-                ['b -> (goto S2)]))
-             (goto S1)
-             null)))
-     (list (term (list 'a)) (term 'b)))
+  ;;   (check-same-distinct-members?
+  ;;    (term (spec-input-patterns/mf
+  ;;           (((define-state (S1)
+  ;;               [(list 'a) -> (goto S1)]
+  ;;               ['b -> (goto S1)]
+  ;;               ['b -> (goto S2)]))
+  ;;            (goto S1)
+  ;;            null)))
+  ;;    (list (term (list 'a)) (term 'b)))
 
-    (check-same-distinct-members?
-     (term (spec-input-patterns/mf
-            (((define-state (S1)
-                [(list 'a) -> (goto S1)]
-                ['b -> (goto S1)])
-              (define-state (S2)
-                ['c -> (goto S1)] ['d -> (goto S1)]))
-             (goto S1)
-             null)))
-     (list (term (list 'a)) (term 'b)))))
+  ;;   (check-same-distinct-members?
+  ;;    (term (spec-input-patterns/mf
+  ;;           (((define-state (S1)
+  ;;               [(list 'a) -> (goto S1)]
+  ;;               ['b -> (goto S1)])
+  ;;             (define-state (S2)
+  ;;               ['c -> (goto S1)] ['d -> (goto S1)]))
+  ;;            (goto S1)
+  ;;            null)))
+  ;;    (list (term (list 'a)) (term 'b))))
+  )
 
-(require 'spec-eval)
+;; (require 'spec-eval)
