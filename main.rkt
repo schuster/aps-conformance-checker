@@ -65,8 +65,9 @@ Remaining big challenges I see in the analysis:
           (define possible-transitions
             ;; TODO: figure out where to abstract the addresses
             ;; TODO: get the max depth from somewhere
-            (for/list ([message (generate-abstract-messages (actor-message-type the-actor) 0)])
-              (csa#-eval-transition prog (actor-address the-actor) message)))
+            (for/fold ([eval-results null])
+                      ([message (generate-abstract-messages (actor-message-type the-actor) 0)])
+              (append eval-results (csa#-eval-transition prog (actor-address the-actor) message))))
           (for ([possible-transition possible-transitions])
             (match (find-matching-spec-transition possible-transition spec state-matches)
               [(list) (error "couldn't find any match") ;; TODO: call a continuation to return #f here instead
@@ -79,15 +80,16 @@ Remaining big challenges I see in the analysis:
                  ]))
           (loop to-visit (set-add visited next-pair))])])))
 
+;; TODO: hide this function in a separate module and make it less susceptible to breaking because of changes in the config's structure
 (define (step-prog-with-goto prog-config goto-exp)
-  (redex-let csa# ([(((SINGLE-ACTOR-ADDR ((S# ...) _)))
+  (redex-let csa# ([(((SINGLE-ACTOR-ADDR (τ (S# ...) _)))
                      ()
                      (SINGLE-ACTOR-ADDR)
                      ;; TODO: update χ# or just get rid of it
                      ())
                     prog-config])
              (term
-              (((SINGLE-ACTOR-ADDR ((S# ...) ,goto-exp)))
+              (((SINGLE-ACTOR-ADDR (τ (S# ...) ,goto-exp)))
                ()
                (SINGLE-ACTOR-ADDR)
                ;; TODO: update χ# or just get rid of it
@@ -123,9 +125,10 @@ Remaining big challenges I see in the analysis:
     (match (csa#-match (program-transition-message prog-trans) (term p_spec-pat))
       [(list)
        ;; No matches, so the whole predicate fails
+       (displayln "Found no matches for received message")
        #f]
-      [(list subst1 subst-rest ...)
-       (error "too many matches")]
+      [(list subst1 subst2 subst-rest ...)
+       (error "too many matches for value ~s and pattern ~s" (program-transition-message prog-trans) (term p_spec-pat))]
       [(list some-subst)
        (redex-let* aps#
                    ([([x a#ext] ...) some-subst]
@@ -150,14 +153,18 @@ Remaining big challenges I see in the analysis:
                               [#f (error "No match for output in the commitments")]
                               [commitment (remove commitment remaining-commitments)]))])
                      (match unmatched-commitments
-                       [(list) #f]
+                       [(list c1 c-rest ...)
+                        (displayln "Found unmatched commitments")
+                        #f]
                        [_
                         ;; 3. Check the gotos (annotated)
                         (redex-let aps# ([(goto s_prog _ ...) (program-transition-goto-exp prog-trans)])
                                    (if (equal? (hash-ref state-matches (term s_prog)) (term s_spec))
                                        ;; 4. Return transitioned spec config
                                        (term (goto s_spec v# ...))
-                                       #f))])))])))
+                                       (begin
+                                         (printf "State names didn't match: ~s ~s ~s\n" (term s_prog) (hash-ref state-matches (term s_prog)) (term s_spec))
+                                         #f)))])))])))
 
 ;; TODO: tests for the above transition matching predicates/search functions
 

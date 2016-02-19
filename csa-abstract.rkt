@@ -174,7 +174,7 @@
 
 (define (csa#-match val pat)
   (judgment-holds (csa#-match/j ,val ,pat ([x a#ext] ...))
-                  (term ([x a#ext] ...))))
+                  ([x a#ext] ...)))
 
 (define-judgment-form csa#
   #:mode (csa#-match/j I I O)
