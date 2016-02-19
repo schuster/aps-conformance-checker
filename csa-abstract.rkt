@@ -7,7 +7,8 @@
  generate-abstract-messages
  csa#-match
  csa#-eval-transition
- (struct-out program-transition))
+ (struct-out program-transition)
+ α-config)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -21,7 +22,8 @@
 (define-extended-language csa# aps
   (K# (α# μ# ρ# χ#)) ; TODO: update this
   ;; NOTE: for now, assuming only the one special actor
-  (α# ((SINGLE-ACTOR-ADDR (τ (S# ...) e#)) ...))
+  (α# (α#n)) ; NOTE: for now, does not handle configs with more than one actor
+  (α#n (a#int (τ (S# ...) e#)))
   (μ# ()) ; NOTE: for now, assuming no internal sends
   (S# (define-state (s x ...) (x) e#)
       ;; TODO: not dealing with timeouts yet...
@@ -48,9 +50,9 @@
       t
       a#
       x
-      Nat
-      *)
-  (a# SINGLE-ACTOR-ADDR a#ext)
+      (* τ))
+  (a# a#int a#ext) ; internal and external addresses
+  (a#int SINGLE-ACTOR-ADDR)
   (a#ext
    (* (Addr τ))
    (s v#template natural time-flag))
@@ -104,11 +106,12 @@
 ;; Helper functions
 
 ;; TODO: define this
-(define (generate-abstract-messages type max-depth)
-  (term (generate-abstract-messages/mf ,type ,max-depth)))
+(define (generate-abstract-messages type current-state-name max-depth)
+  (redex-let csa# ([(v#template ...) (term (generate-abstract-messages/mf ,type ,max-depth))])
+             (term ((fill-template v#template ,current-state-name) ...))))
 
 (define-metafunction csa#
-  generate-abstract-messages/mf : τ natural -> (v# ...)
+  generate-abstract-messages/mf : τ natural -> (v#template ...)
   [(generate-abstract-messages/mf Nat _) ((* Nat))]
   [(generate-abstract-messages/mf t _) (t)]
   [(generate-abstract-messages/mf (Union τ_1 τ_rest ...) natural_max-depth)
@@ -131,7 +134,8 @@
           (term (tuple v#_1 v#_other ...))))
       tuples-so-far))]
   [(generate-abstract-messages/mf (Tuple) natural_max-depth)
-   ((tuple))])
+   ((tuple))]
+  [(generate-abstract-messages/mf (Addr τ) _) (ADDR-HOLE)])
 
 (module+ test
   (require rackunit)
@@ -172,6 +176,38 @@
    (term (generate-abstract-messages/mf ,list-of-nat 0))
    (term ('Null (* ,list-of-nat)))))
 
+(define-metafunction csa#
+  fill-template : v#template s -> v#
+  [(fill-template v#template s)
+   v#
+   (where (v# _) (fill-template/acc v#template v#template 0 s))])
+
+;; Fills the abstract message template with address values, also returning the next index to be used
+;; for an address
+(define-metafunction csa#
+  fill-template/acc : v#template_current v#template_whole natural_current-index s -> (v# natural_next-index)
+  [(fill-template/acc ADDR-HOLE v#template natural_current s)
+   ((s v#template natural_current MOST-RECENT) ,(+ 1 (term natural_current)))]
+  [(fill-template/acc t _ natural s) (t natural)]
+  [(fill-template/acc (tuple v#template_child1 v#template_rest ...) v#template natural_current s)
+   ((tuple v#_1 v#_rest ...) natural_next-rest)
+   (where (v#_1 natural_next1) (fill-template/acc v#template_child1 v#template natural_current s))
+   (where ((tuple v#_rest ...) natural_next-rest)
+          (fill-template/acc (tuple v#template_rest ...) v#template natural_next1 s))]
+  [(fill-template/acc (tuple) v#template natural s)
+   ((tuple) natural)]
+  [(fill-template/acc (* τ) _ natural _)
+   ((* τ) natural)])
+
+(module+ test
+  ;; TODO: write more tests here
+  (check-equal? (term (fill-template (* Nat) Always))
+                (term (* Nat)))
+  (define simple-pair-template (term (tuple ADDR-HOLE ADDR-HOLE)))
+  (check-equal? (term (fill-template ,simple-pair-template Always))
+                (term (tuple (Always ,simple-pair-template 0 MOST-RECENT)
+                             (Always ,simple-pair-template 1 MOST-RECENT)))))
+
 (define (csa#-match val pat)
   (judgment-holds (csa#-match/j ,val ,pat ([x a#ext] ...))
                   ([x a#ext] ...)))
@@ -184,7 +220,7 @@
    (csa#-match/j _ * ())]
 
   [-------------------
-   (csa#-match/j x a#ext ([x a#ext]))]
+   (csa#-match/j a#ext x ([x a#ext]))]
 
   [----------------
    (csa#-match/j t t ())]
@@ -192,6 +228,12 @@
   [(csa#-match/j v# p ([x a#ext] ...)) ...
    --------------
    (csa#-match/j (tuple v# ..._n) (tuple p ..._n) ([x a#ext] ... ...))])
+
+(module+ test
+  (check-equal? (csa#-match (term (* Nat)) (term *))
+                (list (term ())))
+  (check-equal? (csa#-match (term (Always ADDR-HOLE 0 MOST-RECENT)) (term x))
+                (list (term ([x (Always ADDR-HOLE 0 MOST-RECENT)])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
@@ -202,6 +244,7 @@
 ;; (csa#-eval-transition prog (actor-address the-actor) message)
 
 (define (csa#-eval-transition prog-config actor-address message)
+  ;; (config-actor-by-address prog-config actor-address)
   (redex-let csa# ([(((SINGLE-ACTOR-ADDR (τ (_ ... (define-state (s x_s ..._n) (x_m) e#) _ ...) (in-hole E# (goto s v# ..._n)))))
                      ()
                      (SINGLE-ACTOR-ADDR)
@@ -211,12 +254,20 @@
              (define results
                (apply-reduction-relation*
                 handler-step#
-                (term ((csa#-subst-n e# [x_s v#] ...)
+                (term ((csa#-subst-n e# [x_m ,message] [x_s v#] ...)
                        ()))))
              (for/list ([result results])
-               (redex-let csa# ([((goto s v#_param ...) ([a#ext v#_out] ...)) result])
+               ;; Debugging
+               ;; (redex-let csa# ([(e#_final ([a#ext v#_out] ...)) result])
+               ;;            (match (redex-match csa# (in-hole E# e#_end) (term e#_final))
+               ;;   [(list _ _ _ ...) ; more than 1 way to match
+               ;;    (printf "Multiple contexts, final expression: ~s\n")
+               ;;    ])
+               ;;            (printf "Final context: ~s, Final exp: ~s\n" (term E#) (term e#_end)))
+
+               (redex-let csa# ([((in-hole E# (goto s v#_param ...)) ([a#ext v#_out] ...)) result])
                           ;; TODO: deal with unobserved messages
-                          (program-transition message #t (term ([a#ext v#_out] ...)) (term (goto s v#_param ...)))))))
+                          (program-transition message #t (term ([a#ext v#_out] ...)) (term (in-hole E# (goto s v#_param ...))))))))
 
 (define handler-step#
   (reduction-relation csa#
@@ -260,6 +311,8 @@
   [(csa#-subst x x v#) v#]
   [(csa#-subst x x_2 v#) x]
   ;; [(csa#-subst n x v) n]
+  [(csa#-subst (* τ) _ _) (* τ)]
+  [(csa#-subst a# _ _) a#]
   [(csa#-subst t x v) t]
   ;; [(csa#-subst a x v) a]
   ;; [(csa#-subst (spawn e S ...) self v) (spawn e S ...)]
@@ -283,3 +336,10 @@
   ;; [(csa#-subst (rcv (x_h) e [(timeout n) e_timeout]) x v)
   ;;  (rcv (x_h) (csa#-subst e x v) [(timeout n) (csa#-subst e_timeout x v)])]
   )
+
+;; ---------------------------------------------------------------------------------------------------
+;; Abstraction
+
+(define (α-config concrete-config)
+  ;; TODO: write the real definition of this
+  concrete-config)

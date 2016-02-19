@@ -74,12 +74,14 @@
   (term (aps#-eval/mf ,exp)))
 
 (define-metafunction aps#
-  aps#-eval/mf : e-hat -> [(goto s v-hat ...) ([a#ext po] ...)]
+  aps#-eval/mf : e-hat -> [(goto s a#ext ...) ([a#ext po] ...)]
   [(aps#-eval/mf (goto s a#ext ...))
    [(goto s a#ext ...) ()]]
   [(aps#-eval/mf (with-outputs ([a#ext_1 po_1] any_rest ...) e-hat))
-   [(goto s a#ext) ([a#ext_1 po_1] any_outputs ...)]
-   (where [(goto s a#ext) (any_outputs ...)]
+   [(goto s a#ext ...) ([a#ext_1 po_1] any_outputs ...)]
+   ;; TODO: this is an example of a where clause I expect to always succeed. I should write a macro on
+   ;; reduction-relation that enforces that
+   (where [(goto s a#ext ...) (any_outputs ...)]
           (aps#-eval/mf (with-outputs (any_rest ...) e-hat)))]
   [(aps#-eval/mf (with-outputs () e-hat))
    (aps#-eval/mf e-hat)])
@@ -93,7 +95,7 @@
   (term (aps-matches-po?/mf ,value ,pattern)))
 
 (define-metafunction aps#
-  aps-matches-po?/mf : v po -> boolean
+  aps-matches-po?/mf : v# po -> boolean
   [(aps-matches-po?/mf _ *) #t]
   [(aps-matches-po?/mf _ x) #t]
   ;; TODO: self

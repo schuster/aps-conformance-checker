@@ -44,7 +44,7 @@ Remaining big challenges I see in the analysis:
 ;; actors. Also assumes that the spec starts in a state in which it has no state parameters.
 (define (analyze initial-prog-config initial-spec-instance state-matches)
   ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
-  (let loop ([to-visit (queue (cons initial-prog-config initial-spec-instance))]
+  (let loop ([to-visit (queue (cons (α-config initial-prog-config) initial-spec-instance))]
              [visited (set)])
     (cond
       [(queue-empty? to-visit) #t]
@@ -66,7 +66,7 @@ Remaining big challenges I see in the analysis:
             ;; TODO: figure out where to abstract the addresses
             ;; TODO: get the max depth from somewhere
             (for/fold ([eval-results null])
-                      ([message (generate-abstract-messages (actor-message-type the-actor) 0)])
+                      ([message (generate-abstract-messages (actor-message-type the-actor) (actor-current-state the-actor) 0)])
               (append eval-results (csa#-eval-transition prog (actor-address the-actor) message))))
           (for ([possible-transition possible-transitions])
             (match (find-matching-spec-transition possible-transition spec state-matches)
@@ -125,7 +125,7 @@ Remaining big challenges I see in the analysis:
     (match (csa#-match (program-transition-message prog-trans) (term p_spec-pat))
       [(list)
        ;; No matches, so the whole predicate fails
-       (displayln "Found no matches for received message")
+       (printf "Found no matches for received message ~s to pattern ~s\n" (program-transition-message prog-trans) (term p_spec-pat))
        #f]
       [(list subst1 subst2 subst-rest ...)
        (error "too many matches for value ~s and pattern ~s" (program-transition-message prog-trans) (term p_spec-pat))]
@@ -158,7 +158,7 @@ Remaining big challenges I see in the analysis:
                         #f]
                        [_
                         ;; 3. Check the gotos (annotated)
-                        (redex-let aps# ([(goto s_prog _ ...) (program-transition-goto-exp prog-trans)])
+                        (redex-let aps# ([(in-hole E# (goto s_prog _ ...)) (program-transition-goto-exp prog-trans)])
                                    (if (equal? (hash-ref state-matches (term s_prog)) (term s_spec))
                                        ;; 4. Return transitioned spec config
                                        (term (goto s_spec v# ...))
@@ -284,9 +284,6 @@ Remaining big challenges I see in the analysis:
            ;; (submod ".." spec-eval test)
            )
 
-  (define (make-single-agent-config agent)
-    `((,agent) () (SINGLE-ACTOR-ADDR) ()))
-
   (define ignore-all-agent
     '(SINGLE-ACTOR-ADDR
       (Nat
@@ -298,10 +295,11 @@ Remaining big challenges I see in the analysis:
       (goto Always)
       SINGLE-ACTOR-ADDR))
 
-  (check-not-false (redex-match csa# (a# (τ (S# ...) e#)) ignore-all-agent))
+  (check-not-false (redex-match csa# α#n ignore-all-agent))
   (check-not-false (redex-match csa# K# ignore-all-config))
   (check-not-false (redex-match aps# z ignore-all-spec-instance))
 
+  ;; TODO: supply concrete specs and programs to the checker, not abstract ones
   (check-true (analyze ignore-all-config ignore-all-spec-instance (hash 'Always 'Always)))
 
   ;; TODO: remove the redundancy between the state defs and the current expression
@@ -395,6 +393,60 @@ Remaining big challenges I see in the analysis:
   ;; (check-true (analyze (make-single-agent-config pattern-matching-agent) pattern-match-spec))
   ;; (check-false (analyze (make-single-agent-config partial-pattern-matching-agent) pattern-match-spec))
   ;; (check-false (analyze (make-single-agent-config reverse-pattern-matching-agent) pattern-match-spec))
+
+  ;; TODO: make these *concrete* things, not abstracted ones
+  (define request-response-spec
+    '(((define-state (Always)
+         [response-target -> (with-outputs ([response-target *]) (goto Always))]))
+      (goto Always)
+      SINGLE-ACTOR-ADDR))
+  (define request-response-agent
+    `(SINGLE-ACTOR-ADDR
+      ((Addr Nat)
+       ((define-state (Always) (response-target)
+          (begin
+            (send response-target (* Nat))
+            (goto Always))))
+       (goto Always))))
+  (define respond-to-first-addr-agent
+    `(SINGLE-ACTOR-ADDR
+      ((Addr Nat)
+       ((define-state (Init) (response-target)
+          (begin
+            (send response-target (* Nat))
+            (goto HaveAddr response-target)))
+        (define-state (HaveAddr response-target) (new-response-target)
+          (begin
+            (send response-target (* Nat))
+            ;; TODO: also try the case where we save new-response-target instead
+            (goto HaveAddr response-target))))
+       (goto Always))))
+  ;; (define static-double-response-agent
+  ;;   `((addr 1)
+  ;;     (((define-state (Always response-dest) (m)
+  ;;         (begin
+  ;;           (send response-dest 'ack)
+  ;;           (send response-dest 'ack)
+  ;;           (goto Always response-dest))))
+  ;;      (rcv (m)
+  ;;        (begin
+  ;;          (send (addr 2) 'ack)
+  ;;          (send (addr 2) 'ack)
+  ;;          (goto Always (addr 2)))))))
+
+  ;; (check-not-false (redex-match csa# (a# (τ (S# ...) e#)) ignore-all-agent))
+  ;; (check-not-false (redex-match csa# K# ignore-all-config))
+  (check-not-false (redex-match aps# z request-response-spec))
+  (check-not-false (redex-match csa# α#n request-response-agent))
+  (check-not-false (redex-match csa# α#n respond-to-first-addr-agent))
+
+  (check-true (analyze (make-single-agent-config request-response-agent)
+                       request-response-spec
+                       (hash 'Always 'Always)))
+  ;; TODO: uncomment this test
+  (check-false (analyze (make-single-agent-config respond-to-first-addr-agent)
+                        request-response-spec
+                        (hash 'Init 'Always 'HaveAddr 'Always)))
 
   ;; TODO: write a test where the unobs input messages for pattern matching matter
 

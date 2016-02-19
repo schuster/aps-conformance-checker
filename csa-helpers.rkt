@@ -3,7 +3,9 @@
 (provide
  actor-message-type
  actor-address
- config-only-actor)
+ actor-current-state
+ config-only-actor
+ make-single-agent-config)
 
 (require
  redex/reduction-semantics
@@ -13,19 +15,31 @@
   (term (actor-message-type/mf ,the-actor)))
 
 (define-metafunction csa#
-  actor-message-type/mf : (SINGLE-ACTOR-ADDR (τ (S ...) e)) -> τ
-  [(actor-message-type/mf (SINGLE-ACTOR-ADDR (τ (S ...) e)))
+  actor-message-type/mf : α#n -> τ
+  [(actor-message-type/mf (_ (τ _ _)))
    τ])
 
 (define (actor-address the-actor)
   (redex-let csa# ([(a# _) the-actor])
              (term a#)))
 
+(define (actor-current-state the-actor)
+  (redex-let csa# ([(_ (_ _ (in-hole E# (goto s _ ...)))) the-actor])
+             (term s)))
+
 (define (config-only-actor prog-config)
-  (redex-let csa# ([(((SINGLE-ACTOR-ADDR any_body))
-                     ()
-                     (SINGLE-ACTOR-ADDR)
-                     ;; TODO: update χ# or just get rid of it
-                     ())
-                    prog-config])
-             (term (SINGLE-ACTOR-ADDR any_body))))
+  (term (config-only-actor/mf ,prog-config)))
+
+(define-metafunction csa#
+  config-only-actor/mf : K# -> α#n
+  [(config-only-actor/mf (α# _ _ _))
+   α#n
+   (where (α#n) α#)])
+
+(define (make-single-agent-config agent)
+  (term (make-single-agent-config/mf ,agent)))
+
+(define-metafunction csa#
+  make-single-agent-config/mf : α#n -> K#
+  [(make-single-agent-config/mf α#n)
+   ((α#n) () (SINGLE-ACTOR-ADDR) ())])
