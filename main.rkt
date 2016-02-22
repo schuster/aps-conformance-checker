@@ -173,7 +173,7 @@ Remaining big challenges I see in the analysis:
                                                   ;; 4. Return transitioned spec config
                                                   (term (goto s_spec v# ...))
                                                   (begin
-                                                    (printf "State names didn't match: ~s ~s ~s\n" (term s_prog) (hash-ref state-matches (term s_prog)) (term s_spec))
+                                                    ;; (printf "State names didn't match: ~s ~s ~s\n" (term s_prog) (hash-ref state-matches (term s_prog)) (term s_spec))
                                                     #f)))])))])))
 )
 
@@ -411,7 +411,15 @@ Remaining big challenges I see in the analysis:
          [response-target -> (with-outputs ([response-target *]) (goto Always))]))
       (goto Always)
       SINGLE-ACTOR-ADDR))
-  (define request-response-agent
+    ;; TODO: make these *concrete* things, not abstracted ones
+  (define request-same-response-addr-spec
+    '(((define-state (Init)
+         [response-target -> (with-outputs ([response-target *]) (goto HaveAddr response-target))])
+       (define-state (HaveAddr response-target)
+         [new-response-target -> (with-outputs ([response-target *]) (goto HaveAddr response-target))]))
+      (goto Init)
+      SINGLE-ACTOR-ADDR))
+  (define request-response-agent/abstract
     `(SINGLE-ACTOR-ADDR
       ((Addr Nat)
        ((define-state (Always) (response-target)
@@ -419,7 +427,28 @@ Remaining big challenges I see in the analysis:
             (send response-target (* Nat))
             (goto Always))))
        (goto Always))))
-  (define respond-to-first-addr-agent
+  (define request-response-agent-concrete
+    `(addr1234
+      ((Addr Nat)
+       ((define-state (Always i) (response-target)
+          (begin
+            (send response-target i)
+            (goto Always (+ i 1)))))
+       (goto Always))))
+  (define respond-to-first-addr-agent/concrete
+    `(addr4567
+      ((Addr Nat)
+       ((define-state (Init) (response-target)
+          (begin
+            (send response-target 0)
+            (goto HaveAddr 1 response-target)))
+        (define-state (HaveAddr i response-target) (new-response-target)
+          (begin
+            (send response-target i)
+            ;; TODO: also try the case where we save new-response-target instead
+            (goto HaveAddr (+ i 1) response-target))))
+       (goto Init))))
+    (define respond-to-first-addr-agent/abstract
     `(SINGLE-ACTOR-ADDR
       ((Addr Nat)
        ((define-state (Init) (response-target)
@@ -448,16 +477,23 @@ Remaining big challenges I see in the analysis:
   ;; (check-not-false (redex-match csa# (a# (τ (S# ...) e#)) ignore-all-agent))
   ;; (check-not-false (redex-match csa# K# ignore-all-config))
   (check-not-false (redex-match aps# z request-response-spec))
-  (check-not-false (redex-match csa# α#n request-response-agent))
-  (check-not-false (redex-match csa# α#n respond-to-first-addr-agent))
+  (check-not-false (redex-match aps# z request-same-response-addr-spec))
+  (check-not-false (redex-match csa# α#n request-response-agent/abstract))
+  (check-not-false (redex-match csa# α#n respond-to-first-addr-agent/abstract))
 
-  (check-true (analyze (make-single-agent-config request-response-agent)
+  (check-true (analyze (make-single-agent-config request-response-agent/abstract)
                        request-response-spec
                        (hash 'Always 'Always)))
-  ;; TODO: uncomment this test
-  (check-false (analyze (make-single-agent-config respond-to-first-addr-agent)
+  (check-false (analyze (make-single-agent-config respond-to-first-addr-agent/abstract)
                         request-response-spec
                         (hash 'Init 'Always 'HaveAddr 'Always)))
+
+  (check-false (analyze (make-single-agent-config request-response-agent/abstract)
+                        request-same-response-addr-spec
+                        (hash 'Always 'Init)))
+  (check-true (analyze (make-single-agent-config respond-to-first-addr-agent/abstract)
+                       request-same-response-addr-spec
+                       (hash 'Init 'Init 'HaveAddr 'HaveAddr)))
 
   ;; TODO: write a test where the unobs input messages for pattern matching matter
 

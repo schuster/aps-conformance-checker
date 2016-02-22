@@ -46,7 +46,7 @@
   subst/aps#/u : u x v-hat -> u
   [(subst/aps#/u x x v-hat) v-hat]
   [(subst/aps#/u x_2 x v-hat) x_2]
-  [(subst/aps#/u a x v-hat) a])
+  [(subst/aps#/u a# x v-hat) a#])
 
 (define-metafunction aps#
   subst/aps#/po : po x v-hat -> po
