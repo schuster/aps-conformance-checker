@@ -14,7 +14,7 @@
 
 (require
  redex/reduction-semantics
- csa/model)
+ "csa.rkt")
 
 ;; Abstract interpretation version of CSA
 ;; NOTE: this handles only single-actor configurations right now

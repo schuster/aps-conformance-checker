@@ -287,7 +287,7 @@ Remaining big challenges I see in the analysis:
 (module+ test
   (require rackunit
            redex/reduction-semantics
-           csa/model
+           "csa.rkt"
 
            ;; also run the submodule tests here
            ;; TODO: remove these?
@@ -473,7 +473,7 @@ Remaining big challenges I see in the analysis:
 
 (module language-eval racket
   (require redex/reduction-semantics
-           csa/model)
+           "csa.rkt")
   (provide handle-message
            extract-external-sends)
 
@@ -582,7 +582,7 @@ Remaining big challenges I see in the analysis:
            get-spec-commitments)
 
     (require redex/reduction-semantics
-           csa/model)
+             "csa.rkt")
 
   ;; Returns the transitions of the spec instance's current state with the state parameters
   ;; substituted in, grouped by input pattern
