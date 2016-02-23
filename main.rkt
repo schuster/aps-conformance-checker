@@ -13,13 +13,10 @@ Remaining big challenges I see in the analysis:
 
 (require
  data/queue
- redex/reduction-semantics
  "queue-helpers.rkt"
  "aps-abstract.rkt"
  "csa-abstract.rkt"
  "csa-helpers.rkt")
-
-;; TODO: take the dependency on Redex out of this file
 
 ;; TODO: test 1: the actor that just loops on itself conforms to the spec that does the same thing
 ;; (all observable actions)
