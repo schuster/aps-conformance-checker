@@ -7,8 +7,12 @@
  generate-abstract-messages
  csa#-match
  csa#-eval-transition
- (struct-out program-transition)
- α-config)
+ (struct-out csa#-transition)
+ csa#-output-address
+ csa#-output-message
+ csa#-transition-next-state
+ α-config
+ step-prog-final-behavior)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -247,8 +251,15 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
 
-;; Outputs is a list of abstract-addr/abstract-message pairs
-(struct program-transition (message observed? outputs goto-exp))
+;; Outputs is a list of abstract-addr/abstract-message 2-tuples
+(struct csa#-transition (message observed? outputs behavior-exp))
+
+(define csa#-output-address car)
+(define csa#-output-message cadr)
+
+(define (csa#-transition-next-state transition)
+  (redex-let csa# ([(in-hole E# (goto s _ ...)) (csa#-transition-behavior-exp transition)])
+    (term s)))
 
 (define (csa#-eval-transition prog-config actor-address message)
   (redex-let csa# ([(_ (τ (_ ... (define-state (s x_s ..._n) (x_m) e#) _ ...) (in-hole E# (goto s v# ..._n))))
@@ -270,7 +281,7 @@
 
                (redex-let csa# ([((in-hole E# (goto s v#_param ...)) ([a#ext v#_out] ...)) result])
                           ;; TODO: deal with unobserved messages
-                          (program-transition message #t (term ([a#ext v#_out] ...)) (term (in-hole E# (goto s v#_param ...))))))))
+                          (csa#-transition message #t (term ([a#ext v#_out] ...)) (term (in-hole E# (goto s v#_param ...))))))))
 
 (define handler-step#
   (reduction-relation csa#
@@ -297,6 +308,21 @@
     [(--> ((in-hole E# old) ([a#ext v#] ...))
           ((in-hole E# new) ([a#ext v#] ...)))
      (==> old new)]))
+
+;; TODO: make this function less susceptible to breaking because of changes in the config's structure
+(define (step-prog-final-behavior prog-config beahvior-exp)
+  (redex-let csa# ([(((SINGLE-ACTOR-ADDR (τ (S# ...) _)))
+                     ()
+                     (SINGLE-ACTOR-ADDR)
+                     ;; TODO: update χ# or just get rid of it
+                     ())
+                    prog-config])
+             (term
+              (((SINGLE-ACTOR-ADDR (τ (S# ...) ,beahvior-exp)))
+               ()
+               (SINGLE-ACTOR-ADDR)
+               ;; TODO: update χ# or just get rid of it
+               ()))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution

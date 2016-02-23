@@ -7,13 +7,22 @@
  subst-n/aps#
  aps#-current-transitions
  aps#-eval
- aps-matches-po?)
+ aps#-matches-po?
+ step-spec-with-goto
+ aps#-transition-pattern
+ aps#-transition-expression
+ aps#-commitment-address
+ aps#-commitment-pattern
+ aps#-goto-state)
 
 ;; ---------------------------------------------------------------------------------------------------
 
 (require
  redex/reduction-semantics
  "csa-abstract.rkt")
+
+(module+ test
+  (require rackunit))
 
 (define-extended-language aps#
   csa#
@@ -70,8 +79,9 @@
   [(aps#-current-transitions/mf ((_ ... (define-state (s x ...) (ε -> e-hat) ...) _ ...) (goto s v-hat ...) _))
    ((ε -> (subst-n/aps# e-hat (x v-hat) ...)) ...)])
 
-(define (aps#-eval exp)
-  (term (aps#-eval/mf ,exp)))
+(define (aps#-eval exp subst)
+  (redex-let aps# ([(any_binding ...) subst])
+    (term (aps#-eval/mf (subst-n/aps# ,exp any_binding ...)))))
 
 (define-metafunction aps#
   aps#-eval/mf : e-hat -> [(goto s a#ext ...) ([a#ext po] ...)]
@@ -88,24 +98,70 @@
 
 ;; TODO: test the eval function
 
+(define (step-spec-with-goto spec-instance goto-exp)
+  (redex-let aps# ([((S-hat ...) _ σ) spec-instance])
+             (term ((S-hat ...) ,goto-exp σ))))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pattern matching
 
-(define (aps-matches-po? value pattern)
-  (term (aps-matches-po?/mf ,value ,pattern)))
+(define (aps#-matches-po? value pattern)
+  (term (aps#-matches-po?/mf ,value ,pattern)))
 
 (define-metafunction aps#
-  aps-matches-po?/mf : v# po -> boolean
-  [(aps-matches-po?/mf _ *) #t]
-  [(aps-matches-po?/mf _ x) #t]
+  aps#-matches-po?/mf : v# po -> boolean
+  [(aps#-matches-po?/mf _ *) #t]
+  [(aps#-matches-po?/mf _ x) #t]
   ;; TODO: self
-  [(aps-matches-po?/mf t t) #t]
-  [(aps-matches-po?/mf (list v ..._n) (list po ..._n))
+  [(aps#-matches-po?/mf t t) #t]
+  [(aps#-matches-po?/mf (list v ..._n) (list po ..._n))
    ;; TODO: find a better way to normalize to boolean rather than not/not
    ,(andmap
-     (lambda (v po) (term (aps-matches-po?/mf ,v ,po)))
+     (lambda (v po) (term (aps#-matches-po?/mf ,v ,po)))
      (term (v ...))
      (term (po ...)))]
-  [(aps-matches-po?/mf _ _) #f])
+  [(aps#-matches-po?/mf _ _) #f])
 
 ;; TODO: add tests for the match predicate
+
+;; ---------------------------------------------------------------------------------------------------
+;; Selectors
+
+;; TODO: test these
+
+(define (aps#-transition-pattern transition)
+  (redex-let aps# ([(ε -> _) transition])
+    (term ε)))
+
+(define (aps#-transition-expression transition)
+  (redex-let aps# ([(_ -> e-hat) transition])
+    (term e-hat)))
+
+(module+ test
+  (define transition (term [(tuple a b) -> (with-outputs ([a *]) (goto S))]))
+
+  (check-equal? (aps#-transition-pattern transition) (term (tuple a b)))
+  (check-equal? (aps#-transition-expression transition) (term (with-outputs ([a *]) (goto S))))
+  (define transition2 (term [unobs -> (with-outputs ([x *]) (goto S2))]))
+  (check-equal? (aps#-transition-pattern transition2) (term unobs)))
+
+(define (aps#-goto-state goto-exp)
+  (redex-let aps# ([(goto s _ ...) goto-exp])
+             (term s)))
+
+(module+ test
+  (check-equal? (aps#-goto-state (term (goto A))) (term A))
+  (check-equal? (aps#-goto-state (term (goto B (SINGLE-ACTOR-ADDR SINGLE-ACTOR-ADDR)))) (term B)))
+
+(define (aps#-commitment-address commitment)
+  (redex-let aps# ([[a#ext _] commitment])
+    (term a#ext)))
+
+(define (aps#-commitment-pattern commitment)
+  (redex-let aps# ([[_ po] commitment])
+    (term po)))
+
+(module+ test
+  (define commitment (term [(* (Addr Nat)) (tuple)]))
+  (check-equal? (aps#-commitment-address commitment) (term (* (Addr Nat))))
+  (check-equal? (aps#-commitment-pattern commitment) (term (tuple))))

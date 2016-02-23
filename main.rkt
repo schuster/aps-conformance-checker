@@ -79,31 +79,11 @@ Remaining big challenges I see in the analysis:
                  (return-early #f)]
                 [(list spec-goto-exp)
                  (enqueue! to-visit
-                           (cons (step-prog-with-goto prog (program-transition-goto-exp possible-transition))
+                           (cons (step-prog-final-behavior prog (csa#-transition-behavior-exp possible-transition))
                                  (step-spec-with-goto spec spec-goto-exp)))]
                 [_ (error "too many possible matches") ;; TODO: call a continuation instead
                    ]))
-            (loop to-visit (set-add visited next-pair))])])))
-)
-
-;; TODO: hide this function in a separate module and make it less susceptible to breaking because of changes in the config's structure
-(define (step-prog-with-goto prog-config goto-exp)
-  (redex-let csa# ([(((SINGLE-ACTOR-ADDR (τ (S# ...) _)))
-                     ()
-                     (SINGLE-ACTOR-ADDR)
-                     ;; TODO: update χ# or just get rid of it
-                     ())
-                    prog-config])
-             (term
-              (((SINGLE-ACTOR-ADDR (τ (S# ...) ,goto-exp)))
-               ()
-               (SINGLE-ACTOR-ADDR)
-               ;; TODO: update χ# or just get rid of it
-               ()))))
-
-(define (step-spec-with-goto spec-instance goto-exp)
-  (redex-let aps# ([((S-hat ...) _ σ) spec-instance])
-             (term ((S-hat ...) ,goto-exp σ))))
+            (loop to-visit (set-add visited next-pair))])]))))
 
 ;; TODO: I probably need some canonical representation of program and spec configs so that otherwise
 ;; equivalent configs are not considered different by the worklist algorithm
@@ -114,6 +94,7 @@ Remaining big challenges I see in the analysis:
 ;; states, returns the list of spec gotos for all possible matching transitions
 (define (find-matching-spec-transition prog-transition spec-instance state-matches)
   (define match-results
+    ;; TODO: rewrite this as a for/list
     (map
      (lambda (spec-transition)
        (prog-transition-matches-spec-transition? prog-transition spec-transition state-matches))
@@ -123,59 +104,55 @@ Remaining big challenges I see in the analysis:
 ;; Prog-trans is the above struct, spec-trans is the syntax of the expression
 ;;
 ;; Returns #f for no match, or the spec's goto expression with prog values if there is a match
+;;
+;; TODO: test this function
 (define (prog-transition-matches-spec-transition? prog-trans spec-trans state-matches)
-  ;; so, prog transition must have: message received, obs vs unobs, outputs, and the goto
+
+  ;; TODO: have this function return some kind of message/information about what went wrong
+
+  ;; TODO: rename this function, because it's not just a predicate: returns something other than #t
+
+  (match (csa#-match (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
+    [(list)
+     ;; No matches, so the whole predicate fails
+     ;; (printf "Found no matches for received message ~s to pattern ~s\n" (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
+     #f]
+    [(list subst1 subst2 subst-rest ...)
+     ;; (printf "too many matches for value ~s and pattern ~s\n" (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
+     #f]
+    [(list some-subst)
+     (match-define (list spec-goto commitments)
+       (aps#-eval (aps#-transition-expression spec-trans) some-subst))
+     (if (and (outputs-match-commitments? (csa#-transition-outputs prog-trans) commitments)
+              (equal? (hash-ref state-matches (csa#-transition-next-state prog-trans))
+                      (aps#-goto-state spec-goto)))
+         spec-goto
+         #f)]))
+
+;; Returns #t if the given commitments fully account for the observable transmissions in outputs; #f
+;; otherwise
+;;
+;; TODO: test this
+(define (outputs-match-commitments? outputs commitments)
   (let/cc return-early
-    (redex-let aps# ([(p_spec-pat -> e-hat) spec-trans])
-               ;; 1. Check pattern vs. received message
-               ;; TODO: check for obs vs. unobs
-               (match (csa#-match (program-transition-message prog-trans) (term p_spec-pat))
-                 [(list)
-                  ;; No matches, so the whole predicate fails
-                  (printf "Found no matches for received message ~s to pattern ~s\n" (program-transition-message prog-trans) (term p_spec-pat))
-                  #f]
-                 [(list subst1 subst2 subst-rest ...)
-                  (error "too many matches for value ~s and pattern ~s" (program-transition-message prog-trans) (term p_spec-pat))]
-                 [(list some-subst)
-                  (redex-let* aps#
-                              ([([x a#ext] ...) some-subst]
-                               [e-hat (term (subst-n/aps# e-hat (x a#ext) ...))]
-                               [((goto s_spec v# ...) ([a#ext po] ...)) (aps#-eval (term e-hat))])
-                              ;; 2. Check outputs (check each prog output aginst commitments and check there are
-                              ;; no commitments left)
-                              ;;
-                              ;; NOTE: this does not check for multiple possible ways to match the outputs
-                              (let ([unmatched-commitments
-                                     (for/fold ([remaining-commitments (term ([a#ext po] ...))])
-                                               ([output (program-transition-outputs prog-trans)])
-                                       ;; TODO: test this function separately
-                                       (define (satisfied? commitment)
-                                         (redex-let aps# ([[a#ext_prog v#] output]
-                                                          [[a#ext_spec po] commitment]
-                                                          )
-                                                    (and (equal? (term a#ext_prog) (term a#ext_spec))
-                                                         (aps-matches-po? (term v#) (term po)))))
-                                       (match (findf satisfied? remaining-commitments)
-                                         ;; TODO: figure out how to deal with addresses that are precisely abstracted but not observed by the spec
-                                         [#f ;; (printf "No match for output in the commitments.\nOutput: ~s\nCommitments: ~s\n"
-                                             ;;         output
-                                             ;;         remaining-commitments)
-                                             (return-early #f)]
-                                         [commitment (remove commitment remaining-commitments)]))])
-                                (match unmatched-commitments
-                                  [(list c1 c-rest ...)
-                                   (displayln "Found unmatched commitments")
-                                   #f]
-                                  [_
-                                   ;; 3. Check the gotos (annotated)
-                                   (redex-let aps# ([(in-hole E# (goto s_prog _ ...)) (program-transition-goto-exp prog-trans)])
-                                              (if (equal? (hash-ref state-matches (term s_prog)) (term s_spec))
-                                                  ;; 4. Return transitioned spec config
-                                                  (term (goto s_spec v# ...))
-                                                  (begin
-                                                    ;; (printf "State names didn't match: ~s ~s ~s\n" (term s_prog) (hash-ref state-matches (term s_prog)) (term s_spec))
-                                                    #f)))])))])))
-)
+    (define unmatched-commitments
+      (for/fold ([remaining-commitments commitments])
+                ([output outputs])
+        ;; TODO: check whether the output is observable according to the spec
+        (match (findf (curry output-satisfies-commitment? output) remaining-commitments)
+          ;; TODO: figure out how to deal with addresses that are precisely abstracted but not observed by the spec
+          [#f
+           ;; (printf "No match for output in the commitments.\nOutput: ~s\nCommitments: ~s\n"
+           ;;         output
+           ;;         remaining-commitments)
+           (return-early #f)]
+          [commitment (remove commitment remaining-commitments)])))
+    (empty? unmatched-commitments)))
+
+;; TODO: test this function
+(define (output-satisfies-commitment? output commitment)
+  (and (equal? (csa#-output-address output) (aps#-commitment-address commitment))
+       (aps#-matches-po? (csa#-output-message output) (aps#-commitment-pattern commitment))))
 
 ;; TODO: tests for the above transition matching predicates/search functions
 
@@ -507,6 +484,8 @@ Remaining big challenges I see in the analysis:
 ;; ---------------------------------------------------------------------------------------------------
 ;; Language evaluation forms
 
+;; TODO: I think this whole section should be deprecated
+
 (module language-eval racket
   (require redex/reduction-semantics
            "csa.rkt")
@@ -610,6 +589,8 @@ Remaining big challenges I see in the analysis:
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Spec evaluation forms (maybe merge into previous section?
+
+;; TODO: I think this whole section should be deprecated
 
 (module spec-eval racket
 
