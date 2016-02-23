@@ -1,11 +1,12 @@
 #lang racket
 
+;; TODO: move these functions into other files and get rid of this one
+
 (provide
  actor-message-type
  actor-address
  actor-current-state
- config-only-actor
- make-single-agent-config)
+ config-only-actor)
 
 (require
  redex/reduction-semantics
@@ -35,11 +36,3 @@
   [(config-only-actor/mf (α# _ _ _))
    α#n
    (where (α#n) α#)])
-
-(define (make-single-agent-config agent)
-  (term (make-single-agent-config/mf ,agent)))
-
-(define-metafunction csa#
-  make-single-agent-config/mf : α#n -> K#
-  [(make-single-agent-config/mf α#n)
-   ((α#n) () (SINGLE-ACTOR-ADDR) ())])

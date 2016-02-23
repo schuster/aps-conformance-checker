@@ -5,6 +5,7 @@
 (provide csa
          csa-eval
          inject-message
+         make-single-agent-config
          handler-step
          aps
          aps-eval
@@ -55,7 +56,8 @@
 (define-extended-language csa-eval
   csa
   (K (α μ ρ χ))
-  (α ((a ((S ...) e)) ...))
+  (α (αn ...))
+  (αn (a (τ (S ...) e)))
   (μ (m ...))
   (m (a <= v))
   ((ρ χ) (a ...))
@@ -74,6 +76,15 @@
      (let ([x E] [x e] ...) e)
      (match E [p e] ...)
      (tuple v ... E e ...)))
+
+(define (make-single-agent-config agent)
+  (term (make-single-agent-config/mf ,agent)))
+
+(define-metafunction csa-eval
+  make-single-agent-config/mf : αn -> K
+  [(make-single-agent-config/mf αn)
+   ((αn) () (a) ())
+   (where (a _) αn)])
 
 (define handler-step
   (reduction-relation csa-eval

@@ -15,6 +15,7 @@ Remaining big challenges I see in the analysis:
  data/queue
  "queue-helpers.rkt"
  "aps-abstract.rkt"
+ "csa.rkt"
  "csa-abstract.rkt"
  "csa-helpers.rkt")
 
@@ -44,8 +45,10 @@ Remaining big challenges I see in the analysis:
 ;; actors. Also assumes that the spec starts in a state in which it has no state parameters.
 (define (analyze initial-prog-config initial-spec-instance state-matches)
   (let/cc return-early
-  ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
-    (let loop ([to-visit (queue (cons (α-config initial-prog-config) initial-spec-instance))]
+    ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
+    ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
+    ;; message generation
+    (let loop ([to-visit (queue (cons (α-config initial-prog-config 0) initial-spec-instance))]
                [visited (set)])
       (cond
         [(queue-empty? to-visit) #t]
@@ -269,19 +272,22 @@ Remaining big challenges I see in the analysis:
            ;; (submod ".." spec-eval test)
            )
 
+  (define single-agent-concrete-addr (term (addr 0)))
   (define ignore-all-agent
-    '(SINGLE-ACTOR-ADDR
+    (term
+     (,single-agent-concrete-addr
       (Nat
        ((define-state (Always) (m) (goto Always)))
-       (goto Always))))
+       (goto Always)))))
   (define ignore-all-config (make-single-agent-config ignore-all-agent))
   (define ignore-all-spec-instance
-    '(((define-state (Always) [* -> (goto Always)]))
+    (term
+     (((define-state (Always) [* -> (goto Always)]))
       (goto Always)
-      SINGLE-ACTOR-ADDR))
+      SINGLE-ACTOR-ADDR)))
 
-  (check-not-false (redex-match csa# α#n ignore-all-agent))
-  (check-not-false (redex-match csa# K# ignore-all-config))
+  (check-not-false (redex-match csa# αn ignore-all-agent))
+  (check-not-false (redex-match csa# K ignore-all-config))
   (check-not-false (redex-match aps# z ignore-all-spec-instance))
 
   ;; TODO: supply concrete specs and programs to the checker, not abstract ones
@@ -289,37 +295,43 @@ Remaining big challenges I see in the analysis:
 
   ;; TODO: remove the redundancy between the state defs and the current expression
   (define static-response-agent
-    `((addr 1)
-      (((define-state (Always response-dest) (m)
+    (term
+     (,single-agent-concrete-addr
+      ((Addr 'ack)
+       ((define-state (Always response-dest) (m)
           (begin
             (send response-dest 'ack)
             (goto Always response-dest))))
        (rcv (m)
-         (begin
-           (send (addr 2) 'ack)
-           (goto Always (addr 2)))))))
+            (begin
+              (send (addr 2) 'ack)
+              (goto Always (addr 2))))))))
   (define static-double-response-agent
-    `((addr 1)
-      (((define-state (Always response-dest) (m)
+    (term
+     (,single-agent-concrete-addr
+      ((Addr 'ack)
+       ((define-state (Always response-dest) (m)
           (begin
             (send response-dest 'ack)
             (send response-dest 'ack)
             (goto Always response-dest))))
        (rcv (m)
-         (begin
-           (send (addr 2) 'ack)
-           (send (addr 2) 'ack)
-           (goto Always (addr 2)))))))
+            (begin
+              (send (addr 2) 'ack)
+              (send (addr 2) 'ack)
+              (goto Always (addr 2))))))))
   (define static-response-spec
-    '(((define-state (Always response-dest)
+    (term
+     (((define-state (Always response-dest)
          [* -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
       (goto Always (addr 2))
-      (addr 1)))
+      (addr 1))))
 
-  (check-not-false (redex-match csa-eval (a ((S ...) e)) static-response-agent))
-  (check-not-false (redex-match csa-eval (a ((S ...) e)) static-double-response-agent))
+  (check-not-false (redex-match csa-eval αn static-response-agent))
+  (check-not-false (redex-match csa-eval αn static-double-response-agent))
   (check-not-false (redex-match aps-eval z static-response-spec))
 
+  ;; TODO: actually run these tests
   ;; (check-true (analyze (make-single-agent-config static-response-agent) static-response-spec))
 
   ;; all 3 of these fail; let's check double/single first
@@ -381,36 +393,34 @@ Remaining big challenges I see in the analysis:
 
   ;; TODO: make these *concrete* things, not abstracted ones
   (define request-response-spec
-    '(((define-state (Always)
+    (term
+     (((define-state (Always)
          [response-target -> (with-outputs ([response-target *]) (goto Always))]))
       (goto Always)
-      SINGLE-ACTOR-ADDR))
-    ;; TODO: make these *concrete* things, not abstracted ones
+      SINGLE-ACTOR-ADDR)))
+
   (define request-same-response-addr-spec
-    '(((define-state (Init)
+    (term
+     (((define-state (Init)
          [response-target -> (with-outputs ([response-target *]) (goto HaveAddr response-target))])
        (define-state (HaveAddr response-target)
          [new-response-target -> (with-outputs ([response-target *]) (goto HaveAddr response-target))]))
       (goto Init)
-      SINGLE-ACTOR-ADDR))
-  (define request-response-agent/abstract
-    `(SINGLE-ACTOR-ADDR
-      ((Addr Nat)
-       ((define-state (Always) (response-target)
-          (begin
-            (send response-target (* Nat))
-            (goto Always))))
-       (goto Always))))
-  (define request-response-agent-concrete
-    `(addr1234
+      SINGLE-ACTOR-ADDR)))
+  (define request-response-agent
+    (term
+     (,single-agent-concrete-addr
       ((Addr Nat)
        ((define-state (Always i) (response-target)
           (begin
             (send response-target i)
-            (goto Always (+ i 1)))))
-       (goto Always))))
-  (define respond-to-first-addr-agent/concrete
-    `(addr4567
+            ;; TODO: implement addition and make this a counter
+            ;; (goto Always (+ i 1))
+            (goto Always i))))
+       (goto Always 0)))))
+  (define respond-to-first-addr-agent
+    (term
+     (,single-agent-concrete-addr
       ((Addr Nat)
        ((define-state (Init) (response-target)
           (begin
@@ -420,21 +430,10 @@ Remaining big challenges I see in the analysis:
           (begin
             (send response-target i)
             ;; TODO: also try the case where we save new-response-target instead
-            (goto HaveAddr (+ i 1) response-target))))
-       (goto Init))))
-    (define respond-to-first-addr-agent/abstract
-    `(SINGLE-ACTOR-ADDR
-      ((Addr Nat)
-       ((define-state (Init) (response-target)
-          (begin
-            (send response-target (* Nat))
-            (goto HaveAddr response-target)))
-        (define-state (HaveAddr response-target) (new-response-target)
-          (begin
-            (send response-target (* Nat))
-            ;; TODO: also try the case where we save new-response-target instead
-            (goto HaveAddr response-target))))
-       (goto Init))))
+            ;; TODO: implement addition and make this a counter
+            ;; (goto HaveAddr (+ i 1) response-target)
+            (goto HaveAddr i response-target))))
+       (goto Init)))))
   ;; (define static-double-response-agent
   ;;   `((addr 1)
   ;;     (((define-state (Always response-dest) (m)
@@ -452,20 +451,20 @@ Remaining big challenges I see in the analysis:
   ;; (check-not-false (redex-match csa# K# ignore-all-config))
   (check-not-false (redex-match aps# z request-response-spec))
   (check-not-false (redex-match aps# z request-same-response-addr-spec))
-  (check-not-false (redex-match csa# α#n request-response-agent/abstract))
-  (check-not-false (redex-match csa# α#n respond-to-first-addr-agent/abstract))
+  (check-not-false (redex-match csa# αn request-response-agent))
+  (check-not-false (redex-match csa# αn respond-to-first-addr-agent))
 
-  (check-true (analyze (make-single-agent-config request-response-agent/abstract)
+  (check-true (analyze (make-single-agent-config request-response-agent)
                        request-response-spec
                        (hash 'Always 'Always)))
-  (check-false (analyze (make-single-agent-config respond-to-first-addr-agent/abstract)
+  (check-false (analyze (make-single-agent-config respond-to-first-addr-agent)
                         request-response-spec
                         (hash 'Init 'Always 'HaveAddr 'Always)))
 
-  (check-false (analyze (make-single-agent-config request-response-agent/abstract)
+  (check-false (analyze (make-single-agent-config request-response-agent)
                         request-same-response-addr-spec
                         (hash 'Always 'Init)))
-  (check-true (analyze (make-single-agent-config respond-to-first-addr-agent/abstract)
+  (check-true (analyze (make-single-agent-config respond-to-first-addr-agent)
                        request-same-response-addr-spec
                        (hash 'Init 'Init 'HaveAddr 'HaveAddr)))
 

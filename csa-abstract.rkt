@@ -369,6 +369,43 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
 
-(define (α-config concrete-config)
+;; TODO: test these functions
+
+(define (α-config concrete-config max-tuple-depth)
   ;; TODO: write the real definition of this
-  concrete-config)
+  (term (α-config/mf ,concrete-config ,max-tuple-depth)))
+
+;; NOTE: currently only supports single-actor, no-externals configs
+(define-metafunction csa#
+  α-config/mf : K natural -> K#
+  [(α-config/mf ((αn) ; actors
+                 () ; messages-in-transit
+                 ((addr 0)) ; receptionists
+                 () ; externals
+                 )
+                natural_depth)
+   ((α#n) () (SINGLE-ACTOR-ADDR) ())
+   (where α#n (α-actor αn natural_depth))])
+
+;; NOTE: currently assumes address 0
+(define-metafunction csa#
+  α-actor : αn natural_depth -> α#n
+  [(α-actor ((addr 0) (τ (S ...) e)) natural_depth)
+   (SINGLE-ACTOR-ADDR (τ ((α-S S natural_depth) ...) (α-e e natural_depth)))])
+
+;; NOTE: does not support timeouts yet
+(define-metafunction csa#
+  α-S : S natural_depth -> S#
+  [(α-S (define-state (s x ...) (x_m)  e) natural_depth)
+   (define-state (s x ...) (x_m) (α-e e natural_depth))])
+
+;; NOTE: does not yet support abstraction for addresses or spawns
+(define-metafunction csa#
+  α-e : e natural_depth -> e#
+  [(α-e natural _) (* Nat)]
+  [(α-e x _) x]
+  [(α-e (goto s e ...) natural_depth) (goto s (α-e e natural_depth) ...)]
+  [(α-e (begin e ...) natural_depth) (begin (α-e e natural_depth) ...)]
+  [(α-e (send e_1 e_2) natural_depth)
+   (send (α-e e_1 natural_depth) (α-e e_2 natural_depth))])
+
