@@ -156,121 +156,14 @@ Remaining big challenges I see in the analysis:
 
 ;; TODO: tests for the above transition matching predicates/search functions
 
-(define pattern-group-pattern car)
-(define pattern-group-exps cadr)
-
-;; Returns #f if any of prog's immediate transitions violate conformance to spec (by sending/failing
-;; to send some message); otherwise, it returns the list of program/specification configuration pairs
-;; remaining to check to prove conformance for the given pair. This is the "visit" method for our
-;; graph search algorithm.
-;;
-;; prog: program configuration
-;; spec: specification configuration
-;; (define (check-immediate-transitions prog spec)
-;;   ;; Gather all possible inputs according to the spec (including non-specified ones) and run each one
-;;   ;; abstractly through the handler. For each result, check if it satisfies a transition, and add the
-;;   ;; next state to the to-visit queue if it's not there already (or add it anyway, I think...)
-
-;;   ;; TODO: deal with commitments from previous transitions
-
-;;   ;; TODO: figure out the actual source of input patterns here
-;;   ;; TODO: also process the unobserved patterns
-;;   (for/fold ([next-state-pairs null])
-;;             ([input-pattern-group (spec-input-pattern-groups spec)]
-;;              #:break (not next-state-pairs))
-;;     ;; (printf "group: ~s\n" input-pattern-group)
-;;     ;; TODO: add in the real address and message here
-
-;;     (for/fold ([next-state-pairs null])
-;;               ;; TODO: change the address and message here to be *real* values
-;;               ([result-config (handle-message prog '(addr 1) ''sample-value)]
-;;                ;; [result-config (handle-message prog '(addr 1) (pattern-group-pattern input-pattern-group))]
-;;                #:break (not next-state-pairs))
-
-;;       ;; Check all of its outputs and see if it matches *some* transition
-
-;;       ;; TODO: check that we're not in a stuck state (or maybe I just do this ahead of time with a
-;;       ;; type-system-like thing
-
-;;       ;; TODO: add primitive predicates to match patterns to check if something is an address, a
-;;       ;; symbol, a number, or some other primitive
-
-;;       ;; TODO: check each result to see if it matches a spec transition, and if so, add the next
-;;       ;; state to the to-visit list
-
-;;       ;; TODO: change this code to account for more than one possible transition
-;;       ;;
-;;       ;; TODO: change this code to allow for multiple possible ways to match the outputs against the
-;;       ;; available commitments
-;;       (match-define (list external-packets wiped-config) (extract-external-sends result-config))
-;;       ;; TODO: deal with spec instance addresses communicated to the outside world
-
-;;       ;; Returns the list of commitments still unsatisfied in the spec
-;;       (define possible-transitions (pattern-group-exps input-pattern-group))
-;;       (define match-results (match-sends-to-commitments external-packets possible-transitions))
-;;       ;; TODO: remove this debug line and inline match-results definition
-;;       ;; (printf "match results: ~s\n" match-results)
-;;       (match match-results
-;;         [#f #f] ; if matching up the outputs failed, then the whole transition definitely fails
-;;         [(list)
-;;          ;; TODO: get the list of new state pairs that we've transitioned to and now want to check
-;;          (list)]
-;;         ;; TODO: find a way to check on the commitments that aren't immediately satisfied
-;;         [_ #f]))))
-
-;; Returns #f if any of the given message packets does not have a matching commitment in the given
-;; transitions; otherwise, returns the list of remaining (unmatched) commitments.
-;; (define (match-sends-to-commitments external-packets possible-transitions)
-
-;;   ;; TODO: make this handle more than 1 possible transition in the spec (may require a constraint
-;;   ;; solver instead of BFS, to allow for backtracking)
-
-;;   ;; TODO: make this handle all possible orderings of matches
-
-;;   ;; TODO: make this work with abstract address values
-
-;;   ;; TODO: make this allow for unobserved communication
-
-;;   ;; TODO: also get the pre-existing commitments from the spec config
-
-;;   ;; TODO: figure out what to do when the spec is mal-formed and doesn't give us a proper list of
-;;   ;; commitments
-
-;;   ;; (printf "external packets: ~s\n" external-packets)
-;;   ;; (printf "commitments: ~s\n" (get-spec-commitments (car possible-transitions)))
-;;   (define-values (conformance-violated? remaining-commitments)
-;;     (for/fold ([conformance-violated? #f]
-;;                [remaining-commitments (get-spec-commitments (car possible-transitions))])
-;;         ([packet external-packets]
-;;          #:break conformance-violated?)
-;;       (match-define `(,packet-address <= ,packet-message) packet)
-;;       ;; (printf "address: ~s, message: ~s\n" packet-address packet-message)
-;;       (match (findf
-;;               (lambda (commitment)
-;;                 (match-define `(,commitment-address ,pattern) commitment)
-;;                 ;; (printf "commitment address: ~s, pattern: ~s\n" commitment-address pattern)
-
-;;                 ;; TODO: make pattern matching also do the variable-binding thing
-;;                 (and (equal? commitment-address packet-address)
-;;                      (matches-output-pattern? packet-message pattern)))
-;;               remaining-commitments)
-;;         [#f (values #t remaining-commitments)]
-;;         [pattern (values #f (remove pattern remaining-commitments))])))
-
-;;   (if conformance-violated? #f remaining-commitments))
-
-;; TODO: write tests for analyze-state-pair-transitions
+;; ---------------------------------------------------------------------------------------------------
+;; Top-level tests
 
 (module+ test
-  (require rackunit
-           redex/reduction-semantics
-           "csa.rkt"
-
-           ;; also run the submodule tests here
-           ;; TODO: remove these?
-           ;; (submod ".." language-eval test)
-           ;; (submod ".." spec-eval test)
-           )
+  (require
+   rackunit
+   redex/reduction-semantics
+   "csa.rkt")
 
   (define single-agent-concrete-addr (term (addr 0)))
   (define ignore-all-agent
