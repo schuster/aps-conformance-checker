@@ -48,7 +48,7 @@ Remaining big challenges I see in the analysis:
     ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
     ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
     ;; message generation
-    (let loop ([to-visit (queue (cons (α-config initial-prog-config 0) initial-spec-instance))]
+    (let loop ([to-visit (queue (cons (α-config initial-prog-config 0) (aps#-α-z initial-spec-instance)))]
                [visited (set)])
       (cond
         [(queue-empty? to-visit) #t]
@@ -156,6 +156,10 @@ Remaining big challenges I see in the analysis:
 
 ;; TODO: tests for the above transition matching predicates/search functions
 
+;; TODO: consider defining the spec semantics completely independently of concrete addresses, and
+;; provide a mapping in the spec instead (the spec semantics would probably look something like HD
+;; automata)
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Top-level tests
 
@@ -166,6 +170,9 @@ Remaining big challenges I see in the analysis:
    "csa.rkt")
 
   (define single-agent-concrete-addr (term (addr 0)))
+
+  ;;;; Ignore everything
+
   (define ignore-all-agent
     (term
      (,single-agent-concrete-addr
@@ -186,7 +193,10 @@ Remaining big challenges I see in the analysis:
   ;; TODO: supply concrete specs and programs to the checker, not abstract ones
   (check-true (analyze ignore-all-config ignore-all-spec-instance (hash 'Always 'Always)))
 
+  ;;;; Send one message to a statically-known address per request
+
   ;; TODO: remove the redundancy between the state defs and the current expression
+  (define static-response-address (term (addr 2)))
   (define static-response-agent
     (term
      (,single-agent-concrete-addr
@@ -195,10 +205,7 @@ Remaining big challenges I see in the analysis:
           (begin
             (send response-dest 'ack)
             (goto Always response-dest))))
-       (rcv (m)
-            (begin
-              (send (addr 2) 'ack)
-              (goto Always (addr 2))))))))
+       (goto Always ,static-response-address)))))
   (define static-double-response-agent
     (term
      (,single-agent-concrete-addr
@@ -208,29 +215,30 @@ Remaining big challenges I see in the analysis:
             (send response-dest 'ack)
             (send response-dest 'ack)
             (goto Always response-dest))))
-       (rcv (m)
-            (begin
-              (send (addr 2) 'ack)
-              (send (addr 2) 'ack)
-              (goto Always (addr 2))))))))
+       (goto Always ,static-response-address)))))
   (define static-response-spec
     (term
      (((define-state (Always response-dest)
          [* -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
-      (goto Always (addr 2))
-      (addr 1))))
+      (goto Always ,static-response-address)
+      ,single-agent-concrete-addr)))
 
   (check-not-false (redex-match csa-eval αn static-response-agent))
   (check-not-false (redex-match csa-eval αn static-double-response-agent))
   (check-not-false (redex-match aps-eval z static-response-spec))
 
-  ;; TODO: actually run these tests
-  ;; (check-true (analyze (make-single-agent-config static-response-agent) static-response-spec))
-
-  ;; all 3 of these fail; let's check double/single first
-  ;; (check-false (analyze (make-single-agent-config static-response-agent) ignore-all-spec-instance))
-  ;; (check-false (analyze (make-single-agent-config static-double-response-agent) static-response-spec))
-  ;; (check-false (analyze ignore-all-config static-response-spec))
+  (check-true (analyze (make-single-agent-config static-response-agent)
+                       static-response-spec
+                       (hash 'Always 'Always)))
+  (check-false (analyze (make-single-agent-config static-response-agent)
+                        ignore-all-spec-instance
+                        (hash 'Always 'Always)))
+  (check-false (analyze (make-single-agent-config static-double-response-agent)
+                        static-response-spec
+                        (hash 'Always 'Always)))
+  (check-false (analyze ignore-all-config
+                        static-response-spec
+                        (hash 'Always 'Always)))
 
   ;; Pattern matching tests, without dynamic channels
   ;; TODO: uncomment and implement the stuff for these tests

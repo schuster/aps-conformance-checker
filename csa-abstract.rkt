@@ -58,8 +58,11 @@
   (a# a#int a#ext) ; internal and external addresses
   (a#int SINGLE-ACTOR-ADDR)
   (a#ext
-   (* (Addr τ))
-   (s v#template natural time-flag))
+   (* (Addr τ)) ; unobserved address
+   ;; NOTE: only a finite number of addresses in the initial config, so we can use natural numbers
+   ;; here
+   (init-addr natural)
+   (received-addr s v#template natural time-flag))
   (time-flag MOST-RECENT PREVIOUS)
   (ρ# (SINGLE-ACTOR-ADDR))
   (χ# (a#ext ...))
@@ -191,7 +194,7 @@
 (define-metafunction csa#
   fill-template/acc : v#template_current v#template_whole natural_current-index s -> (v# natural_next-index)
   [(fill-template/acc ADDR-HOLE v#template natural_current s)
-   ((s v#template natural_current MOST-RECENT) ,(+ 1 (term natural_current)))]
+   ((received-addr s v#template natural_current MOST-RECENT) ,(+ 1 (term natural_current)))]
   [(fill-template/acc t _ natural s) (t natural)]
   [(fill-template/acc (tuple v#template_child1 v#template_rest ...) v#template natural_current s)
    ((tuple v#_1 v#_rest ...) natural_next-rest)
@@ -209,8 +212,8 @@
                 (term (* Nat)))
   (define simple-pair-template (term (tuple ADDR-HOLE ADDR-HOLE)))
   (check-equal? (term (fill-template ,simple-pair-template Always))
-                (term (tuple (Always ,simple-pair-template 0 MOST-RECENT)
-                             (Always ,simple-pair-template 1 MOST-RECENT)))))
+                (term (tuple (received-addr Always ,simple-pair-template 0 MOST-RECENT)
+                             (received-addr Always ,simple-pair-template 1 MOST-RECENT)))))
 
 (define (csa#-match val pat)
   (judgment-holds (csa#-match/j ,val ,pat ([x a#ext] ...))
@@ -236,8 +239,8 @@
 (module+ test
   (check-equal? (csa#-match (term (* Nat)) (term *))
                 (list (term ())))
-  (check-equal? (csa#-match (term (Always ADDR-HOLE 0 MOST-RECENT)) (term x))
-                (list (term ([x (Always ADDR-HOLE 0 MOST-RECENT)])))))
+  (check-equal? (csa#-match (term (received-addr Always ADDR-HOLE 0 MOST-RECENT)) (term x))
+                (list (term ([x (received-addr Always ADDR-HOLE 0 MOST-RECENT)])))))
 
 
 (define (config-actor-by-address config addr)
@@ -342,7 +345,7 @@
   ;; [(csa#-subst n x v) n]
   [(csa#-subst (* τ) _ _) (* τ)]
   [(csa#-subst a# _ _) a#]
-  [(csa#-subst t x v) t]
+  [(csa#-subst t x v#) t]
   ;; [(csa#-subst a x v) a]
   ;; [(csa#-subst (spawn e S ...) self v) (spawn e S ...)]
   ;; [(csa#-subst (spawn e S ...) x v)
@@ -365,6 +368,9 @@
   ;; [(csa#-subst (rcv (x_h) e [(timeout n) e_timeout]) x v)
   ;;  (rcv (x_h) (csa#-subst e x v) [(timeout n) (csa#-subst e_timeout x v)])]
   )
+
+(module+ test
+  (check-equal? (term (csa#-subst 'Foo a (* Nat))) (term 'Foo)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
@@ -404,6 +410,9 @@
   α-e : e natural_depth -> e#
   [(α-e natural _) (* Nat)]
   [(α-e x _) x]
+  [(α-e t _) t]
+  ;; TODO: is there any way this will ever be used for anything but the initial addresses?
+  [(α-e (addr natural) _) (init-addr natural)]
   [(α-e (goto s e ...) natural_depth) (goto s (α-e e natural_depth) ...)]
   [(α-e (begin e ...) natural_depth) (begin (α-e e natural_depth) ...)]
   [(α-e (send e_1 e_2) natural_depth)

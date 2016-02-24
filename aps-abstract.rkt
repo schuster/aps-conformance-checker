@@ -4,6 +4,7 @@
 
 (provide
  aps#
+ aps#-α-z
  subst-n/aps#
  aps#-current-transitions
  aps#-eval
@@ -30,6 +31,21 @@
   (σ a# null)
   (u .... a#)
   (v-hat a# a-hat))
+
+;; TODO: change the language and conformance so that I don't have to do this little initial
+;; abstraction
+(define (aps#-α-z spec-instance)
+  ;; Doing a redex-let here just to add a codomain contract
+  (redex-let aps# ([z (term (aps#-α-z/mf ,spec-instance))])
+             (term z)))
+
+(define-metafunction aps#
+  aps#-α-z/mf : any -> any
+  [(aps#-α-z/mf (addr natural))
+   (init-addr natural)]
+  [(aps#-α-z/mf (any ...))
+   ((aps#-α-z/mf any) ...)]
+  [(aps#-α-z/mf any) any])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
