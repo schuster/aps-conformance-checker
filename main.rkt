@@ -112,7 +112,8 @@ Remaining big challenges I see in the analysis:
 
   ;; TODO: rename this function, because it's not just a predicate: returns something other than #t
 
-  (match (csa#-match (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
+  ;; (printf "Checking value ~s against pattern ~s\n" (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
+  (match (aps#-match (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
     [(list)
      ;; No matches, so the whole predicate fails
      ;; (printf "Found no matches for received message ~s to pattern ~s\n" (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
@@ -123,6 +124,8 @@ Remaining big challenges I see in the analysis:
     [(list some-subst)
      (match-define (list spec-goto commitments)
        (aps#-eval (aps#-transition-expression spec-trans) some-subst))
+     ;; (printf "Outputs: ~s\n" (csa#-transition-outputs prog-trans))
+     ;; (printf "Commitments: ~s\n" commitments)
      (if (and (outputs-match-commitments? (csa#-transition-outputs prog-trans) commitments)
               (equal? (hash-ref state-matches (csa#-transition-next-state prog-trans))
                       (aps#-goto-state spec-goto)))
@@ -151,6 +154,8 @@ Remaining big challenges I see in the analysis:
 
 ;; TODO: test this function
 (define (output-satisfies-commitment? output commitment)
+  ;; (printf "aps match attempt: ~s ~s\n" (csa#-output-message output) (aps#-commitment-pattern commitment))
+  ;; (printf "aps match result: ~s\n" (aps#-matches-po? (csa#-output-message output) (aps#-commitment-pattern commitment)))
   (and (equal? (csa#-output-address output) (aps#-commitment-address commitment))
        (aps#-matches-po? (csa#-output-message output) (aps#-commitment-pattern commitment))))
 
@@ -240,59 +245,68 @@ Remaining big challenges I see in the analysis:
                         static-response-spec
                         (hash 'Always 'Always)))
 
-  ;; Pattern matching tests, without dynamic channels
-  ;; TODO: uncomment and implement the stuff for these tests
-  ;; (define pattern-match-spec
-  ;;   '(((define-state (Matching r)
-  ;;        ['a -> (with-outputs ([r 'a]) (goto Matching r))]
-  ;;        [(list 'b *) -> (with-outputs ([r (list 'b *)]) (goto Matching r))]))
-  ;;     (goto Matching (addr 2))
-  ;;     (addr 1)))
+  ;;;; Pattern matching tests, without dynamic channels
 
-  ;; (define pattern-matching-agent
-  ;;   '((addr 1)
-  ;;     (((define-state (Always r) (m)
-  ;;         (match m
-  ;;           ['a (begin (send r 'a) (goto Always r))]
-  ;;           [(list 'b *) (begin (send r (list 'b *)) (goto Always r))]
-  ;;           [_ (goto Always r)])))
-  ;;      (rcv (m)
-  ;;           (match m
-  ;;           ['a (begin (send (addr 2) 'a) (goto Always (addr 2)))]
-  ;;           [(list 'b *) (begin (send (addr 2) (list 'b *)) (goto Always (addr 2)))]
-  ;;           [_ (goto Always (addr 2))])))))
+  (define pattern-match-spec
+    (term
+     (((define-state (Matching r)
+         ['a -> (with-outputs ([r 'a]) (goto Matching r))]
+         [(tuple 'b *) -> (with-outputs ([r (tuple 'b *)]) (goto Matching r))]))
+      (goto Matching ,static-response-address)
+      ,single-agent-concrete-addr)))
 
-  ;; (define reverse-pattern-matching-agent
-  ;;   '((addr 1)
-  ;;     (((define-state (Always r) (m)
-  ;;         (match m
-  ;;           ['a (begin (send r (list 'b *)) (goto Always r))]
-  ;;           [(list 'b *) (begin (send r 'a) (goto Always r))]
-  ;;           [_ (goto Always r)])))
-  ;;      (rcv (m)
-  ;;           (match m
-  ;;           ['a (begin (send (addr 2) (list 'b *)) (goto Always (addr 2)))]
-  ;;           [(list 'b *) (begin (send (addr 2) 'a) (goto Always (addr 2)))]
-  ;;           [_ (goto Always (addr 2))])))))
+  (define pattern-matching-agent
+    (term
+     (,single-agent-concrete-addr
+      ((Union 'a (Tuple 'b Nat))
+       ((define-state (Always r) (m)
+          (match m
+            ['a (begin (send r 'a) (goto Always r))]
+            [(tuple 'b *) (begin (send r (tuple 'b 0)) (goto Always r))]
+            [* (goto Always r)])))
+       (goto Always ,static-response-address)))))
 
-  ;; (define partial-pattern-matching-agent
-  ;;   '((addr 1)
-  ;;     (((define-state (Always r) (m)
-  ;;         (match m
-  ;;           ['a (begin (send r 'a) (goto Always r))]
-  ;;           [(list 'b *) (goto Always r)]
-  ;;           [_ (goto Always r)])))
-  ;;      (rcv (m)
-  ;;           (match m
-  ;;           ['a (begin (send (addr 2) 'a) (goto Always (addr 2)))]
-  ;;           [(list 'b *) (goto Always (addr 2))]
-  ;;           [_ (goto Always (addr 2))])))))
-  ;;
-  ;; (check-true (analyze (make-single-agent-config pattern-matching-agent) pattern-match-spec))
-  ;; (check-false (analyze (make-single-agent-config partial-pattern-matching-agent) pattern-match-spec))
-  ;; (check-false (analyze (make-single-agent-config reverse-pattern-matching-agent) pattern-match-spec))
+  (define reverse-pattern-matching-agent
+    (term
+     (,single-agent-concrete-addr
+      ((Union 'a (Tuple 'b Nat))
+       ((define-state (Always r) (m)
+          (match m
+            ['a (begin (send r (tuple 'b 0)) (goto Always r))]
+            [(tuple 'b *) (begin (send r 'a) (goto Always r))]
+            [* (goto Always r)])))
+       (goto Always ,static-response-address)))))
 
-  ;; TODO: make these *concrete* things, not abstracted ones
+  (define partial-pattern-matching-agent
+    (term
+     (,single-agent-concrete-addr
+      ((Union 'a (Tuple 'b Nat))
+       ((define-state (Always r) (m)
+          (match m
+            ['a (begin (send r 'a) (goto Always r))]
+            [(tuple 'b *) (goto Always r)]
+            [* (goto Always r)])))
+       (goto Always ,static-response-address)))))
+
+  (define pattern-matching-map (hash 'Always 'Matching))
+
+  (check-not-false (redex-match aps-eval z pattern-match-spec))
+  (check-not-false (redex-match csa-eval αn pattern-matching-agent))
+  (check-not-false (redex-match csa-eval αn reverse-pattern-matching-agent))
+  (check-not-false (redex-match csa-eval αn partial-pattern-matching-agent))
+
+  (check-true (analyze (make-single-agent-config pattern-matching-agent)
+                       pattern-match-spec
+                       pattern-matching-map))
+  (check-false (analyze (make-single-agent-config partial-pattern-matching-agent)
+                        pattern-match-spec
+                        pattern-matching-map))
+  (check-false (analyze (make-single-agent-config reverse-pattern-matching-agent)
+                        pattern-match-spec
+                        pattern-matching-map))
+
+  ;;;; Dynamic request/response
+
   (define request-response-spec
     (term
      (((define-state (Always)

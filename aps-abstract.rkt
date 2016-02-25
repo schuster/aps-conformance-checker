@@ -8,6 +8,7 @@
  subst-n/aps#
  aps#-current-transitions
  aps#-eval
+ aps#-match
  aps#-matches-po?
  step-spec-with-goto
  aps#-transition-pattern
@@ -63,7 +64,8 @@
   [(subst/aps# (goto s u ...) x v-hat)
    (goto s (subst/aps#/u u x v-hat) ...)]
   [(subst/aps# (with-outputs ([u po] ...) e-hat) x v-hat)
-   (with-outputs ([(subst/aps#/u u x v-hat) (subst/aps#/po po x v-hat)] ...) (subst/aps# e-hat x v-hat))]
+   ;; TODO: figure out if I need to substitute into the patterns, for spawned specs
+   (with-outputs ([(subst/aps#/u u x v-hat) po] ...) (subst/aps# e-hat x v-hat))]
   ;; TODO: write the other clauses
   )
 
@@ -121,22 +123,54 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pattern matching
 
-(define (aps#-matches-po? value pattern)
-  (term (aps#-matches-po?/mf ,value ,pattern)))
+(define (aps#-match val pat)
+  ;; effectively the same as csa#-match, except only allow external addresses as bindings
+  (judgment-holds (csa#-match/j ,val ,pat ([x a#ext] ...))
+                  ([x a#ext] ...)))
 
-(define-metafunction aps#
-  aps#-matches-po?/mf : v# po -> boolean
-  [(aps#-matches-po?/mf _ *) #t]
-  [(aps#-matches-po?/mf _ x) #t]
+;; TODO: write tests for the above match
+
+(define (aps#-matches-po? value pattern)
+  (judgment-holds (aps#-matches-po?/j ,value ,pattern)))
+
+(define-judgment-form aps#
+  #:mode (aps#-matches-po?/j I I)
+  #:contract (aps#-matches-po?/j v# po)
+
+  [-----
+   (aps#-matches-po?/j _ *)]
+
+  ;; TODO: make this rule match not quite everything
+  [----
+   (aps#-matches-po?/j _ x)]
+
   ;; TODO: self
-  [(aps#-matches-po?/mf t t) #t]
-  [(aps#-matches-po?/mf (list v ..._n) (list po ..._n))
-   ;; TODO: find a better way to normalize to boolean rather than not/not
-   ,(andmap
-     (lambda (v po) (term (aps#-matches-po?/mf ,v ,po)))
-     (term (v ...))
-     (term (po ...)))]
-  [(aps#-matches-po?/mf _ _) #f])
+  [----
+   (aps#-matches-po?/j t t)]
+  [----
+   (aps#-matches-po?/j (* t) t)]
+
+  [(aps#-matches-po?/j v# po) ...
+   ------
+   (aps#-matches-po?/j (tuple v# ..._n) (tuple po ..._n))]
+
+  [(aps#-matches-po?/j (* τ) po) ...
+   -----
+   (aps#-matches-po?/j (* (Tuple τ ..._n)) (tuple po ..._n))])
+
+(module+ test
+  (check-true (judgment-holds (aps#-matches-po?/j 'a 'a)))
+  (check-true (aps#-matches-po? (term 'a) (term 'a)))
+  (check-true (aps#-matches-po? (term (* 'a)) (term 'a)))
+  (check-false (aps#-matches-po? (term (* 'a)) (term 'b)))
+  (check-true (aps#-matches-po? (term (* (Tuple 'a 'b))) (term (tuple 'a 'b))))
+  (check-false (aps#-matches-po? (term (* (Tuple 'a 'b))) (term (tuple 'a 'c))))
+  (check-true (aps#-matches-po? (term (tuple (* 'a))) (term (tuple 'a))))
+  (check-true (aps#-matches-po? (term (tuple (quote b) (* Nat)))
+                                (term (tuple (quote b) *))
+)))
+
+
 
 ;; TODO: add tests for the match predicate
 

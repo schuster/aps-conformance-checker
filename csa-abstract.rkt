@@ -6,6 +6,7 @@
  csa#
  generate-abstract-messages
  csa#-match
+ csa#-match/j
  csa#-eval-transition
  (struct-out csa#-transition)
  csa#-output-address
@@ -220,32 +221,52 @@
                              (received-addr Always ,simple-pair-template 1 MOST-RECENT)))))
 
 (define (csa#-match val pat)
-  (judgment-holds (csa#-match/j ,val ,pat ([x a#ext] ...))
-                  ([x a#ext] ...)))
+  ;; TODO: make a version of this that only matches external addresses, for the APS matching
+  (judgment-holds (csa#-match/j ,val ,pat ([x v#] ...))
+                  ([x v#] ...)))
 
 (define-judgment-form csa#
   #:mode (csa#-match/j I I O)
-  #:contract (csa#-match/j v# p ((x a#ext) ...))
+  #:contract (csa#-match/j v# p ((x v#) ...))
 
   [-------------------
    (csa#-match/j _ * ())]
 
+  ;; TODO: make a version of this that only matches external addresses, for the APS matching
   [-------------------
-   (csa#-match/j a#ext x ([x a#ext]))]
+   (csa#-match/j v# x ([x v#]))]
 
   [----------------
    (csa#-match/j t t ())]
 
-  [(csa#-match/j v# p ([x a#ext] ...)) ...
+  [----------------
+   (csa#-match/j (* t) t ())]
+
+  [(csa#-match/j v# p ([x v#_binding] ...)) ...
    --------------
-   (csa#-match/j (tuple v# ..._n) (tuple p ..._n) ([x a#ext] ... ...))])
+   (csa#-match/j (tuple v# ..._n) (tuple p ..._n) ([x v#_binding] ... ...))]
+
+  [(csa#-match/j (* τ) p ([x v#_binding] ...)) ...
+   --------------
+   (csa#-match/j (* (Tuple τ ..._n)) (tuple p ..._n) ([x v#_binding] ... ...))])
 
 (module+ test
   (check-equal? (csa#-match (term (* Nat)) (term *))
                 (list (term ())))
   (check-equal? (csa#-match (term (received-addr Always ADDR-HOLE 0 MOST-RECENT)) (term x))
-                (list (term ([x (received-addr Always ADDR-HOLE 0 MOST-RECENT)])))))
-
+                (list (term ([x (received-addr Always ADDR-HOLE 0 MOST-RECENT)]))))
+  (check-equal? (csa#-match (term (tuple 'a 'b)) (term (tuple 'a 'b)))
+                (list (term ())))
+  ;; (displayln (redex-match csa# t (term 'a)))
+  ;; (displayln (redex-match csa# v# (term 'a)))
+  ;; (displayln (redex-match csa# x (term item)))
+  ;; (displayln (build-derivations (csa#-match/j 'a item ())))
+  (check-equal? (csa#-match (term 'a) (term item))
+                (list (term ([item 'a]))))
+  (check-equal? (csa#-match (term (tuple 'a 'b)) (term (tuple 'a item)))
+                (list (term ([item 'b]))))
+  (check-equal? (csa#-match (term (* (Tuple 'a 'b))) (term (tuple x 'b)))
+                (list (term ([x (* 'a)])))))
 
 (define (config-actor-by-address config addr)
   (term (config-actor-by-address/mf ,config ,addr)))
@@ -272,11 +293,11 @@
   (redex-let csa# ([(_ (τ (_ ... (define-state (s x_s ..._n) (x_m) e#) _ ...) (in-hole E# (goto s v# ..._n))))
                     (config-actor-by-address prog-config actor-address)])
              ;; TODO: deal with the case where x_m shadows an x_s
+             ;; (printf "Expression to be run: ~s\n" (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...)))
              (define results
                (apply-reduction-relation*
                 handler-step#
-                (term ((csa#-subst-n e# [x_m ,message] [x_s v#] ...)
-                       ()))))
+                (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...)))))
              (for/list ([result results])
                ;; Debugging
                ;; (redex-let csa# ([(e#_final ([a#ext v#_out] ...)) result])
@@ -289,6 +310,12 @@
                (redex-let csa# ([((in-hole E# (goto s v#_param ...)) ([a#ext v#_out] ...)) result])
                           ;; TODO: deal with unobserved messages
                           (csa#-transition message #t (term ([a#ext v#_out] ...)) (term (in-hole E# (goto s v#_param ...))))))))
+
+(define (inject/H# exp)
+  (redex-let csa#
+             ([e# exp]
+              [H# (term (,exp ()))])
+             (term H#)))
 
 (define handler-step#
   (reduction-relation csa#
@@ -304,6 +331,20 @@
          v#
          Begin2)
 
+    (==> (match v#
+           [p e#]
+           [p_rest e#_rest] ...)
+         (csa#-subst-n e# [x v#_subst] ...)
+         (judgment-holds (csa#-match/j v# p ([x v#_subst] ...)))
+         MatchSuccess)
+    (==> (match v#
+           [p _]
+           [p_rest e#_rest] ...)
+         (match v#
+           [p_rest e#_rest] ...)
+         (side-condition (not (judgment-holds (csa#-match/j v# p ([x v#_subst] ...)))))
+         MatchFailure)
+
     (--> ((in-hole E# (send a# v#)) (any_outputs ...))
          ((in-hole E# v#)           (any_outputs ... [a# v#]))
          Send)
@@ -315,6 +356,47 @@
     [(--> ((in-hole E# old) ([a#ext v#] ...))
           ((in-hole E# new) ([a#ext v#] ...)))
      (==> old new)]))
+
+(module+ test
+  (define (csa#-make-simple-test-config exp)
+    (redex-let* csa# ([α#n (term [SINGLE-ACTOR-ADDR
+                                  (Nat
+                                   ((define-state (Always) (long-unused-name) (begin ,exp (goto Always))))
+                                   (begin ,exp (goto Always)))])]
+                      [α# (term (α#n))]
+                      [μ# (term ())]
+                      [ρ# (term (SINGLE-ACTOR-ADDR))]
+                      [χ# (term ())])
+                (term (α# μ# ρ# χ#))))
+
+  ;; TODO: remove this one
+  (check-not-false (redex-match csa# K# (csa#-make-simple-test-config (term (* Nat)))))
+
+  (define-check (csa#-exp-steps-to? e1 e2)
+    (define next-steps (apply-reduction-relation handler-step# (inject/H# e1)))
+    (unless (equal? next-steps (list (inject/H# e2)))
+      (fail-check (format "There were ~s next steps: ~s" (length next-steps) next-steps))))
+
+  (csa#-exp-steps-to? (term (match (tuple 'a 'b)
+                              ['c (* Nat)]
+                              [(tuple 'a item) item]))
+                      (term (match (tuple 'a 'b)
+                              [(tuple 'a item) item])))
+  (csa#-exp-steps-to? (term (match (tuple 'a 'b)
+                              [(tuple 'a item) item]))
+                      (term 'b))
+
+  (csa#-exp-steps-to? (term (match (* Nat)
+                              [(tuple) (goto S1 (* Nat))]
+                              [_ (goto S2 (* Nat))]))
+                      (term (match (* Nat)
+                              [_ (goto S2 (* Nat))]) ))
+  (csa#-exp-steps-to? (term (match (* Nat)
+                              [_ (goto S2 (* Nat))]))
+                      (term (goto S2 (* Nat)) ))
+  (csa#-exp-steps-to? (term (match (* Nat)
+                              [(tuple) (goto S2 (* Nat))]))
+                      (term (match (* Nat)))))
 
 ;; TODO: make this function less susceptible to breaking because of changes in the config's structure
 (define (step-prog-final-behavior prog-config beahvior-exp)
@@ -363,15 +445,46 @@
   ;;  (where (_ ... x _ ...) (x_let ...))] ; check that x is in the list of bound vars
   ;; [(csa#-subst (let ([x_let e] ...) e_body) x v)
   ;;  (let ([x_let (csa#-subst e x v)] ...) (csa#-subst e_body x v))]
-  ;; [(csa#-subst (match e [p e_pat] ...) x v)
-  ;;  (match (csa#-subst e x v) (csa#-subst/match-clause [p e_pat] x v) ...)]
-  ;; [(csa#-subst (tuple e ...) x v) (tuple (csa#-subst e x v) ...)]
+  [(csa#-subst (match e# [p e#_pat] ...) x v#)
+   (match (csa#-subst e# x v#) (csa#-subst/match-clause [p e#_pat] x v#) ...)]
+  [(csa#-subst (tuple e# ...) x v#) (tuple (csa#-subst e# x v#) ...)]
   ;; [(csa#-subst (rcv (x) e) x v) (rcv (x) e)]
   ;; [(csa#-subst (rcv (x_h) e) x v) (rcv (x_h) (csa#-subst e x v))]
   ;; [(csa#-subst (rcv (x) e [(timeout n) e_timeout]) x v) (rcv (x) e [(timeout n) e_timeout])]
   ;; [(csa#-subst (rcv (x_h) e [(timeout n) e_timeout]) x v)
   ;;  (rcv (x_h) (csa#-subst e x v) [(timeout n) (csa#-subst e_timeout x v)])]
   )
+
+(define-metafunction csa#
+  csa#-subst/match-clause : [p e#] x v# -> [p e#]
+  [(csa#-subst/match-clause [p e#] x v#)
+   [p e#]
+   (side-condition (term (pattern-binds-var p x)))]
+  [(csa#-subst/match-clause [p e#] x v#)
+   [p (csa#-subst e# x v#)]])
+
+;; TODO: rewrite this as a judgment form
+(define-metafunction csa#
+  pattern-binds-var : p x -> boolean
+  [(pattern-binds-var * x) #f]
+  [(pattern-binds-var x x) #t]
+  [(pattern-binds-var x_1 x_2) #f]
+  [(pattern-binds-var t x) #f]
+  [(pattern-binds-var (tuple p ...) x)
+   ,(ormap values (term ((pattern-binds-var p x) ...)))])
+;; TODO: write more tests for this
+
+(module+ test
+  (check-false (term (pattern-binds-var (tuple z y) x)))
+  (check-true (term (pattern-binds-var (tuple x y) x)))
+  (check-false (term (pattern-binds-var (tuple 'x y) x)))
+  (check-true (term (pattern-binds-var (tuple 'x x) x))))
+
+(module+ test
+  (check-equal? (term (csa#-subst/match-clause [(tuple x y z) x] x 'foo))
+                (term [(tuple x y z) x]))
+  (check-equal? (term (csa#-subst/match-clause [(tuple a y z) x] x 'foo))
+                (term [(tuple a y z) 'foo])))
 
 (module+ test
   (check-equal? (term (csa#-subst 'Foo a (* Nat))) (term 'Foo)))
@@ -420,5 +533,15 @@
   [(α-e (goto s e ...) natural_depth) (goto s (α-e e natural_depth) ...)]
   [(α-e (begin e ...) natural_depth) (begin (α-e e natural_depth) ...)]
   [(α-e (send e_1 e_2) natural_depth)
-   (send (α-e e_1 natural_depth) (α-e e_2 natural_depth))])
+   (send (α-e e_1 natural_depth) (α-e e_2 natural_depth))]
+  [(α-e (match e_val [p e_clause] ...) natural_depth)
+   (match (α-e e_val natural_depth) [p (α-e e_clause natural_depth)] ...)]
+  ;; TODO: do something much better here - figure out how to limit the depth
+  ;; [(α-e (tuple e ...) 0)
+  ;;  ;; TODO: give the actual type here
+  ;;  (* (Tuple))]
+  [(α-e (tuple e ...) natural_depth)
+   ;; TODO: take out the "max" issue here
+   (tuple (α-e e ,(max 0 (- (term natural_depth) 1))) ...)])
 
+;; TODO: write tests for the tuple test, because the crappy version I have here isn't good enough
