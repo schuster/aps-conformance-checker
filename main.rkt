@@ -479,5 +479,10 @@ Remaining big challenges I see in the analysis:
   (check-true (analyze (make-single-agent-config div-by-one-agent) nat-to-nat-spec (hash 'Always 'Always)))
   (check-true (analyze (make-single-agent-config div-by-zero-agent) nat-to-nat-spec (hash 'Always 'Always)))
 
+  ;; TODO: unobs tests to write:
+  ;; 1. other participants can send same message as obs (causes or does not cause effect...)
+  ;; 2. unobs causes a particular behavior (like connected/error in TCP)
+
+
   ;; TODO: write a test where the unobs input messages for pattern matching matter
   )
