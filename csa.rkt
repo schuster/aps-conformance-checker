@@ -11,7 +11,9 @@
          aps-eval
          subst-n/aps
          subst/aps
-         type-subst)
+         type-subst
+         csa-valid-config?
+         aps-valid-instance?)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -32,6 +34,7 @@
      (let ([x e] ...) e)
      (match e [p e] ...)
      (tuple e ...)
+     (primop e ...)
      t
      x
      n)
@@ -41,6 +44,7 @@
      x
      t
      (tuple p ...))
+  (primop <)
   ((x s) variable-not-otherwise-mentioned)
   (t (quote variable-not-otherwise-mentioned))
   (n natural)
@@ -75,7 +79,8 @@
      (begin E e ...)
      (let ([x E] [x e] ...) e)
      (match E [p e] ...)
-     (tuple v ... E e ...)))
+     (tuple v ... E e ...)
+     (primop v ... E e ...)))
 
 (define (make-single-agent-config agent)
   (term (make-single-agent-config/mf ,agent)))
@@ -316,3 +321,12 @@
    (Union (type-subst τ X τ_2) ...)]
   [(type-subst (Addr τ) X τ_2)
    (Addr (type-subst τ X τ_2))])
+
+;; ---------------------------------------------------------------------------------------------------
+;; Predicates
+
+(define (csa-valid-config? c)
+  (if (redex-match csa-eval K c) #t #f))
+
+(define (aps-valid-instance? i)
+  (if (redex-match aps-eval z i) #t #f))

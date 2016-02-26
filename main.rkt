@@ -44,6 +44,12 @@ Remaining big challenges I see in the analysis:
 ;; NOTE: this currently handles only programs consisting of a single actor that does not spawn other
 ;; actors. Also assumes that the spec starts in a state in which it has no state parameters.
 (define (analyze initial-prog-config initial-spec-instance state-matches)
+  (unless (csa-valid-config? initial-prog-config)
+    (error 'analyze "Invalid initial program configuration ~s" initial-prog-config))
+  (unless (aps-valid-instance? initial-spec-instance)
+    (error 'analyze "Invalid initial specification instance ~s" initial-spec-instance))
+  ;; TODO: do a check for the state mapping
+
   (let/cc return-early
     ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
     ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
@@ -189,11 +195,11 @@ Remaining big challenges I see in the analysis:
     (term
      (((define-state (Always) [* -> (goto Always)]))
       (goto Always)
-      SINGLE-ACTOR-ADDR)))
+      ,single-agent-concrete-addr)))
 
-  (check-not-false (redex-match csa# αn ignore-all-agent))
-  (check-not-false (redex-match csa# K ignore-all-config))
-  (check-not-false (redex-match aps# z ignore-all-spec-instance))
+  (check-not-false (redex-match csa-eval αn ignore-all-agent))
+  (check-not-false (redex-match csa-eval K ignore-all-config))
+  (check-not-false (redex-match aps-eval z ignore-all-spec-instance))
 
   ;; TODO: supply concrete specs and programs to the checker, not abstract ones
   (check-true (analyze ignore-all-config ignore-all-spec-instance (hash 'Always 'Always)))
@@ -312,7 +318,7 @@ Remaining big challenges I see in the analysis:
      (((define-state (Always)
          [response-target -> (with-outputs ([response-target *]) (goto Always))]))
       (goto Always)
-      SINGLE-ACTOR-ADDR)))
+      ,single-agent-concrete-addr)))
 
   (define request-same-response-addr-spec
     (term
@@ -321,7 +327,7 @@ Remaining big challenges I see in the analysis:
        (define-state (HaveAddr response-target)
          [new-response-target -> (with-outputs ([response-target *]) (goto HaveAddr response-target))]))
       (goto Init)
-      SINGLE-ACTOR-ADDR)))
+      ,single-agent-concrete-addr)))
   (define request-response-agent
     (term
      (,single-agent-concrete-addr
@@ -376,12 +382,12 @@ Remaining big challenges I see in the analysis:
             (goto Always i))))
        (goto Always 0))))
 
-  (check-not-false (redex-match aps# z request-response-spec))
-  (check-not-false (redex-match aps# z request-same-response-addr-spec))
-  (check-not-false (redex-match csa# αn request-response-agent))
-  (check-not-false (redex-match csa# αn respond-to-first-addr-agent))
-  (check-not-false (redex-match csa# αn double-response-agent))
-  (check-not-false (redex-match csa# αn delay-saving-address-agent))
+  (check-not-false (redex-match aps-eval z request-response-spec))
+  (check-not-false (redex-match aps-eval z request-same-response-addr-spec))
+  (check-not-false (redex-match csa-eval αn request-response-agent))
+  (check-not-false (redex-match csa-eval αn respond-to-first-addr-agent))
+  (check-not-false (redex-match csa-eval αn double-response-agent))
+  (check-not-false (redex-match csa-eval αn delay-saving-address-agent))
 
   (check-true (analyze (make-single-agent-config request-response-agent)
                        request-response-spec
@@ -403,6 +409,41 @@ Remaining big challenges I see in the analysis:
   (check-false (analyze (make-single-agent-config delay-saving-address-agent)
                         request-response-spec
                         (hash 'Init 'Always 'HaveAddr 'Always)))
+
+  ;;;; Non-deterministic branching in spec
+
+  (define zero-nonzero-spec
+    (term
+     (((define-state (S1 r)
+         [* -> (with-outputs ([r 'Zero])    (goto S1 r))]
+         [* -> (with-outputs ([r 'NonZero]) (goto S1 r))]))
+      (goto S1 ,static-response-address)
+      ,single-agent-concrete-addr)))
+  (define zero-spec
+    (term
+     (((define-state (S1 r)
+         [* -> (with-outputs ([r 'Zero])    (goto S1 r))]))
+      (goto S1 ,static-response-address)
+      ,single-agent-concrete-addr)))
+  (define primitive-branch-agent
+    (term
+     (,single-agent-concrete-addr
+      (Nat
+       ((define-state (S1 dest) (i)
+          (begin
+            (match (< 0 i)
+              ['True (send dest 'NonZero)]
+              ['False (send dest 'Zero)])
+            (goto S1 dest))))
+       (goto S1 ,static-response-address)))))
+
+  (check-not-false (redex-match aps-eval z static-response-spec))
+  (check-not-false (redex-match aps-eval z zero-nonzero-spec))
+  (check-not-false (redex-match aps-eval z zero-spec))
+  (check-not-false (redex-match csa-eval αn primitive-branch-agent))
+
+  (check-true (analyze (make-single-agent-config primitive-branch-agent) zero-nonzero-spec (hash 'S1 'S1)))
+  (check-false (analyze (make-single-agent-config primitive-branch-agent) zero-spec (hash 'S1 'S1)))
 
   ;; TODO: write a test where the unobs input messages for pattern matching matter
 

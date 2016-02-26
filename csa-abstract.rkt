@@ -52,6 +52,7 @@
       (let ([x e#] ...) e#)
       (match e# [p e#] ...)
       (tuple e# ...)
+      (primop e# ...)
       t
       a#
       x
@@ -294,10 +295,13 @@
                     (config-actor-by-address prog-config actor-address)])
              ;; TODO: deal with the case where x_m shadows an x_s
              ;; (printf "Expression to be run: ~s\n" (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...)))
-             (define results
-               (apply-reduction-relation*
-                handler-step#
-                (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...)))))
+             (define initial-config (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...))))
+             (define results (apply-reduction-relation* handler-step# initial-config))
+             (unless (redex-match csa# (((in-hole E# (goto s v#_param ...)) ([a#ext v#_out] ...)) ...) results)
+               (error 'csa#-eval-transition
+                      "Abstract evaluation did not complete\nInitial config: ~s\nFinal configs:~s"
+                      initial-config
+                      results))
              (for/list ([result results])
                ;; Debugging
                ;; (redex-let csa# ([(e#_final ([a#ext v#_out] ...)) result])
@@ -307,6 +311,8 @@
                ;;    ])
                ;;            (printf "Final context: ~s, Final exp: ~s\n" (term E#) (term e#_end)))
 
+               ;; TODO: do a version of redex-let with a failure case so I don't have to duplicate
+               ;; like above
                (redex-let csa# ([((in-hole E# (goto s v#_param ...)) ([a#ext v#_out] ...)) result])
                           ;; TODO: deal with unobserved messages
                           (csa#-transition message #t (term ([a#ext v#_out] ...)) (term (in-hole E# (goto s v#_param ...))))))))
@@ -344,6 +350,13 @@
            [p_rest e#_rest] ...)
          (side-condition (not (judgment-holds (csa#-match/j v# p ([x v#_subst] ...)))))
          MatchFailure)
+
+    (==> (< (* Nat) (* Nat))
+         'True
+         LessThan1)
+    (==> (< (* Nat) (* Nat))
+         'False
+         LessThan2)
 
     (--> ((in-hole E# (send a# v#)) (any_outputs ...))
          ((in-hole E# v#)           (any_outputs ... [a# v#]))
@@ -448,6 +461,7 @@
   [(csa#-subst (match e# [p e#_pat] ...) x v#)
    (match (csa#-subst e# x v#) (csa#-subst/match-clause [p e#_pat] x v#) ...)]
   [(csa#-subst (tuple e# ...) x v#) (tuple (csa#-subst e# x v#) ...)]
+  [(csa#-subst (primop e# ...) x v#) (primop (csa#-subst e# x v#) ...)]
   ;; [(csa#-subst (rcv (x) e) x v) (rcv (x) e)]
   ;; [(csa#-subst (rcv (x_h) e) x v) (rcv (x_h) (csa#-subst e x v))]
   ;; [(csa#-subst (rcv (x) e [(timeout n) e_timeout]) x v) (rcv (x) e [(timeout n) e_timeout])]
@@ -536,6 +550,7 @@
    (send (α-e e_1 natural_depth) (α-e e_2 natural_depth))]
   [(α-e (match e_val [p e_clause] ...) natural_depth)
    (match (α-e e_val natural_depth) [p (α-e e_clause natural_depth)] ...)]
+  [(α-e (primop e ...) natural_depth) (primop (α-e e natural_depth) ...)]
   ;; TODO: do something much better here - figure out how to limit the depth
   ;; [(α-e (tuple e ...) 0)
   ;;  ;; TODO: give the actual type here
