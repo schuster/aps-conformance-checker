@@ -358,6 +358,10 @@
          'False
          LessThan2)
 
+    (==> (/ (* Nat) (* Nat))
+         (* Nat)
+         Div)
+
     (--> ((in-hole E# (send a# v#)) (any_outputs ...))
          ((in-hole E# v#)           (any_outputs ... [a# v#]))
          Send)

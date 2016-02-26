@@ -44,7 +44,7 @@
      x
      t
      (tuple p ...))
-  (primop <)
+  (primop < /)
   ((x s) variable-not-otherwise-mentioned)
   (t (quote variable-not-otherwise-mentioned))
   (n natural)

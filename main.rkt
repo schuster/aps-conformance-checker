@@ -445,11 +445,39 @@ Remaining big challenges I see in the analysis:
   (check-true (analyze (make-single-agent-config primitive-branch-agent) zero-nonzero-spec (hash 'S1 'S1)))
   (check-false (analyze (make-single-agent-config primitive-branch-agent) zero-spec (hash 'S1 'S1)))
 
-  ;; TODO: write a test where the unobs input messages for pattern matching matter
+  ;;;; Stuck states in concrete evaluation
 
-  ;; TODO: test 2: program outputs on static observable channel, spec does not
-  ;; TODO: test 3: spec outputs, program does not
-  ;; TODO: test 4: program and spec output
-  ;; TODO: test 5: spec requires an output to provided channel
-  ;; TODO: test 6: stuck state in program (e.g. something that doesn't type-check)
+  (define nat-to-nat-spec
+    (term
+     (((define-state (Always response-dest)
+         [* -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
+      (goto Always ,static-response-address)
+      ,single-agent-concrete-addr)))
+  (define div-by-one-agent
+    (term
+     (,single-agent-concrete-addr
+      (Nat
+       ((define-state (Always response-dest) (n)
+          (begin
+            (send response-dest (/ n 1))
+            (goto Always response-dest))))
+       (goto Always ,static-response-address)))))
+  (define div-by-zero-agent
+    (term
+     (,single-agent-concrete-addr
+      (Nat
+       ((define-state (Always response-dest) (n)
+          (begin
+            (send response-dest (/ n 0))
+            (goto Always response-dest))))
+       (goto Always ,static-response-address)))))
+
+  (check-not-false (redex-match aps-eval z nat-to-nat-spec))
+  (check-not-false (redex-match csa-eval αn div-by-zero-agent))
+  (check-not-false (redex-match csa-eval αn div-by-one-agent))
+
+  (check-true (analyze (make-single-agent-config div-by-one-agent) nat-to-nat-spec (hash 'Always 'Always)))
+  (check-true (analyze (make-single-agent-config div-by-zero-agent) nat-to-nat-spec (hash 'Always 'Always)))
+
+  ;; TODO: write a test where the unobs input messages for pattern matching matter
   )
