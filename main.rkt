@@ -349,25 +349,39 @@ Remaining big challenges I see in the analysis:
             ;; (goto HaveAddr (+ i 1) response-target)
             (goto HaveAddr i response-target))))
        (goto Init)))))
-  ;; (define static-double-response-agent
-  ;;   `((addr 1)
-  ;;     (((define-state (Always response-dest) (m)
-  ;;         (begin
-  ;;           (send response-dest 'ack)
-  ;;           (send response-dest 'ack)
-  ;;           (goto Always response-dest))))
-  ;;      (rcv (m)
-  ;;        (begin
-  ;;          (send (addr 2) 'ack)
-  ;;          (send (addr 2) 'ack)
-  ;;          (goto Always (addr 2)))))))
+  (define delay-saving-address-agent
+    (term
+     (,single-agent-concrete-addr
+      ((Addr Nat)
+       ((define-state (Init) (response-target)
+          (begin
+            (send response-target 0)
+            (goto HaveAddr 1 response-target)))
+        (define-state (HaveAddr i response-target) (new-response-target)
+          (begin
+            (send response-target i)
+            ;; TODO: implement addition and make this a counter
+            ;; (goto HaveAddr (+ i 1) response-target)
+            (goto HaveAddr i new-response-target))))
+       (goto Init)))))
+  (define double-response-agent
+    `(,single-agent-concrete-addr
+      ((Addr Nat)
+       ((define-state (Always i) (response-dest)
+          (begin
+            (send response-dest i)
+            (send response-dest i)
+            ;; TODO: implement addition and make this a counter
+            ;; (goto Always (+ i 1))
+            (goto Always i))))
+       (goto Always 0))))
 
-  ;; (check-not-false (redex-match csa# (a# (τ (S# ...) e#)) ignore-all-agent))
-  ;; (check-not-false (redex-match csa# K# ignore-all-config))
   (check-not-false (redex-match aps# z request-response-spec))
   (check-not-false (redex-match aps# z request-same-response-addr-spec))
   (check-not-false (redex-match csa# αn request-response-agent))
   (check-not-false (redex-match csa# αn respond-to-first-addr-agent))
+  (check-not-false (redex-match csa# αn double-response-agent))
+  (check-not-false (redex-match csa# αn delay-saving-address-agent))
 
   (check-true (analyze (make-single-agent-config request-response-agent)
                        request-response-spec
@@ -382,6 +396,13 @@ Remaining big challenges I see in the analysis:
   (check-true (analyze (make-single-agent-config respond-to-first-addr-agent)
                        request-same-response-addr-spec
                        (hash 'Init 'Init 'HaveAddr 'HaveAddr)))
+
+  (check-false (analyze (make-single-agent-config double-response-agent)
+                        request-response-spec
+                        (hash 'Always 'Always)))
+  (check-false (analyze (make-single-agent-config delay-saving-address-agent)
+                        request-response-spec
+                        (hash 'Init 'Always 'HaveAddr 'Always)))
 
   ;; TODO: write a test where the unobs input messages for pattern matching matter
 
