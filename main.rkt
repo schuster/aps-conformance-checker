@@ -16,8 +16,7 @@ Remaining big challenges I see in the analysis:
  "queue-helpers.rkt"
  "aps-abstract.rkt"
  "csa.rkt"
- "csa-abstract.rkt"
- "csa-helpers.rkt")
+ "csa-abstract.rkt")
 
 ;; TODO: test 1: the actor that just loops on itself conforms to the spec that does the same thing
 ;; (all observable actions)
@@ -71,7 +70,7 @@ Remaining big challenges I see in the analysis:
             ;; TODO: rename this function. A better name will help me with the general terminology with
             ;; which I describe my technique
             (match-define (cons prog spec) next-pair)
-            (define the-actor (config-only-actor prog))
+            (define the-actor (csa#-config-only-actor prog))
             ;; TODO: rename this idea of transition: there's some other "thing" that this is, like a
             ;; transmission result. Define this data definition in the code somewhere, because it should
             ;; really be a type (it's a new kind of data in my domain that needs to be defined and
@@ -79,8 +78,8 @@ Remaining big challenges I see in the analysis:
             (define possible-transitions
               ;; TODO: get the max depth from somewhere
               (for/fold ([eval-results null])
-                        ([message (generate-abstract-messages obs-sendable-type (actor-current-state the-actor) 0)])
-                (append eval-results (csa#-eval-transition prog (actor-address the-actor) message))))
+                        ([message (generate-abstract-messages obs-sendable-type (csa#-actor-current-state the-actor) 0)])
+                (append eval-results (csa#-eval-transition prog (csa#-actor-address the-actor) message))))
             (for ([possible-transition possible-transitions])
               (match (find-matching-spec-transition possible-transition spec state-matches)
                 [(list)

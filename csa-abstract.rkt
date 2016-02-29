@@ -13,7 +13,10 @@
  csa#-output-message
  csa#-transition-next-state
  α-config
- step-prog-final-behavior)
+ step-prog-final-behavior
+ csa#-actor-address
+ csa#-actor-current-state
+ csa#-config-only-actor)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -565,3 +568,23 @@
    (tuple (α-e e ,(max 0 (- (term natural_depth) 1))) ...)])
 
 ;; TODO: write tests for the tuple test, because the crappy version I have here isn't good enough
+
+;; ---------------------------------------------------------------------------------------------------
+;; Selectors
+
+(define (csa#-actor-address the-actor)
+  (redex-let csa# ([(a# _) the-actor])
+             (term a#)))
+
+(define (csa#-actor-current-state the-actor)
+  (redex-let csa# ([(_ (_ (in-hole E# (goto s _ ...)))) the-actor])
+             (term s)))
+
+(define (csa#-config-only-actor prog-config)
+  (term (config-only-actor/mf ,prog-config)))
+
+(define-metafunction csa#
+  config-only-actor/mf : K# -> α#n
+  [(config-only-actor/mf (α# _ _ _))
+   α#n
+   (where (α#n) α#)])
