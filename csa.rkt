@@ -61,9 +61,10 @@
   csa
   (K (α μ ρ χ))
   (α (αn ...))
-  (αn (a (τ (S ...) e)))
+  (αn (a ((S ...) e)))
   (μ (m ...))
   (m (a <= v))
+  ;; TODO: include types in the receptionists and externals
   ((ρ χ) (a ...))
   (e ....
      a

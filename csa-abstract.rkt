@@ -28,7 +28,7 @@
   (K# (α# μ# ρ# χ#)) ; TODO: update this
   ;; NOTE: for now, assuming only the one special actor
   (α# (α#n)) ; NOTE: for now, does not handle configs with more than one actor
-  (α#n (a#int (τ (S# ...) e#)))
+  (α#n (a#int ((S# ...) e#)))
   (μ# ()) ; NOTE: for now, assuming no internal sends
   (S# (define-state (s x ...) (x) e#)
       ;; TODO: not dealing with timeouts yet...
@@ -66,6 +66,8 @@
    (init-addr natural)
    (received-addr s v#template natural time-flag))
   (time-flag MOST-RECENT PREVIOUS)
+  ;; TODO: include types in the receptionists and externals (maybe? Might not need them if they're
+  ;; tracked elsewhere)
   (ρ# (SINGLE-ACTOR-ADDR))
   (χ# (a#ext ...))
   ;; H# = handler config (exp + outputs so far)
@@ -291,7 +293,7 @@
     (term s)))
 
 (define (csa#-eval-transition prog-config actor-address message)
-  (redex-let csa# ([(_ (τ (_ ... (define-state (s x_s ..._n) (x_m) e#) _ ...) (in-hole E# (goto s v# ..._n))))
+  (redex-let csa# ([(_ ((_ ... (define-state (s x_s ..._n) (x_m) e#) _ ...) (in-hole E# (goto s v# ..._n))))
                     (config-actor-by-address prog-config actor-address)])
              ;; TODO: deal with the case where x_m shadows an x_s
              ;; (printf "Expression to be run: ~s\n" (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...)))
@@ -377,8 +379,7 @@
 (module+ test
   (define (csa#-make-simple-test-config exp)
     (redex-let* csa# ([α#n (term [SINGLE-ACTOR-ADDR
-                                  (Nat
-                                   ((define-state (Always) (long-unused-name) (begin ,exp (goto Always))))
+                                  (((define-state (Always) (long-unused-name) (begin ,exp (goto Always))))
                                    (begin ,exp (goto Always)))])]
                       [α# (term (α#n))]
                       [μ# (term ())]
@@ -417,14 +418,14 @@
 
 ;; TODO: make this function less susceptible to breaking because of changes in the config's structure
 (define (step-prog-final-behavior prog-config beahvior-exp)
-  (redex-let csa# ([(((SINGLE-ACTOR-ADDR (τ (S# ...) _)))
+  (redex-let csa# ([(((SINGLE-ACTOR-ADDR ((S# ...) _)))
                      ()
                      (SINGLE-ACTOR-ADDR)
                      ;; TODO: update χ# or just get rid of it
                      ())
                     prog-config])
              (term
-              (((SINGLE-ACTOR-ADDR (τ (S# ...) ,beahvior-exp)))
+              (((SINGLE-ACTOR-ADDR ((S# ...) ,beahvior-exp)))
                ()
                (SINGLE-ACTOR-ADDR)
                ;; TODO: update χ# or just get rid of it
@@ -531,8 +532,8 @@
 ;; NOTE: currently assumes address 0
 (define-metafunction csa#
   α-actor : αn natural_depth -> α#n
-  [(α-actor ((addr 0) (τ (S ...) e)) natural_depth)
-   (SINGLE-ACTOR-ADDR (τ ((α-S S natural_depth) ...) (α-e e natural_depth)))])
+  [(α-actor ((addr 0) ((S ...) e)) natural_depth)
+   (SINGLE-ACTOR-ADDR (((α-S S natural_depth) ...) (α-e e natural_depth)))])
 
 ;; NOTE: does not support timeouts yet
 (define-metafunction csa#

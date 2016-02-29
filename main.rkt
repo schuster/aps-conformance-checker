@@ -43,7 +43,11 @@ Remaining big challenges I see in the analysis:
 ;;
 ;; NOTE: this currently handles only programs consisting of a single actor that does not spawn other
 ;; actors. Also assumes that the spec starts in a state in which it has no state parameters.
-(define (analyze initial-prog-config initial-spec-instance state-matches)
+(define (analyze initial-prog-config
+                 initial-spec-instance
+                 obs-sendable-type
+                 unobs-sendable-type
+                 state-matches)
   (unless (csa-valid-config? initial-prog-config)
     (error 'analyze "Invalid initial program configuration ~s" initial-prog-config))
   (unless (aps-valid-instance? initial-spec-instance)
@@ -73,10 +77,9 @@ Remaining big challenges I see in the analysis:
             ;; really be a type (it's a new kind of data in my domain that needs to be defined and
             ;; named)
             (define possible-transitions
-              ;; TODO: figure out where to abstract the addresses
               ;; TODO: get the max depth from somewhere
               (for/fold ([eval-results null])
-                        ([message (generate-abstract-messages (actor-message-type the-actor) (actor-current-state the-actor) 0)])
+                        ([message (generate-abstract-messages obs-sendable-type (actor-current-state the-actor) 0)])
                 (append eval-results (csa#-eval-transition prog (actor-address the-actor) message))))
             (for ([possible-transition possible-transitions])
               (match (find-matching-spec-transition possible-transition spec state-matches)
@@ -187,8 +190,7 @@ Remaining big challenges I see in the analysis:
   (define ignore-all-agent
     (term
      (,single-agent-concrete-addr
-      (Nat
-       ((define-state (Always) (m) (goto Always)))
+      (((define-state (Always) (m) (goto Always)))
        (goto Always)))))
   (define ignore-all-config (make-single-agent-config ignore-all-agent))
   (define ignore-all-spec-instance
@@ -202,7 +204,7 @@ Remaining big challenges I see in the analysis:
   (check-not-false (redex-match aps-eval z ignore-all-spec-instance))
 
   ;; TODO: supply concrete specs and programs to the checker, not abstract ones
-  (check-true (analyze ignore-all-config ignore-all-spec-instance (hash 'Always 'Always)))
+  (check-true (analyze ignore-all-config ignore-all-spec-instance (term Nat) (term (Union)) (hash 'Always 'Always)))
 
   ;;;; Send one message to a statically-known address per request
 
@@ -211,8 +213,7 @@ Remaining big challenges I see in the analysis:
   (define static-response-agent
     (term
      (,single-agent-concrete-addr
-      ((Addr 'ack)
-       ((define-state (Always response-dest) (m)
+      (((define-state (Always response-dest) (m)
           (begin
             (send response-dest 'ack)
             (goto Always response-dest))))
@@ -220,8 +221,7 @@ Remaining big challenges I see in the analysis:
   (define static-double-response-agent
     (term
      (,single-agent-concrete-addr
-      ((Addr 'ack)
-       ((define-state (Always response-dest) (m)
+      (((define-state (Always response-dest) (m)
           (begin
             (send response-dest 'ack)
             (send response-dest 'ack)
@@ -240,15 +240,19 @@ Remaining big challenges I see in the analysis:
 
   (check-true (analyze (make-single-agent-config static-response-agent)
                        static-response-spec
+                       (term (Addr 'ack)) (term (Union))
                        (hash 'Always 'Always)))
   (check-false (analyze (make-single-agent-config static-response-agent)
                         ignore-all-spec-instance
+                        (term (Addr 'ack)) (term (Union))
                         (hash 'Always 'Always)))
   (check-false (analyze (make-single-agent-config static-double-response-agent)
                         static-response-spec
+                        (term (Addr 'ack)) (term (Union))
                         (hash 'Always 'Always)))
   (check-false (analyze ignore-all-config
                         static-response-spec
+                        (term Nat) (term (Union))
                         (hash 'Always 'Always)))
 
   ;;;; Pattern matching tests, without dynamic channels
@@ -264,8 +268,7 @@ Remaining big challenges I see in the analysis:
   (define pattern-matching-agent
     (term
      (,single-agent-concrete-addr
-      ((Union 'a (Tuple 'b Nat))
-       ((define-state (Always r) (m)
+      (((define-state (Always r) (m)
           (match m
             ['a (begin (send r 'a) (goto Always r))]
             [(tuple 'b *) (begin (send r (tuple 'b 0)) (goto Always r))]
@@ -275,8 +278,7 @@ Remaining big challenges I see in the analysis:
   (define reverse-pattern-matching-agent
     (term
      (,single-agent-concrete-addr
-      ((Union 'a (Tuple 'b Nat))
-       ((define-state (Always r) (m)
+      (((define-state (Always r) (m)
           (match m
             ['a (begin (send r (tuple 'b 0)) (goto Always r))]
             [(tuple 'b *) (begin (send r 'a) (goto Always r))]
@@ -286,8 +288,7 @@ Remaining big challenges I see in the analysis:
   (define partial-pattern-matching-agent
     (term
      (,single-agent-concrete-addr
-      ((Union 'a (Tuple 'b Nat))
-       ((define-state (Always r) (m)
+      (((define-state (Always r) (m)
           (match m
             ['a (begin (send r 'a) (goto Always r))]
             [(tuple 'b *) (goto Always r)]
@@ -303,12 +304,15 @@ Remaining big challenges I see in the analysis:
 
   (check-true (analyze (make-single-agent-config pattern-matching-agent)
                        pattern-match-spec
+                       (term (Union 'a (Tuple 'b Nat))) (term (Union))
                        pattern-matching-map))
   (check-false (analyze (make-single-agent-config partial-pattern-matching-agent)
                         pattern-match-spec
+                        (term (Union 'a (Tuple 'b Nat))) (term (Union))
                         pattern-matching-map))
   (check-false (analyze (make-single-agent-config reverse-pattern-matching-agent)
                         pattern-match-spec
+                        (term (Union 'a (Tuple 'b Nat))) (term (Union))
                         pattern-matching-map))
 
   ;;;; Dynamic request/response
@@ -331,8 +335,7 @@ Remaining big challenges I see in the analysis:
   (define request-response-agent
     (term
      (,single-agent-concrete-addr
-      ((Addr Nat)
-       ((define-state (Always i) (response-target)
+      (((define-state (Always i) (response-target)
           (begin
             (send response-target i)
             ;; TODO: implement addition and make this a counter
@@ -342,8 +345,7 @@ Remaining big challenges I see in the analysis:
   (define respond-to-first-addr-agent
     (term
      (,single-agent-concrete-addr
-      ((Addr Nat)
-       ((define-state (Init) (response-target)
+      (((define-state (Init) (response-target)
           (begin
             (send response-target 0)
             (goto HaveAddr 1 response-target)))
@@ -358,8 +360,7 @@ Remaining big challenges I see in the analysis:
   (define delay-saving-address-agent
     (term
      (,single-agent-concrete-addr
-      ((Addr Nat)
-       ((define-state (Init) (response-target)
+      (((define-state (Init) (response-target)
           (begin
             (send response-target 0)
             (goto HaveAddr 1 response-target)))
@@ -372,8 +373,7 @@ Remaining big challenges I see in the analysis:
        (goto Init)))))
   (define double-response-agent
     `(,single-agent-concrete-addr
-      ((Addr Nat)
-       ((define-state (Always i) (response-dest)
+      (((define-state (Always i) (response-dest)
           (begin
             (send response-dest i)
             (send response-dest i)
@@ -391,23 +391,29 @@ Remaining big challenges I see in the analysis:
 
   (check-true (analyze (make-single-agent-config request-response-agent)
                        request-response-spec
+                       (term (Addr Nat)) (term (Union))
                        (hash 'Always 'Always)))
   (check-false (analyze (make-single-agent-config respond-to-first-addr-agent)
                         request-response-spec
+                        (term (Addr Nat)) (term (Union))
                         (hash 'Init 'Always 'HaveAddr 'Always)))
 
   (check-false (analyze (make-single-agent-config request-response-agent)
                         request-same-response-addr-spec
+                        (term (Addr Nat)) (term (Union))
                         (hash 'Always 'Init)))
   (check-true (analyze (make-single-agent-config respond-to-first-addr-agent)
                        request-same-response-addr-spec
+                       (term (Addr Nat)) (term (Union))
                        (hash 'Init 'Init 'HaveAddr 'HaveAddr)))
 
   (check-false (analyze (make-single-agent-config double-response-agent)
                         request-response-spec
+                        (term (Addr Nat)) (term (Union))
                         (hash 'Always 'Always)))
   (check-false (analyze (make-single-agent-config delay-saving-address-agent)
                         request-response-spec
+                        (term (Addr Nat)) (term (Union))
                         (hash 'Init 'Always 'HaveAddr 'Always)))
 
   ;;;; Non-deterministic branching in spec
@@ -428,8 +434,7 @@ Remaining big challenges I see in the analysis:
   (define primitive-branch-agent
     (term
      (,single-agent-concrete-addr
-      (Nat
-       ((define-state (S1 dest) (i)
+      (((define-state (S1 dest) (i)
           (begin
             (match (< 0 i)
               ['True (send dest 'NonZero)]
@@ -442,8 +447,8 @@ Remaining big challenges I see in the analysis:
   (check-not-false (redex-match aps-eval z zero-spec))
   (check-not-false (redex-match csa-eval αn primitive-branch-agent))
 
-  (check-true (analyze (make-single-agent-config primitive-branch-agent) zero-nonzero-spec (hash 'S1 'S1)))
-  (check-false (analyze (make-single-agent-config primitive-branch-agent) zero-spec (hash 'S1 'S1)))
+  (check-true (analyze (make-single-agent-config primitive-branch-agent) zero-nonzero-spec (term Nat) (term (Union)) (hash 'S1 'S1)))
+  (check-false (analyze (make-single-agent-config primitive-branch-agent) zero-spec (term Nat) (term (Union)) (hash 'S1 'S1)))
 
   ;;;; Stuck states in concrete evaluation
 
@@ -456,8 +461,7 @@ Remaining big challenges I see in the analysis:
   (define div-by-one-agent
     (term
      (,single-agent-concrete-addr
-      (Nat
-       ((define-state (Always response-dest) (n)
+      (((define-state (Always response-dest) (n)
           (begin
             (send response-dest (/ n 1))
             (goto Always response-dest))))
@@ -465,8 +469,7 @@ Remaining big challenges I see in the analysis:
   (define div-by-zero-agent
     (term
      (,single-agent-concrete-addr
-      (Nat
-       ((define-state (Always response-dest) (n)
+      (((define-state (Always response-dest) (n)
           (begin
             (send response-dest (/ n 0))
             (goto Always response-dest))))
@@ -476,12 +479,22 @@ Remaining big challenges I see in the analysis:
   (check-not-false (redex-match csa-eval αn div-by-zero-agent))
   (check-not-false (redex-match csa-eval αn div-by-one-agent))
 
-  (check-true (analyze (make-single-agent-config div-by-one-agent) nat-to-nat-spec (hash 'Always 'Always)))
-  (check-true (analyze (make-single-agent-config div-by-zero-agent) nat-to-nat-spec (hash 'Always 'Always)))
+  (check-true (analyze (make-single-agent-config div-by-one-agent) nat-to-nat-spec (term Nat) (term Union) (hash 'Always 'Always)))
+  (check-true (analyze (make-single-agent-config div-by-zero-agent) nat-to-nat-spec (term Nat) (term Union) (hash 'Always 'Always)))
 
-  ;; TODO: unobs tests to write:
-  ;; 1. other participants can send same message as obs (causes or does not cause effect...)
-  ;; 2. unobs causes a particular behavior (like connected/error in TCP)
+  ;;;; Unobservable communication
+
+  ;; 1. In dynamic req/resp, allowing unobserved perspective to send same messages does not affect conformance
+  ;; 2. Allowing same messages from unobs perspective violates conformance for static req/resp.
+  ;; (check-false (analyze (make-single-agent-config static-response-agent)
+  ;;                       static-response-spec
+  ;;                       (Addr 'ack)
+  ;;                       (Addr 'ack)
+  ;;                       (hash 'Always 'Always)))
+  ;; 3. Conformance regained for static req/resp. when add an unobs transition
+
+
+  ;; 4. unobs causes a particular behavior (like connected/error in TCP)
 
 
   ;; TODO: write a test where the unobs input messages for pattern matching matter
