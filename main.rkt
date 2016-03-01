@@ -11,6 +11,11 @@ Remaining big challenges I see in the analysis:
 
 #lang racket
 
+
+;; TODO: probably shouldn't call this file "main" if it's exporting something to something else in the
+;; "package"
+(provide analyze)
+
 (require
  data/queue
  "queue-helpers.rkt"
