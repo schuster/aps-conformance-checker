@@ -667,7 +667,4 @@ Remaining big challenges I see in the analysis:
                           unobs-toggle-spec
                           (term (Union 'FromObserver))
                           (term (Union 'FromUnobservedEnvironment))
-                          (hash 'On 'On 'Off 'Off))))
-
-  ;; TODO: write a test where the unobs input messages for pattern matching matter
-)
+                          (hash 'On 'On 'Off 'Off)))))
