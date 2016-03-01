@@ -19,6 +19,7 @@ Remaining big challenges I see in the analysis:
 (require
  data/queue
  "queue-helpers.rkt"
+ "aps.rkt"
  "aps-abstract.rkt"
  "csa.rkt"
  "csa-abstract.rkt")

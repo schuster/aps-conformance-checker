@@ -23,13 +23,17 @@
 
 (require
  redex/reduction-semantics
+ "aps.rkt"
  "csa-abstract.rkt")
 
 (module+ test
   (require rackunit))
 
+(define-union-language aps-eval-with-csa#
+  aps-eval csa#)
+
 (define-extended-language aps#
-  csa#
+  aps-eval-with-csa#
   (z ((S-hat ...) e-hat σ))
   (σ a# null)
   (u .... a#)

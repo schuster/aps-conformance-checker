@@ -28,7 +28,7 @@
 ;; Abstract interpretation version of CSA
 ;; NOTE: this handles only single-actor configurations right now
 ;; TODO: make the language inheritance hierarchy correct
-(define-extended-language csa# aps
+(define-extended-language csa# csa-eval
   (K# (α# μ# ρ# χ#)) ; TODO: update this
   ;; NOTE: for now, assuming only the one special actor
   (α# (α#n)) ; NOTE: for now, does not handle configs with more than one actor
