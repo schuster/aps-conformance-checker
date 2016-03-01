@@ -18,8 +18,7 @@ Remaining big challenges I see in the analysis:
  "csa.rkt"
  "csa-abstract.rkt")
 
-;; TODO: test 1: the actor that just loops on itself conforms to the spec that does the same thing
-;; (all observable actions)
+;; TODO: rename "agents" to just actors, or otherwise decide what these things should be called
 
 (struct spec-config (instances commitments))
 
@@ -44,8 +43,8 @@ Remaining big challenges I see in the analysis:
 ;; actors. Also assumes that the spec starts in a state in which it has no state parameters.
 (define (analyze initial-prog-config
                  initial-spec-instance
-                 obs-sendable-type
-                 unobs-sendable-type
+                 init-obs-type
+                 init-unobs-type
                  state-matches)
   (unless (csa-valid-config? initial-prog-config)
     (error 'analyze "Invalid initial program configuration ~s" initial-prog-config))
@@ -57,44 +56,65 @@ Remaining big challenges I see in the analysis:
     ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
     ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
     ;; message generation
-    (let loop ([to-visit (queue (cons (α-config initial-prog-config 0) (aps#-α-z initial-spec-instance)))]
+    (define initial-tuple
+      (list (α-config initial-prog-config 0)
+            (aps#-α-z initial-spec-instance)
+            init-obs-type
+            init-unobs-type))
+    (let loop ([to-visit (queue initial-tuple)]
                [visited (set)])
       (cond
         [(queue-empty? to-visit) #t]
         [else
-         (define next-pair (dequeue! to-visit))
+         (define current-tuple (dequeue! to-visit))
          (cond
-           [(set-member? visited next-pair)
+           [(set-member? visited current-tuple)
             (loop to-visit visited)]
            [else
-            ;; TODO: rename this function. A better name will help me with the general terminology with
-            ;; which I describe my technique
-            (match-define (cons prog spec) next-pair)
-            (define the-actor (csa#-config-only-actor prog))
+            ;; TODO: rename this function. A better name will help me with the general terminology
+            ;; with which I describe my technique
+            (match-define (list prog spec obs-type unobs-type) current-tuple)
             ;; TODO: rename this idea of transition: there's some other "thing" that this is, like a
-            ;; transmission result. Define this data definition in the code somewhere, because it should
-            ;; really be a type (it's a new kind of data in my domain that needs to be defined and
-            ;; named)
+            ;; transmission result. Define this data definition in the code somewhere, because it
+            ;; should really be a type (it's a new kind of data in my domain that needs to be defined
+            ;; and named)
             (define possible-transitions
-              ;; TODO: get the max depth from somewhere
-              (for/fold ([eval-results null])
-                        ([message (generate-abstract-messages obs-sendable-type (csa#-actor-current-state the-actor) 0)])
-                (append eval-results (csa#-eval-transition prog (csa#-actor-address the-actor) message))))
+              (append (transitions-from-message-of-type prog obs-type #t)
+                      (transitions-from-message-of-type prog unobs-type #f)))
             (for ([possible-transition possible-transitions])
               (match (find-matching-spec-transition possible-transition spec state-matches)
                 [(list)
-                 ;; (printf "couldn't find any match\n")
+                 ;; (printf "couldn't find any match for ~s\n" possible-transition)
                  (return-early #f)]
                 [(list spec-goto-exp)
                  (enqueue! to-visit
-                           (cons (step-prog-final-behavior prog (csa#-transition-behavior-exp possible-transition))
-                                 (step-spec-with-goto spec spec-goto-exp)))]
+                           (list (step-prog-final-behavior prog (csa#-transition-behavior-exp possible-transition))
+                                 (step-spec-with-goto spec spec-goto-exp)
+                                 ;; TODO: allow these types to change over time
+                                 obs-type
+                                 unobs-type))]
                 [_ (error "too many possible matches") ;; TODO: call a continuation instead
                    ]))
-            (loop to-visit (set-add visited next-pair))])]))))
+            (loop to-visit (set-add visited current-tuple))])]))))
 
 ;; TODO: I probably need some canonical representation of program and spec configs so that otherwise
 ;; equivalent configs are not considered different by the worklist algorithm
+
+;; TODO: adjust this function to allow for multiple possible actors
+;;
+;; Returns all possible transitions of the given program config caused by a received message to the of the
+;; given type
+(define (transitions-from-message-of-type prog-config type observed?)
+  (define the-actor (csa#-config-only-actor prog-config))
+  (for/fold ([transitions-so-far null])
+            ;; TODO: get the max depth from somewhere
+            ([message (generate-abstract-messages type (csa#-actor-current-state the-actor) 0 observed?)])
+    (define eval-results (csa#-eval-transition prog-config (csa#-actor-address the-actor) message))
+    (define new-transitions
+      (for/list ([result eval-results])
+        (match-define (list behavior-exp outputs) result)
+        (csa#-transition message observed? outputs behavior-exp)))
+    (append transitions-so-far new-transitions)))
 
 ;; NOTE: only supports spec configs with a single actor/spec
 ;;
@@ -106,7 +126,7 @@ Remaining big challenges I see in the analysis:
     (map
      (lambda (spec-transition)
        (prog-transition-matches-spec-transition? prog-transition spec-transition state-matches))
-     (aps#-current-transitions spec-instance)))
+     (cons (aps#-null-transition spec-instance) (aps#-current-transitions spec-instance))))
   (filter values match-results))
 
 ;; Prog-trans is the above struct, spec-trans is the syntax of the expression
@@ -119,26 +139,33 @@ Remaining big challenges I see in the analysis:
   ;; TODO: have this function return some kind of message/information about what went wrong
 
   ;; TODO: rename this function, because it's not just a predicate: returns something other than #t
-
-  ;; (printf "Checking value ~s against pattern ~s\n" (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
-  (match (aps#-match (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
-    [(list)
-     ;; No matches, so the whole predicate fails
-     ;; (printf "Found no matches for received message ~s to pattern ~s\n" (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
-     #f]
-    [(list subst1 subst2 subst-rest ...)
-     ;; (printf "too many matches for value ~s and pattern ~s\n" (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
-     #f]
-    [(list some-subst)
-     (match-define (list spec-goto commitments)
-       (aps#-eval (aps#-transition-expression spec-trans) some-subst))
-     ;; (printf "Outputs: ~s\n" (csa#-transition-outputs prog-trans))
-     ;; (printf "Commitments: ~s\n" commitments)
-     (if (and (outputs-match-commitments? (csa#-transition-outputs prog-trans) commitments)
-              (equal? (hash-ref state-matches (csa#-transition-next-state prog-trans))
-                      (aps#-goto-state spec-goto)))
-         spec-goto
-         #f)]))
+  (let/cc return-early
+   (define valid-substitutions
+     (cond
+       [(and (csa#-transition-observed? prog-trans) (aps#-transition-observed? spec-trans))
+        (aps#-match (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))]
+       [(and (not (csa#-transition-observed? prog-trans)) (not (aps#-transition-observed? spec-trans)))
+        (list (list))]
+       [else (return-early #f)]))
+     ;; (printf "Checking value ~s against pattern ~s\n" (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
+   (match valid-substitutions
+     [(list)
+      ;; No matches, so the whole predicate fails
+      ;; (printf "Found no matches for received message ~s to pattern ~s\n" (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
+      #f]
+     [(list subst1 subst2 subst-rest ...)
+      ;; (printf "too many matches for value ~s and pattern ~s\n" (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
+      #f]
+     [(list some-subst)
+      (match-define (list spec-goto commitments)
+        (aps#-eval (aps#-transition-expression spec-trans) some-subst))
+      ;; (printf "Outputs: ~s\n" (csa#-transition-outputs prog-trans))
+      ;; (printf "Commitments: ~s\n" commitments)
+      (if (and (outputs-match-commitments? (filter csa#-observable-output? (csa#-transition-outputs prog-trans)) commitments)
+               (equal? (hash-ref state-matches (csa#-transition-next-state prog-trans))
+                       (aps#-goto-state spec-goto)))
+          spec-goto
+          #f)])))
 
 ;; Returns #t if the given commitments fully account for the observable transmissions in outputs; #f
 ;; otherwise
@@ -239,15 +266,15 @@ Remaining big challenges I see in the analysis:
 
   (check-true (analyze (make-single-agent-config static-response-agent)
                        static-response-spec
-                       (term (Addr 'ack)) (term (Union))
+                       (term Nat) (term (Union))
                        (hash 'Always 'Always)))
   (check-false (analyze (make-single-agent-config static-response-agent)
                         ignore-all-spec-instance
-                        (term (Addr 'ack)) (term (Union))
+                        (term Nat) (term (Union))
                         (hash 'Always 'Always)))
   (check-false (analyze (make-single-agent-config static-double-response-agent)
                         static-response-spec
-                        (term (Addr 'ack)) (term (Union))
+                        (term Nat) (term (Union))
                         (hash 'Always 'Always)))
   (check-false (analyze ignore-all-config
                         static-response-spec
@@ -478,20 +505,40 @@ Remaining big challenges I see in the analysis:
   (check-not-false (redex-match csa-eval αn div-by-zero-agent))
   (check-not-false (redex-match csa-eval αn div-by-one-agent))
 
-  (check-true (analyze (make-single-agent-config div-by-one-agent) nat-to-nat-spec (term Nat) (term Union) (hash 'Always 'Always)))
-  (check-true (analyze (make-single-agent-config div-by-zero-agent) nat-to-nat-spec (term Nat) (term Union) (hash 'Always 'Always)))
+  (check-true (analyze (make-single-agent-config div-by-one-agent) nat-to-nat-spec (term Nat) (term (Union)) (hash 'Always 'Always)))
+  (check-true (analyze (make-single-agent-config div-by-zero-agent) nat-to-nat-spec (term Nat) (term (Union)) (hash 'Always 'Always)))
 
   ;;;; Unobservable communication
 
   ;; 1. In dynamic req/resp, allowing unobserved perspective to send same messages does not affect conformance
-  ;; 2. Allowing same messages from unobs perspective violates conformance for static req/resp.
-  ;; (check-false (analyze (make-single-agent-config static-response-agent)
-  ;;                       static-response-spec
-  ;;                       (Addr 'ack)
-  ;;                       (Addr 'ack)
-  ;;                       (hash 'Always 'Always)))
-  ;; 3. Conformance regained for static req/resp. when add an unobs transition
+  (check-true (analyze (make-single-agent-config request-response-agent)
+                       request-response-spec
+                       (term (Addr Nat))
+                       (term (Addr Nat))
+                       (hash 'Always 'Always)))
 
+  ;; 2. Allowing same messages from unobs perspective violates conformance for static req/resp.
+  (check-false (analyze (make-single-agent-config static-response-agent)
+                        static-response-spec
+                        (term Nat)
+                        (term Nat)
+                        (hash 'Always 'Always)))
+
+  ;; 3. Conformance regained for static req/resp when add an unobs transition
+  (define static-response-spec-with-unobs
+    (term
+     (((define-state (Always response-dest)
+         [*     -> (with-outputs ([response-dest *]) (goto Always response-dest))]
+         [unobs -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
+      (goto Always ,static-response-address)
+      ,single-agent-concrete-addr)))
+  (check-not-false (redex-match aps-eval z static-response-spec-with-unobs))
+
+  (check-true (analyze (make-single-agent-config static-response-agent)
+                       static-response-spec-with-unobs
+                       (term Nat)
+                       (term Nat)
+                       (hash 'Always 'Always)))
 
   ;; 4. unobs causes a particular behavior (like connected/error in TCP)
 

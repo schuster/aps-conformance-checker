@@ -6,11 +6,12 @@
  csa#
  generate-abstract-messages
  csa#-match
- csa#-match/j
+ csa#-match/j ; exported only for aps#
  csa#-eval-transition
  (struct-out csa#-transition)
  csa#-output-address
  csa#-output-message
+ csa#-observable-output?
  csa#-transition-next-state
  α-config
  step-prog-final-behavior
@@ -117,12 +118,14 @@
   ;;   [(abstract/e (rcv (x) e)) (rcv (x) (abstract/e e))])
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Helper functions
+;; Message generation
 
 ;; TODO: define this
-(define (generate-abstract-messages type current-state-name max-depth)
+(define (generate-abstract-messages type current-state-name max-depth observed?)
   (redex-let csa# ([(v#template ...) (term (generate-abstract-messages/mf ,type ,max-depth))])
-             (term ((fill-template v#template ,current-state-name) ...))))
+             (if observed?
+                 (term ((fill-template v#template ,current-state-name) ...))
+                 (term ((fill-template/unobs v#template) ...)))))
 
 (define-metafunction csa#
   generate-abstract-messages/mf : τ natural -> (v#template ...)
@@ -226,6 +229,16 @@
                 (term (tuple (received-addr Always ,simple-pair-template 0 MOST-RECENT)
                              (received-addr Always ,simple-pair-template 1 MOST-RECENT)))))
 
+(define-metafunction csa#
+  fill-template/unobs : v#template -> v#
+  [(fill-template/unobs ADDR-HOLE) (* (Addr Nat))] ;; TODO:  fill in the real address type here
+  [(fill-template/unobs t) t]
+  [(fill-template/unobs (tuple v#template_child ...))
+   (tuple (fill-template/unobs v#template_child) ...)]
+  [(fill-template/unobs (* τ)) (* τ)])
+
+;; ---------------------------------------------------------------------------------------------------
+
 (define (csa#-match val pat)
   ;; TODO: make a version of this that only matches external addresses, for the APS matching
   (judgment-holds (csa#-match/j ,val ,pat ([x v#] ...))
@@ -286,15 +299,26 @@
 ;; Evaluation
 
 ;; Outputs is a list of abstract-addr/abstract-message 2-tuples
-(struct csa#-transition (message observed? outputs behavior-exp))
+(struct csa#-transition (message observed? outputs behavior-exp) #:transparent)
 
 (define csa#-output-address car)
 (define csa#-output-message cadr)
+
+(define (csa#-observable-output? output)
+  (if (redex-match csa# [(* (Addr _)) _] output) #f #t))
+
+(module+ test
+  (check-false (csa#-observable-output? (term [(* (Addr Nat)) 1])))
+  (check-true (csa#-observable-output? (term [(init-addr 0) 1])))
+  (check-true (csa#-observable-output? (term [(received-addr S1 ADDR-HOLE 0 MOST-RECENT) 1])))
+  (check-true (csa#-observable-output? (term [(received-addr S1 ADDR-HOLE 0 PREVIOUS) 1]))))
 
 (define (csa#-transition-next-state transition)
   (redex-let csa# ([(in-hole E# (goto s _ ...)) (csa#-transition-behavior-exp transition)])
     (term s)))
 
+;; Evaluates the handler triggered by sending message to actor-address, return the list of possible
+;; results (which are tuples of the final behavior expression and the list of outputs)
 (define (csa#-eval-transition prog-config actor-address message)
   (redex-let csa# ([(_ ((_ ... (define-state (s x_s ..._n) (x_m) e#) _ ...) (in-hole E# (goto s v# ..._n))))
                     (config-actor-by-address prog-config actor-address)])
@@ -307,20 +331,7 @@
                       "Abstract evaluation did not complete\nInitial config: ~s\nFinal configs:~s"
                       initial-config
                       results))
-             (for/list ([result results])
-               ;; Debugging
-               ;; (redex-let csa# ([(e#_final ([a#ext v#_out] ...)) result])
-               ;;            (match (redex-match csa# (in-hole E# e#_end) (term e#_final))
-               ;;   [(list _ _ _ ...) ; more than 1 way to match
-               ;;    (printf "Multiple contexts, final expression: ~s\n")
-               ;;    ])
-               ;;            (printf "Final context: ~s, Final exp: ~s\n" (term E#) (term e#_end)))
-
-               ;; TODO: do a version of redex-let with a failure case so I don't have to duplicate
-               ;; like above
-               (redex-let csa# ([((in-hole E# (goto s v#_param ...)) ([a#ext v#_out] ...)) result])
-                          ;; TODO: deal with unobserved messages
-                          (csa#-transition message #t (term ([a#ext v#_out] ...)) (term (in-hole E# (goto s v#_param ...))))))))
+             results))
 
 (define (inject/H# exp)
   (redex-let csa#
@@ -328,6 +339,7 @@
               [H# (term (,exp ()))])
              (term H#)))
 
+;; TODO: make this relation work on a full abstract configuration (maybe?)
 (define handler-step#
   (reduction-relation csa#
     #:domain H#

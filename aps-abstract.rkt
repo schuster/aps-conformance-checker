@@ -7,6 +7,8 @@
  aps#-α-z
  subst-n/aps#
  aps#-current-transitions
+ aps#-null-transition
+ aps#-transition-observed?
  aps#-eval
  aps#-match
  aps#-matches-po?
@@ -96,6 +98,27 @@
   aps#-current-transitions/mf : z -> ((ε -> e-hat) ...)
   [(aps#-current-transitions/mf ((_ ... (define-state (s x ...) (ε -> e-hat) ...) _ ...) (goto s v-hat ...) _))
    ((ε -> (subst-n/aps# e-hat (x v-hat) ...)) ...)])
+
+(define (aps#-null-transition instance)
+  (term (aps#-null-transition/mf ,instance)))
+
+(define-metafunction aps#
+  aps#-null-transition/mf : z -> (unobs -> (goto s v-hat ...))
+  [(aps#-null-transition/mf ((_ ... (define-state (s x ...) _ ...) _ ...) (goto s v-hat ...) _))
+   (unobs -> (goto s v-hat ...))])
+
+(define (aps#-transition-observed? trans)
+  (term (aps#-transition-observed?/mf ,trans)))
+
+(define-metafunction aps#
+  aps#-transition-observed?/mf : (ε -> e-hat) -> boolean
+  [(aps#-transition-observed?/mf (p _ _)) #t]
+  [(aps#-transition-observed?/mf _) #f])
+
+(module+ test
+  (check-false (aps#-transition-observed? (term [unobs -> (goto S x y)])))
+  (check-true (aps#-transition-observed? (term [(tuple x y) -> (goto S x y)])))
+  (check-true (aps#-transition-observed? (term [* -> (goto S x y)]))))
 
 (define (aps#-eval exp subst)
   (redex-let aps# ([(any_binding ...) subst])
