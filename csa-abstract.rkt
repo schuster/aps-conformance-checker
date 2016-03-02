@@ -5,8 +5,6 @@
 (provide
  csa#
  generate-abstract-messages
- csa#-match
- csa#-match/j ; exported only for aps#
  csa#-eval-transition
  (struct-out csa#-transition)
  csa#-output-address
@@ -39,14 +37,12 @@
       ;; (define-state (s x ...) (x) e# [(timeout Nat) e#])
       )
   ;; TODO: these probably should be sets of values, right?
-  (v# t
-      a# ; TODO: replace this one with a special pattern
-      (tuple v# ...)
+  (v# a# ; TODO: replace this one with a special pattern
+      (variant t v#)
       (* τ))
   (v#template
-   t
    ADDR-HOLE
-   (tuple v#template ...)
+   (variant t v#template ...)
    (* τ))
   (e# (spawn e# S ...)
       (goto s e# ...)
@@ -54,10 +50,9 @@
       self
       (begin e# ... e#)
       (let ([x e#] ...) e#)
-      (match e# [p e#] ...)
-      (tuple e# ...)
+      (case e# [t x e#] ...)
+      (variant t e#)
       (primop e# ...)
-      t
       a#
       x
       (* τ))
@@ -83,8 +78,8 @@
       (send v# E#)
       (begin E# e# ...)
       (let ([x E#] [x e#] ...) e#)
-      (match E# [p e#] ...)
-      (tuple v# ... E# e# ...)))
+      (case E# [t x e#] ...)
+      (variant t E#)))
 
   ;; (define-metafunction csa#
   ;;   abstract : K -> K#
@@ -130,28 +125,29 @@
 (define-metafunction csa#
   generate-abstract-messages/mf : τ natural -> (v#template ...)
   [(generate-abstract-messages/mf Nat _) ((* Nat))]
-  [(generate-abstract-messages/mf t _) (t)]
-  [(generate-abstract-messages/mf (Union τ_1 τ_rest ...) natural_max-depth)
-   (v#_1 ... v#_rest ...)
-   ;; TODO: should I do allow duplicates to be returned?
-   (where (v#_1 ...) (generate-abstract-messages/mf τ_1 natural_max-depth))
-   (where (v#_rest ...) (generate-abstract-messages/mf (Union τ_rest ...) natural_max-depth))]
-  [(generate-abstract-messages/mf (Union) natural_max-depth) ()]
+  [(generate-abstract-messages/mf (Union) _) ()]
+  [(generate-abstract-messages/mf (Union [t τ] ...) 0) ((* (Union [t τ] ...)))]
+  [(generate-abstract-messages/mf (Union [t_1 τ_1] [t_rest τ_rest] ...) natural_max-depth)
+   ((variant t_1 v#template_1) ... v#template_rest ...)
+   ;; TODO: do I need to do a (max 0) on natural_max-depth here?
+   (where (v#template_1 ...) (generate-abstract-messages/mf τ_1 ,(max 0 (- (term natural_max-depth) 1))))
+   (where (v#template_rest ...)
+          (generate-abstract-messages/mf (Union [t_rest τ_rest] ...) natural_max-depth))]
   [(generate-abstract-messages/mf (minfixpt X τ) natural_max-depth)
    (generate-abstract-messages/mf (type-subst τ X (minfixpt X τ)) natural_max-depth)]
-  [(generate-abstract-messages/mf (Tuple τ ...) 0)
-   ((* (Tuple τ ...)))]
-  [(generate-abstract-messages/mf (Tuple τ_1 τ_rest ...) natural_max-depth)
-   ,(for/fold ([tuples-so-far null])
-             ([sub-tuple (term (generate-abstract-messages/mf (Tuple τ_rest ...) natural_max-depth))])
-     (append
-      (for/list ([generated-v (term (generate-abstract-messages/mf τ_1 ,(- (term natural_max-depth) 1)))])
-        (redex-let csa# ([(tuple v#_other ...) sub-tuple]
-                         [v#_1 generated-v])
-          (term (tuple v#_1 v#_other ...))))
-      tuples-so-far))]
-  [(generate-abstract-messages/mf (Tuple) natural_max-depth)
-   ((tuple))]
+  ;; [(generate-abstract-messages/mf (Tuple τ ...) 0)
+  ;;  ((* (Tuple τ ...)))]
+  ;; [(generate-abstract-messages/mf (Tuple τ_1 τ_rest ...) natural_max-depth)
+  ;;  ,(for/fold ([tuples-so-far null])
+  ;;            ([sub-tuple (term (generate-abstract-messages/mf (Tuple τ_rest ...) natural_max-depth))])
+  ;;    (append
+  ;;     (for/list ([generated-v (term (generate-abstract-messages/mf τ_1 ,(- (term natural_max-depth) 1)))])
+  ;;       (redex-let csa# ([(tuple v#_other ...) sub-tuple]
+  ;;                        [v#_1 generated-v])
+  ;;         (term (tuple v#_1 v#_other ...))))
+  ;;     tuples-so-far))]
+  ;; [(generate-abstract-messages/mf (Tuple) natural_max-depth)
+  ;;  ((tuple))]
   [(generate-abstract-messages/mf (Addr τ) _) (ADDR-HOLE)])
 
 (module+ test
@@ -166,36 +162,43 @@
   ;; addresses...?
   ;; symbols
   ;; recursive types (list of Nat, up to certain depth
-  (check-same-items? (term (generate-abstract-messages/mf 'Begin 0)) (term ('Begin)))
-  (check-same-items?
-   (term (generate-abstract-messages/mf (Union 'A 'B) 0))
-   (term ('A 'B)))
-  ;; check: allow reordering
-  (check-same-items?
-   (term (generate-abstract-messages/mf (Union 'A 'B) 0))
-   (term ('B 'A)))
-  (check-same-items? (term (generate-abstract-messages/mf (Union) 0)) (term ()))
-  (check-same-items?
-   (term (generate-abstract-messages/mf (minfixpt Dummy Nat) 0))
-   (term ((* Nat))))
-  (check-same-items?
-   (term (generate-abstract-messages/mf (Tuple Nat Nat) 0))
-   (term ((* (Tuple Nat Nat)))))
-  (check-same-items?
-   (term (generate-abstract-messages/mf (Tuple Nat Nat) 1))
-   (term ((tuple (* Nat) (* Nat)))))
-  (check-same-items?
-   (term (generate-abstract-messages/mf (Tuple (Union 'A 'B) (Union 'C 'D)) 0))
-   (term ((* (Tuple (Union 'A 'B) (Union 'C 'D))))))
-  (check-same-items?
-   (term (generate-abstract-messages/mf (Tuple (Union 'A 'B) (Union 'C 'D)) 1))
-   (term ((tuple 'A 'C) (tuple 'A 'D) (tuple 'B 'C) (tuple 'B 'D))))
-  (define list-of-nat (term (minfixpt NatList (Union 'Null (Tuple 'Cons Nat NatList)))))
+
+  ;; TODO: rewrite these tests using records and variants
+  ;; (check-same-items? (term (generate-abstract-messages/mf 'Begin 0)) (term ('Begin)))
+  ;; (check-same-items?
+  ;;  (term (generate-abstract-messages/mf (Union 'A 'B) 0))
+  ;;  (term ('A 'B)))
+  ;; ;; check: allow reordering
+  ;; (check-same-items?
+  ;;  (term (generate-abstract-messages/mf (Union 'A 'B) 0))
+  ;;  (term ('B 'A)))
+  ;; (check-same-items? (term (generate-abstract-messages/mf (Union) 0)) (term ()))
+  ;; (check-same-items?
+  ;;  (term (generate-abstract-messages/mf (minfixpt Dummy Nat) 0))
+  ;;  (term ((* Nat))))
+  ;; (check-same-items?
+  ;;  (term (generate-abstract-messages/mf (Tuple Nat Nat) 0))
+  ;;  (term ((* (Tuple Nat Nat)))))
+  ;; (check-same-items?
+  ;;  (term (generate-abstract-messages/mf (Tuple Nat Nat) 1))
+  ;;  (term ((tuple (* Nat) (* Nat)))))
+  ;; (check-same-items?
+  ;;  (term (generate-abstract-messages/mf (Tuple (Union 'A 'B) (Union 'C 'D)) 0))
+  ;;  (term ((* (Tuple (Union 'A 'B) (Union 'C 'D))))))
+  ;; (check-same-items?
+  ;;  (term (generate-abstract-messages/mf (Tuple (Union 'A 'B) (Union 'C 'D)) 1))
+  ;;  (term ((tuple 'A 'C) (tuple 'A 'D) (tuple 'B 'C) (tuple 'B 'D))))
+  ;; (define list-of-nat (term (minfixpt NatList (Union 'Null (Tuple 'Cons Nat NatList)))))
   ;; TODO: get this fixpoint test to work
   ;; (check-same-items?
   ;;  (term (generate-abstract-messages/mf ,list-of-nat 0))
   ;;  (term ('Null (* ,list-of-nat))))
-  )
+  (check-same-items?
+   (term (generate-abstract-messages/mf (Union) 0))
+   (term ()))
+  (check-same-items?
+   (term (generate-abstract-messages/mf (Union) 1))
+   (term ())))
 
 (define-metafunction csa#
   fill-template : v#template s -> v#
@@ -209,14 +212,16 @@
   fill-template/acc : v#template_current v#template_whole natural_current-index s -> (v# natural_next-index)
   [(fill-template/acc ADDR-HOLE v#template natural_current s)
    ((received-addr s v#template natural_current MOST-RECENT) ,(+ 1 (term natural_current)))]
-  [(fill-template/acc t _ natural s) (t natural)]
-  [(fill-template/acc (tuple v#template_child1 v#template_rest ...) v#template natural_current s)
-   ((tuple v#_1 v#_rest ...) natural_next-rest)
-   (where (v#_1 natural_next1) (fill-template/acc v#template_child1 v#template natural_current s))
-   (where ((tuple v#_rest ...) natural_next-rest)
-          (fill-template/acc (tuple v#template_rest ...) v#template natural_next1 s))]
-  [(fill-template/acc (tuple) v#template natural s)
-   ((tuple) natural)]
+  [(fill-template/acc (variant t v#template_child) v#template natural_current s)
+   ((variant t v#_child) natural_next)
+   (where (v#_child natural_next) (fill-template/acc v#template_child v#template natural_current s))]
+  ;; [(fill-template/acc (tuple v#template_child1 v#template_rest ...) v#template natural_current s)
+  ;;  ((tuple v#_1 v#_rest ...) natural_next-rest)
+  ;;  (where (v#_1 natural_next1) (fill-template/acc v#template_child1 v#template natural_current s))
+  ;;  (where ((tuple v#_rest ...) natural_next-rest)
+  ;;         (fill-template/acc (tuple v#template_rest ...) v#template natural_next1 s))]
+  ;; [(fill-template/acc (tuple) v#template natural s)
+  ;;  ((tuple) natural)]
   [(fill-template/acc (* τ) _ natural _)
    ((* τ) natural)])
 
@@ -224,68 +229,22 @@
   ;; TODO: write more tests here
   (check-equal? (term (fill-template (* Nat) Always))
                 (term (* Nat)))
-  (define simple-pair-template (term (tuple ADDR-HOLE ADDR-HOLE)))
-  (check-equal? (term (fill-template ,simple-pair-template Always))
-                (term (tuple (received-addr Always ,simple-pair-template 0 MOST-RECENT)
-                             (received-addr Always ,simple-pair-template 1 MOST-RECENT)))))
+  ;; TODO: rewrite this test using records and variants
+  ;; (define simple-pair-template (term (tuple ADDR-HOLE ADDR-HOLE)))
+  ;; (check-equal? (term (fill-template ,simple-pair-template Always))
+  ;;               (term (tuple (received-addr Always ,simple-pair-template 0 MOST-RECENT)
+  ;;                            (received-addr Always ,simple-pair-template 1 MOST-RECENT))))
+  )
 
 (define-metafunction csa#
   fill-template/unobs : v#template -> v#
   [(fill-template/unobs ADDR-HOLE) (* (Addr Nat))] ;; TODO:  fill in the real address type here
   [(fill-template/unobs t) t]
-  [(fill-template/unobs (tuple v#template_child ...))
-   (tuple (fill-template/unobs v#template_child) ...)]
+  [(fill-template/unobs (variant t v#template_child ...))
+   (variant t (fill-template/unobs v#template_child) ...)]
   [(fill-template/unobs (* τ)) (* τ)])
 
 ;; ---------------------------------------------------------------------------------------------------
-
-(define (csa#-match val pat)
-  ;; TODO: make a version of this that only matches external addresses, for the APS matching
-  (judgment-holds (csa#-match/j ,val ,pat ([x v#] ...))
-                  ([x v#] ...)))
-
-(define-judgment-form csa#
-  #:mode (csa#-match/j I I O)
-  #:contract (csa#-match/j v# p ((x v#) ...))
-
-  [-------------------
-   (csa#-match/j _ * ())]
-
-  ;; TODO: make a version of this that only matches external addresses, for the APS matching
-  [-------------------
-   (csa#-match/j v# x ([x v#]))]
-
-  [----------------
-   (csa#-match/j t t ())]
-
-  [----------------
-   (csa#-match/j (* t) t ())]
-
-  [(csa#-match/j v# p ([x v#_binding] ...)) ...
-   --------------
-   (csa#-match/j (tuple v# ..._n) (tuple p ..._n) ([x v#_binding] ... ...))]
-
-  [(csa#-match/j (* τ) p ([x v#_binding] ...)) ...
-   --------------
-   (csa#-match/j (* (Tuple τ ..._n)) (tuple p ..._n) ([x v#_binding] ... ...))])
-
-(module+ test
-  (check-equal? (csa#-match (term (* Nat)) (term *))
-                (list (term ())))
-  (check-equal? (csa#-match (term (received-addr Always ADDR-HOLE 0 MOST-RECENT)) (term x))
-                (list (term ([x (received-addr Always ADDR-HOLE 0 MOST-RECENT)]))))
-  (check-equal? (csa#-match (term (tuple 'a 'b)) (term (tuple 'a 'b)))
-                (list (term ())))
-  ;; (displayln (redex-match csa# t (term 'a)))
-  ;; (displayln (redex-match csa# v# (term 'a)))
-  ;; (displayln (redex-match csa# x (term item)))
-  ;; (displayln (build-derivations (csa#-match/j 'a item ())))
-  (check-equal? (csa#-match (term 'a) (term item))
-                (list (term ([item 'a]))))
-  (check-equal? (csa#-match (term (tuple 'a 'b)) (term (tuple 'a item)))
-                (list (term ([item 'b]))))
-  (check-equal? (csa#-match (term (* (Tuple 'a 'b))) (term (tuple x 'b)))
-                (list (term ([x (* 'a)])))))
 
 (define (config-actor-by-address config addr)
   (term (config-actor-by-address/mf ,config ,addr)))
@@ -354,25 +313,39 @@
          v#
          Begin2)
 
-    (==> (match v#
-           [p e#]
-           [p_rest e#_rest] ...)
-         (csa#-subst-n e# [x v#_subst] ...)
-         (judgment-holds (csa#-match/j v# p ([x v#_subst] ...)))
-         MatchSuccess)
-    (==> (match v#
-           [p _]
-           [p_rest e#_rest] ...)
-         (match v#
-           [p_rest e#_rest] ...)
-         (side-condition (not (judgment-holds (csa#-match/j v# p ([x v#_subst] ...)))))
-         MatchFailure)
+    (==> (case (* (Union _ ... [t τ] _ ...))
+           [t x e#]
+           _ ...)
+         (csa#-subst e# x (* τ))
+         CaseWildcardSuccess)
+    (==> (case (* (Union [t_val τ_val] ...))
+           ;; Only fail if there is at least one more clause; type safety guarantees that at least one
+           ;; clause matches
+           [t_1 x_1 e#_1]
+           [t_2 x_2 e#_2]
+           [t_rest x_rest e#_rest] ...)
+         (case (* (Union [t_val τ_val] ...))
+           [t_2 x_2 e#_2]
+           [t_rest x_rest e#_rest] ...)
+         CaseWildcardFailure)
+    (==> (case (variant t v#)
+           [t x e#]
+           _ ...)
+         (csa#-subst e# x v#)
+         CaseVariantSuccess)
+    (==> (case (variant t v#)
+           [t_other x e#]
+           [t_rest x_rest e#_rest] ...)
+         (case (variant t v#)
+           [t_rest x_rest e#_rest] ...)
+         (side-condition (not (equal? (term t) (term t_other))))
+         CaseVariantFailure)
 
     (==> (< (* Nat) (* Nat))
-         'True
+         (variant True (* Nat))
          LessThan1)
     (==> (< (* Nat) (* Nat))
-         'False
+         (variant False (* Nat))
          LessThan2)
 
     (==> (/ (* Nat) (* Nat))
@@ -384,7 +357,6 @@
          Send)
 
     ;; TODO: let
-    ;; TODO: match
 
     with
     [(--> ((in-hole E# old) ([a#ext v#] ...))
@@ -410,26 +382,28 @@
     (unless (equal? next-steps (list (inject/H# e2)))
       (fail-check (format "There were ~s next steps: ~s" (length next-steps) next-steps))))
 
-  (csa#-exp-steps-to? (term (match (tuple 'a 'b)
-                              ['c (* Nat)]
-                              [(tuple 'a item) item]))
-                      (term (match (tuple 'a 'b)
-                              [(tuple 'a item) item])))
-  (csa#-exp-steps-to? (term (match (tuple 'a 'b)
-                              [(tuple 'a item) item]))
-                      (term 'b))
+  ;; TODO: rewrite all of these tests with case statements
+  ;; (csa#-exp-steps-to? (term (match (tuple 'a 'b)
+  ;;                             ['c (* Nat)]
+  ;;                             [(tuple 'a item) item]))
+  ;;                     (term (match (tuple 'a 'b)
+  ;;                             [(tuple 'a item) item])))
+  ;; (csa#-exp-steps-to? (term (match (tuple 'a 'b)
+  ;;                             [(tuple 'a item) item]))
+  ;;                     (term 'b))
 
-  (csa#-exp-steps-to? (term (match (* Nat)
-                              [(tuple) (goto S1 (* Nat))]
-                              [_ (goto S2 (* Nat))]))
-                      (term (match (* Nat)
-                              [_ (goto S2 (* Nat))]) ))
-  (csa#-exp-steps-to? (term (match (* Nat)
-                              [_ (goto S2 (* Nat))]))
-                      (term (goto S2 (* Nat)) ))
-  (csa#-exp-steps-to? (term (match (* Nat)
-                              [(tuple) (goto S2 (* Nat))]))
-                      (term (match (* Nat)))))
+  ;; (csa#-exp-steps-to? (term (match (* Nat)
+  ;;                             [(tuple) (goto S1 (* Nat))]
+  ;;                             [_ (goto S2 (* Nat))]))
+  ;;                     (term (match (* Nat)
+  ;;                             [_ (goto S2 (* Nat))]) ))
+  ;; (csa#-exp-steps-to? (term (match (* Nat)
+  ;;                             [_ (goto S2 (* Nat))]))
+  ;;                     (term (goto S2 (* Nat)) ))
+  ;; (csa#-exp-steps-to? (term (match (* Nat)
+  ;;                             [(tuple) (goto S2 (* Nat))]))
+  ;;                     (term (match (* Nat))))
+  )
 
 ;; TODO: make this function less susceptible to breaking because of changes in the config's structure
 (define (step-prog-final-behavior prog-config beahvior-exp)
@@ -464,7 +438,6 @@
   ;; [(csa#-subst n x v) n]
   [(csa#-subst (* τ) _ _) (* τ)]
   [(csa#-subst a# _ _) a#]
-  [(csa#-subst t x v#) t]
   ;; [(csa#-subst a x v) a]
   ;; [(csa#-subst (spawn e S ...) self v) (spawn e S ...)]
   ;; [(csa#-subst (spawn e S ...) x v)
@@ -478,9 +451,9 @@
   ;;  (where (_ ... x _ ...) (x_let ...))] ; check that x is in the list of bound vars
   ;; [(csa#-subst (let ([x_let e] ...) e_body) x v)
   ;;  (let ([x_let (csa#-subst e x v)] ...) (csa#-subst e_body x v))]
-  [(csa#-subst (match e# [p e#_pat] ...) x v#)
-   (match (csa#-subst e# x v#) (csa#-subst/match-clause [p e#_pat] x v#) ...)]
-  [(csa#-subst (tuple e# ...) x v#) (tuple (csa#-subst e# x v#) ...)]
+  [(csa#-subst (case e# [t x_clause e#_clause] ...) x v#)
+   (case (csa#-subst e# x v#) (csa#-subst/case-clause [t x_clause e#_clause] x v#) ...)]
+  [(csa#-subst (variant t e#) x v#) (variant t (csa#-subst e# x v#))]
   [(csa#-subst (primop e# ...) x v#) (primop (csa#-subst e# x v#) ...)]
   ;; [(csa#-subst (rcv (x) e) x v) (rcv (x) e)]
   ;; [(csa#-subst (rcv (x_h) e) x v) (rcv (x_h) (csa#-subst e x v))]
@@ -490,47 +463,29 @@
   )
 
 (define-metafunction csa#
-  csa#-subst/match-clause : [p e#] x v# -> [p e#]
-  [(csa#-subst/match-clause [p e#] x v#)
-   [p e#]
-   (side-condition (term (pattern-binds-var p x)))]
-  [(csa#-subst/match-clause [p e#] x v#)
-   [p (csa#-subst e# x v#)]])
+  csa#-subst/case-clause : [t x e#] x v# -> [t x e#]
+  [(csa#-subst/case-clause [t x e#] x v#)
+   [t x e#]]
+  [(csa#-subst/case-clause [t x_other e#] x v#)
+   [t x_other (csa#-subst e# x v#)]])
 
-;; TODO: rewrite this as a judgment form
-(define-metafunction csa#
-  pattern-binds-var : p x -> boolean
-  [(pattern-binds-var * x) #f]
-  [(pattern-binds-var x x) #t]
-  [(pattern-binds-var x_1 x_2) #f]
-  [(pattern-binds-var t x) #f]
-  [(pattern-binds-var (tuple p ...) x)
-   ,(ormap values (term ((pattern-binds-var p x) ...)))])
-;; TODO: write more tests for this
 
 (module+ test
-  (check-false (term (pattern-binds-var (tuple z y) x)))
-  (check-true (term (pattern-binds-var (tuple x y) x)))
-  (check-false (term (pattern-binds-var (tuple 'x y) x)))
-  (check-true (term (pattern-binds-var (tuple 'x x) x))))
+  (check-equal? (term (csa#-subst/case-clause [Cons p (begin p x)] p (* Nat)))
+                (term [Cons p (begin p x)]))
+  (check-equal? (term (csa#-subst/case-clause [Cons p (begin p x)] x (* Nat)))
+                (term [Cons p (begin p (* Nat))])))
 
 (module+ test
-  (check-equal? (term (csa#-subst/match-clause [(tuple x y z) x] x 'foo))
-                (term [(tuple x y z) x]))
-  (check-equal? (term (csa#-subst/match-clause [(tuple a y z) x] x 'foo))
-                (term [(tuple a y z) 'foo])))
-
-(module+ test
-  (check-equal? (term (csa#-subst 'Foo a (* Nat))) (term 'Foo)))
+  (check-equal? (term (csa#-subst (variant Foo (* Nat)) a (* Nat))) (term (variant Foo (* Nat)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
 
 ;; TODO: test these functions
 
-(define (α-config concrete-config max-tuple-depth)
-  ;; TODO: write the real definition of this
-  (term (α-config/mf ,concrete-config ,max-tuple-depth)))
+(define (α-config concrete-config max-depth)
+  (term (α-config/mf ,concrete-config ,max-depth)))
 
 ;; NOTE: currently only supports single-actor, no-externals configs
 (define-metafunction csa#
@@ -561,25 +516,25 @@
   α-e : e natural_depth -> e#
   [(α-e natural _) (* Nat)]
   [(α-e x _) x]
-  [(α-e t _) t]
   ;; TODO: is there any way this will ever be used for anything but the initial addresses?
   [(α-e (addr natural) _) (init-addr natural)]
   [(α-e (goto s e ...) natural_depth) (goto s (α-e e natural_depth) ...)]
   [(α-e (begin e ...) natural_depth) (begin (α-e e natural_depth) ...)]
   [(α-e (send e_1 e_2) natural_depth)
    (send (α-e e_1 natural_depth) (α-e e_2 natural_depth))]
-  [(α-e (match e_val [p e_clause] ...) natural_depth)
-   (match (α-e e_val natural_depth) [p (α-e e_clause natural_depth)] ...)]
+  [(α-e (case e_val [t x e_clause] ...) natural_depth)
+   (case (α-e e_val natural_depth) [t x (α-e e_clause natural_depth)] ...)]
   [(α-e (primop e ...) natural_depth) (primop (α-e e natural_depth) ...)]
   ;; TODO: do something much better here - figure out how to limit the depth
   ;; [(α-e (tuple e ...) 0)
   ;;  ;; TODO: give the actual type here
   ;;  (* (Tuple))]
-  [(α-e (tuple e ...) natural_depth)
+  [(α-e (variant t e) natural_depth)
    ;; TODO: take out the "max" issue here
-   (tuple (α-e e ,(max 0 (- (term natural_depth) 1))) ...)])
+   (variant t (α-e e ,(max 0 (- (term natural_depth) 1))))])
 
-;; TODO: write tests for the tuple test, because the crappy version I have here isn't good enough
+;; TODO: write tests for the variant/record case, because the crappy version I have here isn't good
+;; enough
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors

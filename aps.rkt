@@ -24,11 +24,15 @@
   (ε unobs
      p)
   (u x) ; arguments
+  (p *
+     x
+     t
+     (variant t p))
   (po *
       x
       self
       t
-      (tuple po ...)))
+      (variant t po)))
 
 (define-extended-language aps-eval
   aps
@@ -68,7 +72,7 @@
   [(subst/aps/po a-hat x v-hat) a-hat]
   [(subst/aps/po t x v-hat) t]
   [(subst/aps/po * x v-hat) *]
-  [(subst/aps/po (tuple po ...) x v-hat) (tuple (subst/aps/po po x v-hat) ...)])
+  [(subst/aps/po (variant t po) x v-hat) (variant t (subst/aps/po po x v-hat))])
 
 
 ;; ---------------------------------------------------------------------------------------------------

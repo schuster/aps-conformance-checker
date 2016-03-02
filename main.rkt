@@ -114,7 +114,7 @@ Remaining big challenges I see in the analysis:
   (define the-actor (csa#-config-only-actor prog-config))
   (for/fold ([transitions-so-far null])
             ;; TODO: get the max depth from somewhere
-            ([message (generate-abstract-messages type (csa#-actor-current-state the-actor) 0 observed?)])
+            ([message (generate-abstract-messages type (csa#-actor-current-state the-actor) 1 observed?)])
     (define eval-results (csa#-eval-transition prog-config (csa#-actor-address the-actor) message))
     (define new-transitions
       (for/list ([result eval-results])
@@ -247,7 +247,7 @@ Remaining big challenges I see in the analysis:
      (,single-agent-concrete-addr
       (((define-state (Always response-dest) (m)
           (begin
-            (send response-dest 'ack)
+            (send response-dest (variant Ack 0))
             (goto Always response-dest))))
        (goto Always ,static-response-address)))))
   (define static-double-response-agent
@@ -255,8 +255,8 @@ Remaining big challenges I see in the analysis:
      (,single-agent-concrete-addr
       (((define-state (Always response-dest) (m)
           (begin
-            (send response-dest 'ack)
-            (send response-dest 'ack)
+            (send response-dest (variant Ack 0))
+            (send response-dest (variant Ack 0))
             (goto Always response-dest))))
        (goto Always ,static-response-address)))))
   (define static-response-spec
@@ -292,8 +292,8 @@ Remaining big challenges I see in the analysis:
   (define pattern-match-spec
     (term
      (((define-state (Matching r)
-         ['a -> (with-outputs ([r 'a]) (goto Matching r))]
-         [(tuple 'b *) -> (with-outputs ([r (tuple 'b *)]) (goto Matching r))]))
+         [(variant A *) -> (with-outputs ([r (variant A *)]) (goto Matching r))]
+         [(variant B *) -> (with-outputs ([r (variant B *)]) (goto Matching r))]))
       (goto Matching ,static-response-address)
       ,single-agent-concrete-addr)))
 
@@ -301,30 +301,27 @@ Remaining big challenges I see in the analysis:
     (term
      (,single-agent-concrete-addr
       (((define-state (Always r) (m)
-          (match m
-            ['a (begin (send r 'a) (goto Always r))]
-            [(tuple 'b *) (begin (send r (tuple 'b 0)) (goto Always r))]
-            [* (goto Always r)])))
+          (case m
+            [A x (begin (send r (variant A x)) (goto Always r))]
+            [B y (begin (send r (variant B 0)) (goto Always r))])))
        (goto Always ,static-response-address)))))
 
   (define reverse-pattern-matching-agent
     (term
      (,single-agent-concrete-addr
       (((define-state (Always r) (m)
-          (match m
-            ['a (begin (send r (tuple 'b 0)) (goto Always r))]
-            [(tuple 'b *) (begin (send r 'a) (goto Always r))]
-            [* (goto Always r)])))
+          (case m
+            [A x (begin (send r (variant B 0)) (goto Always r))]
+            [B y (begin (send r (variant A y)) (goto Always r))])))
        (goto Always ,static-response-address)))))
 
   (define partial-pattern-matching-agent
     (term
      (,single-agent-concrete-addr
       (((define-state (Always r) (m)
-          (match m
-            ['a (begin (send r 'a) (goto Always r))]
-            [(tuple 'b *) (goto Always r)]
-            [* (goto Always r)])))
+          (case m
+            [A x (begin (send r (variant A 0)) (goto Always r))]
+            [B y (goto Always r)])))
        (goto Always ,static-response-address)))))
 
   (define pattern-matching-map (hash 'Always 'Matching))
@@ -336,15 +333,15 @@ Remaining big challenges I see in the analysis:
 
   (check-true (analyze (make-single-agent-config pattern-matching-agent)
                        pattern-match-spec
-                       (term (Union 'a (Tuple 'b Nat))) (term (Union))
+                       (term (Union [A Nat] [B Nat])) (term (Union))
                        pattern-matching-map))
   (check-false (analyze (make-single-agent-config partial-pattern-matching-agent)
                         pattern-match-spec
-                        (term (Union 'a (Tuple 'b Nat))) (term (Union))
+                        (term (Union [A Nat] [B Nat])) (term (Union))
                         pattern-matching-map))
   (check-false (analyze (make-single-agent-config reverse-pattern-matching-agent)
                         pattern-match-spec
-                        (term (Union 'a (Tuple 'b Nat))) (term (Union))
+                        (term (Union [A Nat] [B Nat])) (term (Union))
                         pattern-matching-map))
 
   ;;;; Dynamic request/response
@@ -453,14 +450,14 @@ Remaining big challenges I see in the analysis:
   (define zero-nonzero-spec
     (term
      (((define-state (S1 r)
-         [* -> (with-outputs ([r 'Zero])    (goto S1 r))]
-         [* -> (with-outputs ([r 'NonZero]) (goto S1 r))]))
+         [* -> (with-outputs ([r (variant Zero *)])    (goto S1 r))]
+         [* -> (with-outputs ([r (variant NonZero *)]) (goto S1 r))]))
       (goto S1 ,static-response-address)
       ,single-agent-concrete-addr)))
   (define zero-spec
     (term
      (((define-state (S1 r)
-         [* -> (with-outputs ([r 'Zero])    (goto S1 r))]))
+         [* -> (with-outputs ([r (variant Zero *)])    (goto S1 r))]))
       (goto S1 ,static-response-address)
       ,single-agent-concrete-addr)))
   (define primitive-branch-agent
@@ -468,9 +465,9 @@ Remaining big challenges I see in the analysis:
      (,single-agent-concrete-addr
       (((define-state (S1 dest) (i)
           (begin
-            (match (< 0 i)
-              ['True (send dest 'NonZero)]
-              ['False (send dest 'Zero)])
+            (case (< 0 i)
+              [True dummy (send dest (variant NonZero 0))]
+              [False dummy (send dest (variant Zero 0))])
             (goto S1 dest))))
        (goto S1 ,static-response-address)))))
 
@@ -549,101 +546,101 @@ Remaining big challenges I see in the analysis:
   ;; 4. unobs causes a particular behavior (like connected/error in TCP)
   (define unobs-toggle-spec
     (term (((define-state (Off r)
-              [* -> (with-outputs ([r 'TurningOn]) (goto On r))])
+              [* -> (with-outputs ([r (variant TurningOn *)]) (goto On r))])
             (define-state (On r)
               [* -> (goto On r)]
-              [unobs -> (with-outputs ([r 'TurningOff]) (goto Off r))]))
+              [unobs -> (with-outputs ([r (variant TurningOff *)]) (goto Off r))]))
            (goto Off ,static-response-address)
            ,single-agent-concrete-addr)))
   (define unobs-toggle-agent
     (term
      (,single-agent-concrete-addr
       (((define-state (Off r) (m)
-          (match m
-            ['FromObserver
+          (case m
+            [FromObserver dummy
              (begin
-               (send r 'TurningOn)
+               (send r (variant TurningOn 0))
                (goto On r))]
-            ['FromUnobservedEnvironment (goto Off r)]))
+            [FromUnobservedEnvironment dummy (goto Off r)]))
         (define-state (On r) (m)
-          (match m
-            ['FromObserver (goto On r)]
-            ['FromUnobservedEnvironment
+          (case m
+            [FromObserver dummy (goto On r)]
+            [FromUnobservedEnvironment dummy
              (begin
-               (send r 'TurningOff)
+               (send r (variant TurningOff 0))
                (goto Off r))])))
        (goto Off ,static-response-address)))))
   (define unobs-toggle-agent-wrong1
     (term
      (,single-agent-concrete-addr
       (((define-state (Off r) (m)
-          (match m
-            ['FromObserver
+          (case m
+            [FromObserver dummy
              (begin
-               (send r 'TurningOn)
+               (send r (variant TurningOn 0))
                ;; Going to Off instead of On
                (goto Off r))]
-            ['FromUnobservedEnvironment (goto Off r)]))
+            [FromUnobservedEnvironment dummy (goto Off r)]))
         (define-state (On r) (m)
-          (match m
-            ['FromObserver (goto On r)]
-            ['FromUnobservedEnvironment
+          (case m
+            [FromObserver dummy (goto On r)]
+            [FromUnobservedEnvironment dummy
              (begin
-               (send r 'TurningOff)
+               (send r (variant TurningOff 0))
                (goto Off r))])))
        (goto Off ,static-response-address)))))
   (define unobs-toggle-agent-wrong2
     (term
      (,single-agent-concrete-addr
       (((define-state (Off r) (m)
-          (match m
-            ['FromObserver
+          (case m
+            [FromObserver dummy
              (begin
-               (send r 'TurningOn)
+               (send r (variant TurningOn 0))
                (goto On r))]
-            ['FromUnobservedEnvironment (goto On r)]))
+            [FromUnobservedEnvironment dummy (goto On r)]))
         (define-state (On r) (m)
-          (match m
-            ['FromObserver (goto On r)]
-            ['FromUnobservedEnvironment
+          (case m
+            [FromObserver dummy (goto On r)]
+            [FromUnobservedEnvironment dummy
              (begin
-               (send r 'TurningOff)
+               (send r (variant TurningOff 0))
                (goto Off r))])))
        (goto Off ,static-response-address)))))
   (define unobs-toggle-agent-wrong3
     (term
      (,single-agent-concrete-addr
       (((define-state (Off r) (m)
-          (match m
-            ['FromObserver
+          (case m
+            [FromObserver dummy
              (begin
-               (send r 'TurningOn)
+               (send r (variant TurningOn 0))
                (goto On r))]
-            ['FromUnobservedEnvironment (goto Off r)]))
+            [FromUnobservedEnvironment dummy (goto Off r)]))
         (define-state (On r) (m)
-          (match m
-            ['FromObserver (goto On r)]
-            ['FromUnobservedEnvironment
+          (case m
+            [FromObserver dummy (goto On r)]
+            [FromUnobservedEnvironment dummy
              (begin
-               (send r 'TurningOff)
+               (send r (variant TurningOff 0))
                (goto On r))])))
        (goto Off ,static-response-address)))))
   (define unobs-toggle-agent-wrong4
     (term
      (,single-agent-concrete-addr
       (((define-state (Off r) (m)
-          (match m
-            ['FromObserver (goto Off r)]
-            ['FromUnobservedEnvironment
+          (case m
+            [FromObserver dummy (goto Off r)]
+            [FromUnobservedEnvironment dummy
              (begin
-               (send r 'TurningOn)
+               (send r (variant TurningOn 0))
                (goto On r))]))
         (define-state (On r) (m)
-          (match m
-            ['FromObserver (goto On r)]
-            ['FromUnobservedEnvironment
+          (case m
+            [FromObserver dummy (goto On r)]
+            [FromUnobservedEnvironment dummy
              (begin
-               (send r 'TurningOff)
+               (send r (variant TurningOff 0))
                (goto Off r))])))
        (goto Off ,static-response-address)))))
 
@@ -656,8 +653,8 @@ Remaining big challenges I see in the analysis:
 
   (check-true (analyze (make-single-agent-config unobs-toggle-agent)
                        unobs-toggle-spec
-                       (term (Union 'FromObserver))
-                       (term (Union 'FromUnobservedEnvironment))
+                       (term (Union [FromObserver Nat]))
+                       (term (Union [FromUnobservedEnvironment Nat]))
                        (hash 'On 'On 'Off 'Off)))
 
   (for ([agent (list unobs-toggle-agent-wrong1
@@ -666,6 +663,6 @@ Remaining big challenges I see in the analysis:
                      unobs-toggle-agent-wrong4)])
     (check-false (analyze (make-single-agent-config agent)
                           unobs-toggle-spec
-                          (term (Union 'FromObserver))
-                          (term (Union 'FromUnobservedEnvironment))
+                          (term (Union [FromObserver Nat]))
+                          (term (Union [FromUnobservedEnvironment Nat]))
                           (hash 'On 'On 'Off 'Off)))))

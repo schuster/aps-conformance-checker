@@ -26,29 +26,24 @@
      (send e e)
      self
      (begin e ... e)
+     ;; TODO: let should probably be syntactic sugar for a special kind of case statement
      (let ([x e] ...) e)
-     (match e [p e] ...)
-     (tuple e ...)
+     (case e [t x e] ...)
+     ;; TODO: come up with vocab for tagged unions: is a "variant" the full type, or one branch of the
+     ;; type, or what?
+     (variant t e)
      (primop e ...)
-     t
      x
      n)
   (S (define-state (s x ...) (x) e)
      (define-state (s x ...) (x) e [(timeout n) e]))
-  (p *
-     x
-     t
-     (tuple p ...))
   (primop < /)
-  ((x s) variable-not-otherwise-mentioned)
-  (t (quote variable-not-otherwise-mentioned))
+  ((x s t) variable-not-otherwise-mentioned)
   (n natural)
   (τ Nat
      (minfixpt X τ)
      X
-     t
-     (Tuple τ ...)
-     (Union τ ...)
+     (Union [t τ] ...)
      (Addr τ)) ;; TODO: integrate types into the language
   (X variable-not-otherwise-mentioned))
 
@@ -65,7 +60,7 @@
      a
      (rcv (x) e)
      (rcv (x) e [(timeout n) e]))
-  (v n t (tuple v ...) a)
+  (v n (variant t v) a)
   (a (addr natural))
   (A ((any_1 ... hole any_2 ...) μ ρ χ))
   (E hole
@@ -74,8 +69,8 @@
      (send v E)
      (begin E e ...)
      (let ([x E] [x e] ...) e)
-     (match E [p e] ...)
-     (tuple v ... E e ...)
+     (case E _ ...)
+     (variant t E)
      (primop v ... E e ...)))
 
 (define (make-single-agent-config agent)
@@ -115,7 +110,7 @@
          Send)
 
     ;; TODO: let
-    ;; TODO: match
+    ;; TODO: case
 
     with
     [(--> (in-hole A (a ((S ...) (in-hole E old))))
@@ -128,7 +123,7 @@
   (check-not-false (redex-match csa-eval S S1-def))
   (check-not-false (redex-match csa-eval A empty-A-context))
   (define init-config
-    (term (in-hole ,empty-A-context ((addr 1) ((,S1-def) (begin 'foo 'baz (goto S1 'bar 'foo)))))))
+    (term (in-hole ,empty-A-context ((addr 1) ((,S1-def) (begin 0 2 (goto S1 1 0)))))))
   (check-not-false (redex-match csa-eval K init-config))
   ;; begin1
   ;; begin2
@@ -139,7 +134,7 @@
    (apply-reduction-relation* handler-step
                               init-config)
    (list (term (in-hole ,empty-A-context
-                        ((addr 1) ((,S1-def) (rcv (x) (begin 'bar x (goto S1 'foo 'bar))))))))))
+                        ((addr 1) ((,S1-def) (rcv (x) (begin 1 x (goto S1 0 1))))))))))
 
 (define-metafunction csa-eval
   subst-n : e (x v) ... -> e
@@ -152,7 +147,6 @@
   [(subst x x v) v]
   [(subst x x_2 v) x]
   [(subst n x v) n]
-  [(subst t x v) t]
   [(subst a x v) a]
   [(subst (spawn e S ...) self v) (spawn e S ...)]
   [(subst (spawn e S ...) x v)
@@ -166,9 +160,9 @@
    (where (_ ... x _ ...) (x_let ...))] ; check that x is in the list of bound vars
   [(subst (let ([x_let e] ...) e_body) x v)
    (let ([x_let (subst e x v)] ...) (subst e_body x v))]
-  [(subst (match e [p e_pat] ...) x v)
-   (match (subst e x v) (subst/match-clause [p e_pat] x v) ...)]
-  [(subst (tuple e ...) x v) (tuple (subst e x v) ...)]
+  [(subst (case e [t x_clause e_clause] ...) x v)
+   (case (subst e x v) (subst/case-clause [t x_clause e_clause] x v) ...)]
+  [(subst (variant t e) x v) (variant t (subst e x v))]
   [(subst (rcv (x) e) x v) (rcv (x) e)]
   [(subst (rcv (x_h) e) x v) (rcv (x_h) (subst e x v))]
   [(subst (rcv (x) e [(timeout n) e_timeout]) x v) (rcv (x) e [(timeout n) e_timeout])]
@@ -176,27 +170,17 @@
    (rcv (x_h) (subst e x v) [(timeout n) (subst e_timeout x v)])])
 
 (define-metafunction csa-eval
-  subst/match-clause : [p e] x v -> [p e]
-  [(subst/match-clause [p e] x v)
-   [p e]
-   (side-condition (term (pattern-binds-var p x)))]
-  [(subst/match-clause [p e] x v)
-   [p (subst e x v)]])
-
-(define-metafunction csa-eval
-  pattern-binds-var : p x -> boolean
-  [(pattern-binds-var * x) #f]
-  [(pattern-binds-var x x) #t]
-  [(pattern-binds-var x_1 x_2) #f]
-  [(pattern-binds-var t x) #t]
-  [(pattern-binds-var (tuple p ...) x)
-   ,(ormap values (term ((pattern-binds-var p x) ...)))])
+  subst/case-clause : [t x e] x v -> [t x e]
+  [(subst/case-clause [t x e] x v)
+   [t x e]]
+  [(subst/case-clause [t x_other e] x v)
+   [t x_other (subst e x v)]])
 
 (module+ test
-  (check-equal? (term (subst/match-clause [(tuple x y z) x] x 'foo))
-                (term [(tuple x y z) x]))
-  (check-equal? (term (subst/match-clause [(tuple a y z) x] x 'foo))
-                (term [(tuple a y z) 'foo])))
+  (check-equal? (term (subst/case-clause [Cons p (begin p x)] p 0))
+                (term [Cons p (begin p x)]))
+  (check-equal? (term (subst/case-clause [Cons p (begin p x)] x 0))
+                (term [Cons p (begin p 0)])))
 
 (define-metafunction csa-eval
   subst/S : S x v -> S
@@ -212,19 +196,19 @@
    (define-state (s x_s ...) (x_h) (subst e_1 x v) [(timeout n) (subst e_2 x v)])])
 
 (module+ test
-  (check-equal? (term (subst 'foo x 'bar))
-                (term 'foo))
-  (check-equal? (term (subst a a 'foo))
-                (term 'foo))
-  (check-equal? (term (subst a b 'foo))
+  (check-equal? (term (subst 0 x 1))
+                (term 0))
+  (check-equal? (term (subst a a 0))
+                (term 0))
+  (check-equal? (term (subst a b 0))
                 (term a))
-  (check-equal? (term (subst (goto s x y) x 'foo))
-                (term (goto s 'foo y)))
-  (check-equal? (term (subst (begin x y x) x 'foo))
-                (term (begin 'foo y 'foo)))
+  (check-equal? (term (subst (goto s x y) x 0))
+                (term (goto s 0 y)))
+  (check-equal? (term (subst (begin x y x) x 0))
+                (term (begin 0 y 0)))
 
-  (check-equal? (term (subst-n (goto s x y z) (x 'foo) (y 'bar)))
-                (term (goto s 'foo 'bar z)))
+  (check-equal? (term (subst-n (goto s x y z) (x 0) (y 1)))
+                (term (goto s 0 1 z)))
   ;; TODO: more tests
   )
 
@@ -245,18 +229,15 @@
 (define-metafunction csa
   type-subst : τ X τ -> τ
   [(type-subst Nat _ _) Nat]
-  [(type-subst (μ X τ_1) X τ_2)
-   (μ X τ_1)]
+  [(type-subst (minfixpt X τ_1) X τ_2)
+   (minfixpt X τ_1)]
   ;; TODO: do the full renaming here
   [(type-subst (μ X_1 τ_1) X_2 τ_2)
    (μ X_1 (type-subst τ_1 X_2 τ_2))]
   [(type-subst X X τ) τ]
   [(type-subst X_1 X_2 τ) X_1]
-  [(type-subst t _ _) t]
-  [(type-subst (Tuple τ ...) X τ_2)
-   (Tuple (type-subst τ X τ_2) ...)]
-  [(type-subst (Union τ ...) X τ_2)
-   (Union (type-subst τ X τ_2) ...)]
+  [(type-subst (Union [t τ] ...) X τ_2)
+   (Union [t (type-subst τ X τ_2)] ...)]
   [(type-subst (Addr τ) X τ_2)
    (Addr (type-subst τ X τ_2))])
 

@@ -121,7 +121,7 @@
 
 (module+ test
   (check-false (aps#-transition-observed? (term [unobs -> (goto S x y)])))
-  (check-true (aps#-transition-observed? (term [(tuple x y) -> (goto S x y)])))
+  (check-true (aps#-transition-observed? (term [(variant Cons y) -> (goto S x y)])))
   (check-true (aps#-transition-observed? (term [* -> (goto S x y)]))))
 
 (define (aps#-eval exp subst)
@@ -151,9 +151,52 @@
 ;; Pattern matching
 
 (define (aps#-match val pat)
-  ;; effectively the same as csa#-match, except only allow external addresses as bindings
-  (judgment-holds (csa#-match/j ,val ,pat ([x a#ext] ...))
+  (judgment-holds (aps#-match/j ,val ,pat ([x a#ext] ...))
                   ([x a#ext] ...)))
+
+(define-judgment-form aps#
+  #:mode (aps#-match/j I I O)
+  #:contract (aps#-match/j v# p ((x v#) ...))
+
+  [-------------------
+   (aps#-match/j _ * ())]
+
+  ;; TODO: make a version of this that only matches external addresses, for the APS matching
+  [-------------------
+   (aps#-match/j v# x ([x v#]))]
+
+  [----------------
+   (aps#-match/j t t ())]
+
+  [----------------
+   (aps#-match/j (* t) t ())]
+
+  [(aps#-match/j v# p ([x v#_binding] ...))
+   --------------
+   (aps#-match/j (variant t v#) (variant t p) ([x v#_binding] ...))]
+
+  [(aps#-match/j (* τ) p ([x v#_binding] ...))
+   --------------
+   (aps#-match/j (* (Union _ ... [t τ] _ ...)) (variant t p) ([x v#_binding] ...))])
+
+;; TODO: rewrite these tests
+;; (module+ test
+;;   (check-equal? (aps#-match (term (* Nat)) (term *))
+;;                 (list (term ())))
+;;   (check-equal? (aps#-match (term (received-addr Always ADDR-HOLE 0 MOST-RECENT)) (term x))
+;;                 (list (term ([x (received-addr Always ADDR-HOLE 0 MOST-RECENT)]))))
+;;   (check-equal? (aps#-match (term (tuple 'a 'b)) (term (tuple 'a 'b)))
+;;                 (list (term ())))
+;;   ;; (displayln (redex-match csa# t (term 'a)))
+;;   ;; (displayln (redex-match csa# v# (term 'a)))
+;;   ;; (displayln (redex-match csa# x (term item)))
+;;   ;; (displayln (build-derivations (aps#-match/j 'a item ())))
+;;   (check-equal? (aps#-match (term 'a) (term item))
+;;                 (list (term ([item 'a]))))
+;;   (check-equal? (aps#-match (term (tuple 'a 'b)) (term (tuple 'a item)))
+;;                 (list (term ([item 'b]))))
+;;   (check-equal? (aps#-match (term (* (Tuple 'a 'b))) (term (tuple x 'b)))
+;;                 (list (term ([x (* 'a)])))))
 
 ;; TODO: write tests for the above match
 
@@ -177,25 +220,28 @@
   [----
    (aps#-matches-po?/j (* t) t)]
 
-  [(aps#-matches-po?/j v# po) ...
+  [(aps#-matches-po?/j v# po)
    ------
-   (aps#-matches-po?/j (tuple v# ..._n) (tuple po ..._n))]
+   (aps#-matches-po?/j (variant t v#) (variant t po))]
 
-  [(aps#-matches-po?/j (* τ) po) ...
+  [(aps#-matches-po?/j (* τ) po)
    -----
-   (aps#-matches-po?/j (* (Tuple τ ..._n)) (tuple po ..._n))])
+   (aps#-matches-po?/j (* (Union _ ... [t τ] _ ...)) (variant t po))])
 
 (module+ test
-  (check-true (judgment-holds (aps#-matches-po?/j 'a 'a)))
-  (check-true (aps#-matches-po? (term 'a) (term 'a)))
-  (check-true (aps#-matches-po? (term (* 'a)) (term 'a)))
-  (check-false (aps#-matches-po? (term (* 'a)) (term 'b)))
-  (check-true (aps#-matches-po? (term (* (Tuple 'a 'b))) (term (tuple 'a 'b))))
-  (check-false (aps#-matches-po? (term (* (Tuple 'a 'b))) (term (tuple 'a 'c))))
-  (check-true (aps#-matches-po? (term (tuple (* 'a))) (term (tuple 'a))))
-  (check-true (aps#-matches-po? (term (tuple (quote b) (* Nat)))
-                                (term (tuple (quote b) *))
-)))
+    ;; TODO: rewrite these tests
+  ;; (check-true (judgment-holds (aps#-matches-po?/j 'a 'a)))
+  ;; (check-true (aps#-matches-po? (term 'a) (term 'a)))
+  ;; (check-true (aps#-matches-po? (term (* 'a)) (term 'a)))
+  ;; (check-false (aps#-matches-po? (term (* 'a)) (term 'b)))
+
+;;   (check-true (aps#-matches-po? (term (* (Tuple 'a 'b))) (term (tuple 'a 'b))))
+;;   (check-false (aps#-matches-po? (term (* (Tuple 'a 'b))) (term (tuple 'a 'c))))
+;;   (check-true (aps#-matches-po? (term (tuple (* 'a))) (term (tuple 'a))))
+;;   (check-true (aps#-matches-po? (term (tuple (quote b) (* Nat)))
+;;                                 (term (tuple (quote b) *))
+;; ))
+  )
 
 
 
@@ -215,12 +261,14 @@
     (term e-hat)))
 
 (module+ test
-  (define transition (term [(tuple a b) -> (with-outputs ([a *]) (goto S))]))
+  ;; TODO: rewrite these tests
+  ;; (define transition (term [(tuple a b) -> (with-outputs ([a *]) (goto S))]))
 
-  (check-equal? (aps#-transition-pattern transition) (term (tuple a b)))
-  (check-equal? (aps#-transition-expression transition) (term (with-outputs ([a *]) (goto S))))
-  (define transition2 (term [unobs -> (with-outputs ([x *]) (goto S2))]))
-  (check-equal? (aps#-transition-pattern transition2) (term unobs)))
+  ;; (check-equal? (aps#-transition-pattern transition) (term (tuple a b)))
+  ;; (check-equal? (aps#-transition-expression transition) (term (with-outputs ([a *]) (goto S))))
+  ;; (define transition2 (term [unobs -> (with-outputs ([x *]) (goto S2))]))
+  ;; (check-equal? (aps#-transition-pattern transition2) (term unobs))
+  )
 
 (define (aps#-goto-state goto-exp)
   (redex-let aps# ([(goto s _ ...) goto-exp])
@@ -239,6 +287,6 @@
     (term po)))
 
 (module+ test
-  (define commitment (term [(* (Addr Nat)) (tuple)]))
+  (define commitment (term [(* (Addr Nat)) (variant Null *)]))
   (check-equal? (aps#-commitment-address commitment) (term (* (Addr Nat))))
-  (check-equal? (aps#-commitment-pattern commitment) (term (tuple))))
+  (check-equal? (aps#-commitment-pattern commitment) (term (variant Null *))))
