@@ -42,7 +42,7 @@
       (* τ))
   (v#template
    ADDR-HOLE
-   (variant t v#template ...)
+   (variant t v#template)
    (* τ))
   (e# (spawn e# S ...)
       (goto s e# ...)
