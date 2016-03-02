@@ -87,9 +87,8 @@
   [(subst/aps#/po x_2 x v-hat) x_2]
   [(subst/aps#/po a x v-hat) a]
   [(subst/aps#/po a-hat x v-hat) a-hat]
-  [(subst/aps#/po t x v-hat) t]
-  [(subst/aps#/po * x v-hat) *]
-  [(subst/aps#/po (list po ...) x v-hat) (list (subst/aps#/po po x v-hat) ...)])
+  ;; TODO: do this for variants and records
+  [(subst/aps#/po * x v-hat) *])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
@@ -177,7 +176,15 @@
 
   [(aps#-match/j (* τ) p ([x v#_binding] ...))
    --------------
-   (aps#-match/j (* (Union _ ... [t τ] _ ...)) (variant t p) ([x v#_binding] ...))])
+   (aps#-match/j (* (Union _ ... [t τ] _ ...)) (variant t p) ([x v#_binding] ...))]
+
+  [(aps#-match/j v# p ([x v#_binding] ...)) ...
+   ---------------------------------------------
+   (aps#-match/j (record [l v#] ..._n) (record [l p] ..._n) ([x v#_binding] ... ...))]
+
+  [(aps#-match/j (* τ) p ([x v#_binding] ...)) ...
+   ---------------------------------------------
+   (aps#-match/j (* (Record [l τ] ..._n)) (record [l p] ..._n) ([x v#_binding] ... ...))])
 
 ;; TODO: rewrite these tests
 ;; (module+ test

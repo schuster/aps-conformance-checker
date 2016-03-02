@@ -32,18 +32,21 @@
      ;; TODO: come up with vocab for tagged unions: is a "variant" the full type, or one branch of the
      ;; type, or what?
      (variant t e)
+     (record [l e] ...)
+     (: e l) ; record lookup
      (primop e ...)
      x
      n)
   (S (define-state (s x ...) (x) e)
      (define-state (s x ...) (x) e [(timeout n) e]))
   (primop < /)
-  ((x s t) variable-not-otherwise-mentioned)
+  ((x s t l) variable-not-otherwise-mentioned)
   (n natural)
   (τ Nat
      (minfixpt X τ)
      X
      (Union [t τ] ...)
+     (Record [l τ] ...)
      (Addr τ)) ;; TODO: integrate types into the language
   (X variable-not-otherwise-mentioned))
 
@@ -60,7 +63,7 @@
      a
      (rcv (x) e)
      (rcv (x) e [(timeout n) e]))
-  (v n (variant t v) a)
+  (v n (variant t v) (record [l v] ...) a)
   (a (addr natural))
   (A ((any_1 ... hole any_2 ...) μ ρ χ))
   (E hole
@@ -71,6 +74,8 @@
      (let ([x E] [x e] ...) e)
      (case E _ ...)
      (variant t E)
+     (record [l v] ... [l E] [l e] ...)
+     (: E l)
      (primop v ... E e ...)))
 
 (define (make-single-agent-config agent)
@@ -111,6 +116,7 @@
 
     ;; TODO: let
     ;; TODO: case
+    ;; TODO: record lookup
 
     with
     [(--> (in-hole A (a ((S ...) (in-hole E old))))
@@ -163,6 +169,7 @@
   [(subst (case e [t x_clause e_clause] ...) x v)
    (case (subst e x v) (subst/case-clause [t x_clause e_clause] x v) ...)]
   [(subst (variant t e) x v) (variant t (subst e x v))]
+  ;; TODO: records, record lookup
   [(subst (rcv (x) e) x v) (rcv (x) e)]
   [(subst (rcv (x_h) e) x v) (rcv (x_h) (subst e x v))]
   [(subst (rcv (x) e [(timeout n) e_timeout]) x v) (rcv (x) e [(timeout n) e_timeout])]
@@ -238,6 +245,7 @@
   [(type-subst X_1 X_2 τ) X_1]
   [(type-subst (Union [t τ] ...) X τ_2)
    (Union [t (type-subst τ X τ_2)] ...)]
+  ;; TODO: Record
   [(type-subst (Addr τ) X τ_2)
    (Addr (type-subst τ X τ_2))])
 

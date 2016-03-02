@@ -39,10 +39,12 @@
   ;; TODO: these probably should be sets of values, right?
   (v# a# ; TODO: replace this one with a special pattern
       (variant t v#)
+      (record [l v#] ...)
       (* τ))
   (v#template
    ADDR-HOLE
    (variant t v#template)
+   (record [l v#template] ...)
    (* τ))
   (e# (spawn e# S ...)
       (goto s e# ...)
@@ -52,6 +54,8 @@
       (let ([x e#] ...) e#)
       (case e# [t x e#] ...)
       (variant t e#)
+      (record [l e#] ...)
+      (: e# l)
       (primop e# ...)
       a#
       x
@@ -79,7 +83,9 @@
       (begin E# e# ...)
       (let ([x E#] [x e#] ...) e#)
       (case E# [t x e#] ...)
-      (variant t E#)))
+      (variant t E#)
+      (record [l v#] ... [l E#] [l e#] ...)
+      (: E# l)))
 
   ;; (define-metafunction csa#
   ;;   abstract : K -> K#
@@ -135,20 +141,23 @@
           (generate-abstract-messages/mf (Union [t_rest τ_rest] ...) natural_max-depth))]
   [(generate-abstract-messages/mf (minfixpt X τ) natural_max-depth)
    (generate-abstract-messages/mf (type-subst τ X (minfixpt X τ)) natural_max-depth)]
-  ;; [(generate-abstract-messages/mf (Tuple τ ...) 0)
-  ;;  ((* (Tuple τ ...)))]
-  ;; [(generate-abstract-messages/mf (Tuple τ_1 τ_rest ...) natural_max-depth)
-  ;;  ,(for/fold ([tuples-so-far null])
-  ;;            ([sub-tuple (term (generate-abstract-messages/mf (Tuple τ_rest ...) natural_max-depth))])
-  ;;    (append
-  ;;     (for/list ([generated-v (term (generate-abstract-messages/mf τ_1 ,(- (term natural_max-depth) 1)))])
-  ;;       (redex-let csa# ([(tuple v#_other ...) sub-tuple]
-  ;;                        [v#_1 generated-v])
-  ;;         (term (tuple v#_1 v#_other ...))))
-  ;;     tuples-so-far))]
-  ;; [(generate-abstract-messages/mf (Tuple) natural_max-depth)
-  ;;  ((tuple))]
+  [(generate-abstract-messages/mf (Record [l τ] ...) 0)
+   ((* (Record [l τ] ...)))]
+  [(generate-abstract-messages/mf (Record [l_1 τ_1] [l_rest τ_rest] ...) natural_max-depth)
+   ,(for/fold ([records-so-far null])
+              ([sub-record (term (generate-abstract-messages/mf (Record [l_rest τ_rest] ...) natural_max-depth))])
+      (append
+       ;; TODO: do I need to do a (max 0) on natural_max-depth here?
+       (for/list ([generated-v (term (generate-abstract-messages/mf τ_1 ,(sub1 (term natural_max-depth))))])
+         (redex-let csa# ([(record [l_other v#template_other] ...) sub-record]
+                          [v#template_1 generated-v])
+           (term (record [l_1 v#template_1] [l_other v#template_other] ...))))
+       records-so-far))]
+  [(generate-abstract-messages/mf (Record) natural_max-depth)
+   ((record))]
   [(generate-abstract-messages/mf (Addr τ) _) (ADDR-HOLE)])
+
+;; TODO: write a test for the n-squared match of record message generation
 
 (module+ test
   (require
@@ -215,13 +224,16 @@
   [(fill-template/acc (variant t v#template_child) v#template natural_current s)
    ((variant t v#_child) natural_next)
    (where (v#_child natural_next) (fill-template/acc v#template_child v#template natural_current s))]
-  ;; [(fill-template/acc (tuple v#template_child1 v#template_rest ...) v#template natural_current s)
-  ;;  ((tuple v#_1 v#_rest ...) natural_next-rest)
-  ;;  (where (v#_1 natural_next1) (fill-template/acc v#template_child1 v#template natural_current s))
-  ;;  (where ((tuple v#_rest ...) natural_next-rest)
-  ;;         (fill-template/acc (tuple v#template_rest ...) v#template natural_next1 s))]
-  ;; [(fill-template/acc (tuple) v#template natural s)
-  ;;  ((tuple) natural)]
+  [(fill-template/acc (record [l_1 v#template_child1] [l_rest v#template_rest] ...)
+                      v#template
+                      natural_current
+                      s)
+   ((record [l_1 v#_1] [l_rest v#_rest] ...) natural_next-rest)
+   (where (v#_1 natural_next1) (fill-template/acc v#template_child1 v#template natural_current s))
+   (where ((record [l_rest v#_rest] ...) natural_next-rest)
+          (fill-template/acc (record [l_rest v#template_rest] ...) v#template natural_next1 s))]
+  [(fill-template/acc (record) v#template natural s)
+   ((record) natural)]
   [(fill-template/acc (* τ) _ natural _)
    ((* τ) natural)])
 
@@ -341,6 +353,15 @@
          (side-condition (not (equal? (term t) (term t_other))))
          CaseVariantFailure)
 
+    ;; Records
+    (==> (: (record _ ... [l v#] _ ...) l)
+         v#
+         RecordLookup)
+    (==> (: (* (Record _ ... [l τ] _ ...)) l)
+         (* τ)
+         RecordWildcardLookup)
+
+    ;; Primops
     (==> (< (* Nat) (* Nat))
          (variant True (* Nat))
          LessThan1)
@@ -455,6 +476,8 @@
    (case (csa#-subst e# x v#) (csa#-subst/case-clause [t x_clause e#_clause] x v#) ...)]
   [(csa#-subst (variant t e#) x v#) (variant t (csa#-subst e# x v#))]
   [(csa#-subst (primop e# ...) x v#) (primop (csa#-subst e# x v#) ...)]
+  [(csa#-subst (record [l e#] ...) x v#) (record [l (csa#-subst e# x v#)] ...)]
+  [(csa#-subst (: e# l) x v#) (: (csa#-subst e# x v#) l)]
   ;; [(csa#-subst (rcv (x) e) x v) (rcv (x) e)]
   ;; [(csa#-subst (rcv (x_h) e) x v) (rcv (x_h) (csa#-subst e x v))]
   ;; [(csa#-subst (rcv (x) e [(timeout n) e_timeout]) x v) (rcv (x) e [(timeout n) e_timeout])]
@@ -529,9 +552,15 @@
   ;; [(α-e (tuple e ...) 0)
   ;;  ;; TODO: give the actual type here
   ;;  (* (Tuple))]
+  ;; TODO: check for the depth=0 case on variants
   [(α-e (variant t e) natural_depth)
    ;; TODO: take out the "max" issue here
-   (variant t (α-e e ,(max 0 (- (term natural_depth) 1))))])
+   (variant t (α-e e ,(max 0 (- (term natural_depth) 1))))]
+  ;; TODO: check for the depth=0 case on records
+  [(α-e (record [l e] ...) natural_depth)
+   ;; TODO: take out the "max" issue here
+   (record [l (α-e e (max 0 ,(sub1 (term natural_depth))))] ...)]
+  [(α-e (: e l) natural_depth) (: (α-e e natural_depth) l)])
 
 ;; TODO: write tests for the variant/record case, because the crappy version I have here isn't good
 ;; enough

@@ -63,7 +63,8 @@ Remaining big challenges I see in the analysis:
     ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
     ;; message generation
     (define initial-tuple
-      (list (α-config initial-prog-config 0)
+      ;; TODO: get the max depth from somewhere
+      (list (α-config initial-prog-config 10)
             (aps#-α-z initial-spec-instance)
             init-obs-type
             init-unobs-type))
@@ -114,7 +115,7 @@ Remaining big challenges I see in the analysis:
   (define the-actor (csa#-config-only-actor prog-config))
   (for/fold ([transitions-so-far null])
             ;; TODO: get the max depth from somewhere
-            ([message (generate-abstract-messages type (csa#-actor-current-state the-actor) 1 observed?)])
+            ([message (generate-abstract-messages type (csa#-actor-current-state the-actor) 10 observed?)])
     (define eval-results (csa#-eval-transition prog-config (csa#-actor-address the-actor) message))
     (define new-transitions
       (for/list ([result eval-results])
@@ -665,4 +666,47 @@ Remaining big challenges I see in the analysis:
                           unobs-toggle-spec
                           (term (Union [FromObserver Nat]))
                           (term (Union [FromUnobservedEnvironment Nat]))
-                          (hash 'On 'On 'Off 'Off)))))
+                          (hash 'On 'On 'Off 'Off))))
+
+  ;;;; Records
+
+  (define record-req-resp-spec
+    (term
+     (((define-state (Always)
+         [(record [dest dest] [msg (variant A *)]) -> (with-outputs ([dest (variant A *)]) (goto Always))]
+         [(record [dest dest] [msg (variant B *)]) -> (with-outputs ([dest (variant B *)]) (goto Always))]))
+      (goto Always)
+      ,single-agent-concrete-addr)))
+  (define record-req-resp-agent
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (Always) (m)
+          (begin
+            (send (: m dest) (: m msg))
+            (goto Always))))
+       (goto Always)))))
+  (define record-req-wrong-resp-agent
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (Always) (m)
+          (begin
+            (send (: m dest) (variant A 0))
+            (goto Always))))
+       (goto Always)))))
+
+  (check-not-false (redex-match aps-eval z record-req-resp-spec))
+  (check-not-false (redex-match csa-eval αn record-req-resp-agent))
+  (check-not-false (redex-match csa-eval αn record-req-wrong-resp-agent))
+
+  ;; TODO: figure out why this test fails when max-depth for the program and the messages is set to
+  ;; 0
+  (check-true (analyze (make-single-agent-config record-req-resp-agent)
+                       record-req-resp-spec
+                       (term (Record [dest (Addr (Union [A Nat] [B Nat]))] [msg (Union [A Nat] [B Nat])]))
+                       (term (Union))
+                       (hash 'Always 'Always)))
+  (check-false (analyze (make-single-agent-config record-req-wrong-resp-agent)
+                        record-req-resp-spec
+                        (term (Record [dest (Addr (Union [A Nat] [B Nat]))] [msg (Union [A Nat] [B Nat])]))
+                        (term (Union))
+                        (hash 'Always 'Always))))
