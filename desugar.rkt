@@ -69,9 +69,9 @@
             ad
             (define-type T τ))
   (ActorDef (ad)
-    (define-actor τ (a x ...) (fd ...) e S ...))
+    (define-actor τ (a [x τ2] ...) (fd ...) e S ...))
   (StateDef (S)
-    (define-state (s x  ...) (x2) e))
+    (define-state (s [x τ]  ...) (x2) e))
   (Exp (e body)
        n
        b
@@ -89,7 +89,7 @@
   (LetBinding (lb)
               [x e])
   (FuncDef (fd)
-           (define-function (f x ...) e))
+           (define-function (f [x τ] ...) e))
   (Type (τ)
         pτ
         T)
@@ -103,8 +103,8 @@
 (define-language csa/inlined-functions
   (extends csa/surface)
   (ActorDef (ad)
-            (- (define-actor τ (a x ...) (fd ...) e S ...))
-            (+ (define-actor τ (a x ...)          e S ...)))
+            (- (define-actor τ (a [x τ2] ...) (fd ...) e S ...))
+            (+ (define-actor τ (a [x τ2] ...)          e S ...)))
   (Exp (e) (- (f e ...))))
 
 (define-parser parse-csa/inlined-functions csa/inlined-functions)
@@ -113,15 +113,16 @@
 
 (define-pass inline-functions : csa/surface (P) -> csa/inlined-functions ()
   (definitions
+    ;; TODO: clear this list every time we start a new actor
     (define funcs null))
   (ActorDef : ActorDef (d) -> ActorDef ()
-    [(define-actor ,τ (,a ,x1 ...) ((define-function (,f ,x2 ...) ,[body]) ,fd* ...)  ,e ,S ...)
+    [(define-actor ,τ (,a [,x1 ,τ1] ...) ((define-function (,f [,x2 ,τ2] ...) ,[body]) ,fd* ...)  ,e ,S ...)
      (set! funcs (cons (func-record f x2 body) funcs))
      (ActorDef
       (with-output-language (csa/surface ActorDef)
-        `(define-actor ,τ (,a ,x1 ...) (,fd* ...) ,e ,S ...)))]
-    [(define-actor ,τ (,a ,x ...) () ,[e] ,[S] ...)
-     `(define-actor ,τ (,a ,x ...) ,e ,S ...)])
+        `(define-actor ,τ (,a [,x1 ,τ1] ...) (,fd* ...) ,e ,S ...)))]
+    [(define-actor ,τ (,a [,x ,τ1] ...) () ,[e] ,[S] ...)
+     `(define-actor ,τ (,a [,x ,τ1] ...) ,e ,S ...)])
   (Exp : Exp (e) -> Exp ()
        ;; TODO: see tmp/expected-meta for why this breaks
 
@@ -133,9 +134,10 @@
             `(let ([,formals ,e*] ...) ,body)])]
         [(,po ,[e*] ...)
      (,po ,e* ...)])
-  (StateDef : StateDef (S) -> StateDef ()
-            [(define-state (,s ,x1 ...) (,x2) ,[e])
-             `(define-state (,s ,x1 ...) (,x2) ,e)]))
+  ;; (StateDef : StateDef (S) -> StateDef ()
+  ;;           [(define-state (,s ,x1 ...) (,x2) ,[e])
+  ;;            `(define-state (,s ,x1 ...) (,x2) ,e)])
+  )
 
 (module+ test
   (require rackunit)
@@ -145,8 +147,8 @@
     (inline-functions
      (with-output-language (csa/surface Prog)
        `((define-actor Nat (A)
-           ((define-function (foo x) (+ x 2))
-            (define-function (bar x y) (- x y)))
+           ((define-function (foo [x Nat]) (+ x 2))
+            (define-function (bar [x Nat] [y Nat]) (- x y)))
            (foo (bar 3 4)))
          (spawn A)))))
    `((define-actor Nat (A)
@@ -218,14 +220,14 @@
 (define-pass inline-actors : csa/inlined-functions (P) -> csa/inlined-actors ()
   ;; TODO: I think the return "type" is not checked, because I've seen things get through when I had ActorDef instead of Prog
   (Prog : Prog (P defs-so-far) -> Prog ()
-        [((define-actor ,τ (,a ,x ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...) ,ad* ... ,e1)
+        [((define-actor ,τ (,a [,x ,τ1] ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...) ,ad* ... ,e1)
          (Prog (with-output-language (csa/inlined-functions Prog) `(,ad* ... ,e1))
                ;; TODO: figure out if hash-set overwrites existing entries or not
                (hash-set defs-so-far a (actor-record τ x e S)))]
         [(,[Exp : e0 defs-so-far -> e]) e])
   (StateDef : StateDef (S defs-so-far) -> StateDef ()
-    [(define-state (,s ,x ...) (,x2) ,[Exp : e0 defs-so-far -> e])
-     `(define-state (,s ,x ...) (,x2) ,e)])
+    [(define-state (,s [,x ,τ] ...) (,x2) ,[Exp : e0 defs-so-far -> e])
+     `(define-state (,s [,x ,τ] ...) (,x2) ,e)])
   ;; (MyExp2 : Exp (e) -> Exp ()
   ;;         [,spawn-exp `5]
   ;;         )
@@ -296,7 +298,7 @@
    (unparse-csa/inlined-actors
     (inline-actors
      (with-output-language (csa/inlined-functions Prog)
-       `((define-actor Nat (A x)
+       `((define-actor Nat (A [x Nat])
            (goto S1)
            (define-state (S1) (m)
              (goto S1)))
@@ -311,11 +313,11 @@
    (unparse-csa/inlined-actors
     (inline-actors
      (with-output-language (csa/inlined-functions Prog)
-       `((define-actor Nat (A x)
+       `((define-actor Nat (A [x Nat])
            (goto S1)
            (define-state (S1) (m)
              (goto S1)))
-         (define-actor Nat (B y)
+         (define-actor Nat (B [y Nat])
            (goto S2)
            (define-state (S2) (m)
              (begin
