@@ -185,7 +185,7 @@
   (extends csa/inlined-funcs)
   (Prog (P)
     (- (ad ... spawn-exp))
-    (+ spawn-exp))
+    (+ e))
   (SpawnExp (spawn-exp)
             (- (spawn a e ...))
             (+ (spawn e S ...))))
@@ -198,13 +198,26 @@
          (Prog (with-output-language (csa/inlined-funcs Prog) `(,ad* ... ,spawn-exp))
                ;; TODO: figure out if hash-set overwrites existing entries or not
                (hash-set defs-so-far a (actor-record x S e)))]
-        [(,[SpawnExp : spawn-exp0 defs-so-far -> spawn-exp]) spawn-exp])
+        [(,[Exp : spawn-exp0 defs-so-far -> spawn-exp]) spawn-exp])
   (StateDef : StateDef (S defs-so-far) -> StateDef ()
     [(define-state (,s ,x ...) (,x2) ,[Exp : e0 defs-so-far -> e])
      `(define-state (,s ,x ...) (,x2) ,e)])
+  ;; (MyExp2 : Exp (e) -> Exp ()
+  ;;         [,spawn-exp `5]
+  ;;         )
   (Exp : Exp (e defs-so-far) -> Exp ()
-       [,spawn-exp
-        (SpawnExp spawn-exp defs-so-far)]
+       [(spawn ,a ,[Exp : e0 defs-so-far -> e] ...)
+        (match (hash-ref defs-so-far a)
+          [#f (error 'inline-actors "Could not find match for actor ~s\n" a)]
+          [(actor-record formals state-defs body)
+           ;; TODO: do I need to rename variables here at all?
+           ;; `(spawn (goto S-Bad1))
+           `(let ([,formals ,e] ...) (spawn ,body ,state-defs ...))
+           ])
+
+        ;; ,spawn-exp
+        ;; (SpawnExp spawn-exp defs-so-far)
+        ]
        ;; [(goto ,s ,[e0 defs-so-far -> e] ...)
        ;;  `(goto ,s ,e)]
        ;; [(send ,[e1 defs-so-far -> e11] ,[e2 defs-so-far e22])
@@ -226,29 +239,33 @@
        ;; (let* (lb ...) e2)
 
        )
-  (SpawnExp : SpawnExp (spawn-exp defs-so-far) -> SpawnExp ()
-       [(spawn ,a ,[Exp : e0 defs-so-far -> e] ...)
-        (match (hash-ref defs-so-far a)
-          [#f (error 'inline-actors "Could not find match for actor ~s\n" a)]
-          [(actor-record formals state-defs body)
-           ;; TODO: do I need to rename variables here at all?
-           `(spawn (goto S-Bad))
-           ;; `(let ([,formals ,e] ...) (spawn ,state-defs ... ,body))
-           ])]
-       [else "error in spawnexp"])
-  ;; TODO: this one is just for debugging
+  ;; (SpawnExp : SpawnExp (spawn-exp defs-so-far) -> SpawnExp ()
+  ;;      [(spawn ,a ,[Exp : e0 defs-so-far -> e] ...)
+  ;;       (match (hash-ref defs-so-far a)
+  ;;         [#f (error 'inline-actors "Could not find match for actor ~s\n" a)]
+  ;;         [(actor-record formals state-defs body)
+  ;;          ;; TODO: do I need to rename variables here at all?
+  ;;          ;; `(spawn (goto S-Bad1))
+  ;;          `(let (;; [,formals ,e] ...
+  ;;                 ) (spawn ,state-defs ... ,body))
+  ;;          ])]
+  ;;      [else "error in spawnexp"])
+
+  ;; TODO: figure out why this processor is necessary at all
   (SpawnExp2 : SpawnExp (spawn-exp) -> SpawnExp ()
              [(spawn ,a ,e ...)
-              (displayln spawn-exp)
-             `(spawn (goto S1))
+              (error "this should never happen")
+             `(spawn (goto S-Bad2))
         ;; (match (findf (lambda (rec) (eq? a (actor-recod-name rec))) defs-so-far)
         ;;   [#f (error 'inline-actors "Could not find match for actor ~s\n" a)]
         ;;   [(actor-record formals state-defs body)
         ;;    ;; TODO: do I need to rename variables here at all?
         ;;    `(let ([,formals ,e] ...) (spawn ,state-defs ... ,body))])
              ]
-)
-  (Prog P (hash))
+  )
+
+  ;; BUG: (?): shouldn't this be the default init statement?
+  (Prog P defs-so-far)
   )
 
 (check-equal?
@@ -256,7 +273,8 @@
   (inline-actors
    (with-output-language (csa/inlined-funcs Prog)
      `((define-actor (A x)
-         (define-state (S1) (m) (goto S1))
+         (define-state (S1) (m)
+           (goto S1))
          (goto S1))
        (spawn A 5)))
    (hash)))
@@ -264,6 +282,34 @@
    (spawn
     (goto S1)
     (define-state (S1) (m) (goto S1)))))
+
+(check-equal?
+ (unparse-csa/inlined-actors
+  (inline-actors
+   (with-output-language (csa/inlined-funcs Prog)
+     `((define-actor (A x)
+         (define-state (S1) (m)
+           (goto S1))
+         (goto S1))
+       (define-actor (B y)
+         (define-state (S2) (m)
+           (begin
+             (spawn A 3)
+             (goto S2)))
+         (goto S2))
+       (spawn B 5)))
+   (hash)))
+ `(let ([y 5])
+   (spawn
+    (goto S2)
+    (define-state (S2) (m)
+      (begin
+        (let ([x 3])
+          (spawn
+           (goto S1)
+           (define-state (S1) (m)
+             (goto S1))))
+        (goto S2))))))
 
  ;; (unparse-csa/inlined-funcs
  ;;  (inline-functions
