@@ -43,8 +43,7 @@
 (define (name? x)
   (and (symbol? x)
        (not (PrimOp? x))
-       ;; (not (Type? x))
-       ))
+       (not (PrimitiveType? x))))
 
 (define (PrimOp? x) (not (not (member x (list '+ '-)))))
 
@@ -61,22 +60,25 @@
   (terminals
    (number (n))
    (boolean (b))
-   (name (x f a s))
+   (name (x f a s T))
    (PrimitiveType (pτ))
    )
   (Prog (P)
-    (ad ... spawn-exp))
+        (PI ... e))
+  (ProgItem (PI)
+            ad
+            (define-type T τ))
   (ActorDef (ad)
     (define-actor τ (a x ...) (fd ...) e S ...))
   (StateDef (S)
-    (define-state (s x ...) (x2) e))
+    (define-state (s x  ...) (x2) e))
   (Exp (e body)
        n
        b
        x
        (goto s e ...)
        (send e1 e2)
-       spawn-exp
+       (spawn a e ...)
        (begin e1 e* ...)
        (f e ...)
        ;; (po e ...)
@@ -84,49 +86,32 @@
        (- e ...)
        (let (lb ...) e2)
        (let* (lb ...) e2))
-  (SpawnExp (spawn-exp)
-            (spawn a e ...))
   (LetBinding (lb)
               [x e])
   (FuncDef (fd)
            (define-function (f x ...) e))
   (Type (τ)
-        pτ)
+        pτ
+        T)
   (entry Prog))
 
 ;; TODO: how does Nanopass resolve ambiguity?
 
-;; (define-pass
-;;   let*->let : L1 (P) -> L1
-;;   (Exp (e) : Exp -> Exp
-;;        [(let* () ,[e]) ,e]
-;;        [(let* ([,x1 ,e1] [x* e*] ...))
-;;         (let ([x1 e1]) (let* ([x* e*] ...)))
-;;         ]
-;;        )
-
-;;   )
-
-;; (module+ test
-;;   (let*->let
-;;    `(let* ([a 1] [b 2] [c 3]) (+ a b c)))
-;;   `(let ([a 1])
-;;      (let ([b 2])
-;;        (let ([c 3])))))
-
 ;; ---------------------------------------------------------------------------------------------------
 ;; Function inlining
 
-(define-language csa/inlined-funcs
+(define-language csa/inlined-functions
   (extends csa/surface)
   (ActorDef (ad)
             (- (define-actor τ (a x ...) (fd ...) e S ...))
             (+ (define-actor τ (a x ...)          e S ...)))
   (Exp (e) (- (f e ...))))
 
+(define-parser parse-csa/inlined-functions csa/inlined-functions)
+
 (struct func-record (name formals body))
 
-(define-pass inline-functions : csa/surface (P) -> csa/inlined-funcs ()
+(define-pass inline-functions : csa/surface (P) -> csa/inlined-functions ()
   (definitions
     (define funcs null))
   (ActorDef : ActorDef (d) -> ActorDef ()
@@ -156,7 +141,7 @@
   (require rackunit)
 
   (check-equal?
-   (unparse-csa/inlined-funcs
+   (unparse-csa/inlined-functions
     (inline-functions
      (with-output-language (csa/surface Prog)
        `((define-actor Nat (A)
@@ -173,25 +158,71 @@
      (spawn A))))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Inlined Types
+
+(define-language csa/inlined-types
+  (extends csa/inlined-functions)
+  (ProgItem (PI)
+            (- (define-type T τ)))
+  (Type (τ) (- T)))
+
+(define-parser parse-csa/inlined-types csa/inlined-types)
+
+(define-pass inline-type-aliases : csa/inlined-functions (P) -> csa/inlined-types ()
+  ;; TODO: figure out the best way to do this kind of fold, because the restriction that the return
+  ;; type always has to be the same languae prevents me from doing a general Subst processor like I
+  ;; want to (but perhaps that's inefficient anyway, since it requires many passes)
+  (definitions
+    (define aliases-so-far (make-hash)))
+  (Prog : Prog (P) -> Prog ()
+        [((define-type ,T ,[τ]) ,PI ... ,e)
+         ;; TODO: do something more defensive for hash overwrites
+         (hash-set! aliases-so-far T τ)
+         (Prog (with-output-language (csa/inlined-functions Prog) `(,PI ... ,e)))]
+        ;; [(,[PI1^ aliases-so-far -> PI1] ,PI* ... ,e)
+        ;;  (AppendItem (Prog (with-output-language (csa/inlined-functions Prog) `(,PI* ... ,e))
+        ;;                    aliases-so-far)
+        ;;              PI1)]
+        ;; [(,[e0 aliases-so-far -> e]) `e]
+        )
+  (Type : Type (τ) -> Type ()
+        [,T
+         (hash-ref aliases-so-far T (lambda () (error ~s "Could not find alias for type ~s" T)))]))
+
+(module+ test
+  (check-equal?
+   (unparse-csa/inlined-types
+    (inline-type-aliases
+     (parse-csa/inlined-functions
+      `((define-type MyT Nat)
+        (define-actor MyT (A)
+          (goto S1))
+        (spawn A)))))
+   `((define-actor Nat (A)
+       (goto S1))
+     (spawn A))))
+
+;; ---------------------------------------------------------------------------------------------------
 
 (define-language csa/inlined-actors
-  (extends csa/inlined-funcs)
+  (extends csa/inlined-types)
   (Prog (P)
-    (- (ad ... spawn-exp))
+    (- (PI ... e))
     (+ e))
-  (SpawnExp (spawn-exp)
-            (- (spawn a e ...))
-            (+ (spawn τ e S ...))))
+  (Exp (e)
+       (- (spawn a e ...))
+       (+ (spawn τ e S ...))))
 
 (struct actor-record (type formals body state-defs))
 
-(define-pass inline-actors : csa/inlined-funcs (P) -> csa/inlined-actors ()
-  (Prog : Prog (P defs-so-far) -> ActorDef ()
-        [((define-actor ,τ (,a ,x ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...) ,ad* ... ,spawn-exp)
-         (Prog (with-output-language (csa/inlined-funcs Prog) `(,ad* ... ,spawn-exp))
+(define-pass inline-actors : csa/inlined-functions (P) -> csa/inlined-actors ()
+  ;; TODO: I think the return "type" is not checked, because I've seen things get through when I had ActorDef instead of Prog
+  (Prog : Prog (P defs-so-far) -> Prog ()
+        [((define-actor ,τ (,a ,x ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...) ,ad* ... ,e1)
+         (Prog (with-output-language (csa/inlined-functions Prog) `(,ad* ... ,e1))
                ;; TODO: figure out if hash-set overwrites existing entries or not
                (hash-set defs-so-far a (actor-record τ x e S)))]
-        [(,[Exp : spawn-exp0 defs-so-far -> spawn-exp]) spawn-exp])
+        [(,[Exp : e0 defs-so-far -> e]) e])
   (StateDef : StateDef (S defs-so-far) -> StateDef ()
     [(define-state (,s ,x ...) (,x2) ,[Exp : e0 defs-so-far -> e])
      `(define-state (,s ,x ...) (,x2) ,e)])
@@ -245,17 +276,17 @@
   ;;      [else "error in spawnexp"])
 
   ;; TODO: figure out why this processor is necessary at all
-  (SpawnExp2 : SpawnExp (spawn-exp) -> SpawnExp ()
-             [(spawn ,a ,e ...)
-              (error "this should never happen")
+  ;; (SpawnExp2 : SpawnExp (spawn-exp) -> SpawnExp ()
+  ;;            [(spawn ,a ,e ...)
+  ;;             (error "this should never happen")
 
-        ;; (match (findf (lambda (rec) (eq? a (actor-recod-name rec))) defs-so-far)
-        ;;   [#f (error 'inline-actors "Could not find match for actor ~s\n" a)]
-        ;;   [(actor-record formals state-defs body)
-        ;;    ;; TODO: do I need to rename variables here at all?
-        ;;    `(let ([,formals ,e] ...) (spawn ,state-defs ... ,body))])
-             ]
-  )
+  ;;       ;; (match (findf (lambda (rec) (eq? a (actor-recod-name rec))) defs-so-far)
+  ;;       ;;   [#f (error 'inline-actors "Could not find match for actor ~s\n" a)]
+  ;;       ;;   [(actor-record formals state-defs body)
+  ;;       ;;    ;; TODO: do I need to rename variables here at all?
+  ;;       ;;    `(let ([,formals ,e] ...) (spawn ,state-defs ... ,body))])
+  ;;            ]
+  ;; )
 
   ;; BUG: (?): shouldn't this be the default init statement?
   (Prog P (hash)))
@@ -264,7 +295,7 @@
   (check-equal?
    (unparse-csa/inlined-actors
     (inline-actors
-     (with-output-language (csa/inlined-funcs Prog)
+     (with-output-language (csa/inlined-functions Prog)
        `((define-actor Nat (A x)
            (goto S1)
            (define-state (S1) (m)
@@ -279,7 +310,7 @@
   (check-equal?
    (unparse-csa/inlined-actors
     (inline-actors
-     (with-output-language (csa/inlined-funcs Prog)
+     (with-output-language (csa/inlined-functions Prog)
        `((define-actor Nat (A x)
            (goto S1)
            (define-state (S1) (m)
