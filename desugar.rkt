@@ -2,7 +2,7 @@
 
 ;; Defines the desugaring from the surface syntax to the core syntax
 
-;; (provide desugar-program)
+(provide desugar-actor)
 
 (require
  ;; redex/reduction-semantics
@@ -39,43 +39,36 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 
-;; (define desugar-program
-;;   (compose )
-;;   (unparse-csa/actors-inlined
-;;    (desugar-pass
-;;     (with-output-language (csa/surface ActorDef)
-;;       `,a))))
-
-;; (define desugar-program
-;;   (compose
-;;    unparse-csa/inlined-actors
-;;    inline-actor-defs
-;;    inline-functions
-;;    parse-csa/surface))
-
-;; ---------------------------------------------------------------------------------------------------
-
 (require nanopass)
 
-(define (name? x) (and (symbol? x) (not (PrimOp? x))))
+(define (name? x)
+  (and (symbol? x)
+       (not (PrimOp? x))
+       ;; (not (Type? x))
+       ))
+
 (define (PrimOp? x) (not (not (member x (list '+ '-)))))
 
-(check-not-false (PrimOp? '+))
-(check-false (name? '+))
-(check-false (PrimOp? 'x))
-(check-true (name? 'x))
+(define (PrimitiveType? x)
+  (not (not (member x (list 'Nat)))))
+
+(module+ test
+  (check-not-false (PrimOp? '+))
+  (check-false (name? '+))
+  (check-false (PrimOp? 'x))
+  (check-true (name? 'x)))
 
 (define-language csa/surface
   (terminals
    (number (n))
    (boolean (b))
    (name (x f a s))
-   ;; (PrimOp (po))
+   (PrimitiveType (pτ))
    )
   (Prog (P)
     (ad ... spawn-exp))
   (ActorDef (ad)
-    (define-actor (a x ...) (fd ...) S ... e))
+    (define-actor τ (a x ...) (fd ...) e S ...))
   (StateDef (S)
     (define-state (s x ...) (x2) e))
   (Exp (e body)
@@ -98,11 +91,13 @@
               [x e])
   (FuncDef (fd)
            (define-function (f x ...) e))
+  (Type (τ)
+        pτ)
   (entry Prog))
 
-;; (define (parse-csa/surface prog)
-;;   (with-output-language (csa/surface Prog)
-;;     `,prog))
+(define (parse-actor-def-csa/surface/actor-def term)
+  (with-output-language (csa/surface ActorDef)
+    `,term))
 
 ;; TODO: how does Nanopass resolve ambiguity?
 
@@ -130,54 +125,64 @@
 (define-language csa/inlined-funcs
   (extends csa/surface)
   (ActorDef (ad)
-            (- (define-actor (a x ...) (fd ...) S ... e))
-            (+ (define-actor (a x ...)          S ... e)))
+            (- (define-actor τ (a x ...) (fd ...) e S ...))
+            (+ (define-actor τ (a x ...)          e S ...)))
   (Exp (e) (- (f e ...))))
 
 (struct func-record (name formals body))
 
-;; (define-pass inline-functions : csa/surface (actor-def) -> csa/inlined-funcs ()
-;;   (definitions
-;;     (define funcs null))
-;;   (ActorDef : ActorDef (d) -> ActorDef ()
-;;     [(define-actor (,a ,x1 ...) ((define-function (,f ,x2 ...) ,[body]) ,fd* ...) ,S ... ,e)
-;;      (set! funcs (cons (func-record f x2 body) funcs))
-;;      (ActorDef
-;;       (with-output-language (csa/surface ActorDef)
-;;         `(define-actor (,a ,x1 ...) (,fd* ...) ,S ... ,e)))]
-;;     [(define-actor (,a ,x ...) () ,[S] ... ,[e])
-;;      `(define-actor (,a ,x ...) ,S ... ,e)])
-;;   (Exp : Exp (e) -> Exp ()
-;;        ;; TODO: see tmp/expected-meta for why this breaks
+(define-language csa/surface/actor-def
+  (extends csa/surface)
+  (entry ActorDef))
 
-;;     [(,f ,[e*] ...)
-;;          (define (name-matches? rec) (eq? f (func-record-name rec)))
-;;          (match (findf name-matches? funcs)
-;;            [#f (error 'inline-functions "could not find match for function ~s\n") f]
-;;            [(func-record _ (list formals ...) body)
-;;             `(let ([,formals ,e*] ...) ,body)])]
-;;         [(,po ,[e*] ...)
-;;      (,po ,e* ...)])
-;;   (StateDef : StateDef (S) -> StateDef ()
-;;             [(define-state (,s ,x1 ...) (,x2) ,[e])
-;;              `(define-state (,s ,x1 ...) (,x2) ,e)]))
+(define-language csa/inlined-funcs/actor-def
+  (extends csa/inlined-funcs)
+  (entry ActorDef))
 
-(require rackunit)
+(define-pass inline-functions : csa/surface/actor-def (actor-def) -> csa/inlined-funcs/actor-def ()
+  (definitions
+    (define funcs null))
+  (ActorDef : ActorDef (d) -> ActorDef ()
+    [(define-actor ,τ (,a ,x1 ...) ((define-function (,f ,x2 ...) ,[body]) ,fd* ...)  ,e ,S ...)
+     (set! funcs (cons (func-record f x2 body) funcs))
+     (ActorDef
+      (with-output-language (csa/surface/actor-def ActorDef)
+        `(define-actor ,τ (,a ,x1 ...) (,fd* ...) ,e ,S ...)))]
+    [(define-actor ,τ (,a ,x ...) () ,[e] ,[S] ...)
+     `(define-actor ,τ (,a ,x ...) ,e ,S ...)])
+  (Exp : Exp (e) -> Exp ()
+       ;; TODO: see tmp/expected-meta for why this breaks
 
-;; (check-equal?
-;;  (unparse-csa/inlined-funcs
-;;   (inline-functions
-;;    (with-output-language (csa/surface ActorDef)
-;;      `(define-actor (A)
-;;         (     (define-function (foo x) (+ x 2))
-;;               (define-function (bar x y) (- x y)))
-;;         (foo (bar 3 4))))))
-;;  `(define-actor (A)
-;;     (let ([x
-;;            (let ([x 3]
-;;                  [y 4])
-;;              (- x y))])
-;;       (+ x 2))))
+    [(,f ,[e*] ...)
+         (define (name-matches? rec) (eq? f (func-record-name rec)))
+         (match (findf name-matches? funcs)
+           [#f (error 'inline-functions "could not find match for function ~s\n") f]
+           [(func-record _ (list formals ...) body)
+            `(let ([,formals ,e*] ...) ,body)])]
+        [(,po ,[e*] ...)
+     (,po ,e* ...)])
+  (StateDef : StateDef (S) -> StateDef ()
+            [(define-state (,s ,x1 ...) (,x2) ,[e])
+             `(define-state (,s ,x1 ...) (,x2) ,e)])
+  (ActorDef actor-def))
+
+(module+ test
+  (require rackunit)
+
+  (check-equal?
+   (unparse-csa/inlined-funcs/actor-def
+    (inline-functions
+     (with-output-language (csa/surface/actor-def ActorDef)
+       `(define-actor Nat (A)
+          ((define-function (foo x) (+ x 2))
+           (define-function (bar x y) (- x y)))
+          (foo (bar 3 4))))))
+   `(define-actor Nat (A)
+      (let ([x
+             (let ([x 3]
+                   [y 4])
+               (- x y))])
+        (+ x 2)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -188,16 +193,16 @@
     (+ e))
   (SpawnExp (spawn-exp)
             (- (spawn a e ...))
-            (+ (spawn e S ...))))
+            (+ (spawn τ e S ...))))
 
-(struct actor-record (formals state-defs body))
+(struct actor-record (type formals body state-defs))
 
 (define-pass inline-actors : csa/inlined-funcs (P defs-so-far) -> csa/inlined-actors ()
   (Prog : Prog (P defs-so-far) -> ActorDef ()
-        [((define-actor (,a ,x ...) ,[StateDef : S0 defs-so-far -> S] ... ,[Exp : e0 defs-so-far -> e]) ,ad* ... ,spawn-exp)
+        [((define-actor ,τ (,a ,x ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...) ,ad* ... ,spawn-exp)
          (Prog (with-output-language (csa/inlined-funcs Prog) `(,ad* ... ,spawn-exp))
                ;; TODO: figure out if hash-set overwrites existing entries or not
-               (hash-set defs-so-far a (actor-record x S e)))]
+               (hash-set defs-so-far a (actor-record τ x e S)))]
         [(,[Exp : spawn-exp0 defs-so-far -> spawn-exp]) spawn-exp])
   (StateDef : StateDef (S defs-so-far) -> StateDef ()
     [(define-state (,s ,x ...) (,x2) ,[Exp : e0 defs-so-far -> e])
@@ -209,10 +214,10 @@
        [(spawn ,a ,[Exp : e0 defs-so-far -> e] ...)
         (match (hash-ref defs-so-far a)
           [#f (error 'inline-actors "Could not find match for actor ~s\n" a)]
-          [(actor-record formals state-defs body)
+          [(actor-record type formals body state-defs)
            ;; TODO: do I need to rename variables here at all?
            ;; `(spawn (goto S-Bad1))
-           `(let ([,formals ,e] ...) (spawn ,body ,state-defs ...))
+           `(let ([,formals ,e] ...) (spawn ,type ,body ,state-defs ...))
            ])
 
         ;; ,spawn-exp
@@ -255,7 +260,7 @@
   (SpawnExp2 : SpawnExp (spawn-exp) -> SpawnExp ()
              [(spawn ,a ,e ...)
               (error "this should never happen")
-             `(spawn (goto S-Bad2))
+
         ;; (match (findf (lambda (rec) (eq? a (actor-recod-name rec))) defs-so-far)
         ;;   [#f (error 'inline-actors "Could not find match for actor ~s\n" a)]
         ;;   [(actor-record formals state-defs body)
@@ -268,49 +273,58 @@
   (Prog P defs-so-far)
   )
 
-(check-equal?
- (unparse-csa/inlined-actors
-  (inline-actors
-   (with-output-language (csa/inlined-funcs Prog)
-     `((define-actor (A x)
-         (define-state (S1) (m)
-           (goto S1))
-         (goto S1))
-       (spawn A 5)))
-   (hash)))
- `(let ([x 5])
-   (spawn
-    (goto S1)
-    (define-state (S1) (m) (goto S1)))))
-
-(check-equal?
- (unparse-csa/inlined-actors
-  (inline-actors
-   (with-output-language (csa/inlined-funcs Prog)
-     `((define-actor (A x)
-         (define-state (S1) (m)
-           (goto S1))
-         (goto S1))
-       (define-actor (B y)
-         (define-state (S2) (m)
-           (begin
-             (spawn A 3)
-             (goto S2)))
-         (goto S2))
-       (spawn B 5)))
-   (hash)))
- `(let ([y 5])
-   (spawn
-    (goto S2)
-    (define-state (S2) (m)
-      (begin
-        (let ([x 3])
-          (spawn
+(module+ test
+  (check-equal?
+   (unparse-csa/inlined-actors
+    (inline-actors
+     (with-output-language (csa/inlined-funcs Prog)
+       `((define-actor Nat (A x)
            (goto S1)
            (define-state (S1) (m)
-             (goto S1))))
-        (goto S2))))))
+             (goto S1)))
+         (spawn A 5)))
+     (hash)))
+   `(let ([x 5])
+      (spawn
+       Nat
+       (goto S1)
+       (define-state (S1) (m) (goto S1)))))
 
- ;; (unparse-csa/inlined-funcs
- ;;  (inline-functions
- ;;   (with-output-language (csa/surface ActorDef)
+  (check-equal?
+   (unparse-csa/inlined-actors
+    (inline-actors
+     (with-output-language (csa/inlined-funcs Prog)
+       `((define-actor Nat (A x)
+           (goto S1)
+           (define-state (S1) (m)
+             (goto S1)))
+         (define-actor Nat (B y)
+           (goto S2)
+           (define-state (S2) (m)
+             (begin
+               (spawn A 3)
+               (goto S2))))
+         (spawn B 5)))
+     (hash)))
+   `(let ([y 5])
+      (spawn
+       Nat
+       (goto S2)
+       (define-state (S2) (m)
+         (begin
+           (let ([x 3])
+             (spawn
+              Nat
+              (goto S1)
+              (define-state (S1) (m)
+                (goto S1))))
+           (goto S2)))))))
+
+;; ---------------------------------------------------------------------------------------------------
+
+(define desugar-actor
+  (compose
+   unparse-csa/inlined-funcs/actor-def
+   ;; inline-actor-defs
+   inline-functions
+   parse-actor-def-csa/surface/actor-def))
