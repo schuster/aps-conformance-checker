@@ -21,7 +21,7 @@
 ;; CSA
 
 (define-language csa
-  (e (spawn e S ...)
+  (e (spawn τ e S ...)
      (goto s e ...)
      (send e e)
      self

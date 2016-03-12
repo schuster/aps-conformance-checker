@@ -5,9 +5,8 @@
 (provide desugar-actor)
 
 (require
- ;; redex/reduction-semantics
- ;; "csa.rkt"
- )
+ (only-in redex/reduction-semantics redex-let term)
+ "csa.rkt")
 
 ;; TODO: consider using Nanopass for this transformation
 
@@ -94,10 +93,6 @@
   (Type (τ)
         pτ)
   (entry Prog))
-
-(define (parse-actor-def-csa/surface/actor-def term)
-  (with-output-language (csa/surface ActorDef)
-    `,term))
 
 ;; TODO: how does Nanopass resolve ambiguity?
 
@@ -322,9 +317,13 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 
-(define desugar-actor
-  (compose
-   unparse-csa/inlined-funcs/actor-def
-   ;; inline-actor-defs
-   inline-functions
-   parse-actor-def-csa/surface/actor-def))
+(define-parser parse-actor-def-csa/surface/actor-def csa/surface/actor-def)
+
+(define (desugar-actor actor address)
+  (define processed-actor
+    (unparse-csa/inlined-funcs/actor-def
+     (inline-functions
+      (parse-actor-def-csa/surface/actor-def actor))))
+  ;; TODO: deal with actor parameters and type
+  (redex-let csa-eval ([(define-actor τ (x_actor) e S ...) processed-actor])
+    (term (,address ((S ...) e)))))
