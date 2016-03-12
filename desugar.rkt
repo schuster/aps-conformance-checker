@@ -67,7 +67,9 @@
         (PI ... e))
   (ProgItem (PI)
             ad
-            (define-type T τ))
+            (define-function (f [x τ] ...) e)
+            (define-type T τ)
+            (define-record T [x τ] ...)
   (ActorDef (ad)
     (define-actor τ (a [x τ2] ...) (fd ...) e S ...))
   (StateDef (S)
@@ -80,6 +82,7 @@
        (send e1 e2)
        (spawn a e ...)
        (begin e1 e* ...)
+       (record [x e] ...)
        (f e ...)
        ;; (po e ...)
        (+ e ...)
@@ -92,16 +95,25 @@
            (define-function (f [x τ] ...) e))
   (Type (τ)
         pτ
+        (record [x τ] ...)
         T)
   (entry Prog))
 
 ;; TODO: how does Nanopass resolve ambiguity?
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Variant desugaring
+
+(define-language csa/desugared-variants
+  (extends csa/surface)
+  ;; (ProgItem (PI)
+  ;;           (- (define-record T [x τ] ...)))
+  )
+
 ;; Function inlining
 
 (define-language csa/inlined-functions
-  (extends csa/surface)
+  (extends csa/inlined-records)
   (ActorDef (ad)
             (- (define-actor τ (a [x τ2] ...) (fd ...) e S ...))
             (+ (define-actor τ (a [x τ2] ...)          e S ...)))
@@ -111,7 +123,7 @@
 
 (struct func-record (name formals body))
 
-(define-pass inline-functions : csa/surface (P) -> csa/inlined-functions ()
+(define-pass inline-functions : csa/inlined-records (P) -> csa/inlined-functions ()
   (definitions
     ;; TODO: clear this list every time we start a new actor
     (define funcs null))
@@ -119,7 +131,7 @@
     [(define-actor ,τ (,a [,x1 ,τ1] ...) ((define-function (,f [,x2 ,τ2] ...) ,[body]) ,fd* ...)  ,e ,S ...)
      (set! funcs (cons (func-record f x2 body) funcs))
      (ActorDef
-      (with-output-language (csa/surface ActorDef)
+      (with-output-language (csa/inlined-records ActorDef)
         `(define-actor ,τ (,a [,x1 ,τ1] ...) (,fd* ...) ,e ,S ...)))]
     [(define-actor ,τ (,a [,x ,τ1] ...) () ,[e] ,[S] ...)
      `(define-actor ,τ (,a [,x ,τ1] ...) ,e ,S ...)])
@@ -145,7 +157,7 @@
   (check-equal?
    (unparse-csa/inlined-functions
     (inline-functions
-     (with-output-language (csa/surface Prog)
+     (with-output-language (csa/inlined-records Prog)
        `((define-actor Nat (A)
            ((define-function (foo [x Nat]) (+ x 2))
             (define-function (bar [x Nat] [y Nat]) (- x y)))
@@ -347,7 +359,9 @@
     (compose
      unparse-csa/inlined-actors
      inline-actors
+     inline-type-aliases
      inline-functions
+     inline-records
      parse-actor-def-csa/surface))
   ;; TODO: deal with actor parameters and type
   (redex-let csa-eval ([(let () (spawn τ e S ...)) (pass single-actor-prog)])
