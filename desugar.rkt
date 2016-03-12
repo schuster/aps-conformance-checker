@@ -2,7 +2,7 @@
 
 ;; Defines the desugaring from the surface syntax to the core syntax
 
-(provide desugar-actor)
+(provide desugar-single-actor-program)
 
 (require
  (only-in redex/reduction-semantics redex-let term)
@@ -126,22 +126,14 @@
 
 (struct func-record (name formals body))
 
-(define-language csa/surface/actor-def
-  (extends csa/surface)
-  (entry ActorDef))
-
-(define-language csa/inlined-funcs/actor-def
-  (extends csa/inlined-funcs)
-  (entry ActorDef))
-
-(define-pass inline-functions : csa/surface/actor-def (actor-def) -> csa/inlined-funcs/actor-def ()
+(define-pass inline-functions : csa/surface (P) -> csa/inlined-funcs ()
   (definitions
     (define funcs null))
   (ActorDef : ActorDef (d) -> ActorDef ()
     [(define-actor ,τ (,a ,x1 ...) ((define-function (,f ,x2 ...) ,[body]) ,fd* ...)  ,e ,S ...)
      (set! funcs (cons (func-record f x2 body) funcs))
      (ActorDef
-      (with-output-language (csa/surface/actor-def ActorDef)
+      (with-output-language (csa/surface ActorDef)
         `(define-actor ,τ (,a ,x1 ...) (,fd* ...) ,e ,S ...)))]
     [(define-actor ,τ (,a ,x ...) () ,[e] ,[S] ...)
      `(define-actor ,τ (,a ,x ...) ,e ,S ...)])
@@ -158,26 +150,27 @@
      (,po ,e* ...)])
   (StateDef : StateDef (S) -> StateDef ()
             [(define-state (,s ,x1 ...) (,x2) ,[e])
-             `(define-state (,s ,x1 ...) (,x2) ,e)])
-  (ActorDef actor-def))
+             `(define-state (,s ,x1 ...) (,x2) ,e)]))
 
 (module+ test
   (require rackunit)
 
   (check-equal?
-   (unparse-csa/inlined-funcs/actor-def
+   (unparse-csa/inlined-funcs
     (inline-functions
-     (with-output-language (csa/surface/actor-def ActorDef)
-       `(define-actor Nat (A)
-          ((define-function (foo x) (+ x 2))
-           (define-function (bar x y) (- x y)))
-          (foo (bar 3 4))))))
-   `(define-actor Nat (A)
-      (let ([x
-             (let ([x 3]
-                   [y 4])
-               (- x y))])
-        (+ x 2)))))
+     (with-output-language (csa/surface Prog)
+       `((define-actor Nat (A)
+           ((define-function (foo x) (+ x 2))
+            (define-function (bar x y) (- x y)))
+           (foo (bar 3 4)))
+         (spawn A)))))
+   `((define-actor Nat (A)
+       (let ([x
+              (let ([x 3]
+                    [y 4])
+                (- x y))])
+         (+ x 2)))
+     (spawn A))))
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -192,7 +185,7 @@
 
 (struct actor-record (type formals body state-defs))
 
-(define-pass inline-actors : csa/inlined-funcs (P defs-so-far) -> csa/inlined-actors ()
+(define-pass inline-actors : csa/inlined-funcs (P) -> csa/inlined-actors ()
   (Prog : Prog (P defs-so-far) -> ActorDef ()
         [((define-actor ,τ (,a ,x ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...) ,ad* ... ,spawn-exp)
          (Prog (with-output-language (csa/inlined-funcs Prog) `(,ad* ... ,spawn-exp))
@@ -265,8 +258,7 @@
   )
 
   ;; BUG: (?): shouldn't this be the default init statement?
-  (Prog P defs-so-far)
-  )
+  (Prog P (hash)))
 
 (module+ test
   (check-equal?
@@ -277,8 +269,7 @@
            (goto S1)
            (define-state (S1) (m)
              (goto S1)))
-         (spawn A 5)))
-     (hash)))
+         (spawn A 5)))))
    `(let ([x 5])
       (spawn
        Nat
@@ -299,8 +290,7 @@
              (begin
                (spawn A 3)
                (goto S2))))
-         (spawn B 5)))
-     (hash)))
+         (spawn B 5)))))
    `(let ([y 5])
       (spawn
        Nat
@@ -317,13 +307,15 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 
-(define-parser parse-actor-def-csa/surface/actor-def csa/surface/actor-def)
+(define-parser parse-actor-def-csa/surface csa/surface)
 
-(define (desugar-actor actor address)
-  (define processed-actor
-    (unparse-csa/inlined-funcs/actor-def
-     (inline-functions
-      (parse-actor-def-csa/surface/actor-def actor))))
+(define (desugar-single-actor-program single-actor-prog address)
+  (define pass
+    (compose
+     unparse-csa/inlined-actors
+     inline-actors
+     inline-functions
+     parse-actor-def-csa/surface))
   ;; TODO: deal with actor parameters and type
-  (redex-let csa-eval ([(define-actor τ (x_actor) e S ...) processed-actor])
+  (redex-let csa-eval ([(let () (spawn τ e S ...)) (pass single-actor-prog)])
     (term (,address ((S ...) e)))))
