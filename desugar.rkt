@@ -66,7 +66,7 @@
         (PI ... e))
   (ProgItem (PI)
             ad
-            (define-function (f [x τ] ...) e)
+            fd
             (define-constant x e) ; TODO: should really only be literals
             (define-type T τ)
             (define-record T [x τ] ...)
@@ -74,7 +74,7 @@
   (ActorDef (ad)
     (define-actor τ (a [x τ2] ...) (fd ...) e S ...))
   (StateDef (S)
-    (define-state (s [x τ]  ...) (x2) e))
+    (define-state (s [x τ] ...) (x2) e1 e* ...))
   (Exp (e body)
        n
        b
@@ -82,20 +82,18 @@
        (goto s e ...)
        (send e1 e2)
        (spawn a e ...)
-       (begin e1 e* ...)
        (record [x e] ...)
        (: e x)
-       (case e1 [(V x ...) e2] ...)
-       (f e ...)
+       (case e1 [(V x ...) e2 e* ...] ...)
        ;; (po e ...)
        (+ e ...)
        (- e ...)
-       (let (lb ...) e2)
-       (let* (lb ...) e2))
-  (LetBinding (lb)
-              [x e])
+       (let ([x e] ...) e2 e* ...)
+       (let* ([x e] ...) e2 e* ...)
+       (addr n) ; only for giving the initial output addresses
+       (f e ...))
   (FuncDef (fd)
-           (define-function (f [x τ] ...) e))
+           (define-function (f [x τ] ...) e1 e* ...))
   (Type (τ)
         pτ
         (Addr τ)
@@ -110,17 +108,72 @@
 ;; same, and would probably save boilerplate
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Multi-body shrinking
+
+(define-language csa/single-exp-bodies
+  (extends csa/surface)
+  (StateDef (S)
+            (- (define-state (s [x τ] ...) (x2) e1 e* ...))
+            (+ (define-state (s [x τ] ...) (x2) e)))
+  (FuncDef (fd)
+           (- (define-function (f [x τ] ...) e1 e* ...))
+           (+ (define-function (f [x τ] ...) e)))
+  (Exp (e)
+       (- (case e1 [(V x ...) e2 e* ...] ...)
+          (let ([x e] ...) e2 e* ...)
+          (let* ([x e] ...) e2 e* ...))
+       (+ (case e1 [(V x ...) e2] ...)
+          (let ([x e] ...) e2)
+          (let* ([x e] ...) e2)
+          (begin e1 e* ...))))
+
+(define-parser parse-csa/single-exp-bodies csa/single-exp-bodies)
+
+(define-pass wrap-multi-exp-bodies : csa/surface (P) -> csa/single-exp-bodies ()
+  (StateDef : StateDef (S) -> StateDef ()
+            [(define-state (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e*] ...)
+             `(define-state (,s [,x ,τ] ...) (,x2) (begin ,e1 ,e* ...))])
+  (FuncDef : FuncDef (fd) -> FuncDef ()
+           [(define-function (,f [,x ,[τ]] ...) ,[e1] ,[e*] ...)
+            `(define-function (,f [,x ,τ] ...) (begin ,e1 ,e* ...))])
+  (Exp : Exp (e) -> Exp ()
+       [(case ,[e1] [(,V ,x ...) ,[e2] ,[e*] ...] ...)
+        `(case ,e1 [(,V ,x ...) (begin ,e2 ,e* ...)] ...)]
+       [(let ([,x ,[e]] ...) ,[e2] ,[e*] ...)
+        `(let ([,x ,e] ...) (begin ,e2 ,e* ...))]
+       [(let* ([,x ,[e]] ...) ,[e2] ,[e*] ...)
+        `(let* ([,x ,e] ...) (begin ,e2 ,e* ...))]))
+
+(module+ test
+  ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
+  (check-equal?
+   (unparse-csa/single-exp-bodies
+    (wrap-multi-exp-bodies
+     (with-output-language (csa/surface Prog)
+       `((define-function (f)
+           (case x
+             [(A) 1 2])
+           (let () 3 4))
+         (let* () 5 6)))))
+   `((define-function (f)
+       (begin
+         (case x
+           [(A) (begin 1 2)])
+         (let () (begin 3 4))))
+     (let* () (begin 5 6)))))
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Variant desugaring
 
 (define-language csa/desugared-variants
-  (extends csa/surface)
+  (extends csa/single-exp-bodies)
   (ProgItem (PI)
             (- (define-variant T (V [x τ] ...) ...))))
 
 (define-parser parse-csa/desugared-variants csa/desugared-variants)
 
 ;; TODO: consider leaving the multi-arity variants in
-(define-pass desugar-variants : csa/surface (P) -> csa/desugared-variants ()
+(define-pass desugar-variants : csa/single-exp-bodies (P) -> csa/desugared-variants ()
   (Prog : Prog (P items-to-add) -> Prog ()
         [((define-variant ,T (,V [,x ,[τ]] ...) ...) ,PI ... ,e)
          (define constructor-defs
@@ -130,7 +183,7 @@
                 ;; TODO: field names must be different...
                 `(define-function (,name [,field-list ,types] ...) (variant ,name ,field-list ...))))
             V x τ))
-         (Prog (with-output-language (csa/surface Prog) `(,PI ... ,e))
+         (Prog (with-output-language (csa/single-exp-bodies Prog) `(,PI ... ,e))
                (append items-to-add
                        (append
                         constructor-defs
@@ -138,7 +191,7 @@
                         (with-output-language (csa/desugared-variants ProgItem)
                           `(define-type ,T (Union [,V ,τ ...] ...)))))))]
         [(,[PI1] ,PI* ... ,e)
-         (Prog (with-output-language (csa/surface Prog) `(,PI* ... ,e))
+         (Prog (with-output-language (csa/single-exp-bodies Prog) `(,PI* ... ,e))
                (append items-to-add (list PI1)))]
         [(,[e]) `(,items-to-add ... ,e)])
   (Prog P null))
@@ -148,7 +201,7 @@
   (check-equal?
    (unparse-csa/desugared-variants
     (desugar-variants
-     (with-output-language (csa/surface Prog)
+     (with-output-language (csa/single-exp-bodies Prog)
        `((define-variant List (Null) (Cons [element Nat] [list List]))
          (case (Null)
            [(Null) 0]
@@ -258,7 +311,7 @@
 (define-language csa/inlined-program-definitions
   (extends csa/inlined-types)
   (ProgItem (PI)
-            (- (define-function (f [x τ] ...) e)
+            (- fd
                (define-constant x e))))
 
 (define-parser parse-csa/inlined-program-definitions csa/inlined-program-definitions)
@@ -428,8 +481,8 @@
        ;; ;; (po e ...)
        ;; (+ e ...)
        ;; (- e ...)
-       ;; (let (lb ...) e2)
-       ;; (let* (lb ...) e2)
+       ;; (let ([x e] ...) e2)
+       ;; (let* ([x e] ...) e2)
 
        )
   ;; (SpawnExp : SpawnExp (spawn-exp defs-so-far) -> SpawnExp ()
@@ -519,6 +572,7 @@
      inline-type-aliases
      inline-records
      desugar-variants
+     wrap-multi-exp-bodies
      parse-actor-def-csa/surface))
   ;; TODO: deal with actor parameters and type
   (redex-let csa-eval ([(let () (spawn τ e S ...)) (pass single-actor-prog)])
