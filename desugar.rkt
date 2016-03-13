@@ -354,12 +354,12 @@
     ;; TODO: clear this list every time we start a new actor
     (define funcs (make-hash)))
   (ActorDef : ActorDef (d) -> ActorDef ()
-    [(define-actor ,τ (,a [,x1 ,τ1] ...) ((define-function (,f [,x2 ,τ2] ...) ,[body]) ,fd* ...)  ,e ,S ...)
+    [(define-actor ,τ (,a [,x1 ,τ1] ...) ((define-function (,f [,x2 ,[τ2]] ...) ,[body]) ,fd* ...)  ,e ,S ...)
      (hash-set! funcs f (func-record x2 body))
      (ActorDef
       (with-output-language (csa/inlined-program-functions ActorDef)
         `(define-actor ,τ (,a [,x1 ,τ1] ...) (,fd* ...) ,e ,S ...)))]
-    [(define-actor ,τ (,a [,x ,τ1] ...) () ,[e] ,[S] ...)
+    [(define-actor ,[τ] (,a [,x ,[τ1]] ...) () ,[e] ,[S] ...)
      `(define-actor ,τ (,a [,x ,τ1] ...) ,e ,S ...)])
   (Exp : Exp (e) -> Exp ()
        ;; TODO: see tmp/expected-meta for why this breaks
@@ -414,20 +414,20 @@
   ;; TODO: I think the return "type" is not checked, because I've seen things get through when I had ActorDef instead of Prog
   (Prog : Prog (P defs-so-far) -> Prog ()
         [(
-          (define-actor ,τ (,a [,x ,τ1] ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...) ,PI* ... ,e1)
+          (define-actor ,[τ] (,a [,x ,[τ1]] ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...) ,PI* ... ,e1)
          (Prog (with-output-language (csa/inlined-actor-functions Prog) `(,PI* ... ,e1))
                ;; TODO: figure out if hash-set overwrites existing entries or not
                (hash-set defs-so-far a (actor-record τ x e S)))]
         [(,[Exp : e0 defs-so-far -> e]) e])
   (StateDef : StateDef (S defs-so-far) -> StateDef ()
-    [(define-state (,s [,x ,τ] ...) (,x2) ,[Exp : e0 defs-so-far -> e])
+    [(define-state (,s [,x ,[τ]] ...) (,x2) ,[Exp : e0 defs-so-far -> e])
      `(define-state (,s [,x ,τ] ...) (,x2) ,e)])
   ;; (MyExp2 : Exp (e) -> Exp ()
   ;;         [,spawn-exp `5]
   ;;         )
   (Exp : Exp (e defs-so-far) -> Exp ()
        [(spawn ,a ,[Exp : e0 defs-so-far -> e] ...)
-        (match (hash-ref defs-so-far a)
+        (match (hash-ref defs-so-far a #f)
           [#f (error 'inline-actors "Could not find match for actor ~s\n" a)]
           [(actor-record type formals body state-defs)
            ;; TODO: do I need to rename variables here at all?
