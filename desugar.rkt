@@ -5,7 +5,6 @@
 (provide desugar-single-actor-program)
 
 (require
- (only-in redex/reduction-semantics redex-let term)
  "csa.rkt")
 
 ;; TODO: consider using Nanopass for this transformation
@@ -578,6 +577,4 @@
      desugar-variants
      wrap-multi-exp-bodies
      parse-actor-def-csa/surface))
-  ;; TODO: deal with actor parameters and type
-  (redex-let csa-eval ([(let () (spawn τ e S ...)) (pass single-actor-prog)])
-    (term (,address ((S ...) e)))))
+  (single-agent-prog->config (pass single-actor-prog) address))

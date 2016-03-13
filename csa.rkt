@@ -6,6 +6,7 @@
          csa-eval
          inject-message
          make-single-agent-config
+         single-agent-prog->config
          handler-step
          type-subst
          csa-valid-config?)
@@ -43,7 +44,7 @@
   (primop < /)
   ((x s t l) variable-not-otherwise-mentioned)
   (n natural)
-  (τ Nat
+  (τ Nat ; TODO: change this to Int or something
      String
      (minfixpt X τ)
      X
@@ -84,6 +85,12 @@
 
 (define (make-single-agent-config agent)
   (term (make-single-agent-config/mf ,agent)))
+
+(define (single-agent-prog->config prog address)
+  ;; TODO: do I need to deal with the actor's type?
+  (redex-let csa-eval ([(let ([x v] ...) (spawn τ e S ...)) prog])
+             (term (,address (((subst-n/S S [self ,address] [x v] ...) ...)
+                              (subst-n e [self ,address] [x v] ...))))))
 
 (define-metafunction csa-eval
   make-single-agent-config/mf : αn -> K
@@ -205,6 +212,12 @@
    (where (_ ... x _ ...) (x_s ... x_h))]
   [(subst/S (define-state (s [x_s τ_s] ...) (x_h) e_1 [(timeout n) e_2]) x v)
    (define-state (s [x_s τ_s] ...) (x_h) (subst e_1 x v) [(timeout n) (subst e_2 x v)])])
+
+(define-metafunction csa-eval
+  subst-n/S : S [x v] ... -> S
+  [(subst-n/S S) S]
+  [(subst-n/S [x v] any_rest ...)
+   (subst-n/S (subst/S S x v) any_rest ...)])
 
 (module+ test
   (check-equal? (term (subst 0 x 1))
