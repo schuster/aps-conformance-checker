@@ -354,6 +354,11 @@
          (side-condition (not (equal? (term t) (term t_other))))
          CaseVariantFailure)
 
+    ;; Let
+    (==> (let ([x v#] ...) e#)
+         (csa#-subst-n e# [x v#] ...)
+         Let)
+
     ;; Records
     (==> (: (record _ ... [l v#] _ ...) l)
          v#
@@ -468,11 +473,11 @@
   [(csa#-subst (send e#_1 e#_2) x v#)
    (send (csa#-subst e#_1 x v#) (csa#-subst e#_2 x v#))]
   [(csa#-subst (begin e# ...) x v#) (begin (csa#-subst e# x v#) ...)]
-  ;; [(csa#-subst (let ([x_let e] ...) e_body) x v)
-  ;;  (let ([x_let (csa#-subst e x v)] ...) e_body)
-  ;;  (where (_ ... x _ ...) (x_let ...))] ; check that x is in the list of bound vars
-  ;; [(csa#-subst (let ([x_let e] ...) e_body) x v)
-  ;;  (let ([x_let (csa#-subst e x v)] ...) (csa#-subst e_body x v))]
+  [(csa#-subst (let ([x_let e#] ...) e#_body) x v#)
+   (let ([x_let (csa#-subst e# x v#)] ...) e#_body)
+   (where (_ ... x _ ...) (x_let ...))] ; check that x is in the list of bound vars
+  [(csa#-subst (let ([x_let e#] ...) e#_body) x v#)
+   (let ([x_let (csa#-subst e# x v#)] ...) (csa#-subst e#_body x v#))]
   [(csa#-subst (case e# [t x_clause e#_clause] ...) x v#)
    (case (csa#-subst e# x v#) (csa#-subst/case-clause [t x_clause e#_clause] x v#) ...)]
   [(csa#-subst (variant t e#) x v#) (variant t (csa#-subst e# x v#))]
@@ -546,6 +551,8 @@
   [(α-e (begin e ...) natural_depth) (begin (α-e e natural_depth) ...)]
   [(α-e (send e_1 e_2) natural_depth)
    (send (α-e e_1 natural_depth) (α-e e_2 natural_depth))]
+  [(α-e (let ([x e_binding] ...) e_body) natural)
+   (let ([x (α-e e_binding natural)] ...) (α-e e_body natural))]
   [(α-e (case e_val [t x e_clause] ...) natural_depth)
    (case (α-e e_val natural_depth) [t x (α-e e_clause natural_depth)] ...)]
   [(α-e (primop e ...) natural_depth) (primop (α-e e natural_depth) ...)]

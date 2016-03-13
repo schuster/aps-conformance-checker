@@ -709,4 +709,37 @@ Remaining big challenges I see in the analysis:
                         record-req-resp-spec
                         (term (Record [dest (Addr (Union [A Nat] [B Nat]))] [msg (Union [A Nat] [B Nat])]))
                         (term (Union))
+                        (hash 'Always 'Always)))
+
+  ;;;; Let
+  (define static-response-let-agent
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
+          (let ([new-r response-dest])
+            (begin
+              (send new-r (variant Ack 0))
+              (goto Always new-r)))))
+       (goto Always ,static-response-address)))))
+  (define static-double-response-let-agent
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
+          (let ([new-r response-dest])
+            (begin
+              (send new-r (variant Ack 0))
+              (send new-r (variant Ack 0))
+              (goto Always new-r)))))
+       (goto Always ,static-response-address)))))
+
+  (check-not-false (redex-match csa-eval αn static-response-let-agent))
+  (check-not-false (redex-match csa-eval αn static-double-response-let-agent))
+
+  (check-true (analyze (make-single-agent-config static-response-let-agent)
+                       static-response-spec
+                       (term Nat) (term (Union))
+                       (hash 'Always 'Always)))
+  (check-false (analyze (make-single-agent-config static-double-response-let-agent)
+                        static-response-spec
+                        (term Nat) (term (Union))
                         (hash 'Always 'Always))))
