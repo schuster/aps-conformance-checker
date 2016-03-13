@@ -249,12 +249,15 @@
   ;;                            (received-addr Always ,simple-pair-template 1 MOST-RECENT))))
   )
 
+;; Fills the given value template with unobservable addresses in each ADDR-HOLE
 (define-metafunction csa#
   fill-template/unobs : v#template -> v#
   [(fill-template/unobs ADDR-HOLE) (* (Addr Nat))] ;; TODO:  fill in the real address type here
   [(fill-template/unobs t) t]
   [(fill-template/unobs (variant t v#template_child ...))
    (variant t (fill-template/unobs v#template_child) ...)]
+  [(fill-template/unobs (record [x v#template] ...))
+   (record [x (fill-template/unobs v#template)] ...)]
   [(fill-template/unobs (* τ)) (* τ)])
 
 ;; ---------------------------------------------------------------------------------------------------
