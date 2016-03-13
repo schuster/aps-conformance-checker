@@ -147,7 +147,7 @@
         [(,[e]) `(,items-to-add ... ,e)])
   (Exp : Exp (e) -> Exp ()
        [(case ,[e1] [(,V ,x ...) ,[e2]] ...)
-        (define record-var (gensym))
+        (define record-var (gensym "variant-record"))
         (define named-record-vars (build-list (length V) (lambda (i) record-var)))
         (define referenced-record-vars
           (for/list ([field-list x])
