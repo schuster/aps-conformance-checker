@@ -61,6 +61,7 @@
    (number (n))
    (boolean (b))
    (name (x f a s T V))
+   (string (string))
    (PrimitiveType (pτ)))
   (Prog (P)
         (PI ... e))
@@ -78,6 +79,7 @@
   (Exp (e body)
        n
        b
+       string
        x
        (goto s e ...)
        (send e1 e2)
@@ -99,6 +101,8 @@
         (Addr τ)
         (Record [x τ] ...)
         (Union [V τ ...] ...)
+        (Vectorof τ)
+        (Hash τ1 τ2)
         T)
   (entry Prog))
 

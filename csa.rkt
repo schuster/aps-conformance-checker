@@ -49,7 +49,9 @@
      X
      (Union [t τ ...] ...)
      (Record [l τ] ...)
-     (Addr τ)) ;; TODO: integrate types into the language
+     (Addr τ)
+     (Vectorof τ)
+     (Hash τ τ))
   (X variable-not-otherwise-mentioned))
 
 (define-extended-language csa-eval
