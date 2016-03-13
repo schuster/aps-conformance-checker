@@ -43,7 +43,7 @@
 
     (define-record ClusterConfiguration
       ;; TODO:
-      [members Nat ;; (Listof (Channel RaftMessage))
+      [members Nat ;; (Listof (Addr RaftMessage))
                ]
       ;; ignoring other config fields for now, since I'm not implementing configuration changes
       )
@@ -68,28 +68,28 @@
 ;;   [command String]
 ;;   [term Nat]
 ;;   [index Nat]
-;;   [client (Channel String)])
+;;   [client (Addr String)])
 
 ;; (define-variant RaftMessage
 ;;   (RequestVote
 ;;    [term Nat]
-;;    [candidate (Channel RaftMessage)]
+;;    [candidate (Addr RaftMessage)]
 ;;    [last-log-term Nat]
 ;;    [last-log-index Nat])
 ;;   (VoteCandidate
 ;;    [term Nat]
-;;    [follower (Channel RaftMessage)])
+;;    [follower (Addr RaftMessage)])
 ;;   (DeclineCandidate
 ;;    [term Term]
-;;    [follower (Channel RaftMessage)])
+;;    [follower (Addr RaftMessage)])
 ;;   (AppendEntries
 ;;    [term Nat]
 ;;    [prev-log-term Nat]
 ;;    [prev-log-index Nat]
 ;;    [entries (Vectorof Entry)]
 ;;    [leader-commit-id Nat]
-;;    [leader (Channel RaftMessage)]
-;;    [leader-client (Channel ClientMessage)])
+;;    [leader (Addr RaftMessage)]
+;;    [leader-client (Addr ClientMessage)])
 ;;   ;; A note on last-index: In the paper, this is the optimization at the bottom of p. 7 that allows
 ;;   ;; for quicker recovery of a node that has fallen behind in its log. In RaftScope, they call this
 ;;   ;; "matchIndex", which indicates the lat index in the log (or 0 for AppendRejected). In akka-raft,
@@ -97,34 +97,34 @@
 ;;   (AppendRejected
 ;;    [term Nat]
 ;;    [last-index Nat]
-;;    [member (Channel RaftMessage)])
+;;    [member (Addr RaftMessage)])
 ;;   (AppendSuccessful
 ;;    [term Nat]
 ;;    [last-index Nat]
-;;    [member (Channel RaftMessage)]))
+;;    [member (Addr RaftMessage)]))
 
 ;; (define-variant MaybePeer
 ;;   (NoPeer)
-;;   (JustPeer [peer (Channel RaftMessage)]))
+;;   (JustPeer [peer (Addr RaftMessage)]))
 
 ;; (define-record StateMetadata
 ;;   [current-term Nat]
-;;   [votes (Hash Nat (Channel RaftMessage))]
+;;   [votes (Hash Nat (Addr RaftMessage))]
 ;;   [last-used-timeout-id Nat])
 
 ;; (define-record ElectionMeta
 ;;   [current-term Nat]
-;;   [votes-received (Hash (Channel RaftMessage) Bool)]
-;;   [votes (Hash Nat (Channel RaftMessage))]
+;;   [votes-received (Hash (Addr RaftMessage) Bool)]
+;;   [votes (Hash Nat (Addr RaftMessage))]
 ;;   [last-used-timeout-id Nat])
 
 ;; (define-record LeaderMeta
 ;;   [current-term Nat]
 ;;   [last-used-timeout-id Nat])
 
-;; (define-variant TimerMessage
-;;   (SetTimer [timer-name String] [target (Channel)] [id Nat] [duration Duration] [repeat? Boolean])
-;;   (CancelTimer [timer-name String]))
+(define-variant TimerMessage
+  (SetTimer [timer-name String] [target (Addr Unit)] [id Nat] [duration Duration] [repeat? Boolean])
+  (CancelTimer [timer-name String]))
 
 ;; (define-record AppendResult
 ;;   [message RaftMessage]
@@ -141,7 +141,7 @@
 ;; (define-function (grant-vote?/follower [metadata StateMetadata]
 ;;                               [log ReplicatedLog]
 ;;                               [term Nat]
-;;                               [candidate (Channel RaftMessage)]
+;;                               [candidate (Addr RaftMessage)]
 ;;                               [last-log-term Nat]
 ;;                               [last-log-index Nat])
 ;;   (and (>= term (: metadata current-term))
@@ -153,7 +153,7 @@
 ;; (define-function (grant-vote?/candidate [metadata StateMetadata]
 ;;                                [log ReplicatedLog]
 ;;                                [term Nat]
-;;                                [candidate (Channel RaftMessage)]
+;;                                [candidate (Addr RaftMessage)]
 ;;                                [last-log-term Nat]
 ;;                                [last-log-index Nat])
 ;;   (and (>= term (: metadata current-term))
@@ -165,7 +165,7 @@
 ;; (define-function (grant-vote?/leader [metadata StateMetadata]
 ;;                             [log ReplicatedLog]
 ;;                             [term Nat]
-;;                             [candidate (Channel RaftMessage)]
+;;                             [candidate (Addr RaftMessage)]
 ;;                             [last-log-term Nat]
 ;;                             [last-log-index Nat])
 ;;   (and (>= term (: metadata current-term))
@@ -179,7 +179,7 @@
 ;;         (and (= candidate-log-term my-last-log-term)
 ;;              (>= candidate-log-index (replicated-log-last-index log))))))
 
-;; (define-function (with-vote [metadata StateMetadata] [term Nat] [candidate (Channel RaftMessage)])
+;; (define-function (with-vote [metadata StateMetadata] [term Nat] [candidate (Addr RaftMessage)])
 ;;   (! metadata [votes (hash-set (: metadata votes) term candidate)]))
 
 ;; (define-function (initial-metadata)
@@ -205,31 +205,31 @@
 
 ;; ;; Resets the timer for the election deadline and returns the metadata with the new expected next
 ;; ;; timeout ID
-(define-function (reset-election-deadline/follower [timer (Channel TimerMessage)]
-                                                   [target (Channel Nat)]
+(define-function (reset-election-deadline/follower [timer (Addr TimerMessage)]
+                                                   [target (Addr Nat)]
                                                    [m StateMetadata])
   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
         [next-id (+ 1 (: m last-used-timeout-id))])
     (send timer (SetTimer election-timer-name target next-id deadline false))
     (! m [last-used-timeout-id next-id])))
 
-;; (define-function (reset-election-deadline/candidate [timer (Channel TimerMessage)]
-;;                                            [target (Channel Nat)]
+;; (define-function (reset-election-deadline/candidate [timer (Addr TimerMessage)]
+;;                                            [target (Addr Nat)]
 ;;                                            [m ElectionMeta])
 ;;   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
 ;;         [next-id (+ 1 (: m last-used-timeout-id))])
 ;;     (send timer (SetTimer election-timer-name target next-id deadline false))
 ;;     (! m [last-used-timeout-id next-id])))
 
-;; (define-function (reset-election-deadline/leader [timer (Channel TimerMessage)]
-;;                                         [target (Channel Nat)]
+;; (define-function (reset-election-deadline/leader [timer (Addr TimerMessage)]
+;;                                         [target (Addr Nat)]
 ;;                                         [m LeaderMeta])
 ;;   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
 ;;         [next-id (+ 1 (: m last-used-timeout-id))])
 ;;     (send timer (SetTimer election-timer-name target next-id deadline false))
 ;;     (! m [last-used-timeout-id next-id])))
 
-;; (define-function (cancel-election-deadline [timer (Channel TimerMessage)])
+;; (define-function (cancel-election-deadline [timer (Addr TimerMessage)])
 ;;   (send timer (CancelTimer election-timer-name)))
 
 ;; ;; Because this language does not have traits, I separate forNewElection into two functions
@@ -240,7 +240,7 @@
 ;;   (ElectionMeta (next (: m current-term)) (hash) (: m votes) (: m last-used-timeout-id)))
 
 ;; ;; this effectively duplicates the logic of withVote, but it follows the akka-raft code
-;; (define-function (with-vote-for [m ElectionMeta] [term Nat] [candidate (Channel RaftMessage)])
+;; (define-function (with-vote-for [m ElectionMeta] [term Nat] [candidate (Addr RaftMessage)])
 ;;   (! m [votes (hash-set (: m votes) term candidate)]))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
@@ -252,12 +252,12 @@
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Config helpers
 
-;; (define-function (members-except-self [config ClusterConfiguration] [self (Channel RaftMessage)])
+;; (define-function (members-except-self [config ClusterConfiguration] [self (Addr RaftMessage)])
 ;;   (for/fold ([result null])
 ;;             ([member (: config members)])
 ;;     (if (not (= member self)) (cons member result) result)))
 
-;; (define-function (inc-vote [m ElectionMeta] [follower (Channel RaftMessage)])
+;; (define-function (inc-vote [m ElectionMeta] [follower (Addr RaftMessage)])
 ;;   (! m [votes-received (hash-set (: m votes-received) follower true)]))
 
 ;; (define-function (has-majority [m ElectionMeta] [config ClusterConfiguration])
@@ -281,8 +281,8 @@
 ;;                              [replicated-log ReplicatedLog]
 ;;                              [from-index Nat]
 ;;                              [leader-commit-id Nat]
-;;                              [leader (Channel RaftMessage)]
-;;                              [leader-client (Channel ClientMessage)])
+;;                              [leader (Addr RaftMessage)]
+;;                              [leader-client (Addr ClientMessage)])
 ;;   (let ([entries (replicated-log-entries-batch-from replicated-log from-index)])
 ;;     (cond
 ;;       [(> (vector-length entries) 0)
@@ -410,13 +410,13 @@
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; LogIndexMap
 
-;; (define-function (log-index-map-initialize [members (Listof (Channel RaftMessage))] [initialize-with Nat])
+;; (define-function (log-index-map-initialize [members (Listof (Addr RaftMessage))] [initialize-with Nat])
 ;;   (for/fold ([map (hash)])
 ;;             ([member members])
 ;;     (hash-set map member initialize-with)))
 
-;; (define-function (log-index-map-value-for [map (Hash (Channel RaftMessage) Nat)]
-;;                                  [member (Channel RaftMessage)])
+;; (define-function (log-index-map-value-for [map (Hash (Addr RaftMessage) Nat)]
+;;                                  [member (Addr RaftMessage)])
 ;;   (case (hash-ref map member)
 ;;     [Nothing ()
 ;;       ;; akka-raft would update the map here, but we should never have to because we don't change the
@@ -424,16 +424,16 @@
 ;;       0]
 ;;     [Just (value) value]))
 
-;; (define-function (log-index-map-put-if-greater [map (Hash (Channel RaftMessage) Nat)]
-;;                                       [member (Channel RaftMessage)]
+;; (define-function (log-index-map-put-if-greater [map (Hash (Addr RaftMessage) Nat)]
+;;                                       [member (Addr RaftMessage)]
 ;;                                       [value Nat])
 ;;   (let ([old-value (log-index-map-value-for map member)])
 ;;     (cond
 ;;       [(< old-value value) (hash-set map member value)]
 ;;       [else map])))
 
-;; (define-function (log-index-map-put-if-smaller [map (Hash (Channel RaftMessage) Nat)]
-;;                                       [member (Channel RaftMessage)]
+;; (define-function (log-index-map-put-if-smaller [map (Hash (Addr RaftMessage) Nat)]
+;;                                       [member (Addr RaftMessage)]
 ;;                                       [value Nat])
 ;;   (let ([old-value (log-index-map-value-for map member)])
 ;;     (cond
@@ -442,7 +442,7 @@
 
 ;; ;; NOTE: because the akka-raft version of this is completely wrong, I'm writing my own
 ;; ;; Returns the greatest index that a majority of entries in the map agree on
-;; (define-function (log-index-map-consensus-for-index [map (Hash (Channel RaftMessage) Nat)]
+;; (define-function (log-index-map-consensus-for-index [map (Hash (Addr RaftMessage) Nat)]
 ;;                                            [config ClusterConfiguration])
 ;;   (let ([all-indices
 ;;          (for/fold ([indices-so-far null])
@@ -479,12 +479,12 @@
       ; the functions go here
       (
       ;; ;; Only called from Follower state on receiving an election timeout
-      ;; (define-function (begin-election [timer (Channel TimerMessage)]
-      ;;                         [election-timeout-target (Channel Nat)]
+      ;; (define-function (begin-election [timer (Addr TimerMessage)]
+      ;;                         [election-timeout-target (Addr Nat)]
       ;;                         [metadata StateMetadata]
       ;;                         [replicated-log ReplicatedLog]
       ;;                         [config ClusterConfiguration]
-      ;;                         [begin-election-alerts (Channel)])
+      ;;                         [begin-election-alerts (Addr)])
       ;;   ;; unlike akka-raft, we assume the config is full, because we don't deal with dynamic
       ;;   ;; configuration changes
       ;;   ;;
@@ -507,7 +507,7 @@
       ;;                         [prev-log-index Nat]
       ;;                         [entries (Vectorof Entry)]
       ;;                         [leader-commit-id Nat]
-      ;;                         [leader (Channel RaftMessage)]
+      ;;                         [leader (Addr RaftMessage)]
       ;;                         [m StateMetadata]
       ;;                         [replicated-log ReplicatedLog]
       ;;                         [config ClusterConfiguration]
@@ -585,7 +585,7 @@
 
       ;; (define-constant heartbeat-timer-name "HeartbeatTimer")
       ;; (define-constant heartbeat-interval 50)
-      ;; (define-function (start-heartbeat [m LeaderMeta] [next-index (Hash (Channel RaftMessage) Nat)]
+      ;; (define-function (start-heartbeat [m LeaderMeta] [next-index (Hash (Addr RaftMessage) Nat)]
       ;;                          [replicated-log ReplicatedLog]
       ;;                          [config ClusterConfiguration])
       ;;   (send-heartbeat m next-index replicated-log config)
@@ -596,13 +596,13 @@
       ;;   (send timer-manager (CancelTimer heartbeat-timer-name)))
 
       ;; (define-function (send-heartbeat [m LeaderMeta]
-      ;;                         [next-index (Hash (Channel RaftMessage) Nat)]
+      ;;                         [next-index (Hash (Addr RaftMessage) Nat)]
       ;;                         [replicated-log ReplicatedLog]
       ;;                         [config ClusterConfiguration])
       ;;   (replicate-log m next-index replicated-log config))
 
       ;; (define-function (replicate-log [m LeaderMeta]
-      ;;                        [next-index (Hash (Channel RaftMessage) Nat)]
+      ;;                        [next-index (Hash (Addr RaftMessage) Nat)]
       ;;                        [replicated-log ReplicatedLog]
       ;;                        [config ClusterConfiguration])
       ;;   (for ([member (members-except-self config peer-messages)])
@@ -613,13 +613,13 @@
       ;;                                       peer-messages
       ;;                                       client-messages))))
 
-      ;; (define-function (send-entries [follower (Channel RaftMessage)]
+      ;; (define-function (send-entries [follower (Addr RaftMessage)]
       ;;                       [m LeaderMeta]
       ;;                       [replicated-log ReplicatedLog]
       ;;                       [next-index Nat]
       ;;                       [leader-commit-id Nat]
-      ;;                       [leader (Channel RaftMessage)]
-      ;;                       [leader-client (Channel ClientMessage)])
+      ;;                       [leader (Addr RaftMessage)]
+      ;;                       [leader-client (Addr ClientMessage)])
       ;;   (send follower (AppendEntries-apply (: m current-term)
       ;;                                       replicated-log
       ;;                                       (log-index-map-value-for next-index follower)
@@ -631,10 +631,10 @@
       ;; ;; fields so much
       ;; (define-function (register-append-successful [follower-term Nat]
       ;;                                     [follower-index Nat]
-      ;;                                     [member (Channel RaftMessage)]
+      ;;                                     [member (Addr RaftMessage)]
       ;;                                     [m LeaderMeta]
-      ;;                                     [next-index (Hash (Channel RaftMessage) Nat)]
-      ;;                                     [match-index (Hash (Channel RaftMessage) Nat)]
+      ;;                                     [next-index (Hash (Addr RaftMessage) Nat)]
+      ;;                                     [match-index (Hash (Addr RaftMessage) Nat)]
       ;;                                     [replicated-log ReplicatedLog]
       ;;                                     [config ClusterConfiguration])
       ;;   ;; TODO: why don't both indices use put-if-greater?
@@ -647,10 +647,10 @@
 
       ;; (define-function (register-append-rejected [follower-term Nat]
       ;;                                   [follower-index Nat]
-      ;;                                   [member (Channel RaftMessage)]
+      ;;                                   [member (Addr RaftMessage)]
       ;;                                   [m LeaderMeta]
-      ;;                                   [next-index (Hash (Channel RaftMessage) Nat)]
-      ;;                                   [match-index (Hash (Channel RaftMessage) Nat)]
+      ;;                                   [next-index (Hash (Addr RaftMessage) Nat)]
+      ;;                                   [match-index (Hash (Addr RaftMessage) Nat)]
       ;;                                   [replicated-log ReplicatedLog]
       ;;                                   [config ClusterConfiguration])
       ;;   (let ([next-index (log-index-map-put-if-smaller next-index member (+ 1 follower-index))])
@@ -663,7 +663,7 @@
       ;;                   client-messages)
       ;;     (goto (Leader m next-index match-index replicated-log config))))
 
-      ;; (define-function (maybe-commit-entry [match-index (Hash (Channel RaftMessage) Nat)]
+      ;; (define-function (maybe-commit-entry [match-index (Hash (Addr RaftMessage) Nat)]
       ;;                             [replicated-log ReplicatedLog]
       ;;                             [config ClusterConfiguration])
       ;;   (let ([index-on-majority (log-index-map-consensus-for-index match-index config)])
@@ -840,9 +840,9 @@
       ;; TODO:
       (define-state (Leader [m Nat ;;LeaderMeta
                                ]
-                            [next-index Nat ;; (Hash (Channel RaftMessage) Nat)
+                            [next-index Nat ;; (Hash (Addr RaftMessage) Nat)
                                         ]
-                            [match-index Nat;; (Hash (Channel RaftMessage) Nat)
+                            [match-index Nat;; (Hash (Addr RaftMessage) Nat)
                                          ]
                             [replicated-log Nat ;; ReplicatedLog
                                             ]
