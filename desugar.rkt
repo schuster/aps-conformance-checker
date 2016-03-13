@@ -67,6 +67,7 @@
   (ProgItem (PI)
             ad
             (define-function (f [x τ] ...) e)
+            (define-constant x e) ; TODO: should really only be literals
             (define-type T τ)
             (define-record T [x τ] ...)
             (define-variant T (V [x τ] ...) ...))
@@ -254,22 +255,30 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Inlined Program Functions
 
-(define-language csa/inlined-program-functions
+(define-language csa/inlined-program-definitions
   (extends csa/inlined-types)
   (ProgItem (PI)
-            (- (define-function (f [x τ] ...) e))))
+            (- (define-function (f [x τ] ...) e)
+               (define-constant x e))))
 
-(define-parser parse-csa/inlined-program-functions csa/inlined-program-functions)
+(define-parser parse-csa/inlined-program-definitions csa/inlined-program-definitions)
 
-(define-pass inline-program-functions : csa/inlined-types (P) -> csa/inlined-program-functions ()
+(define-pass inline-program-definitions : csa/inlined-types (P) -> csa/inlined-program-definitions ()
   ;; TODO: figure out the best way to do this kind of fold, because the restriction that the return
   ;; type always has to be the same languae prevents me from doing a general Subst processor like I
   ;; want to (but perhaps that's inefficient anyway, since it requires many passes)
+  ;;
+  ;; TODO: Figure out an easy way to preserve hygiene, since now I should do proper substitution
   (definitions
-    (define func-defs (make-hash)))
+    (define func-defs (make-hash))
+    (define const-defs (make-hash)))
   (Prog : Prog (P items-to-add) -> Prog ()
         [((define-function (,f [,x ,τ] ...) ,[e]) ,PI ... ,body)
          (hash-set! func-defs f (func-record x e))
+         (Prog (with-output-language (csa/inlined-types Prog) `(,PI ... ,body))
+               items-to-add)]
+        [((define-constant ,x ,[e]) ,PI ... ,body)
+         (hash-set! const-defs x e)
          (Prog (with-output-language (csa/inlined-types Prog) `(,PI ... ,body))
                items-to-add)]
         [(,[PI1] ,PI* ... ,e)
@@ -280,25 +289,30 @@
   (Exp : Exp (e) -> Exp ()
        [(,f ,[e*] ...)
         (match-define (func-record formals body)
-          (hash-ref func-defs f (lambda () (error 'inline-functions "could not find match for function in call ~s\n" e))))
-        `(let ([,formals ,e*] ...) ,body)])
+          (hash-ref func-defs f (lambda () (error 'inline-program-definitions "could not find match for function in call ~s" e))))
+        `(let ([,formals ,e*] ...) ,body)]
+       [,x
+        (match (hash-ref const-defs x #f)
+          [#f x]
+          [e e])])
 
   (Prog P null))
 
 (module+ test
   (check-equal?
-   (unparse-csa/inlined-program-functions
-    (inline-program-functions
+   (unparse-csa/inlined-program-definitions
+    (inline-program-definitions
      (parse-csa/inlined-types
       `((define-function (double [x Nat]) (+ x x))
-        (double 5)))))
+        (define-constant c 5)
+        (double c)))))
    `((let ([x 5]) (+ x x)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Actor function inlining
 
 (define-language csa/inlined-actor-functions
-  (extends csa/inlined-program-functions)
+  (extends csa/inlined-program-definitions)
   (ActorDef (ad)
             (- (define-actor τ (a [x τ2] ...) (fd ...) e S ...))
             (+ (define-actor τ (a [x τ2] ...)          e S ...)))
@@ -308,7 +322,7 @@
 
 (struct func-record (formals body))
 
-(define-pass inline-actor-functions : csa/inlined-program-functions (P) -> csa/inlined-actor-functions ()
+(define-pass inline-actor-functions : csa/inlined-program-definitions (P) -> csa/inlined-actor-functions ()
   (definitions
     ;; TODO: clear this list every time we start a new actor
     (define funcs (make-hash)))
@@ -316,7 +330,7 @@
     [(define-actor ,τ (,a [,x1 ,τ1] ...) ((define-function (,f [,x2 ,[τ2]] ...) ,[body]) ,fd* ...)  ,e ,S ...)
      (hash-set! funcs f (func-record x2 body))
      (ActorDef
-      (with-output-language (csa/inlined-program-functions ActorDef)
+      (with-output-language (csa/inlined-program-definitions ActorDef)
         `(define-actor ,τ (,a [,x1 ,τ1] ...) (,fd* ...) ,e ,S ...)))]
     [(define-actor ,[τ] (,a [,x ,[τ1]] ...) () ,[e] ,[S] ...)
      `(define-actor ,τ (,a [,x ,τ1] ...) ,e ,S ...)])
@@ -339,7 +353,7 @@
   (check-equal?
    (unparse-csa/inlined-actor-functions
     (inline-actor-functions
-     (with-output-language (csa/inlined-program-functions Prog)
+     (with-output-language (csa/inlined-program-definitions Prog)
        `((define-actor Nat (A)
            ((define-function (foo [x Nat]) (+ x 2))
             (define-function (bar [x Nat] [y Nat]) (- x y)))
@@ -501,7 +515,7 @@
      unparse-csa/inlined-actors
      inline-actors
      inline-actor-functions
-     inline-program-functions
+     inline-program-definitions
      inline-type-aliases
      inline-records
      desugar-variants
