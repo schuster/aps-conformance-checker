@@ -104,13 +104,19 @@
 
 ;; TODO: how does Nanopass resolve ambiguity?
 
+;; TODO: put all the nominal stuff (at least program-level) into just one pass: it's basically all the
+;; same, and would probably save boilerplate
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Variant desugaring
 
 (define-language csa/desugared-variants
   (extends csa/surface)
   (ProgItem (PI)
-            (- (define-variant T (V [x τ] ...) ...))))
+            (- (define-variant T (V [x τ] ...) ...)))
+  (Exp (e)
+       (- (case e1 [(V x ...) e2] ...))
+       (+ (case e1 [V x e2] ...))))
 
 (define-parser parse-csa/desugared-variants csa/desugared-variants)
 
@@ -137,7 +143,7 @@
                        ))]
         [(,[PI1] ,PI* ... ,e)
          (Prog (with-output-language (csa/surface Prog) `(,PI* ... ,e))
-               PI1)]
+               (append items-to-add (list PI1)))]
         [(,[e]) `(,items-to-add ... ,e)])
   (Exp : Exp (e) -> Exp ()
        [(case ,[e1] [(,V ,x ...) ,[e2]] ...)
@@ -221,7 +227,7 @@
                           `(define-function (,T [,x ,τ] ...) (record [,x ,x] ...))))))]
         [(,[PI1] ,PI* ... ,e)
          (Prog (with-output-language (csa/desugared-variants Prog) `(,PI* ... ,e))
-               PI1)]
+               (append items-to-add (list PI1)))]
         [(,[e]) `(,items-to-add ... ,e)])
   (Prog P null))
 
@@ -241,42 +247,128 @@
     (B (A 5 4)))))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Function inlining
+;; Inlined Types
 
-(define-language csa/inlined-functions
+(define-language csa/inlined-types
   (extends csa/inlined-records)
+  (ProgItem (PI)
+            (- (define-type T τ)))
+  (Type (τ) (- T)))
+
+(define-parser parse-csa/inlined-types csa/inlined-types)
+
+(define-pass inline-type-aliases : csa/inlined-records (P) -> csa/inlined-types ()
+  ;; TODO: figure out the best way to do this kind of fold, because the restriction that the return
+  ;; type always has to be the same languae prevents me from doing a general Subst processor like I
+  ;; want to (but perhaps that's inefficient anyway, since it requires many passes)
+  (definitions
+    (define aliases-so-far (make-hash)))
+  (Prog : Prog (P items-to-add) -> Prog ()
+        [((define-type ,T ,[τ]) ,PI ... ,e)
+         ;; TODO: do something more defensive for hash overwrites
+         (hash-set! aliases-so-far T τ)
+         (Prog (with-output-language (csa/inlined-records Prog) `(,PI ... ,e))
+               items-to-add)]
+        [(,[PI1] ,PI* ... ,e)
+         (Prog (with-output-language (csa/inlined-records Prog) `(,PI* ... ,e))
+               (append items-to-add (list PI1)))]
+        [(,[e])
+         `(,items-to-add ... ,e)])
+  (Type : Type (τ) -> Type ()
+        [,T
+         (hash-ref aliases-so-far T (lambda () (error ~s "Could not find alias for type ~s" T)))])
+  (Prog P null))
+
+(module+ test
+  (check-equal?
+   (unparse-csa/inlined-types
+    (inline-type-aliases
+     (parse-csa/inlined-records
+      `((define-type MyT Nat)
+        (define-actor MyT (A) ()
+          (goto S1))
+        (spawn A)))))
+   `((define-actor Nat (A) ()
+       (goto S1))
+     (spawn A))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Inlined Program Functions
+
+(define-language csa/inlined-program-functions
+  (extends csa/inlined-types)
+  (ProgItem (PI)
+            (- (define-function (f [x τ] ...) e))))
+
+(define-parser parse-csa/inlined-program-functions csa/inlined-program-functions)
+
+(define-pass inline-program-functions : csa/inlined-types (P) -> csa/inlined-program-functions ()
+  ;; TODO: figure out the best way to do this kind of fold, because the restriction that the return
+  ;; type always has to be the same languae prevents me from doing a general Subst processor like I
+  ;; want to (but perhaps that's inefficient anyway, since it requires many passes)
+  (definitions
+    (define func-defs (make-hash)))
+  (Prog : Prog (P items-to-add) -> Prog ()
+        [((define-function (,f [,x ,τ] ...) ,[e]) ,PI ... ,body)
+         (hash-set! func-defs f (func-record x e))
+         (Prog (with-output-language (csa/inlined-types Prog) `(,PI ... ,body))
+               items-to-add)]
+        [(,[PI1] ,PI* ... ,e)
+         (Prog (with-output-language (csa/inlined-types Prog) `(,PI* ... ,e))
+               (append items-to-add (list PI1)))]
+        [(,[e])
+         `(,items-to-add ... ,e)])
+  (Exp : Exp (e) -> Exp ()
+       [(,f ,[e*] ...)
+        (match-define (func-record formals body)
+          (hash-ref func-defs f (lambda () (error 'inline-functions "could not find match for function in call ~s\n" e))))
+        `(let ([,formals ,e*] ...) ,body)])
+
+  (Prog P null))
+
+(module+ test
+  (check-equal?
+   (unparse-csa/inlined-program-functions
+    (inline-program-functions
+     (parse-csa/inlined-types
+      `((define-function (double [x Nat]) (+ x x))
+        (double 5)))))
+   `((let ([x 5]) (+ x x)))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Actor function inlining
+
+(define-language csa/inlined-actor-functions
+  (extends csa/inlined-program-functions)
   (ActorDef (ad)
             (- (define-actor τ (a [x τ2] ...) (fd ...) e S ...))
             (+ (define-actor τ (a [x τ2] ...)          e S ...)))
   (Exp (e) (- (f e ...))))
 
-(define-parser parse-csa/inlined-functions csa/inlined-functions)
+(define-parser parse-csa/inlined-actor-functions csa/inlined-actor-functions)
 
-(struct func-record (name formals body))
+(struct func-record (formals body))
 
-(define-pass inline-functions : csa/inlined-records (P) -> csa/inlined-functions ()
+(define-pass inline-actor-functions : csa/inlined-program-functions (P) -> csa/inlined-actor-functions ()
   (definitions
     ;; TODO: clear this list every time we start a new actor
-    (define funcs null))
+    (define funcs (make-hash)))
   (ActorDef : ActorDef (d) -> ActorDef ()
     [(define-actor ,τ (,a [,x1 ,τ1] ...) ((define-function (,f [,x2 ,τ2] ...) ,[body]) ,fd* ...)  ,e ,S ...)
-     (set! funcs (cons (func-record f x2 body) funcs))
+     (hash-set! funcs f (func-record x2 body))
      (ActorDef
-      (with-output-language (csa/inlined-records ActorDef)
+      (with-output-language (csa/inlined-program-functions ActorDef)
         `(define-actor ,τ (,a [,x1 ,τ1] ...) (,fd* ...) ,e ,S ...)))]
     [(define-actor ,τ (,a [,x ,τ1] ...) () ,[e] ,[S] ...)
      `(define-actor ,τ (,a [,x ,τ1] ...) ,e ,S ...)])
   (Exp : Exp (e) -> Exp ()
        ;; TODO: see tmp/expected-meta for why this breaks
-
-    [(,f ,[e*] ...)
-         (define (name-matches? rec) (eq? f (func-record-name rec)))
-         (match (findf name-matches? funcs)
-           [#f (error 'inline-functions "could not find match for function ~s\n") f]
-           [(func-record _ (list formals ...) body)
-            `(let ([,formals ,e*] ...) ,body)])]
+       [(,f ,[e*] ...)
+        (match-define (func-record formals body)
+          (hash-ref funcs f (lambda () (error 'inline-actor-functions "could not find match for function in call ~s\n" e))))
+        `(let ([,formals ,e*] ...) ,body)]
         [(,po ,[e*] ...)
-     (,po ,e* ...)])
+         (,po ,e* ...)])
   ;; (StateDef : StateDef (S) -> StateDef ()
   ;;           [(define-state (,s ,x1 ...) (,x2) ,[e])
   ;;            `(define-state (,s ,x1 ...) (,x2) ,e)])
@@ -286,9 +378,9 @@
   (require rackunit)
 
   (check-equal?
-   (unparse-csa/inlined-functions
-    (inline-functions
-     (with-output-language (csa/inlined-records Prog)
+   (unparse-csa/inlined-actor-functions
+    (inline-actor-functions
+     (with-output-language (csa/inlined-program-functions Prog)
        `((define-actor Nat (A)
            ((define-function (foo [x Nat]) (+ x 2))
             (define-function (bar [x Nat] [y Nat]) (- x y)))
@@ -303,68 +395,27 @@
      (spawn A))))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Inlined Types
-
-(define-language csa/inlined-types
-  (extends csa/inlined-functions)
-  (ProgItem (PI)
-            (- (define-type T τ)))
-  (Type (τ) (- T)))
-
-(define-parser parse-csa/inlined-types csa/inlined-types)
-
-(define-pass inline-type-aliases : csa/inlined-functions (P) -> csa/inlined-types ()
-  ;; TODO: figure out the best way to do this kind of fold, because the restriction that the return
-  ;; type always has to be the same languae prevents me from doing a general Subst processor like I
-  ;; want to (but perhaps that's inefficient anyway, since it requires many passes)
-  (definitions
-    (define aliases-so-far (make-hash)))
-  (Prog : Prog (P) -> Prog ()
-        [((define-type ,T ,[τ]) ,PI ... ,e)
-         ;; TODO: do something more defensive for hash overwrites
-         (hash-set! aliases-so-far T τ)
-         (Prog (with-output-language (csa/inlined-functions Prog) `(,PI ... ,e)))]
-        ;; [(,[PI1^ aliases-so-far -> PI1] ,PI* ... ,e)
-        ;;  (AppendItem (Prog (with-output-language (csa/inlined-functions Prog) `(,PI* ... ,e))
-        ;;                    aliases-so-far)
-        ;;              PI1)]
-        ;; [(,[e0 aliases-so-far -> e]) `e]
-        )
-  (Type : Type (τ) -> Type ()
-        [,T
-         (hash-ref aliases-so-far T (lambda () (error ~s "Could not find alias for type ~s" T)))]))
-
-(module+ test
-  (check-equal?
-   (unparse-csa/inlined-types
-    (inline-type-aliases
-     (parse-csa/inlined-functions
-      `((define-type MyT Nat)
-        (define-actor MyT (A)
-          (goto S1))
-        (spawn A)))))
-   `((define-actor Nat (A)
-       (goto S1))
-     (spawn A))))
-
-;; ---------------------------------------------------------------------------------------------------
+;; Inlined Actors
 
 (define-language csa/inlined-actors
-  (extends csa/inlined-types)
+  (extends csa/inlined-actor-functions)
   (Prog (P)
     (- (PI ... e))
     (+ e))
+  (ProgItem (P)
+            (- ad))
   (Exp (e)
        (- (spawn a e ...))
        (+ (spawn τ e S ...))))
 
 (struct actor-record (type formals body state-defs))
 
-(define-pass inline-actors : csa/inlined-functions (P) -> csa/inlined-actors ()
+(define-pass inline-actors : csa/inlined-actor-functions (P) -> csa/inlined-actors ()
   ;; TODO: I think the return "type" is not checked, because I've seen things get through when I had ActorDef instead of Prog
   (Prog : Prog (P defs-so-far) -> Prog ()
-        [((define-actor ,τ (,a [,x ,τ1] ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...) ,ad* ... ,e1)
-         (Prog (with-output-language (csa/inlined-functions Prog) `(,ad* ... ,e1))
+        [(
+          (define-actor ,τ (,a [,x ,τ1] ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...) ,PI* ... ,e1)
+         (Prog (with-output-language (csa/inlined-actor-functions Prog) `(,PI* ... ,e1))
                ;; TODO: figure out if hash-set overwrites existing entries or not
                (hash-set defs-so-far a (actor-record τ x e S)))]
         [(,[Exp : e0 defs-so-far -> e]) e])
@@ -440,7 +491,7 @@
   (check-equal?
    (unparse-csa/inlined-actors
     (inline-actors
-     (with-output-language (csa/inlined-functions Prog)
+     (with-output-language (csa/inlined-actor-functions Prog)
        `((define-actor Nat (A [x Nat])
            (goto S1)
            (define-state (S1) (m)
@@ -455,7 +506,7 @@
   (check-equal?
    (unparse-csa/inlined-actors
     (inline-actors
-     (with-output-language (csa/inlined-functions Prog)
+     (with-output-language (csa/inlined-actor-functions Prog)
        `((define-actor Nat (A [x Nat])
            (goto S1)
            (define-state (S1) (m)
@@ -490,9 +541,11 @@
     (compose
      unparse-csa/inlined-actors
      inline-actors
+     inline-actor-functions
+     inline-program-functions
      inline-type-aliases
-     inline-functions
      inline-records
+     desugar-variants
      parse-actor-def-csa/surface))
   ;; TODO: deal with actor parameters and type
   (redex-let csa-eval ([(let () (spawn τ e S ...)) (pass single-actor-prog)])
