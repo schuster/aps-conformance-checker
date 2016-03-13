@@ -37,8 +37,8 @@
      (primop e ...)
      x
      n)
-  (S (define-state (s x ...) (x) e)
-     (define-state (s x ...) (x) e [(timeout n) e]))
+  (S (define-state (s [x τ] ...) (x) e)
+     (define-state (s [x τ] ...) (x) e [(timeout n) e]))
   (primop < /)
   ((x s t l) variable-not-otherwise-mentioned)
   (n natural)
@@ -92,7 +92,7 @@
     #:domain K
     (--> (in-hole A (a ((S ...) (in-hole E (goto s v ..._n)))))
          (in-hole A (a ((S ...) (rcv (x_h) (subst-n e (x_s v) ...)))))
-         (where (_ ... (define-state (s x_s ..._n) (x_h) e) _ ...) (S ...))
+         (where (_ ... (define-state (s [x_s τ_s] ..._n) (x_h) e) _ ...) (S ...))
          Goto)
 
     ;; TODO: goto with timeout
@@ -154,9 +154,9 @@
   [(subst x x_2 v) x]
   [(subst n x v) n]
   [(subst a x v) a]
-  [(subst (spawn e S ...) self v) (spawn e S ...)]
-  [(subst (spawn e S ...) x v)
-    (spawn (subst e x v) (subst/S S x v) ...)]
+  [(subst (spawn τ e S ...) self v) (spawn τ e S ...)]
+  [(subst (spawn τ e S ...) x v)
+    (spawn τ (subst e x v) (subst/S S x v) ...)]
   [(subst (goto s e ...) x v) (goto s (subst e x v) ...)]
   [(subst (send e_1 e_2) x v)
    (send (subst e_1 x v) (subst e_2 x v))]
@@ -191,16 +191,16 @@
 
 (define-metafunction csa-eval
   subst/S : S x v -> S
-  [(subst/S (define-state (s x_s ...) (x_h) e) x v)
-   (define-state (s x_s ...) (x_h) e)
+  [(subst/S (define-state (s [x_s τ_s] ...) (x_h) e) x v)
+   (define-state (s [x_s τ_s] ...) (x_h) e)
    (where (_ ... x _ ...) (x_s ... x_h))]
-  [(subst/S (define-state (s x_s ...) (x_h) e) x v)
-   (define-state (s x_s ...) (x_h) (subst e x v))]
-  [(subst/S (define-state (s x_s ...) (x_h) e_1 [(timeout n) e_2]) x v)
-   (define-state (s x_s ...) (x_h) e_1 [(timeout n) e_2])
+  [(subst/S (define-state (s [x_s τ_s] ...) (x_h) e) x v)
+   (define-state (s [x_s τ_s] ...) (x_h) (subst e x v))]
+  [(subst/S (define-state (s [x_s τ_s] ...) (x_h) e_1 [(timeout n) e_2]) x v)
+   (define-state (s [x_s τ_s] ...) (x_h) e_1 [(timeout n) e_2])
    (where (_ ... x _ ...) (x_s ... x_h))]
-  [(subst/S (define-state (s x_s ...) (x_h) e_1 [(timeout n) e_2]) x v)
-   (define-state (s x_s ...) (x_h) (subst e_1 x v) [(timeout n) (subst e_2 x v)])])
+  [(subst/S (define-state (s [x_s τ_s] ...) (x_h) e_1 [(timeout n) e_2]) x v)
+   (define-state (s [x_s τ_s] ...) (x_h) (subst e_1 x v) [(timeout n) (subst e_2 x v)])])
 
 (module+ test
   (check-equal? (term (subst 0 x 1))

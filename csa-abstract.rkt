@@ -32,7 +32,7 @@
   (α# (α#n)) ; NOTE: for now, does not handle configs with more than one actor
   (α#n (a#int ((S# ...) e#)))
   (μ# ()) ; NOTE: for now, assuming no internal sends
-  (S# (define-state (s x ...) (x) e#)
+  (S# (define-state (s [x τ] ...) (x) e#)
       ;; TODO: not dealing with timeouts yet...
       ;; (define-state (s x ...) (x) e# [(timeout Nat) e#])
       )
@@ -46,7 +46,7 @@
    (variant t v#template)
    (record [l v#template] ...)
    (* τ))
-  (e# (spawn e# S ...)
+  (e# (spawn τ e# S ...)
       (goto s e# ...)
       (send e# e#)
       self
@@ -143,6 +143,7 @@
    (generate-abstract-messages/mf (type-subst τ X (minfixpt X τ)) natural_max-depth)]
   [(generate-abstract-messages/mf (Record [l τ] ...) 0)
    ((* (Record [l τ] ...)))]
+  ;; TODO: max-depth should refer to the number of unrollings of the fixpoint; that's it
   [(generate-abstract-messages/mf (Record [l_1 τ_1] [l_rest τ_rest] ...) natural_max-depth)
    ,(for/fold ([records-so-far null])
               ([sub-record (term (generate-abstract-messages/mf (Record [l_rest τ_rest] ...) natural_max-depth))])
@@ -291,7 +292,7 @@
 ;; Evaluates the handler triggered by sending message to actor-address, return the list of possible
 ;; results (which are tuples of the final behavior expression and the list of outputs)
 (define (csa#-eval-transition prog-config actor-address message)
-  (redex-let csa# ([(_ ((_ ... (define-state (s x_s ..._n) (x_m) e#) _ ...) (in-hole E# (goto s v# ..._n))))
+  (redex-let csa# ([(_ ((_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e#) _ ...) (in-hole E# (goto s v# ..._n))))
                     (config-actor-by-address prog-config actor-address)])
              ;; TODO: deal with the case where x_m shadows an x_s
              ;; (printf "Expression to be run: ~s\n" (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...)))
@@ -531,8 +532,8 @@
 ;; NOTE: does not support timeouts yet
 (define-metafunction csa#
   α-S : S natural_depth -> S#
-  [(α-S (define-state (s x ...) (x_m)  e) natural_depth)
-   (define-state (s x ...) (x_m) (α-e e natural_depth))])
+  [(α-S (define-state (s [x τ] ...) (x_m)  e) natural_depth)
+   (define-state (s [x τ] ...) (x_m) (α-e e natural_depth))])
 
 ;; NOTE: does not yet support abstraction for addresses or spawns
 (define-metafunction csa#

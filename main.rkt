@@ -246,7 +246,7 @@ Remaining big challenges I see in the analysis:
   (define static-response-agent
     (term
      (,single-agent-concrete-addr
-      (((define-state (Always response-dest) (m)
+      (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
           (begin
             (send response-dest (variant Ack 0))
             (goto Always response-dest))))
@@ -254,7 +254,7 @@ Remaining big challenges I see in the analysis:
   (define static-double-response-agent
     (term
      (,single-agent-concrete-addr
-      (((define-state (Always response-dest) (m)
+      (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
           (begin
             (send response-dest (variant Ack 0))
             (send response-dest (variant Ack 0))
@@ -301,7 +301,7 @@ Remaining big challenges I see in the analysis:
   (define pattern-matching-agent
     (term
      (,single-agent-concrete-addr
-      (((define-state (Always r) (m)
+      (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
           (case m
             [A x (begin (send r (variant A x)) (goto Always r))]
             [B y (begin (send r (variant B 0)) (goto Always r))])))
@@ -310,7 +310,7 @@ Remaining big challenges I see in the analysis:
   (define reverse-pattern-matching-agent
     (term
      (,single-agent-concrete-addr
-      (((define-state (Always r) (m)
+      (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
           (case m
             [A x (begin (send r (variant B 0)) (goto Always r))]
             [B y (begin (send r (variant A y)) (goto Always r))])))
@@ -319,7 +319,7 @@ Remaining big challenges I see in the analysis:
   (define partial-pattern-matching-agent
     (term
      (,single-agent-concrete-addr
-      (((define-state (Always r) (m)
+      (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
           (case m
             [A x (begin (send r (variant A 0)) (goto Always r))]
             [B y (goto Always r)])))
@@ -365,7 +365,7 @@ Remaining big challenges I see in the analysis:
   (define request-response-agent
     (term
      (,single-agent-concrete-addr
-      (((define-state (Always i) (response-target)
+      (((define-state (Always [i Nat]) (response-target)
           (begin
             (send response-target i)
             ;; TODO: implement addition and make this a counter
@@ -379,7 +379,7 @@ Remaining big challenges I see in the analysis:
           (begin
             (send response-target 0)
             (goto HaveAddr 1 response-target)))
-        (define-state (HaveAddr i response-target) (new-response-target)
+        (define-state (HaveAddr [i Nat] [response-target (Addr Nat)]) (new-response-target)
           (begin
             (send response-target i)
             ;; TODO: also try the case where we save new-response-target instead
@@ -394,7 +394,7 @@ Remaining big challenges I see in the analysis:
           (begin
             (send response-target 0)
             (goto HaveAddr 1 response-target)))
-        (define-state (HaveAddr i response-target) (new-response-target)
+        (define-state (HaveAddr [i Nat] [response-target (Addr Nat)]) (new-response-target)
           (begin
             (send response-target i)
             ;; TODO: implement addition and make this a counter
@@ -403,7 +403,7 @@ Remaining big challenges I see in the analysis:
        (goto Init)))))
   (define double-response-agent
     `(,single-agent-concrete-addr
-      (((define-state (Always i) (response-dest)
+      (((define-state (Always [i Nat]) (response-dest)
           (begin
             (send response-dest i)
             (send response-dest i)
@@ -464,7 +464,7 @@ Remaining big challenges I see in the analysis:
   (define primitive-branch-agent
     (term
      (,single-agent-concrete-addr
-      (((define-state (S1 dest) (i)
+      (((define-state (S1 [dest (Addr (Union [NonZero Nat] [Zero Nat]))]) (i)
           (begin
             (case (< 0 i)
               [True dummy (send dest (variant NonZero 0))]
@@ -491,7 +491,7 @@ Remaining big challenges I see in the analysis:
   (define div-by-one-agent
     (term
      (,single-agent-concrete-addr
-      (((define-state (Always response-dest) (n)
+      (((define-state (Always [response-dest (Addr Nat)]) (n)
           (begin
             (send response-dest (/ n 1))
             (goto Always response-dest))))
@@ -499,7 +499,7 @@ Remaining big challenges I see in the analysis:
   (define div-by-zero-agent
     (term
      (,single-agent-concrete-addr
-      (((define-state (Always response-dest) (n)
+      (((define-state (Always [response-dest (Addr Nat)]) (n)
           (begin
             (send response-dest (/ n 0))
             (goto Always response-dest))))
@@ -556,14 +556,14 @@ Remaining big challenges I see in the analysis:
   (define unobs-toggle-agent
     (term
      (,single-agent-concrete-addr
-      (((define-state (Off r) (m)
+      (((define-state (Off [r (Addr (Union [TurningOn Nat] [TurningOff Nat]))]) (m)
           (case m
             [FromObserver dummy
              (begin
                (send r (variant TurningOn 0))
                (goto On r))]
             [FromUnobservedEnvironment dummy (goto Off r)]))
-        (define-state (On r) (m)
+        (define-state (On [r (Addr (Union [TurningOn Nat] [TurningOff Nat]))]) (m)
           (case m
             [FromObserver dummy (goto On r)]
             [FromUnobservedEnvironment dummy
@@ -574,7 +574,7 @@ Remaining big challenges I see in the analysis:
   (define unobs-toggle-agent-wrong1
     (term
      (,single-agent-concrete-addr
-      (((define-state (Off r) (m)
+      (((define-state (Off [r (Addr (Union [TurningOn Nat] [TurningOff Nat]))]) (m)
           (case m
             [FromObserver dummy
              (begin
@@ -582,7 +582,7 @@ Remaining big challenges I see in the analysis:
                ;; Going to Off instead of On
                (goto Off r))]
             [FromUnobservedEnvironment dummy (goto Off r)]))
-        (define-state (On r) (m)
+        (define-state (On [r (Addr (Union [TurningOn Nat] [TurningOff Nat]))]) (m)
           (case m
             [FromObserver dummy (goto On r)]
             [FromUnobservedEnvironment dummy
@@ -593,14 +593,14 @@ Remaining big challenges I see in the analysis:
   (define unobs-toggle-agent-wrong2
     (term
      (,single-agent-concrete-addr
-      (((define-state (Off r) (m)
+      (((define-state (Off [r (Addr (Union [TurningOn Nat] [TurningOff Nat]))]) (m)
           (case m
             [FromObserver dummy
              (begin
                (send r (variant TurningOn 0))
                (goto On r))]
             [FromUnobservedEnvironment dummy (goto On r)]))
-        (define-state (On r) (m)
+        (define-state (On [r (Addr (Union [TurningOn Nat] [TurningOff Nat]))]) (m)
           (case m
             [FromObserver dummy (goto On r)]
             [FromUnobservedEnvironment dummy
@@ -611,14 +611,14 @@ Remaining big challenges I see in the analysis:
   (define unobs-toggle-agent-wrong3
     (term
      (,single-agent-concrete-addr
-      (((define-state (Off r) (m)
+      (((define-state (Off [r (Addr (Union [TurningOn Nat] [TurningOff Nat]))]) (m)
           (case m
             [FromObserver dummy
              (begin
                (send r (variant TurningOn 0))
                (goto On r))]
             [FromUnobservedEnvironment dummy (goto Off r)]))
-        (define-state (On r) (m)
+        (define-state (On [r (Addr (Union [TurningOn Nat] [TurningOff Nat]))]) (m)
           (case m
             [FromObserver dummy (goto On r)]
             [FromUnobservedEnvironment dummy
@@ -629,14 +629,14 @@ Remaining big challenges I see in the analysis:
   (define unobs-toggle-agent-wrong4
     (term
      (,single-agent-concrete-addr
-      (((define-state (Off r) (m)
+      (((define-state (Off [r (Addr (Union [TurningOn Nat] [TurningOff Nat]))]) (m)
           (case m
             [FromObserver dummy (goto Off r)]
             [FromUnobservedEnvironment dummy
              (begin
                (send r (variant TurningOn 0))
                (goto On r))]))
-        (define-state (On r) (m)
+        (define-state (On [r (Addr (Union [TurningOn Nat] [TurningOff Nat]))]) (m)
           (case m
             [FromObserver dummy (goto On r)]
             [FromUnobservedEnvironment dummy
