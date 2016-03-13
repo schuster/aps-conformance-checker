@@ -60,9 +60,8 @@
   (terminals
    (number (n))
    (boolean (b))
-   (name (x f a s T))
-   (PrimitiveType (pτ))
-   )
+   (name (x f a s T V))
+   (PrimitiveType (pτ)))
   (Prog (P)
         (PI ... e))
   (ProgItem (PI)
@@ -70,6 +69,7 @@
             (define-function (f [x τ] ...) e)
             (define-type T τ)
             (define-record T [x τ] ...)
+            (define-variant T (V [x τ] ...) ...))
   (ActorDef (ad)
     (define-actor τ (a [x τ2] ...) (fd ...) e S ...))
   (StateDef (S)
@@ -83,6 +83,8 @@
        (spawn a e ...)
        (begin e1 e* ...)
        (record [x e] ...)
+       (: e x)
+       (case e1 [(V x ...) e2] ...)
        (f e ...)
        ;; (po e ...)
        (+ e ...)
@@ -96,6 +98,7 @@
   (Type (τ)
         pτ
         (record [x τ] ...)
+        (Union [V τ] ...)
         T)
   (entry Prog))
 
@@ -106,10 +109,138 @@
 
 (define-language csa/desugared-variants
   (extends csa/surface)
-  ;; (ProgItem (PI)
-  ;;           (- (define-record T [x τ] ...)))
-  )
+  (ProgItem (PI)
+            (- (define-variant T (V [x τ] ...) ...))))
 
+(define-parser parse-csa/desugared-variants csa/desugared-variants)
+
+(define-pass desugar-variants : csa/surface (P) -> csa/desugared-variants ()
+  (Prog : Prog (P items-to-add) -> Prog ()
+        [((define-variant ,T (,V [,x ,[τ]] ...) ...) ,PI ... ,e)
+         (define record-defs
+           (map
+            (lambda (name field-list types)
+              (define x-as-f
+                (build-list (length field-list)
+                            (lambda (i) (string->symbol (string-append "f" (number->string (add1 i)))))))
+              (with-output-language (csa/desugared-variants ProgItem)
+                ;; TODO: field names must be different...
+               `(define-record ,name [,x-as-f ,types] ...)))
+            V x τ))
+         (Prog (with-output-language (csa/surface Prog) `(,PI ... ,e))
+               (append items-to-add
+                       (append
+                        record-defs
+                        (list
+                        (with-output-language (csa/desugared-variants ProgItem)
+                          `(define-type ,T (Union [,V ,V] ...)))))
+                       ))]
+        [(,[PI1] ,PI* ... ,e)
+         (Prog (with-output-language (csa/surface Prog) `(,PI* ... ,e))
+               PI1)]
+        [(,[e]) `(,items-to-add ... ,e)])
+  (Exp : Exp (e) -> Exp ()
+       [(case ,[e1] [(,V ,x ...) ,[e2]] ...)
+        (define record-var (gensym))
+        (define named-record-vars (build-list (length V) (lambda (i) record-var)))
+        (define referenced-record-vars
+          (for/list ([field-list x])
+            (build-list
+             (length field-list)
+             (lambda (i) record-var))))
+        (define field-name-lists
+          (for/list ([field-list x])
+            (build-list
+             (length field-list)
+             (lambda (i) (string->symbol (string-append "f" (number->string (add1 i))))))))
+        ;; (for/list ([field-list x])
+        ;;     (define record-var (gensym))
+        ;;     (define-values (num field-names)
+        ;;       (for/fold ([num 1]
+        ;;                  [names-so-far null])
+        ;;                 ([name field-list])
+        ;;         (values (add1 num)
+        ;;                 (append names-so-far
+        ;;                         (list )))))
+        ;;     (list field-names
+        ;;           (build-list (length field-list) (lambda (i) record-var))
+        ;;           record-var))
+;;         (match-define (list generated-record-field-names referenced-record-vars named-record-vars)
+;; )
+        `(case ,e1
+           [,V ,named-record-vars
+               ;; TODO: would be nice if Nanopass did the Redex-style repetition of names so I didn't
+               ;; rquire the above build-list calls, etc.
+               (let ([,x (: ,referenced-record-vars ,field-name-lists)] ...) ,e2)] ...)])
+  (Prog P null))
+
+(module+ test
+  ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
+  (check-equal?
+   (unparse-csa/desugared-variants
+    (desugar-variants
+     (with-output-language (csa/surface Prog)
+       `((define-variant List (Null) (Cons [element Nat] [list List]))
+         (case (Null)
+           [(Null) 0]
+           [(Cons element rest) element])))))
+   `((define-record Null)
+     (define-record Cons [f1 Nat] [f2 List])
+     (define-type List (Union (Null Null) (Cons Cons)))
+     (case (Null)
+       [Null r (let () 0)]
+       [Cons r
+             (let ([element (: r f1)]
+                   [rest (: r f2)])
+               element)]))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Record type inlining
+
+(define-language csa/inlined-records
+  (extends csa/desugared-variants)
+  (ProgItem (PI)
+            (- (define-record T [x τ] ...))))
+
+(define-parser parse-csa/inlined-records csa/inlined-records)
+
+(define-pass inline-records : csa/desugared-variants (P) -> csa/inlined-records ()
+  ;; TODO: I could really use something like syntax-parse's splicing forms so I could look at items
+  ;; individually and splice them back in
+  (Prog : Prog (P items-to-add) -> Prog ()
+        [((define-record ,T [,x ,τ] ...) ,PI ... ,e)
+         ;; TODO: would be nice if there were a shortcut syntax for saying "create something of the
+         ;; source language type
+         (Prog (with-output-language (csa/desugared-variants Prog) `(,PI ... ,e))
+               (append items-to-add
+                       (list ;; TODO: figure out why I need with-output-language here (maybe b/c I'm not parsing the entry point? or the entry point of this processor?
+                        (with-output-language (csa/inlined-records ProgItem)
+                          `(define-type ,T (record [,x ,τ] ...)))
+                        ;; TODO: figure out why I need with-output-language here
+                        (with-output-language (csa/inlined-records ProgItem)
+                          `(define-function (,T [,x ,τ] ...) (record [,x ,x] ...))))))]
+        [(,[PI1] ,PI* ... ,e)
+         (Prog (with-output-language (csa/desugared-variants Prog) `(,PI* ... ,e))
+               PI1)]
+        [(,[e]) `(,items-to-add ... ,e)])
+  (Prog P null))
+
+(module+ test
+  (check-equal?
+     (unparse-csa/inlined-records
+   (inline-records
+    (with-output-language (csa/desugared-variants Prog)
+      `((define-record A [x Nat] [y Nat])
+        (define-record B [z A])
+        (B (A 5 4))))))
+
+  `((define-type A (record [x Nat] [y Nat]))
+    (define-function (A [x Nat] [y Nat]) (record [x x] [y y]))
+    (define-type B (record [z A]))
+    (define-function (B [z A]) (record [z z]))
+    (B (A 5 4)))))
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Function inlining
 
 (define-language csa/inlined-functions
