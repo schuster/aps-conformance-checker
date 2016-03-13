@@ -97,6 +97,7 @@
            (define-function (f [x τ] ...) e))
   (Type (τ)
         pτ
+        (Addr τ)
         (Record [x τ] ...)
         (Union [V τ ...] ...)
         T)
