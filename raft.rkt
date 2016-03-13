@@ -37,6 +37,9 @@
 
   (term
    (
+    (define-type Unit (Record))
+    (define-type Duration Nat) ; number of seconds
+
     (define-record ClusterConfiguration
       ;; TODO:
       [members Nat ;; (Listof (Channel RaftMessage))
