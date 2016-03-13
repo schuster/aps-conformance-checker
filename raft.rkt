@@ -134,7 +134,7 @@
     ;; ---------------------------------------------------------------------------------------------------
 ;; State metadata helpers
 
-;; (define (grant-vote?/follower [metadata StateMetadata]
+;; (define-function (grant-vote?/follower [metadata StateMetadata]
 ;;                               [log ReplicatedLog]
 ;;                               [term Nat]
 ;;                               [candidate (Channel RaftMessage)]
@@ -146,7 +146,7 @@
 ;;          [Nothing () true]
 ;;          [Just (c) (= candidate c)])))
 
-;; (define (grant-vote?/candidate [metadata StateMetadata]
+;; (define-function (grant-vote?/candidate [metadata StateMetadata]
 ;;                                [log ReplicatedLog]
 ;;                                [term Nat]
 ;;                                [candidate (Channel RaftMessage)]
@@ -158,7 +158,7 @@
 ;;          [Nothing () true]
 ;;          [Just (c) (= candidate c)])))
 
-;; (define (grant-vote?/leader [metadata StateMetadata]
+;; (define-function (grant-vote?/leader [metadata StateMetadata]
 ;;                             [log ReplicatedLog]
 ;;                             [term Nat]
 ;;                             [candidate (Channel RaftMessage)]
@@ -167,7 +167,7 @@
 ;;   (and (>= term (: metadata current-term))
 ;;        (candidate-at-least-as-up-to-date? log last-log-term last-log-index)))
 
-;; (define (candidate-at-least-as-up-to-date? [log ReplicatedLog]
+;; (define-function (candidate-at-least-as-up-to-date? [log ReplicatedLog]
 ;;                                            [candidate-log-term Nat]
 ;;                                            [candidate-log-index Nat])
 ;;   (let ([my-last-log-term (replicated-log-last-term log)])
@@ -175,40 +175,41 @@
 ;;         (and (= candidate-log-term my-last-log-term)
 ;;              (>= candidate-log-index (replicated-log-last-index log))))))
 
-;; (define (with-vote [metadata StateMetadata] [term Nat] [candidate (Channel RaftMessage)])
+;; (define-function (with-vote [metadata StateMetadata] [term Nat] [candidate (Channel RaftMessage)])
 ;;   (! metadata [votes (hash-set (: metadata votes) term candidate)]))
 
-;; (define (initial-metadata)
+;; (define-function (initial-metadata)
 ;;   (StateMetadata 0 (hash) 0))
 
-;; (define (for-follower/candidate [metadata ElectionMeta])
+;; (define-function (for-follower/candidate [metadata ElectionMeta])
 ;;   (StateMetadata (: metadata current-term) (hash) (: metadata last-used-timeout-id)))
 
-;; (define (for-follower/leader [metadata LeaderMeta])
+;; (define-function (for-follower/leader [metadata LeaderMeta])
 ;;   (StateMetadata (: metadata current-term) (hash) (: metadata last-used-timeout-id)))
 
-;; (define (for-leader [metadata ElectionMeta])
+;; (define-function (for-leader [metadata ElectionMeta])
 ;;   (LeaderMeta (: metadata current-term) (: metadata last-used-timeout-id)))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Election
+;; ---------------------------------------------------------------------------------------------------
+;; Election
 
 ;; ;; All times are in milliseconds
-;; (define election-timeout-min 0)
-;; (define election-timeout-max 100)
-;; (define election-timer-name "ElectionTimer")
+;; TODO: define these as constants in the program
+(define-constant election-timeout-min 0)
+(define-constant election-timeout-max 100)
+(define-constant election-timer-name "ElectionTimer")
 
 ;; ;; Resets the timer for the election deadline and returns the metadata with the new expected next
 ;; ;; timeout ID
-;; (define (reset-election-deadline/follower [timer (Channel TimerMessage)]
-;;                                           [target (Channel Nat)]
-;;                                           [m StateMetadata])
-;;   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
-;;         [next-id (+ 1 (: m last-used-timeout-id))])
-;;     (send timer (SetTimer election-timer-name target next-id deadline false))
-;;     (! m [last-used-timeout-id next-id])))
+(define-function (reset-election-deadline/follower [timer (Channel TimerMessage)]
+                                                   [target (Channel Nat)]
+                                                   [m StateMetadata])
+  (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
+        [next-id (+ 1 (: m last-used-timeout-id))])
+    (send timer (SetTimer election-timer-name target next-id deadline false))
+    (! m [last-used-timeout-id next-id])))
 
-;; (define (reset-election-deadline/candidate [timer (Channel TimerMessage)]
+;; (define-function (reset-election-deadline/candidate [timer (Channel TimerMessage)]
 ;;                                            [target (Channel Nat)]
 ;;                                            [m ElectionMeta])
 ;;   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
@@ -216,7 +217,7 @@
 ;;     (send timer (SetTimer election-timer-name target next-id deadline false))
 ;;     (! m [last-used-timeout-id next-id])))
 
-;; (define (reset-election-deadline/leader [timer (Channel TimerMessage)]
+;; (define-function (reset-election-deadline/leader [timer (Channel TimerMessage)]
 ;;                                         [target (Channel Nat)]
 ;;                                         [m LeaderMeta])
 ;;   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
@@ -224,38 +225,38 @@
 ;;     (send timer (SetTimer election-timer-name target next-id deadline false))
 ;;     (! m [last-used-timeout-id next-id])))
 
-;; (define (cancel-election-deadline [timer (Channel TimerMessage)])
+;; (define-function (cancel-election-deadline [timer (Channel TimerMessage)])
 ;;   (send timer (CancelTimer election-timer-name)))
 
 ;; ;; Because this language does not have traits, I separate forNewElection into two functions
-;; (define (for-new-election/follower [m StateMetadata])
+;; (define-function (for-new-election/follower [m StateMetadata])
 ;;   (ElectionMeta (next (: m current-term)) (hash) (: m votes) (: m last-used-timeout-id)))
 
-;; (define (for-new-election/candidate [m StateMetadata])
+;; (define-function (for-new-election/candidate [m StateMetadata])
 ;;   (ElectionMeta (next (: m current-term)) (hash) (: m votes) (: m last-used-timeout-id)))
 
 ;; ;; this effectively duplicates the logic of withVote, but it follows the akka-raft code
-;; (define (with-vote-for [m ElectionMeta] [term Nat] [candidate (Channel RaftMessage)])
+;; (define-function (with-vote-for [m ElectionMeta] [term Nat] [candidate (Channel RaftMessage)])
 ;;   (! m [votes (hash-set (: m votes) term candidate)]))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Terms
 
-;; (define (next [term Nat])
+;; (define-function (next [term Nat])
 ;;   (+ 1 term))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Config helpers
 
-;; (define (members-except-self [config ClusterConfiguration] [self (Channel RaftMessage)])
+;; (define-function (members-except-self [config ClusterConfiguration] [self (Channel RaftMessage)])
 ;;   (for/fold ([result null])
 ;;             ([member (: config members)])
 ;;     (if (not (= member self)) (cons member result) result)))
 
-;; (define (inc-vote [m ElectionMeta] [follower (Channel RaftMessage)])
+;; (define-function (inc-vote [m ElectionMeta] [follower (Channel RaftMessage)])
 ;;   (! m [votes-received (hash-set (: m votes-received) follower true)]))
 
-;; (define (has-majority [m ElectionMeta] [config ClusterConfiguration])
+;; (define-function (has-majority [m ElectionMeta] [config ClusterConfiguration])
 ;;   ;; TODO: figure out what the type for division is here (or maybe rewrite to not use division)
 ;;   (let ([total-votes-received
 ;;          (for/fold ([total 0])
@@ -266,13 +267,13 @@
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Misc.
 
-;; (define (leader-is-lagging [append-entries-term Nat] [m StateMetadata])
+;; (define-function (leader-is-lagging [append-entries-term Nat] [m StateMetadata])
 ;;   (< append-entries-term (: m current-term)))
 
-;; (define (is-heartbeat [append-entries-entries (Vectorof Entry)])
+;; (define-function (is-heartbeat [append-entries-entries (Vectorof Entry)])
 ;;   (= 0 (vector-length append-entries-entries)))
 
-;; (define (AppendEntries-apply [term Nat]
+;; (define-function (AppendEntries-apply [term Nat]
 ;;                              [replicated-log ReplicatedLog]
 ;;                              [from-index Nat]
 ;;                              [leader-commit-id Nat]
@@ -300,42 +301,42 @@
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Replicated log
 
-;; (define (replicated-log-empty)
+;; (define-function (replicated-log-empty)
 ;;   (ReplicatedLog (vector) 0))
 
-;; (define (replicated-log+ [replicated-log ReplicatedLog] [entry Entry])
+;; (define-function (replicated-log+ [replicated-log ReplicatedLog] [entry Entry])
 ;;   (replicated-log-append replicated-log (vector entry) (vector-length (: replicated-log entries))))
 
 ;; ;; Takes the first *take* entries from the log and appends *entries* onto it, returning the new log
-;; (define (replicated-log-append [log ReplicatedLog] [entries-to-append (Vectorof Entry)] [take Nat])
+;; (define-function (replicated-log-append [log ReplicatedLog] [entries-to-append (Vectorof Entry)] [take Nat])
 ;;   (! log [entries (vector-append (vector-take (: log entries) take) entries-to-append)]))
 
-;; (define (replicated-log-commit [replicated-log ReplicatedLog] [n Int])
+;; (define-function (replicated-log-commit [replicated-log ReplicatedLog] [n Int])
 ;;   (! replicated-log [commit-index n]))
 
 ;; ;; Returns the log entries from from-index (exclusive) to to-index (inclusive) (these are *semantic*
 ;; ;; indices)
-;; (define (replicated-log-between [replicated-log ReplicatedLog] [from-index Int] [to-index Int])
+;; (define-function (replicated-log-between [replicated-log ReplicatedLog] [from-index Int] [to-index Int])
 ;;   ;; NOTE: this naive conversion from semantic to implementation indices won't work under log
 ;;   ;; compaction
 ;;   (let ([vector-from-index (- from-index 1)]
 ;;         [vector-to-index   (- to-index   1)])
 ;;       (vector-slice (: replicated-log entries) (+ 1 vector-from-index) (+ 1 vector-to-index))))
 
-;; (define (replicated-log-last-index [replicated-log ReplicatedLog])
+;; (define-function (replicated-log-last-index [replicated-log ReplicatedLog])
 ;;   (let ([entries (: replicated-log entries)])
 ;;     (cond
 ;;       [(= 0 (vector-length entries)) 0]
 ;;       [else (: (vector-ref entries (- (vector-length entries) 1)) index)])))
 
-;; (define (replicated-log-last-term [replicated-log ReplicatedLog])
+;; (define-function (replicated-log-last-term [replicated-log ReplicatedLog])
 ;;   (let ([entries (: replicated-log entries)])
 ;;     (cond
 ;;       [(= 0 (vector-length entries)) 0]
 ;;       [else (: (vector-ref entries (- (vector-length entries) 1)) term)])))
 
 ;; ;; NOTE: this differs from the akka-raft version, which is broken
-;; (define (replicated-log-next-index [replicated-log ReplicatedLog])
+;; (define-function (replicated-log-next-index [replicated-log ReplicatedLog])
 ;;   (let ([entries (: replicated-log entries)])
 ;;     (cond
 ;;       [(= 0 (vector-length entries)) 1]
@@ -343,13 +344,13 @@
 
 ;; ;; Returns true if the leader's previous log is consistent with ours (i.e. the term of the previous
 ;; ;; index matches the term at that index in our log)
-;; (define (replicated-log-consistent-update [replicated-log Replicated-Log]
+;; (define-function (replicated-log-consistent-update [replicated-log Replicated-Log]
 ;;                                           [prev-log-term Nat]
 ;;                                           [prev-log-index Nat])
 ;;   (= (replicated-log-term-at replicated-log prev-log-index) prev-log-term))
 
 ;; (define-variant FindTermResult (NoTerm) (FoundTerm [term Nat]))
-;; (define (replicated-log-term-at [replicated-log ReplicatedLog] [index Nat])
+;; (define-function (replicated-log-term-at [replicated-log ReplicatedLog] [index Nat])
 ;;   (cond
 ;;     [(<= index 0) 0]
 ;;     [else
@@ -372,7 +373,7 @@
 ;; ;; Returns a vector of entries from the log, starting at the from-including index and including either
 ;; ;; all entries with the same term or a total of 5 entries, whichever is less. We assume from-including
 ;; ;; is no less than 1 and no more than 1 + the last index in the log.
-;; (define (replicated-log-entries-batch-from [replicated-log ReplicatedLog] [from-including Nat])
+;; (define-function (replicated-log-entries-batch-from [replicated-log ReplicatedLog] [from-including Nat])
 ;;   (let* ([how-many 5] ; this is the default parameter in akka-raft
 ;;          [first-impl-index 0]
 ;;          [first-semantic-index
@@ -396,21 +397,21 @@
 ;;              [else result])))]
 ;;       [else (vector)])))
 
-;; (define (min [a Nat] [b Nat])
+;; (define-function (min [a Nat] [b Nat])
 ;;   (cond [(< a b) a] [else b]))
 
-;; (define (entry-prev-index [entry Entry])
+;; (define-function (entry-prev-index [entry Entry])
 ;;   (- (: entry index) 1))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; LogIndexMap
 
-;; (define (log-index-map-initialize [members (Listof (Channel RaftMessage))] [initialize-with Nat])
+;; (define-function (log-index-map-initialize [members (Listof (Channel RaftMessage))] [initialize-with Nat])
 ;;   (for/fold ([map (hash)])
 ;;             ([member members])
 ;;     (hash-set map member initialize-with)))
 
-;; (define (log-index-map-value-for [map (Hash (Channel RaftMessage) Nat)]
+;; (define-function (log-index-map-value-for [map (Hash (Channel RaftMessage) Nat)]
 ;;                                  [member (Channel RaftMessage)])
 ;;   (case (hash-ref map member)
 ;;     [Nothing ()
@@ -419,7 +420,7 @@
 ;;       0]
 ;;     [Just (value) value]))
 
-;; (define (log-index-map-put-if-greater [map (Hash (Channel RaftMessage) Nat)]
+;; (define-function (log-index-map-put-if-greater [map (Hash (Channel RaftMessage) Nat)]
 ;;                                       [member (Channel RaftMessage)]
 ;;                                       [value Nat])
 ;;   (let ([old-value (log-index-map-value-for map member)])
@@ -427,7 +428,7 @@
 ;;       [(< old-value value) (hash-set map member value)]
 ;;       [else map])))
 
-;; (define (log-index-map-put-if-smaller [map (Hash (Channel RaftMessage) Nat)]
+;; (define-function (log-index-map-put-if-smaller [map (Hash (Channel RaftMessage) Nat)]
 ;;                                       [member (Channel RaftMessage)]
 ;;                                       [value Nat])
 ;;   (let ([old-value (log-index-map-value-for map member)])
@@ -437,7 +438,7 @@
 
 ;; ;; NOTE: because the akka-raft version of this is completely wrong, I'm writing my own
 ;; ;; Returns the greatest index that a majority of entries in the map agree on
-;; (define (log-index-map-consensus-for-index [map (Hash (Channel RaftMessage) Nat)]
+;; (define-function (log-index-map-consensus-for-index [map (Hash (Channel RaftMessage) Nat)]
 ;;                                            [config ClusterConfiguration])
 ;;   (let ([all-indices
 ;;          (for/fold ([indices-so-far null])
@@ -452,12 +453,12 @@
 ;; ;; Vector and list helpers
 
 ;; ;; Works like Scala's list slice (i.e. returns empty list instead of returning errors)
-;; (define (vector-slice [v (Vectorof Entries)] [from-index Int] [to-index Int])
+;; (define-function (vector-slice [v (Vectorof Entries)] [from-index Int] [to-index Int])
 ;;   (vector-copy v
 ;;                (min from-index (vector-length v))
 ;;                (min to-index   (vector-length v))))
 
-  )
+
 
 
     (define-actor RaftActorMessage (RaftActor)
@@ -474,7 +475,7 @@
       ; the functions go here
       (
       ;; ;; Only called from Follower state on receiving an election timeout
-      ;; (define (begin-election [timer (Channel TimerMessage)]
+      ;; (define-function (begin-election [timer (Channel TimerMessage)]
       ;;                         [election-timeout-target (Channel Nat)]
       ;;                         [metadata StateMetadata]
       ;;                         [replicated-log ReplicatedLog]
@@ -497,7 +498,7 @@
 
       ;; ;; TODO: consider making AppendEntries into a record to remove these long param lists and better
       ;; ;; match akka-raft
-      ;; (define (append-entries [term Nat]
+      ;; (define-function (append-entries [term Nat]
       ;;                         [prev-log-term Nat]
       ;;                         [prev-log-index Nat]
       ;;                         [entries (Vectorof Entry)]
@@ -539,7 +540,7 @@
       ;;                            recently-contacted-by-leader)))]))
 
       ;; ;; appends the entries to the log and returns the success message to send
-      ;; (define (append [replicated-log ReplicatedLog]
+      ;; (define-function (append [replicated-log ReplicatedLog]
       ;;                 [prev-log-index Nat]
       ;;                 [entries (Vectorof Entry)]
       ;;                 [m StateMetadata])
@@ -559,14 +560,14 @@
       ;;                        replicated-log)))]))
 
       ;; ;; NOTE: only works for follower, but fortunately only used there
-      ;; (define (accept-heartbeat [m StateMetadata]
+      ;; (define-function (accept-heartbeat [m StateMetadata]
       ;;                           [replicated-log ReplicatedLog]
       ;;                           [config ClusterConfiguration]
       ;;                           [recently-contacted-by-leader MaybeLeader])
       ;;   (let ([m (reset-election-deadline/follower timer-manager timeouts m)])
       ;;     (goto (Follower recently-contacted-by-leader m replicated-log config))))
 
-      ;; (define (commit-until-index [replicated-log ReplicatedLog]
+      ;; (define-function (commit-until-index [replicated-log ReplicatedLog]
       ;;                             [last-index-to-commit Nat]
       ;;                             [notify-client? Bool])
       ;;   (let ([entries (replicated-log-between replicated-log
@@ -578,25 +579,25 @@
       ;;       (cond [notify-client? (send (: entry client) (: entry command))] [else void])
       ;;       (replicated-log-commit rep-log (: entry index)))))
 
-      ;; (define heartbeat-timer-name "HeartbeatTimer")
-      ;; (define heartbeat-interval 50)
-      ;; (define (start-heartbeat [m LeaderMeta] [next-index (Hash (Channel RaftMessage) Nat)]
+      ;; (define-constant heartbeat-timer-name "HeartbeatTimer")
+      ;; (define-constant heartbeat-interval 50)
+      ;; (define-function (start-heartbeat [m LeaderMeta] [next-index (Hash (Channel RaftMessage) Nat)]
       ;;                          [replicated-log ReplicatedLog]
       ;;                          [config ClusterConfiguration])
       ;;   (send-heartbeat m next-index replicated-log config)
       ;;   (send timer-manager
       ;;         (SetTimer heartbeat-timer-name send-heartbeat-timeouts 1 heartbeat-interval true)))
 
-      ;; (define (stop-heartbeat)
+      ;; (define-function (stop-heartbeat)
       ;;   (send timer-manager (CancelTimer heartbeat-timer-name)))
 
-      ;; (define (send-heartbeat [m LeaderMeta]
+      ;; (define-function (send-heartbeat [m LeaderMeta]
       ;;                         [next-index (Hash (Channel RaftMessage) Nat)]
       ;;                         [replicated-log ReplicatedLog]
       ;;                         [config ClusterConfiguration])
       ;;   (replicate-log m next-index replicated-log config))
 
-      ;; (define (replicate-log [m LeaderMeta]
+      ;; (define-function (replicate-log [m LeaderMeta]
       ;;                        [next-index (Hash (Channel RaftMessage) Nat)]
       ;;                        [replicated-log ReplicatedLog]
       ;;                        [config ClusterConfiguration])
@@ -608,7 +609,7 @@
       ;;                                       peer-messages
       ;;                                       client-messages))))
 
-      ;; (define (send-entries [follower (Channel RaftMessage)]
+      ;; (define-function (send-entries [follower (Channel RaftMessage)]
       ;;                       [m LeaderMeta]
       ;;                       [replicated-log ReplicatedLog]
       ;;                       [next-index Nat]
@@ -624,7 +625,7 @@
 
       ;; ;; TODO: define messages like this alongside handlers in a state, so we don't have to repeat state
       ;; ;; fields so much
-      ;; (define (register-append-successful [follower-term Nat]
+      ;; (define-function (register-append-successful [follower-term Nat]
       ;;                                     [follower-index Nat]
       ;;                                     [member (Channel RaftMessage)]
       ;;                                     [m LeaderMeta]
@@ -640,7 +641,7 @@
       ;;          [replicated-log (maybe-commit-entry match-index replicated-log config)])
       ;;     (goto (Leader m next-index match-index replicated-log config))))
 
-      ;; (define (register-append-rejected [follower-term Nat]
+      ;; (define-function (register-append-rejected [follower-term Nat]
       ;;                                   [follower-index Nat]
       ;;                                   [member (Channel RaftMessage)]
       ;;                                   [m LeaderMeta]
@@ -658,7 +659,7 @@
       ;;                   client-messages)
       ;;     (goto (Leader m next-index match-index replicated-log config))))
 
-      ;; (define (maybe-commit-entry [match-index (Hash (Channel RaftMessage) Nat)]
+      ;; (define-function (maybe-commit-entry [match-index (Hash (Channel RaftMessage) Nat)]
       ;;                             [replicated-log ReplicatedLog]
       ;;                             [config ClusterConfiguration])
       ;;   (let ([index-on-majority (log-index-map-consensus-for-index match-index config)])
@@ -667,7 +668,7 @@
       ;;         [will-commit (commit-until-index replicated-log index-on-majority true)]
       ;;         [else replicated-log]))))
 
-      ;; (define (step-down [m LeaderMeta] [replicated-log ReplicatedLog] [config ClusterConfiguration])
+      ;; (define-function (step-down [m LeaderMeta] [replicated-log ReplicatedLog] [config ClusterConfiguration])
       ;;   (let ([m (reset-election-deadline/leader timer-manager timeouts m)])
       ;;     (goto (Follower (NoLeader) (for-follower/leader m) replicated-log config))))
        )
@@ -922,7 +923,7 @@
       ;;                            (send-heartbeat m next-index replicated-log config)
       ;;                            (goto (Leader m next-index match-index replicated-log config))]
         ))
-    (spawn RaftActor)))
+    (spawn RaftActor))))
 
 ;; TODO: write a test that checks the Raft program's grammar (later: and type-checks it)
 
