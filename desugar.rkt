@@ -97,7 +97,7 @@
            (define-function (f [x τ] ...) e))
   (Type (τ)
         pτ
-        (record [x τ] ...)
+        (Record [x τ] ...)
         (Union [V τ] ...)
         T)
   (entry Prog))
@@ -221,7 +221,7 @@
                (append items-to-add
                        (list ;; TODO: figure out why I need with-output-language here (maybe b/c I'm not parsing the entry point? or the entry point of this processor?
                         (with-output-language (csa/inlined-records ProgItem)
-                          `(define-type ,T (record [,x ,τ] ...)))
+                          `(define-type ,T (Record [,x ,τ] ...)))
                         ;; TODO: figure out why I need with-output-language here
                         (with-output-language (csa/inlined-records ProgItem)
                           `(define-function (,T [,x ,τ] ...) (record [,x ,x] ...))))))]
@@ -240,9 +240,9 @@
         (define-record B [z A])
         (B (A 5 4))))))
 
-  `((define-type A (record [x Nat] [y Nat]))
+  `((define-type A (Record [x Nat] [y Nat]))
     (define-function (A [x Nat] [y Nat]) (record [x x] [y y]))
-    (define-type B (record [z A]))
+    (define-type B (Record [z A]))
     (define-function (B [z A]) (record [z z]))
     (B (A 5 4)))))
 
