@@ -17,29 +17,16 @@
 (define raft-spec
   (term
    (((define-state (Init)
-       [* -> (goto Init)])
-     ;; (define-state (Follower)
-     ;;   [(RequestVote _ candidate _ _) -> ]
-     ;;   [(VoteCandidate _ _) -> ???]
-     ;;   [(DeclineCandidate _ _) -> ???]
-     ;;   [(AppendEntries _ _ _ _ _ leader _) -> ???]
-     ;;   [(AppendRejected _ _ _) -> ???]
-     ;;   [(AppendSuccessful _ _ _) -> ???])
-     ;; (define-state (Candidate)
-     ;;   [(RequestVote _ candidate _ _) -> ???]
-     ;;   [(VoteCandidate _ _) -> ???]
-     ;;   [(DeclineCandidate _ _) -> ???]
-     ;;   [(AppendEntries _ _ _ _ _ leader _) -> ???]
-     ;;   [(AppendRejected _ _ _) -> ???]
-     ;;   [(AppendSuccessful _ _ _) -> ???])
-     ;; (define-state (Leader)
-     ;;   [(RequestVote _ candidate _ _) -> ???]
-     ;;   [(VoteCandidate _ _) -> ???]
-     ;;   [(DeclineCandidate _ _) -> ???]
-     ;;   [(AppendEntries _ _ _ _ _ leader _) -> ???]
-     ;;   [(AppendRejected _ _ _) -> ???]
-     ;;   [(AppendSuccessful _ _ _) -> ???])
-     )
+       [unobs -> (goto Running)])
+     (define-state (Running)
+       ;; [(RequestVote _ candidate _ _) -> ]
+       ;; [(VoteCandidate _ _) -> ???]
+       ;; [(DeclineCandidate _ _) -> ???]
+       ;; [(AppendEntries _ _ _ _ _ leader _) -> ???]
+       ;; [(AppendRejected _ _ _) -> ???]
+       ;; [(AppendSuccessful _ _ _) -> ???]
+       ))
+    ;; TODO: switch the order of the init exp adn the states
     (goto Init)
     ,single-agent-concrete-addr)))
 
@@ -177,7 +164,7 @@
                               [replicated-log Nat ;; ReplicatedLog
                                               ]
                               [config ClusterConfiguration]) (m)
-                              (goto Follower)
+                              (goto Follower recently-contacted-by-leader metadata replicated-log config)
       ;;   [client-messages (m)
       ;;                    (case m
       ;;                      [ClientMessage (client command)
@@ -947,11 +934,14 @@
 ;; 3. Move the actor definition into a config, with addresses assigned appropriately
 (define raft-config (make-single-agent-config desugared-raft-actor))
 
+(define cluster-config-variant
+  (term (Config (Record [f1 (Record [members Nat])]))))
+
 ;; 4. Run the verifier
 (check-true (analyze raft-config
                      raft-spec
-                     (term (Union)) (term (Union))
+                     (term (Union)) (term (Union ,cluster-config-variant))
                      (hash 'Init 'Init
-                           'Follower 'Follower
-                           'Candidate 'Candidate
-                           'Leader 'Leader)))
+                           'Follower 'Running
+                           'Candidate 'Running
+                           'Leader 'Running)))
