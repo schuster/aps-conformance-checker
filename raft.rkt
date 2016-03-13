@@ -39,6 +39,7 @@
    (
     (define-type Unit (Record))
     (define-type Duration Nat) ; number of seconds
+    (define-type Boolean (Union (True) (False)))
 
     (define-record ClusterConfiguration
       ;; TODO:
