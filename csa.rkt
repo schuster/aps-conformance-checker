@@ -35,6 +35,7 @@
      (record [l e] ...)
      (: e l) ; record lookup
      (primop e ...)
+     string
      x
      n)
   (S (define-state (s [x τ] ...) (x) e)
@@ -43,6 +44,7 @@
   ((x s t l) variable-not-otherwise-mentioned)
   (n natural)
   (τ Nat
+     String
      (minfixpt X τ)
      X
      (Union [t τ] ...)
@@ -63,7 +65,7 @@
      a
      (rcv (x) e)
      (rcv (x) e [(timeout n) e]))
-  (v n (variant t v) (record [l v] ...) a)
+  (v n (variant t v) (record [l v] ...) a string)
   (a (addr natural))
   (A ((any_1 ... hole any_2 ...) μ ρ χ))
   (E hole

@@ -131,6 +131,7 @@
 (define-metafunction csa#
   generate-abstract-messages/mf : τ natural -> (v#template ...)
   [(generate-abstract-messages/mf Nat _) ((* Nat))]
+  [(generate-abstract-messages/mf String _) ((* String))]
   [(generate-abstract-messages/mf (Union) _) ()]
   [(generate-abstract-messages/mf (Union [t τ] ...) 0) ((* (Union [t τ] ...)))]
   [(generate-abstract-messages/mf (Union [t_1 τ_1] [t_rest τ_rest] ...) natural_max-depth)
@@ -547,6 +548,7 @@
 (define-metafunction csa#
   α-e : e natural_depth -> e#
   [(α-e natural _) (* Nat)]
+  [(α-e string _) (* String)]
   [(α-e x _) x]
   ;; TODO: is there any way this will ever be used for anything but the initial addresses?
   [(α-e (addr natural) _) (init-addr natural)]
