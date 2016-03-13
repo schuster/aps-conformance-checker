@@ -98,7 +98,7 @@
   (Type (τ)
         pτ
         (Record [x τ] ...)
-        (Union [V τ] ...)
+        (Union [V τ ...] ...)
         T)
   (entry Prog))
 
@@ -113,71 +113,32 @@
 (define-language csa/desugared-variants
   (extends csa/surface)
   (ProgItem (PI)
-            (- (define-variant T (V [x τ] ...) ...)))
-  (Exp (e)
-       (- (case e1 [(V x ...) e2] ...))
-       (+ (case e1 [V x e2] ...))))
+            (- (define-variant T (V [x τ] ...) ...))))
 
 (define-parser parse-csa/desugared-variants csa/desugared-variants)
 
+;; TODO: consider leaving the multi-arity variants in
 (define-pass desugar-variants : csa/surface (P) -> csa/desugared-variants ()
   (Prog : Prog (P items-to-add) -> Prog ()
         [((define-variant ,T (,V [,x ,[τ]] ...) ...) ,PI ... ,e)
-         (define record-defs
+         (define constructor-defs
            (map
             (lambda (name field-list types)
-              (define x-as-f
-                (build-list (length field-list)
-                            (lambda (i) (string->symbol (string-append "f" (number->string (add1 i)))))))
               (with-output-language (csa/desugared-variants ProgItem)
                 ;; TODO: field names must be different...
-               `(define-record ,name [,x-as-f ,types] ...)))
+                `(define-function (,name [,field-list ,types] ...) (variant ,name ,field-list ...))))
             V x τ))
          (Prog (with-output-language (csa/surface Prog) `(,PI ... ,e))
                (append items-to-add
                        (append
-                        record-defs
+                        constructor-defs
                         (list
                         (with-output-language (csa/desugared-variants ProgItem)
-                          `(define-type ,T (Union [,V ,V] ...)))))
-                       ))]
+                          `(define-type ,T (Union [,V ,τ ...] ...)))))))]
         [(,[PI1] ,PI* ... ,e)
          (Prog (with-output-language (csa/surface Prog) `(,PI* ... ,e))
                (append items-to-add (list PI1)))]
         [(,[e]) `(,items-to-add ... ,e)])
-  (Exp : Exp (e) -> Exp ()
-       [(case ,[e1] [(,V ,x ...) ,[e2]] ...)
-        (define record-var (gensym "variant-record"))
-        (define named-record-vars (build-list (length V) (lambda (i) record-var)))
-        (define referenced-record-vars
-          (for/list ([field-list x])
-            (build-list
-             (length field-list)
-             (lambda (i) record-var))))
-        (define field-name-lists
-          (for/list ([field-list x])
-            (build-list
-             (length field-list)
-             (lambda (i) (string->symbol (string-append "f" (number->string (add1 i))))))))
-        ;; (for/list ([field-list x])
-        ;;     (define record-var (gensym))
-        ;;     (define-values (num field-names)
-        ;;       (for/fold ([num 1]
-        ;;                  [names-so-far null])
-        ;;                 ([name field-list])
-        ;;         (values (add1 num)
-        ;;                 (append names-so-far
-        ;;                         (list )))))
-        ;;     (list field-names
-        ;;           (build-list (length field-list) (lambda (i) record-var))
-        ;;           record-var))
-;;         (match-define (list generated-record-field-names referenced-record-vars named-record-vars)
-;; )
-        `(case ,e1
-           [,V ,named-record-vars
-               ;; TODO: would be nice if Nanopass did the Redex-style repetition of names so I didn't
-               ;; rquire the above build-list calls, etc.
-               (let ([,x (: ,referenced-record-vars ,field-name-lists)] ...) ,e2)] ...)])
   (Prog P null))
 
 (module+ test
@@ -190,15 +151,12 @@
          (case (Null)
            [(Null) 0]
            [(Cons element rest) element])))))
-   `((define-record Null)
-     (define-record Cons [f1 Nat] [f2 List])
-     (define-type List (Union (Null Null) (Cons Cons)))
+   `((define-function (Null) (variant Null))
+     (define-function (Cons [element Nat] [list List]) (variant Cons element list))
+     (define-type List (Union (Null) (Cons Nat List)))
      (case (Null)
-       [Null r (let () 0)]
-       [Cons r
-             (let ([element (: r f1)]
-                   [rest (: r f2)])
-               element)]))))
+       [(Null) 0]
+       [(Cons element rest) element]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Record type inlining

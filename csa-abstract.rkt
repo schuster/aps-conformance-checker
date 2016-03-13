@@ -38,12 +38,12 @@
       )
   ;; TODO: these probably should be sets of values, right?
   (v# a# ; TODO: replace this one with a special pattern
-      (variant t v#)
+      (variant t v# ...)
       (record [l v#] ...)
       (* τ))
   (v#template
    ADDR-HOLE
-   (variant t v#template)
+   (variant t v#template ...)
    (record [l v#template] ...)
    (* τ))
   (e# (spawn τ e# S ...)
@@ -52,8 +52,8 @@
       self
       (begin e# ... e#)
       (let ([x e#] ...) e#)
-      (case e# [t x e#] ...)
-      (variant t e#)
+      (case e# [(t x ...) e#] ...)
+      (variant t e# ...)
       (record [l e#] ...)
       (: e# l)
       (primop e# ...)
@@ -82,8 +82,8 @@
       (send v# E#)
       (begin E# e# ...)
       (let ([x E#] [x e#] ...) e#)
-      (case E# [t x e#] ...)
-      (variant t E#)
+      (case E# [(t x ...) e#] ...)
+      (variant t v# ... E# e# ...)
       (record [l v#] ... [l E#] [l e#] ...)
       (: E# l)))
 
@@ -133,13 +133,14 @@
   [(generate-abstract-messages/mf Nat _) ((* Nat))]
   [(generate-abstract-messages/mf String _) ((* String))]
   [(generate-abstract-messages/mf (Union) _) ()]
-  [(generate-abstract-messages/mf (Union [t τ] ...) 0) ((* (Union [t τ] ...)))]
-  [(generate-abstract-messages/mf (Union [t_1 τ_1] [t_rest τ_rest] ...) natural_max-depth)
-   ((variant t_1 v#template_1) ... v#template_rest ...)
-   ;; TODO: do I need to do a (max 0) on natural_max-depth here?
-   (where (v#template_1 ...) (generate-abstract-messages/mf τ_1 ,(max 0 (- (term natural_max-depth) 1))))
-   (where (v#template_rest ...)
-          (generate-abstract-messages/mf (Union [t_rest τ_rest] ...) natural_max-depth))]
+  [(generate-abstract-messages/mf (Union [t τ ...] ...) 0) ((* (Union [t τ ...] ...)))]
+  [(generate-abstract-messages/mf (Union [t_1 τ_1 ...] [t_rest τ_rest ...] ...) natural_max-depth)
+   (v#_1 ... v#_rest ...)
+   ;; (side-condition (displayln "generate-abs-var"))
+   (where (v#_1 ...) (generate-variants natural_max-depth t_1 τ_1 ...))
+   (where (v#_rest ...)
+          (generate-abstract-messages/mf (Union [t_rest τ_rest ...] ...) natural_max-depth))]
+  [(generate-abstract-messages/mf (Union) _) ()]
   [(generate-abstract-messages/mf (minfixpt X τ) natural_max-depth)
    (generate-abstract-messages/mf (type-subst τ X (minfixpt X τ)) natural_max-depth)]
   [(generate-abstract-messages/mf (Record [l τ] ...) 0)
@@ -158,6 +159,22 @@
   [(generate-abstract-messages/mf (Record) natural_max-depth)
    ((record))]
   [(generate-abstract-messages/mf (Addr τ) _) (ADDR-HOLE)])
+
+(define-metafunction csa#
+  generate-variants : natural t τ ... -> ((variant t v#template ...) ...)
+  [(generate-variants _ t) ((variant t))]
+  [(generate-variants natural_max-depth t τ_1 τ_rest ...)
+   ,(for/fold ([variants-so-far null])
+              ([sub-variant (term (generate-variants natural_max-depth t τ_rest ...))])
+      (append
+       ;; TODO: do I need to do a (max 0) on natural_max-depth here?
+       (for/list ([generated-v (term (generate-abstract-messages/mf τ_1 ,(sub1 (term natural_max-depth))))])
+         (redex-let csa# ([(variant t v#template_other ...) sub-variant]
+                          [v#template_1 generated-v])
+           (term (variant t v#template_1 v#template_other ...))))
+       variants-so-far))
+   ;; (side-condition (printf "generate-variants: ~s\n" (term ( t τ_1 τ_rest ...))))
+   ])
 
 ;; TODO: write a test for the n-squared match of record message generation
 
@@ -209,7 +226,12 @@
    (term ()))
   (check-same-items?
    (term (generate-abstract-messages/mf (Union) 1))
-   (term ())))
+   (term ()))
+  (check-same-items?
+   (term (generate-abstract-messages/mf (Union [A] [B String (Union [C] [D])]) 5))
+   (term ((variant A)
+          (variant B (* String) (variant C))
+          (variant B (* String) (variant D))))))
 
 (define-metafunction csa#
   fill-template : v#template s -> v#
@@ -223,9 +245,13 @@
   fill-template/acc : v#template_current v#template_whole natural_current-index s -> (v# natural_next-index)
   [(fill-template/acc ADDR-HOLE v#template natural_current s)
    ((received-addr s v#template natural_current MOST-RECENT) ,(+ 1 (term natural_current)))]
-  [(fill-template/acc (variant t v#template_child) v#template natural_current s)
-   ((variant t v#_child) natural_next)
-   (where (v#_child natural_next) (fill-template/acc v#template_child v#template natural_current s))]
+  [(fill-template/acc (variant t v#template_child1 v#template_child-rest ...) v#template natural_current s)
+   ((variant t v#_1 v#_rest ...) natural_next-rest)
+   (where (v#_1 natural_next1) (fill-template/acc v#template_child1 v#template natural_current s))
+   (where ((variant t v#_rest ...) natural_next-rest)
+          (fill-template/acc (variant t v#template_child-rest ...) v#template natural_next1 s))]
+  [(fill-template/acc (variant t) v#template natural_current s)
+   ((variant t) natural_current)]
   [(fill-template/acc (record [l_1 v#template_child1] [l_rest v#template_rest] ...)
                       v#template
                       natural_current
@@ -330,31 +356,31 @@
          v#
          Begin2)
 
-    (==> (case (* (Union _ ... [t τ] _ ...))
-           [t x e#]
+    (==> (case (* (Union _ ... [t τ ..._n] _ ...))
+           [(t x ..._n) e#]
            _ ...)
-         (csa#-subst e# x (* τ))
+         (csa#-subst-n e# [x (* τ)] ...)
          CaseWildcardSuccess)
-    (==> (case (* (Union [t_val τ_val] ...))
+    (==> (case (* (Union [t_val τ_val ...] ...))
            ;; Only fail if there is at least one more clause; type safety guarantees that at least one
            ;; clause matches
-           [t_1 x_1 e#_1]
-           [t_2 x_2 e#_2]
-           [t_rest x_rest e#_rest] ...)
-         (case (* (Union [t_val τ_val] ...))
-           [t_2 x_2 e#_2]
-           [t_rest x_rest e#_rest] ...)
+           [(t_1 x_1 ...) e#_1]
+           [(t_2 x_2 ...) e#_2]
+           [(t_rest x_rest ...) e#_rest] ...)
+         (case (* (Union [t_val τ_val ...] ...))
+           [(t_2 x_2 ...) e#_2]
+           [(t_rest x_rest ...) e#_rest] ...)
          CaseWildcardFailure)
-    (==> (case (variant t v#)
-           [t x e#]
+    (==> (case (variant t v# ..._n)
+           [(t x ..._n) e#]
            _ ...)
-         (csa#-subst e# x v#)
+         (csa#-subst-n e# [x v#] ...)
          CaseVariantSuccess)
-    (==> (case (variant t v#)
-           [t_other x e#]
-           [t_rest x_rest e#_rest] ...)
-         (case (variant t v#)
-           [t_rest x_rest e#_rest] ...)
+    (==> (case (variant t v# ...)
+           [(t_other x ...) e#]
+           [(t_rest x_rest ...) e#_rest] ...)
+         (case (variant t v# ...)
+           [(t_rest x_rest ...) e#_rest] ...)
          (side-condition (not (equal? (term t) (term t_other))))
          CaseVariantFailure)
 
@@ -373,10 +399,10 @@
 
     ;; Primops
     (==> (< (* Nat) (* Nat))
-         (variant True (* Nat))
+         (variant True)
          LessThan1)
     (==> (< (* Nat) (* Nat))
-         (variant False (* Nat))
+         (variant False)
          LessThan2)
 
     (==> (/ (* Nat) (* Nat))
@@ -482,9 +508,9 @@
    (where (_ ... x _ ...) (x_let ...))] ; check that x is in the list of bound vars
   [(csa#-subst (let ([x_let e#] ...) e#_body) x v#)
    (let ([x_let (csa#-subst e# x v#)] ...) (csa#-subst e#_body x v#))]
-  [(csa#-subst (case e# [t x_clause e#_clause] ...) x v#)
-   (case (csa#-subst e# x v#) (csa#-subst/case-clause [t x_clause e#_clause] x v#) ...)]
-  [(csa#-subst (variant t e#) x v#) (variant t (csa#-subst e# x v#))]
+  [(csa#-subst (case e# [(t x_clause ...) e#_clause] ...) x v#)
+   (case (csa#-subst e# x v#) (csa#-subst/case-clause [(t x_clause ...) e#_clause] x v#) ...)]
+  [(csa#-subst (variant t e# ...) x v#) (variant t (csa#-subst e# x v#) ...)]
   [(csa#-subst (primop e# ...) x v#) (primop (csa#-subst e# x v#) ...)]
   [(csa#-subst (record [l e#] ...) x v#) (record [l (csa#-subst e# x v#)] ...)]
   [(csa#-subst (: e# l) x v#) (: (csa#-subst e# x v#) l)]
@@ -496,18 +522,18 @@
   )
 
 (define-metafunction csa#
-  csa#-subst/case-clause : [t x e#] x v# -> [t x e#]
-  [(csa#-subst/case-clause [t x e#] x v#)
-   [t x e#]]
-  [(csa#-subst/case-clause [t x_other e#] x v#)
-   [t x_other (csa#-subst e# x v#)]])
+  csa#-subst/case-clause : [(t x ...) e#] x v# -> [(t x ...) e#]
+  [(csa#-subst/case-clause [(t x_1 ... x x_2 ...) e#] x v#)
+   [(t x_1 ... x x_2 ...) e#]]
+  [(csa#-subst/case-clause [(t x_other ...) e#] x v#)
+   [(t x_other ...) (csa#-subst e# x v#)]])
 
 
 (module+ test
-  (check-equal? (term (csa#-subst/case-clause [Cons p (begin p x)] p (* Nat)))
-                (term [Cons p (begin p x)]))
-  (check-equal? (term (csa#-subst/case-clause [Cons p (begin p x)] x (* Nat)))
-                (term [Cons p (begin p (* Nat))])))
+  (check-equal? (term (csa#-subst/case-clause [(Cons p) (begin p x)] p (* Nat)))
+                (term [(Cons p) (begin p x)]))
+  (check-equal? (term (csa#-subst/case-clause [(Cons p) (begin p x)] x (* Nat)))
+                (term [(Cons p) (begin p (* Nat))])))
 
 (module+ test
   (check-equal? (term (csa#-subst (variant Foo (* Nat)) a (* Nat))) (term (variant Foo (* Nat)))))
@@ -558,17 +584,17 @@
    (send (α-e e_1 natural_depth) (α-e e_2 natural_depth))]
   [(α-e (let ([x e_binding] ...) e_body) natural)
    (let ([x (α-e e_binding natural)] ...) (α-e e_body natural))]
-  [(α-e (case e_val [t x e_clause] ...) natural_depth)
-   (case (α-e e_val natural_depth) [t x (α-e e_clause natural_depth)] ...)]
+  [(α-e (case e_val [(t x ...) e_clause] ...) natural_depth)
+   (case (α-e e_val natural_depth) [(t x ...) (α-e e_clause natural_depth)] ...)]
   [(α-e (primop e ...) natural_depth) (primop (α-e e natural_depth) ...)]
   ;; TODO: do something much better here - figure out how to limit the depth
   ;; [(α-e (tuple e ...) 0)
   ;;  ;; TODO: give the actual type here
   ;;  (* (Tuple))]
   ;; TODO: check for the depth=0 case on variants
-  [(α-e (variant t e) natural_depth)
+  [(α-e (variant t e ...) natural_depth)
    ;; TODO: take out the "max" issue here
-   (variant t (α-e e ,(max 0 (- (term natural_depth) 1))))]
+   (variant t (α-e e ,(max 0 (- (term natural_depth) 1))) ...)]
   ;; TODO: check for the depth=0 case on records
   [(α-e (record [l e] ...) natural_depth)
    ;; TODO: take out the "max" issue here

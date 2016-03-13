@@ -170,13 +170,13 @@
   [----------------
    (aps#-match/j (* t) t ())]
 
-  [(aps#-match/j v# p ([x v#_binding] ...))
+  [(aps#-match/j v# p ([x v#_binding] ...)) ...
    --------------
-   (aps#-match/j (variant t v#) (variant t p) ([x v#_binding] ...))]
+   (aps#-match/j (variant t v# ..._n) (variant t p ..._n) ([x v#_binding] ... ...))]
 
-  [(aps#-match/j (* τ) p ([x v#_binding] ...))
+  [(aps#-match/j (* τ) p ([x v#_binding] ...)) ...
    --------------
-   (aps#-match/j (* (Union _ ... [t τ] _ ...)) (variant t p) ([x v#_binding] ...))]
+   (aps#-match/j (* (Union _ ... [t τ ..._n] _ ...)) (variant t p ..._n) ([x v#_binding] ... ...))]
 
   [(aps#-match/j v# p ([x v#_binding] ...)) ...
    ---------------------------------------------
@@ -227,13 +227,13 @@
   [----
    (aps#-matches-po?/j (* t) t)]
 
-  [(aps#-matches-po?/j v# po)
+  [(aps#-matches-po?/j v# po) ...
    ------
-   (aps#-matches-po?/j (variant t v#) (variant t po))]
+   (aps#-matches-po?/j (variant t v# ..._n) (variant t po ..._n))]
 
-  [(aps#-matches-po?/j (* τ) po)
+  [(aps#-matches-po?/j (* τ) po) ...
    -----
-   (aps#-matches-po?/j (* (Union _ ... [t τ] _ ...)) (variant t po))])
+   (aps#-matches-po?/j (* (Union _ ... [t τ ..._n] _ ...)) (variant t po ..._n))])
 
 (module+ test
     ;; TODO: rewrite these tests

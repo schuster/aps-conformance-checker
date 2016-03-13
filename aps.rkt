@@ -27,13 +27,13 @@
   (p *
      x
      t
-     (variant t p)
+     (variant t p ...)
      (record [l p] ...))
   (po *
       x
       self
       t
-      (variant t po)
+      (variant t po ...)
       (record [l po] ...)))
 
 (define-extended-language aps-eval
@@ -74,7 +74,7 @@
   [(subst/aps/po a-hat x v-hat) a-hat]
   [(subst/aps/po t x v-hat) t]
   [(subst/aps/po * x v-hat) *]
-  [(subst/aps/po (variant t po) x v-hat) (variant t (subst/aps/po po x v-hat))]
+  [(subst/aps/po (variant t po ...) x v-hat) (variant t (subst/aps/po po x v-hat) ...)]
   [(subst/aps/po (record [l po] ...) x v-hat)
    (record [l (subst/aps/po x v-hat)] ...)])
 

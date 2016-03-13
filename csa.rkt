@@ -28,10 +28,10 @@
      (begin e ... e)
      ;; TODO: let should probably be syntactic sugar for a special kind of case statement
      (let ([x e] ...) e)
-     (case e [t x e] ...)
+     (case e [(t x ...) e] ...)
      ;; TODO: come up with vocab for tagged unions: is a "variant" the full type, or one branch of the
      ;; type, or what?
-     (variant t e)
+     (variant t e ...)
      (record [l e] ...)
      (: e l) ; record lookup
      (primop e ...)
@@ -47,7 +47,7 @@
      String
      (minfixpt X τ)
      X
-     (Union [t τ] ...)
+     (Union [t τ ...] ...)
      (Record [l τ] ...)
      (Addr τ)) ;; TODO: integrate types into the language
   (X variable-not-otherwise-mentioned))
@@ -65,7 +65,7 @@
      a
      (rcv (x) e)
      (rcv (x) e [(timeout n) e]))
-  (v n (variant t v) (record [l v] ...) a string)
+  (v n (variant t v ...) (record [l v] ...) a string)
   (a (addr natural))
   (A ((any_1 ... hole any_2 ...) μ ρ χ))
   (E hole
@@ -75,7 +75,7 @@
      (begin E e ...)
      (let ([x E] [x e] ...) e)
      (case E _ ...)
-     (variant t E)
+     (variant t v ... E e ...)
      (record [l v] ... [l E] [l e] ...)
      (: E l)
      (primop v ... E e ...)))
@@ -127,7 +127,7 @@
 
 (module+ test
   (define empty-A-context (term ((hole) () () ())))
-  (define S1-def (term (define-state (S1 a b) (x) (begin a x (goto S1 b a)))))
+  (define S1-def (term (define-state (S1 [a Nat] [b Nat]) (x) (begin a x (goto S1 b a)))))
   (check-not-false (redex-match csa-eval S S1-def))
   (check-not-false (redex-match csa-eval A empty-A-context))
   (define init-config
@@ -168,9 +168,9 @@
    (where (_ ... x _ ...) (x_let ...))] ; check that x is in the list of bound vars
   [(subst (let ([x_let e] ...) e_body) x v)
    (let ([x_let (subst e x v)] ...) (subst e_body x v))]
-  [(subst (case e [t x_clause e_clause] ...) x v)
-   (case (subst e x v) (subst/case-clause [t x_clause e_clause] x v) ...)]
-  [(subst (variant t e) x v) (variant t (subst e x v))]
+  [(subst (case e [(t x_clause ...) e_clause] ...) x v)
+   (case (subst e x v) (subst/case-clause [(t x_clause ...) e_clause] x v) ...)]
+  [(subst (variant t e ...) x v) (variant t (subst e x v) ...)]
   ;; TODO: records, record lookup
   [(subst (rcv (x) e) x v) (rcv (x) e)]
   [(subst (rcv (x_h) e) x v) (rcv (x_h) (subst e x v))]
@@ -179,17 +179,17 @@
    (rcv (x_h) (subst e x v) [(timeout n) (subst e_timeout x v)])])
 
 (define-metafunction csa-eval
-  subst/case-clause : [t x e] x v -> [t x e]
-  [(subst/case-clause [t x e] x v)
-   [t x e]]
-  [(subst/case-clause [t x_other e] x v)
-   [t x_other (subst e x v)]])
+  subst/case-clause : [(t x ...) e] x v -> [(t x) e]
+  [(subst/case-clause [(t x_1 ... x x_2 ...) e] x v)
+   [(t x_1 ... x x_2 ...)  e]]
+  [(subst/case-clause [(t x_other ...) e] x v)
+   [(t x_other ...) (subst e x v)]])
 
 (module+ test
-  (check-equal? (term (subst/case-clause [Cons p (begin p x)] p 0))
-                (term [Cons p (begin p x)]))
-  (check-equal? (term (subst/case-clause [Cons p (begin p x)] x 0))
-                (term [Cons p (begin p 0)])))
+  (check-equal? (term (subst/case-clause [(Cons p) (begin p x)] p 0))
+                (term [(Cons p) (begin p x)]))
+  (check-equal? (term (subst/case-clause [(Cons p) (begin p x)] x 0))
+                (term [(Cons p) (begin p 0)])))
 
 (define-metafunction csa-eval
   subst/S : S x v -> S
@@ -245,8 +245,8 @@
    (μ X_1 (type-subst τ_1 X_2 τ_2))]
   [(type-subst X X τ) τ]
   [(type-subst X_1 X_2 τ) X_1]
-  [(type-subst (Union [t τ] ...) X τ_2)
-   (Union [t (type-subst τ X τ_2)] ...)]
+  [(type-subst (Union [t τ ...] ...) X τ_2)
+   (Union [t (type-subst τ X τ_2) ...] ...)]
   ;; TODO: Record
   [(type-subst (Addr τ) X τ_2)
    (Addr (type-subst τ X τ_2))])
