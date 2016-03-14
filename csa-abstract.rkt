@@ -139,10 +139,10 @@
   [(generate-abstract-messages/mf (Union) _) ()]
   [(generate-abstract-messages/mf (Union [t τ ...] ...) 0) ((* (Union [t τ ...] ...)))]
   [(generate-abstract-messages/mf (Union [t_1 τ_1 ...] [t_rest τ_rest ...] ...) natural_max-depth)
-   (v#_1 ... v#_rest ...)
+   (v#template_1 ... v#template_rest ...)
    ;; (side-condition (displayln "generate-abs-var"))
-   (where (v#_1 ...) (generate-variants natural_max-depth t_1 τ_1 ...))
-   (where (v#_rest ...)
+   (where (v#template_1 ...) (generate-variants natural_max-depth t_1 τ_1 ...))
+   (where (v#template_rest ...)
           (generate-abstract-messages/mf (Union [t_rest τ_rest ...] ...) natural_max-depth))]
   [(generate-abstract-messages/mf (Union) _) ()]
   [(generate-abstract-messages/mf (minfixpt X τ) natural_max-depth)
@@ -235,7 +235,14 @@
    (term (generate-abstract-messages/mf (Union [A] [B String (Union [C] [D])]) 5))
    (term ((variant A)
           (variant B (* String) (variant C))
-          (variant B (* String) (variant D))))))
+          (variant B (* String) (variant D)))))
+  (check-same-items?
+   (term (generate-abstract-messages/mf
+          (Union (AppendRejected Nat Nat (Addr Nat))
+                 (AppendSuccessful Nat Nat (Addr Nat)))
+          5))
+   (term ((variant AppendRejected (* Nat) (* Nat) ADDR-HOLE)
+          (variant AppendSuccessful (* Nat) (* Nat) ADDR-HOLE)))))
 
 (define-metafunction csa#
   fill-template : v#template s -> v#
