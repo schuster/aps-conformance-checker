@@ -456,12 +456,11 @@
          `(,items-to-add ... ,e)])
   (Exp : Exp (e) -> Exp ()
        [(app ,f ,[e*] ...)
-        (match-define (func-record formals body)
-          (hash-ref func-defs f
-                    (lambda ()
-                      (error 'inline-program-definitions
-                             "could not find match for function in call ~s\nAvailable funcs are: ~s" e (hash-keys func-defs)))))
-        `(let ([,formals ,e*] ...) ,body)]
+        (match (hash-ref func-defs f #f)
+          [#f
+           `(app ,f ,e* ...)]
+          [(func-record formals body)
+           `(let ([,formals ,e*] ...) ,body)])]
        [,x
         (match (hash-ref const-defs x #f)
           [#f x]
@@ -487,7 +486,22 @@
         (define-function (quadruple [x Nat]) (app double (app double x)))
         (app quadruple 5)))))
    `((let ([x 5])
-       (let ([x (let ([x x]) (+ x x))]) (+ x x))))))
+       (let ([x (let ([x x]) (+ x x))]) (+ x x)))))
+
+  (check-equal?
+   (unparse-csa/inlined-program-definitions
+    (inline-program-definitions
+     (parse-csa/inlined-types
+      `((define-actor Nat (A)
+          ((define-function (double [x Nat]) (+ x x))
+           (define-function (quadruple [x Nat]) (app double (app double x))))
+          (app quadruple 5))
+        (spawn A)))))
+   `((define-actor Nat (A)
+       ((define-function (double [x Nat]) (+ x x))
+        (define-function (quadruple [x Nat]) (app double (app double x))))
+       (app quadruple 5))
+     (spawn A))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Actor function inlining
@@ -508,7 +522,7 @@
     ;; TODO: clear this list every time we start a new actor
     (define funcs (make-hash)))
   (ActorDef : ActorDef (d) -> ActorDef ()
-    [(define-actor ,τ (,a [,x1 ,τ1] ...) ((define-function (,f [,x2 ,[τ2]] ...) ,[body]) ,fd* ...)  ,e ,S ...)
+    [(define-actor ,τ (,a [,x1 ,τ1] ...) ((define-function (,f [,x2 ,[τ2]] ...) ,[body]) ,fd* ...) ,e ,S ...)
      (hash-set! funcs f (func-record x2 body))
      (ActorDef
       (with-output-language (csa/inlined-program-definitions ActorDef)
@@ -540,6 +554,20 @@
                     [y 4])
                 (- x y))])
          (+ x 2)))
+     (spawn A)))
+
+  (check-equal?
+   (unparse-csa/inlined-actor-functions
+    (inline-actor-functions
+     (parse-csa/inlined-program-definitions
+      `((define-actor Nat (A)
+          ((define-function (double [x Nat]) (+ x x))
+           (define-function (quadruple [x Nat]) (app double (app double x))))
+          (app quadruple 5))
+        (spawn A)))))
+   `((define-actor Nat (A)
+       (let ([x 5])
+         (let ([x (let ([x x]) (+ x x))]) (+ x x))))
      (spawn A))))
 
 ;; ---------------------------------------------------------------------------------------------------
