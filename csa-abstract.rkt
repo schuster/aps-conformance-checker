@@ -410,21 +410,35 @@
          RecordWildcardUpdate)
 
     ;; Primops
-    (==> (< (* Nat) (* Nat))
+    (==> (primop (* Nat) (* Nat))
          (variant True)
-         LessThan1)
-    (==> (< (* Nat) (* Nat))
+         (side-condition (member (term primop) (list '< '>)))
+         BinaryNumericPredicate1)
+    (==> (primop (* Nat) (* Nat))
          (variant False)
-         LessThan2)
+         (side-condition (member (term primop) (list '< '>)))
+         BinaryNumericPredicate2)
 
     (==> (primop (* Nat) (* Nat))
          (* Nat)
          (side-condition (member (term primop) (list '+ '- '* '/)))
          Arith)
 
-    (==> (random (* Nat))
+    (==> (primop (* Nat))
          (* Nat)
-         Random)
+         (side-condition (member (term primop) (list 'random 'ceiling)))
+         UnaryNumericOp)
+
+    ;; TODO: use the actual list representation here
+    (==> (length v#)
+         (* Nat)
+         Length)
+
+    ;; TODO: make an actual implementation here (although this might be the real implementation once I
+    ;; figure out the representation for lsits
+    (==> (sort-numbers-descending v#)
+         v#
+         Sort)
 
     (--> ((in-hole E# (send a# v#)) (any_outputs ...))
          ((in-hole E# v#)           (any_outputs ... [a# v#]))

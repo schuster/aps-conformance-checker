@@ -41,7 +41,7 @@
      n)
   (S (define-state (s [x τ] ...) (x) e)
      (define-state (s [x τ] ...) (x) e [(timeout n) e]))
-  (primop < / + - random)
+  (primop < > / + - random ceiling length sort-numbers-descending)
   ((x s t l) variable-not-otherwise-mentioned)
   (n natural)
   (τ Nat ; TODO: change this to Int or something
