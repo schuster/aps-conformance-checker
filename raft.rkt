@@ -178,8 +178,8 @@
 ;;   (and (>= term (: metadata current-term))
 ;;        (candidate-at-least-as-up-to-date? log last-log-term last-log-index)
 ;;        (case (hash-ref (: metadata votes) term)
-;;          [Nothing () true]
-;;          [Just (c) (= candidate c)])))
+;;          [(Nothing) true]
+;;          [(Just c) (= candidate c)])))
 
 ;; (define-function (grant-vote?/candidate [metadata StateMetadata]
 ;;                                [log ReplicatedLog]
@@ -190,8 +190,8 @@
 ;;   (and (>= term (: metadata current-term))
 ;;        (candidate-at-least-as-up-to-date? log last-log-term last-log-index)
 ;;        (case (hash-ref (: metadata votes) term)
-;;          [Nothing () true]
-;;          [Just (c) (= candidate c)])))
+;;          [(Nothing) true]
+;;          [(Just c) (= candidate c)])))
 
 ;; (define-function (grant-vote?/leader [metadata StateMetadata]
 ;;                             [log ReplicatedLog]
@@ -362,11 +362,11 @@
                  ;; (for/fold ([result (NoTerm)])
                  ;;           ([entry (: replicated-log entries)])
                  ;;   (case result
-                 ;;     [NoTerm ()
+                 ;;     [(NoTerm)
                  ;;             (cond
                  ;;               [(= (: entry index) index) (FoundTerm (: entry term))]
                  ;;               [else (NoTerm)])]
-                 ;;     [FoundTerm (t) result]))
+                 ;;     [(FoundTerm t) result]))
                  ])
        (case fold-result
          [(FoundTerm t) t]
@@ -453,8 +453,8 @@
          ;; (for/fold ([indices-so-far null])
          ;;           ([member (: config members)])
          ;;   (case (hash-ref map member)
-         ;;     [Nothing () indices-so-far] ; NOTE: this should never happen
-         ;;     [Just (index) (cons index indices-so-far)]))
+         ;;     [(Nothing) indices-so-far] ; NOTE: this should never happen
+         ;;     [(Just index) (cons index indices-so-far)]))
          ])
     (list-ref (sort-numbers-descending all-indices)
               (- (ceiling (/ (length (: config members)) 2)) 1))))
@@ -748,12 +748,12 @@
 
       ;;   [client-messages (m)
       ;;                    (case m
-      ;;                      [ClientMessage (client command)
+      ;;                      [(ClientMessage client command)
       ;;                                     (send client (LeaderIs recently-contacted-by-leader))
       ;;                                     (goto Follower recently-contacted-by-leader metadata replicated-log config)])]
         [(PeerMessage m)
                        (case m
-                         ;; [RequestVote (term candidate last-term last-index)
+                         ;; [(RequestVote term candidate last-term last-index)
                          ;;              (cond
                          ;;                [(grant-vote?/follower metadata replicated-log term candidate last-term last-index)
                          ;;                 (send candidate (VoteCandidate term peer-messages))
@@ -768,11 +768,11 @@
                          ;;                   (send candidate (DeclineCandidate (: metadata current-term) peer-messages))
                          ;;                   ;; TODO: change this to goto-this-state, once I reimplement/find that
                          ;;                   (goto Follower recently-contacted-by-leader metadata replicated-log config))])]
-                         ;; [VoteCandidate (t f)
+                         ;; [(VoteCandidate t f)
                          ;;                (goto Follower recently-contacted-by-leader metadata replicated-log config)]
-                         ;; [DeclineCandidate (t f)
+                         ;; [(DeclineCandidate t f)
                          ;;                   (goto Follower recently-contacted-by-leader metadata replicated-log config)]
-                         ;; [AppendEntries (term prev-term prev-index entries leader-commit-id leader leader-client)
+                         ;; [(AppendEntries term prev-term prev-index entries leader-commit-id leader leader-client)
                          ;;                (let ([recently-contacted-by-leader (JustLeader leader-client)])
                          ;;                  (append-entries term
                          ;;                                  prev-term
@@ -789,16 +789,16 @@
                          [(AppendSuccessful t l m)
                                            (goto Follower recently-contacted-by-leader metadata replicated-log config)])]
       [(Config c) (goto Follower recently-contacted-by-leader metadata replicated-log config)]
-      ;;   [timeouts (id)
+      ;;   [(timeouts id)
       ;;             (cond
       ;;               [(= id (: metadata last-used-timeout-id))
       ;;                (begin-election timer-manager timeouts metadata replicated-log config begin-election-alerts)]
       ;;               [else (goto Follower recently-contacted-by-leader metadata replicated-log config)])]
-      ;;   [begin-election-alerts ()
+      ;;   [(begin-election-alerts )
       ;;                          (goto Follower recently-contacted-by-leader metadata replicated-log config)]
-      ;;   [elected-as-leader ()
+      ;;   [(elected-as-leader)
       ;;                      (goto Follower recently-contacted-by-leader metadata replicated-log config)]
-      ;;   [send-heartbeat-timeouts (id)
+      ;;   [(send-heartbeat-timeouts id)
       ;;                            (goto Follower recently-contacted-by-leader metadata replicated-log config)]
  ))
       (define-state (Candidate [m ElectionMeta]
@@ -812,7 +812,7 @@
       ;;                                     (goto Candidate m replicated-log config)])]
         [(PeerMessage msg)
                        (case msg
-                         ;; [RequestVote (term candidate last-log-term last-log-index)
+                         ;; [(RequestVote term candidate last-log-term last-log-index)
                          ;;              (cond
                          ;;                [(grant-vote?/candidate m replicated-log term candidate last-log-term last-log-index)
                          ;;                 (send candidate (VoteCandidate term peer-messages))
@@ -823,7 +823,7 @@
                          ;;                 (let ([m (! m [current-term (max term (: m current-term))])])
                          ;;                   (send candidate (DeclineCandidate (: m current-term) peer-messages))
                          ;;                   (goto Candidate m replicated-log config))])]
-                         ;; [VoteCandidate (term follower)
+                         ;; [(VoteCandidate term follower)
                          ;;                (cond
                          ;;                  [(= term (: m current-term))
                          ;;                   (let ([including-this-vote (inc-vote m follower)])
@@ -836,8 +836,8 @@
                          ;;                       [else
                          ;;                        (goto Candidate including-this-vote replicated-log config)]))]
                          ;;                  [else (goto Candidate m replicated-log config)])]
-                         ;; [DeclineCandidate (term server) (goto Candidate m replicated-log config)]
-                         ;; [AppendEntries (term
+                         ;; [(DeclineCandidate term server) (goto Candidate m replicated-log config)]
+                         ;; [(AppendEntries term
                          ;;                 prev-log-term
                          ;;                 prev-log-index
                          ;;                 entries
@@ -863,13 +863,13 @@
                          [(AppendSuccessful t i member) (goto Candidate m replicated-log config)]
                          [(AppendRejected t i member) (goto Candidate m replicated-log config)]
                          )]
-      ;;   [timeouts (id)
+      ;;   [(timeouts id)
       ;;             (cond
       ;;               [(= id (: m last-used-timeout-id))
       ;;                (send begin-election-alerts)
       ;;                (goto Candidate (for-new-election/candidate m) replicated-log config)]
       ;;               [else (goto Candidate m replicated-log config)])]
-      ;;   [begin-election-alerts ()
+      ;;   [(begin-election-alerts)
       ;;                          (let ([request (RequestVote (: m current-term)
       ;;                                                      peer-messages
       ;;                                                      (replicated-log-last-term replicated-log)
@@ -880,8 +880,8 @@
       ;;                                   [including-this-vote (inc-vote m peer-messages)]) ; this is the self vote
       ;;                              (goto Candidate (with-vote-for including-this-vote (: m current-term) peer-messages)
       ;;                                                     replicated-log config)))]
-      ;;   [elected-as-leader () (goto Candidate m replicated-log config)]
-      ;;   [send-heartbeat-timeouts (id) (goto Candidate m replicated-log config)]
+      ;;   [(elected-as-leader) (goto Candidate m replicated-log config)]
+      ;;   [(send-heartbeat-timeouts id) (goto Candidate m replicated-log config)]
                                ))
       ;; TODO:
       (define-state (Leader [m LeaderMeta]
@@ -890,9 +890,9 @@
                             [replicated-log ReplicatedLog]
                             [config ClusterConfiguration]) (message)
         (case message
-      ;;   [client-messages (msg)
+      ;;   [(client-messages msg)
       ;;                    (case msg
-      ;;                      [ClientMessage (client command)
+      ;;                      [(ClientMessage client command)
       ;;                                     (let* ([entry (Entry command
       ;;                                                          (: m current-term) (replicated-log-next-index replicated-log)
       ;;                                                          client)]
@@ -902,7 +902,7 @@
       ;;                                       (goto Leader m next-index match-index replicated-log config))])]
         [(PeerMessage msg)
                        (case msg
-                         ;; [RequestVote (term candidate last-log-term last-log-index)
+                         ;; [(RequestVote term candidate last-log-term last-log-index)
                          ;;              (cond
                          ;;                [(grant-vote?/leader m replicated-log term candidate last-log-term last-log-index)
                          ;;                 (send candidate (VoteCandidate term peer-messages))
@@ -915,9 +915,9 @@
                          ;;                [else
                          ;;                 (send candidate (DeclineCandidate (: m current-term) peer-messages))
                          ;;                 (goto Leader m next-index match-index replicated-log config)])]
-                         ;; [VoteCandidate (t s) (goto Leader m next-index match-index replicated-log config)]
-                         ;; [DeclineCandidate (t s) (goto Leader m next-index match-index replicated-log config)]
-                         ;; [AppendEntries (term
+                         ;; [(VoteCandidate t s) (goto Leader m next-index match-index replicated-log config)]
+                         ;; [(DeclineCandidate t s) (goto Leader m next-index match-index replicated-log config)]
+                         ;; [(AppendEntries term
                          ;;                 prev-log-term
                          ;;                 prev-log-index
                          ;;                 entries
@@ -957,15 +957,15 @@
                                                                        replicated-log
                                                                        config)])]
       [(Config c) (goto Leader m next-index match-index replicated-log config)]
-      ;;   [timeouts (id) (goto Leader m next-index match-index replicated-log config)]
-      ;;   [begin-election-alerts () (goto Leader m next-index match-index replicated-log config)]
-      ;;   [elected-as-leader ()
+      ;;   [(timeouts id) (goto Leader m next-index match-index replicated-log config)]
+      ;;   [(begin-election-alerts) (goto Leader m next-index match-index replicated-log config)]
+      ;;   [(elected-as-leader)
       ;;                      (let ([next-index (log-index-map-initialize (: config members)
       ;;                                                                  (+ (replicated-log-last-index replicated-log) 1))]
       ;;                            [match-index (log-index-map-initialize (: config members) 0)])
       ;;                        (start-heartbeat m next-index replicated-log config)
       ;;                        (goto Leader m next-index match-index replicated-log config))]
-      ;;   [send-heartbeat-timeouts (id)
+      ;;   [(send-heartbeat-timeouts id)
       ;;                            (send-heartbeat m next-index replicated-log config)
       ;;                            (goto Leader m next-index match-index replicated-log config)]
                             )))
