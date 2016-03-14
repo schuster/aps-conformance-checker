@@ -195,7 +195,7 @@
    (rcv (x_h) (subst e x v) [(timeout n) (subst e_timeout x v)])])
 
 (define-metafunction csa-eval
-  subst/case-clause : [(t x ...) e] x v -> [(t x) e]
+  subst/case-clause : [(t x ...) e] x v -> [(t x ...) e]
   [(subst/case-clause [(t x_1 ... x x_2 ...) e] x v)
    [(t x_1 ... x x_2 ...)  e]]
   [(subst/case-clause [(t x_other ...) e] x v)
@@ -205,7 +205,10 @@
   (check-equal? (term (subst/case-clause [(Cons p) (begin p x)] p 0))
                 (term [(Cons p) (begin p x)]))
   (check-equal? (term (subst/case-clause [(Cons p) (begin p x)] x 0))
-                (term [(Cons p) (begin p 0)])))
+                (term [(Cons p) (begin p 0)]))
+
+  (check-equal? (term (subst (case q [(A) (+ x y)] [(B x z) (+ x z)]) x 5))
+                (term (case q [(A) (+ 5 y)] [(B x z) (+ x z)]))))
 
 (define-metafunction csa-eval
   subst/S : S x v -> S
