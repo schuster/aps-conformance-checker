@@ -46,13 +46,18 @@
 (define (PrimitiveType? x)
   (not (not (member x (list 'Nat 'String)))))
 
+(define (ElseKeyword? x)
+  (equal? x 'else))
+
 (define-language csa/surface
   (terminals
    (number (n))
    (boolean (b))
    (name (x f a s T V))
    (string (string))
-   (PrimitiveType (pτ)))
+   (PrimitiveType (pτ))
+   ;; TODO: figure out how to get rid of this
+   (ElseKeyword (else-keyword)))
   (Prog (P)
         (PI ... e))
   (ProgItem (PI)
@@ -80,11 +85,15 @@
        (! e [x e2])
        (case e1 [(V x ...) e2 e* ...] ...)
        ;; (po e ...)
-       ;; TODO: find a way to generalize these to primops (ideal solution requires "tagless" fix in Nanopass)
+       ;;
+       ;; TODO: find a way to generalize these to primops (ideal solution requires "tagless" fix in
+       ;; Nanopass)
        (+ e1 e2)
        (- e1 e2)
        (* e1 e2)
        (/ e1 e2)
+       (if e1 e2 e3)
+       (cond [e1 e2 e2* ...] ... [else-keyword e3 e3* ...])
        (random e)
        (let ([x e] ...) e2 e* ...)
        (let* ([x e] ...) e2 e* ...)
@@ -108,10 +117,35 @@
 ;; same, and would probably save boilerplate
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Function Call Wrapping
+
+(define-language csa/wrapped-calls
+  (extends csa/surface)
+  (Exp (e)
+       (- (f e ...))
+       (+ (app f e ...))))
+
+(define-parser parse-csa/wrapped-calls csa/wrapped-calls)
+
+(define-pass wrap-function-calls : csa/surface (P) -> csa/wrapped-calls ()
+  (Exp : Exp (e) -> Exp ()
+       [(,f ,[e] ...) `(app ,f ,e ...)]))
+
+
+(module+ test
+  ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
+  (check-equal?
+   (unparse-csa/wrapped-calls
+    (wrap-function-calls
+     (with-output-language (csa/surface Prog)
+       `((f (g 1) 2)))))
+   `((app f (app g 1) 2))))
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Multi-body shrinking
 
 (define-language csa/single-exp-bodies
-  (extends csa/surface)
+  (extends csa/wrapped-calls)
   (StateDef (S)
             (- (define-state (s [x τ] ...) (x2) e1 e* ...))
             (+ (define-state (s [x τ] ...) (x2) e)))
@@ -121,15 +155,17 @@
   (Exp (e)
        (- (case e1 [(V x ...) e2 e* ...] ...)
           (let ([x e] ...) e2 e* ...)
-          (let* ([x e] ...) e2 e* ...))
+          (let* ([x e] ...) e2 e* ...)
+          (cond [e1 e2 e2* ...] ... [else-keyword e3 e3* ...]))
        (+ (case e1 [(V x ...) e2] ...)
           (let ([x e] ...) e2)
           (let* ([x e] ...) e2)
+          (cond [e1 e2] ... [else-keyword e3])
           (begin e1 e* ...))))
 
 (define-parser parse-csa/single-exp-bodies csa/single-exp-bodies)
 
-(define-pass wrap-multi-exp-bodies : csa/surface (P) -> csa/single-exp-bodies ()
+(define-pass wrap-multi-exp-bodies : csa/wrapped-calls (P) -> csa/single-exp-bodies ()
   (StateDef : StateDef (S) -> StateDef ()
             [(define-state (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e*] ...)
              `(define-state (,s [,x ,τ] ...) (,x2) (begin ,e1 ,e* ...))])
@@ -142,7 +178,9 @@
        [(let ([,x ,[e]] ...) ,[e2] ,[e*] ...)
         `(let ([,x ,e] ...) (begin ,e2 ,e* ...))]
        [(let* ([,x ,[e]] ...) ,[e2] ,[e*] ...)
-        `(let* ([,x ,e] ...) (begin ,e2 ,e* ...))])
+        `(let* ([,x ,e] ...) (begin ,e2 ,e* ...))]
+       [(cond [,[e1] ,[e2] ,[e2*] ...] ... [,else-keyword ,[e3] ,[e3*] ...])
+        `(cond [,e1 (begin ,e2 ,e2* ...)] ... [,else-keyword (begin ,e3 ,e3* ...)])])
   ;; Non-working version that only places begins where necessary
   ;;   (StateDef : StateDef (S) -> StateDef ()
   ;;           [(define-state (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e2] ,[e*] ...)
@@ -164,7 +202,7 @@
   (check-equal?
    (unparse-csa/single-exp-bodies
     (wrap-multi-exp-bodies
-     (with-output-language (csa/surface Prog)
+     (with-output-language (csa/wrapped-calls Prog)
        `((define-function (f)
            (case x
              [(A) 1 2])
@@ -178,17 +216,74 @@
      (let* () (begin 5 6)))))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Desugar cond
+
+(define-language csa/desugared-cond
+  (extends csa/single-exp-bodies)
+  (Exp (e)
+       (- (cond [e1 e2] ... [else-keyword e3]))))
+
+(define-parser parse-csa/desugared-cond csa/desugared-cond)
+
+(define-pass desugar-cond : csa/single-exp-bodies (P) -> csa/desugared-cond ()
+  (Exp : Exp (e) -> Exp ()
+       [(cond [,else-keyword ,[e]]) e]
+       [(cond [,[e1] ,[e2]] [,e3 ,e4] ... [,else-keyword ,e5])
+        `(if ,e1
+             ,e2
+             ,(Exp (with-output-language (csa/single-exp-bodies Exp)
+                     `(cond [,e3 ,e4] ... [,else-keyword ,e5]))))]))
+
+(module+ test
+  ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
+  (check-equal?
+   (unparse-csa/desugared-cond
+    (desugar-cond
+     (with-output-language (csa/single-exp-bodies Prog)
+       `((cond
+           [(< a b) 0]
+           [(< b c) 1]
+           [else 2])))))
+   `((if (< a b) 0 (if (< b c) 1 2)))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Desugar if
+
+(define-language csa/desugared-if
+  (extends csa/desugared-cond)
+  (Exp (e)
+       (- (if e1 e2 e3))))
+
+(define-parser parse-csa/desugared-if csa/desugared-if)
+
+(define-pass desugar-if : csa/desugared-cond (P) -> csa/desugared-if ()
+  (Exp : Exp (e) -> Exp ()
+       [(if ,[e1] ,[e2] ,[e3])
+        `(case ,e1
+           [(variant True) ,e2]
+           [(variant False) ,e3])]))
+
+(module+ test
+  ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
+  (check-equal?
+   (unparse-csa/desugared-if
+    (desugar-if
+     (with-output-language (csa/desugared-cond Prog)
+       `((if (< a b) 1 0)))))
+   `((case (< a b) [(variant True) 1] [(variant False) 0]))))
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Variant desugaring
 
 (define-language csa/desugared-variants
-  (extends csa/single-exp-bodies)
+  (extends csa/desugared-if)
   (ProgItem (PI)
             (- (define-variant T (V [x τ] ...) ...))))
 
 (define-parser parse-csa/desugared-variants csa/desugared-variants)
 
 ;; TODO: consider leaving the multi-arity variants in
-(define-pass desugar-variants : csa/single-exp-bodies (P) -> csa/desugared-variants ()
+(define-pass desugar-variants : csa/desugared-if (P) -> csa/desugared-variants ()
   (Prog : Prog (P items-to-add) -> Prog ()
         [((define-variant ,T (,V [,x ,[τ]] ...) ...) ,PI ... ,e)
          (define constructor-defs
@@ -198,7 +293,7 @@
                 ;; TODO: field names must be different...
                 `(define-function (,name [,field-list ,types] ...) (variant ,name ,field-list ...))))
             V x τ))
-         (Prog (with-output-language (csa/single-exp-bodies Prog) `(,PI ... ,e))
+         (Prog (with-output-language (csa/desugared-if Prog) `(,PI ... ,e))
                (append items-to-add
                        (append
                         constructor-defs
@@ -206,7 +301,7 @@
                         (with-output-language (csa/desugared-variants ProgItem)
                           `(define-type ,T (Union [,V ,τ ...] ...)))))))]
         [(,[PI1] ,PI* ... ,e)
-         (Prog (with-output-language (csa/single-exp-bodies Prog) `(,PI* ... ,e))
+         (Prog (with-output-language (csa/desugared-if Prog) `(,PI* ... ,e))
                (append items-to-add (list PI1)))]
         [(,[e]) `(,items-to-add ... ,e)])
   (Prog P null))
@@ -216,15 +311,15 @@
   (check-equal?
    (unparse-csa/desugared-variants
     (desugar-variants
-     (with-output-language (csa/single-exp-bodies Prog)
+     (with-output-language (csa/desugared-if Prog)
        `((define-variant List (Null) (Cons [element Nat] [list List]))
-         (case (Null)
+         (case (app Null)
            [(Null) 0]
            [(Cons element rest) element])))))
    `((define-function (Null) (variant Null))
      (define-function (Cons [element Nat] [list List]) (variant Cons element list))
      (define-type List (Union (Null) (Cons Nat List)))
-     (case (Null)
+     (case (app Null)
        [(Null) 0]
        [(Cons element rest) element]))))
 
@@ -266,13 +361,13 @@
     (with-output-language (csa/desugared-variants Prog)
       `((define-record A [x Nat] [y Nat])
         (define-record B [z A])
-        (B (A 5 4))))))
+        (app B (app A 5 4))))))
 
   `((define-type A (Record [x Nat] [y Nat]))
     (define-function (A [x Nat] [y Nat]) (record [x x] [y y]))
     (define-type B (Record [z A]))
     (define-function (B [z A]) (record [z z]))
-    (B (A 5 4)))))
+    (app B (app A 5 4)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Inlined Types
@@ -355,9 +450,12 @@
         [(,[e])
          `(,items-to-add ... ,e)])
   (Exp : Exp (e) -> Exp ()
-       [(,f ,[e*] ...)
+       [(app ,f ,[e*] ...)
         (match-define (func-record formals body)
-          (hash-ref func-defs f (lambda () (error 'inline-program-definitions "could not find match for function in call ~s" e))))
+          (hash-ref func-defs f
+                    (lambda ()
+                      (error 'inline-program-definitions
+                             "could not find match for function in call ~s\nAvailable funcs are: ~s" e (hash-keys func-defs)))))
         `(let ([,formals ,e*] ...) ,body)]
        [,x
         (match (hash-ref const-defs x #f)
@@ -373,8 +471,18 @@
      (parse-csa/inlined-types
       `((define-function (double [x Nat]) (+ x x))
         (define-constant c 5)
-        (double c)))))
-   `((let ([x 5]) (+ x x)))))
+        (app double c)))))
+   `((let ([x 5]) (+ x x))))
+
+  (check-equal?
+   (unparse-csa/inlined-program-definitions
+    (inline-program-definitions
+     (parse-csa/inlined-types
+      `((define-function (double [x Nat]) (+ x x))
+        (define-function (quadruple [x Nat]) (app double (app double x)))
+        (app quadruple 5)))))
+   `((let ([x 5])
+       (let ([x (let ([x x]) (+ x x))]) (+ x x))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Actor function inlining
@@ -384,7 +492,7 @@
   (ActorDef (ad)
             (- (define-actor τ (a [x τ2] ...) (fd ...) e S ...))
             (+ (define-actor τ (a [x τ2] ...)          e S ...)))
-  (Exp (e) (- (f e ...))))
+  (Exp (e) (- (app f e ...))))
 
 (define-parser parse-csa/inlined-actor-functions csa/inlined-actor-functions)
 
@@ -404,16 +512,10 @@
      `(define-actor ,τ (,a [,x ,τ1] ...) ,e ,S ...)])
   (Exp : Exp (e) -> Exp ()
        ;; TODO: see tmp/expected-meta for why this breaks
-       [(,f ,[e*] ...)
+       [(app ,f ,[e*] ...)
         (match-define (func-record formals body)
           (hash-ref funcs f (lambda () (error 'inline-actor-functions "could not find match for function in call ~s\n" e))))
-        `(let ([,formals ,e*] ...) ,body)]
-        [(,po ,[e*] ...)
-         (,po ,e* ...)])
-  ;; (StateDef : StateDef (S) -> StateDef ()
-  ;;           [(define-state (,s ,x1 ...) (,x2) ,[e])
-  ;;            `(define-state (,s ,x1 ...) (,x2) ,e)])
-  )
+        `(let ([,formals ,e*] ...) ,body)]))
 
 (module+ test
   (require rackunit)
@@ -425,7 +527,7 @@
        `((define-actor Nat (A)
            ((define-function (foo [x Nat]) (+ x 2))
             (define-function (bar [x Nat] [y Nat]) (- x y)))
-           (foo (bar 3 4)))
+           (app foo (app bar 3 4)))
          (spawn A)))))
    `((define-actor Nat (A)
        (let ([x
@@ -587,6 +689,9 @@
      inline-type-aliases
      inline-records
      desugar-variants
+     desugar-if
+     desugar-cond
      wrap-multi-exp-bodies
+     wrap-function-calls
      parse-actor-def-csa/surface))
   (pass single-actor-prog))
