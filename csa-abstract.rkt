@@ -423,7 +423,7 @@
          BinaryNumericPredicate1)
     (==> (primop (* Nat) (* Nat))
          (variant False)
-         (side-condition (member (term primop) (list '< '>)))
+         (side-condition (member (term primop) (list '< '<= '> '>= '=)))
          BinaryNumericPredicate2)
 
     (==> (primop (* Nat) (* Nat))
@@ -446,6 +446,16 @@
     (==> (sort-numbers-descending v#)
          v#
          Sort)
+
+    ;; TODO: use the actual vector rep. here
+    (==> (vector-length v#)
+         (* Nat)
+         VectorLength)
+
+    ;; TODO: use the actual vector rep. here
+    (==> (vector-ref v# (* Nat))
+         (* Nat) ; TODO: return a vector element here
+         VectorRef)
 
     (--> ((in-hole E# (send a# v#)) (any_outputs ...))
          ((in-hole E# v#)           (any_outputs ... [a# v#]))
