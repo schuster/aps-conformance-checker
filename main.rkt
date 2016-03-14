@@ -86,6 +86,9 @@ Remaining big challenges I see in the analysis:
             ;; transmission result. Define this data definition in the code somewhere, because it
             ;; should really be a type (it's a new kind of data in my domain that needs to be defined
             ;; and named)
+
+            ;; Debugging
+            ;; (printf "next possible transitions\n\n\n")
             (define possible-transitions
               (append (transitions-from-message-of-type prog obs-type #t)
                       (transitions-from-message-of-type prog unobs-type #f)))
@@ -150,6 +153,11 @@ Remaining big challenges I see in the analysis:
   ;; TODO: have this function return some kind of message/information about what went wrong
 
   ;; TODO: rename this function, because it's not just a predicate: returns something other than #t
+
+  ;; Debugging only
+  ;; (printf "prog trans: ~s\n" prog-trans)
+  ;; (printf "spec trans: ~s\n" spec-trans)
+
   (let/cc return-early
    (define valid-substitutions
      (cond
