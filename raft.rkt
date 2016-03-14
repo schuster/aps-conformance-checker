@@ -62,18 +62,21 @@
     (define-variant RaftActorMessage
       (Config [config ClusterConfiguration]))
 
-    ;; (define-variant ClientResponse
-    ;;   (LeaderIs [leader MaybeLeader])
-    ;;   (CommitSuccess [cmd String]))
+    (define-variant ClientResponse
+      ;; TODO: allow this recursive type
+      (LeaderIs [leader Nat ;;MaybeLeader
+                        ])
+      (CommitSuccess [cmd String]))
 
-    ;; ;; Client message contains a command (string) to print when applying to the state machine, and a
-    ;; ;; channel to send to to confirm the application
-    ;; (define-variant ClientMessage
-    ;;   (ClientMessage [client (Address ClientResponse)] [cmd String]))
+    ;; Client message contains a command (string) to print when applying to the state machine, and a
+    ;; channel to send to to confirm the application
+    (define-variant ClientMessage
+      (ClientMessage [client (Addr ClientResponse)] [cmd String]))
 
-    ;; (define-variant MaybeLeader
-    ;;   (NoLeader)
-    ;;   (JustLeader [leader (Address ClientMessage)]))
+    (define-variant MaybeLeader
+      (NoLeader)
+      ;; TODO: allow this type
+      (JustLeader [leader (Addr ClientMessage)]))
 
 (define-record Entry
   [command String]
@@ -227,8 +230,7 @@
                                                    [m StateMetadata])
   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
         [next-id (+ 1 (: m last-used-timeout-id))])
-    (send timer 0 ;; (SetTimer election-timer-name target next-id deadline (False))
-          )
+    (send timer (SetTimer election-timer-name target next-id deadline (False)))
     (! m [last-used-timeout-id next-id])))
 
 ;; (define-function (reset-election-deadline/candidate [timer (Addr TimerMessage)]
@@ -703,18 +705,15 @@
            ;; TODO:
             (let ([metadata (reset-election-deadline/follower timer-manager self (initial-metadata))])
               (goto Follower
-                    5 ; (NoLeader)
+                    (NoLeader)
                     metadata
-                    5 ; (replicated-log-empty)
+                    (replicated-log-empty)
                     config))])
 )
 
-      (define-state (Follower [recently-contacted-by-leader Nat ;; MaybeLeader
-                                                            ]
-                              [metadata Nat ;; StateMetadata
-                                        ]
-                              [replicated-log Nat ;; ReplicatedLog
-                                              ]
+      (define-state (Follower [recently-contacted-by-leader MaybeLeader]
+                              [metadata StateMetadata]
+                              [replicated-log ReplicatedLog]
                               [config ClusterConfiguration]) (m)
                               (goto Follower recently-contacted-by-leader metadata replicated-log config)
       ;;   [client-messages (m)
