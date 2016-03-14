@@ -36,10 +36,12 @@
 (define raft-actor-surface-prog
 
   (term
-   (
-    (define-type Unit (Record))
+   ((define-type Unit (Record))
     (define-type Duration Nat) ; number of seconds
     (define-variant Boolean (True) (False))
+    ;; TODO: use these constants
+    (define-constant true (variant True))
+    (define-constant false (variant False))
     ;; TODO: actually define Int
     (define-type Int Nat)
 
@@ -178,7 +180,7 @@
 ;;   (and (>= term (: metadata current-term))
 ;;        (candidate-at-least-as-up-to-date? log last-log-term last-log-index)
 ;;        (case (hash-ref (: metadata votes) term)
-;;          [Nothing () (True)]
+;;          [Nothing () true]
 ;;          [Just (c) (= candidate c)])))
 
 ;; (define-function (grant-vote?/candidate [metadata StateMetadata]
@@ -190,7 +192,7 @@
 ;;   (and (>= term (: metadata current-term))
 ;;        (candidate-at-least-as-up-to-date? log last-log-term last-log-index)
 ;;        (case (hash-ref (: metadata votes) term)
-;;          [Nothing () (True)]
+;;          [Nothing () true]
 ;;          [Just (c) (= candidate c)])))
 
 ;; (define-function (grant-vote?/leader [metadata StateMetadata]
@@ -241,7 +243,7 @@
                                                    [m StateMetadata])
   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
         [next-id (+ 1 (: m last-used-timeout-id))])
-    (send timer (SetTimer election-timer-name target next-id deadline (False)))
+    (send timer (SetTimer election-timer-name target next-id deadline false))
     (! m [last-used-timeout-id next-id])))
 
 ;; (define-function (reset-election-deadline/candidate [timer (Addr TimerMessage)]
@@ -249,7 +251,7 @@
 ;;                                            [m ElectionMeta])
 ;;   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
 ;;         [next-id (+ 1 (: m last-used-timeout-id))])
-;;     (send timer (SetTimer election-timer-name target next-id deadline (False)))
+;;     (send timer (SetTimer election-timer-name target next-id deadline false))
 ;;     (! m [last-used-timeout-id next-id])))
 
 ;; (define-function (reset-election-deadline/leader [timer (Addr TimerMessage)]
@@ -257,7 +259,7 @@
 ;;                                         [m LeaderMeta])
 ;;   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
 ;;         [next-id (+ 1 (: m last-used-timeout-id))])
-;;     (send timer (SetTimer election-timer-name target next-id deadline (False)))
+;;     (send timer (SetTimer election-timer-name target next-id deadline false))
 ;;     (! m [last-used-timeout-id next-id])))
 
 ;; (define-function (cancel-election-deadline [timer (Addr TimerMessage)])
@@ -289,7 +291,7 @@
 ;;     (if (not (= member self)) (cons member result) result)))
 
 ;; (define-function (inc-vote [m ElectionMeta] [follower (Addr RaftMessage)])
-;;   (! m [votes-received (hash-set (: m votes-received) follower (True))]))
+;;   (! m [votes-received (hash-set (: m votes-received) follower true)]))
 
 ;; (define-function (has-majority [m ElectionMeta] [config ClusterConfiguration])
 ;;   ;; TODO: figure out what the type for division is here (or maybe rewrite to not use division)
@@ -377,7 +379,7 @@
 ;;       [(= 0 (vector-length entries)) 1]
 ;;       [else (+ (: (vector-ref entries (- (vector-length entries) 1)) index) 1)])))
 
-;; ;; Returns (True) if the leader's previous log is consistent with ours (i.e. the term of the previous
+;; ;; Returns true if the leader's previous log is consistent with ours (i.e. the term of the previous
 ;; ;; index matches the term at that index in our log)
 ;; (define-function (replicated-log-consistent-update [replicated-log Replicated-Log]
 ;;                                           [prev-log-term Nat]
@@ -572,7 +574,7 @@
       ;;      (let ([meta-with-updated-term (! m [current-term term])])
       ;;        (define append-result (append replicated-log prev-log-index entries meta-with-updated-term))
       ;;        (send leader (: append-result message))
-      ;;        (let  ([replicated-log (commit-until-index (: append-result log) leader-commit-id (False))])
+      ;;        (let  ([replicated-log (commit-until-index (: append-result log) leader-commit-id false)])
       ;;          (accept-heartbeat meta-with-updated-term
       ;;                            replicated-log
       ;;                            config
@@ -628,7 +630,7 @@
       ;;                          [config ClusterConfiguration])
       ;;   (send-heartbeat m next-index replicated-log config)
       ;;   (send timer-manager
-      ;;         (SetTimer heartbeat-timer-name send-heartbeat-timeouts 1 heartbeat-interval (True))))
+      ;;         (SetTimer heartbeat-timer-name send-heartbeat-timeouts 1 heartbeat-interval true)))
 
       ;; (define-function (stop-heartbeat)
       ;;   (send timer-manager (CancelTimer heartbeat-timer-name)))
@@ -671,7 +673,7 @@
          (let ([index-on-majority (log-index-map-consensus-for-index match-index config)])
           (let ([will-commit (> index-on-majority (: replicated-log committed-index))])
             (cond
-              [will-commit (commit-until-index replicated-log index-on-majority (True))]
+              [will-commit (commit-until-index replicated-log index-on-majority true)]
               [else replicated-log]))))
 
       ;; TODO: define messages like this alongside handlers in a state, so we don't have to repeat state
