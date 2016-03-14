@@ -13,26 +13,23 @@
 ;; TODO: put this in a common place so it isn't repeated across files
 (define single-agent-concrete-addr (term (addr 0)))
 
-;; 0. Define the spec
+;; TODO: write a check that alerts for any underscores in the spec (b/c those are invalid)
 (define raft-spec
   (term
    (((define-state (Init)
-       [unobs -> (goto Running)])
+       [unobs -> (goto Running)]
+       [(variant PeerMessage *) -> (goto Init)])
      (define-state (Running)
-       ;; [(RequestVote _ candidate _ _) -> ]
-       ;; [(VoteCandidate _ _) -> ???]
-       ;; [(DeclineCandidate _ _) -> ???]
-       ;; [(AppendEntries _ _ _ _ _ leader _) -> ???]
-       ;; [(AppendRejected _ _ _) -> ???]
-       ;; [(AppendSuccessful _ _ _) -> ???]
-       ))
-    ;; TODO: switch the order of the init exp adn the states
+       ;; [(RequestVote * candidate * *) -> ]
+       ;; [(VoteCandidate * *) -> ???]
+       ;; [(DeclineCandidate * *) -> ???]
+       ;; [(AppendEntries * * * * * leader *) -> ???]
+       ;; [(AppendRejected * * *) -> ???]
+       [(variant PeerMessage (variant AppendSuccessful * * *)) -> (goto Running)]))
+    ;; TODO: switch the order of the init exp and the states
     (goto Init)
     ,single-agent-concrete-addr)))
 
-(check-not-false (redex-match aps-eval z raft-spec))
-
-;; 1. Define Raft in the basic syntax
 (define raft-actor-surface-prog
 
   (term
@@ -60,7 +57,6 @@
     (define-function (hash-ref [hash (Hash Nat Nat)] [key Nat]) (Nothing))
 
     ;; ---------------------------------------------------------------------------------------------------
-
 
     (define-record ClusterConfiguration
       ;; TODO:
@@ -728,7 +724,7 @@
                     metadata
                     (replicated-log-empty)
                     config))]
-          [(RaftMessage r) (goto Init)]))
+          [(PeerMessage r) (goto Init)]))
 
       (define-state (Follower [recently-contacted-by-leader MaybeLeader]
                               [metadata StateMetadata]
@@ -741,7 +737,7 @@
       ;;                      [ClientMessage (client command)
       ;;                                     (send client (LeaderIs recently-contacted-by-leader))
       ;;                                     (goto (Follower recently-contacted-by-leader metadata replicated-log config))])]
-        [(RaftMessage m)
+        [(PeerMessage m)
                        (case m
                          ;; [RequestVote (term candidate last-term last-index)
                          ;;              (cond
@@ -800,7 +796,7 @@
       ;;                      [ClientMessage (client command)
       ;;                                     (send client (LeaderIs (NoLeader)))
       ;;                                     (goto (Candidate m replicated-log config))])]
-        [(RaftMessage msg)
+        [(PeerMessage msg)
                        (case msg
                          ;; [RequestVote (term candidate last-log-term last-log-index)
                          ;;              (cond
@@ -890,7 +886,7 @@
       ;;                                            [match-index (hash-set match-index peer-messages (: entry index))])
       ;;                                       (replicate-log m next-index replicated-log config)
       ;;                                       (goto (Leader m next-index match-index replicated-log config)))])]
-        [(RaftMessage msg)
+        [(PeerMessage msg)
                        (case msg
                          ;; [RequestVote (term candidate last-log-term last-log-index)
                          ;;              (cond
@@ -978,12 +974,17 @@
 (define raft-config (make-single-agent-config desugared-raft-actor))
 
 (define cluster-config-variant
-  (term (Config (Record [f1 (Record [members Nat])]))))
+  (term (Config (Record [members Nat]))))
 
+(define desugared-raft-message-type
+  `(Union
+    (AppendSuccessful Nat Nat Nat)) ; TODO: add the minfixpt here
+  )
 ;; 4. Run the verifier
 (check-true (analyze raft-config
                      raft-spec
-                     (term (Union)) (term (Union ,cluster-config-variant))
+                     (term (Union (PeerMessage ,desugared-raft-message-type)))
+                     (term (Union ,cluster-config-variant))
                      (hash 'Init 'Init
                            'Follower 'Running
                            'Candidate 'Running
