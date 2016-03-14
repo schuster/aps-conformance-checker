@@ -265,8 +265,8 @@
   (Exp : Exp (e) -> Exp ()
        [(if ,[e1] ,[e2] ,[e3])
         `(case ,e1
-           [(variant True) ,e2]
-           [(variant False) ,e3])]))
+           [(True) ,e2]
+           [(False) ,e3])]))
 
 (module+ test
   ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
@@ -275,7 +275,7 @@
     (desugar-if
      (with-output-language (csa/desugared-cond Prog)
        `((if (< a b) 1 0)))))
-   `((case (< a b) [(variant True) 1] [(variant False) 0]))))
+   `((case (< a b) [(True) 1] [(False) 0]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Desugar let*
