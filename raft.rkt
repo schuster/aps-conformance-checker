@@ -24,7 +24,7 @@
        ;; [(VoteCandidate * *) -> ???]
        ;; [(DeclineCandidate * *) -> ???]
        ;; [(AppendEntries * * * * * leader *) -> ???]
-       ;; [(AppendRejected * * *) -> ???]
+       [(variant PeerMessage (variant AppendRejected * * *)) -> (goto Running)]
        [(variant PeerMessage (variant AppendSuccessful * * *)) -> (goto Running)]))
     ;; TODO: switch the order of the init exp and the states
     (goto Init)
@@ -102,24 +102,26 @@
   ;;  [term Nat]
   ;;  ;; [follower (Addr RaftMessage)]
   ;;  )
-  ;; (AppendEntries
-  ;;  [term Nat]
-  ;;  [prev-log-term Nat]
-  ;;  [prev-log-index Nat]
-  ;;  ;; [entries (Vectorof Entry)]
-  ;;  [leader-commit-id Nat]
-  ;;  ;; [leader (Addr RaftMessage)]
-  ;;  ;; [leader-client (Addr ClientMessage)]
-  ;;  )
+  (AppendEntries
+   [term Nat]
+   [prev-log-term Nat]
+   [prev-log-index Nat]
+   [entries Nat ; TODO: (Vectorof Entry)
+            ]
+   [leader-commit-id Nat]
+   [leader (Addr Nat ; TODO: RaftMessage
+                 )]
+   [leader-client (Addr ClientMessage)])
   ;; A note on last-index: In the paper, this is the optimization at the bottom of p. 7 that allows
   ;; for quicker recovery of a node that has fallen behind in its log. In RaftScope, they call this
   ;; "matchIndex", which indicates the lat index in the log (or 0 for AppendRejected). In akka-raft,
   ;; this is always the last index of the log (for both success and failure)
-  ;; (AppendRejected
-  ;;  [term Nat]
-  ;;  [last-index Nat]
-  ;;  ;; [member (Addr RaftMessage)]
-  ;;  )
+  (AppendRejected
+   [term Nat]
+   [last-index Nat]
+   ;; TODO:
+   [member (Addr Nat ;; RaftMessage
+                 )])
   (AppendSuccessful
    [term Nat]
    [last-index Nat]
@@ -214,14 +216,14 @@
 (define-function (initial-metadata)
   (StateMetadata 0 (hash) 0))
 
-;; (define-function (for-follower/candidate [metadata ElectionMeta])
-;;   (StateMetadata (: metadata current-term) (hash) (: metadata last-used-timeout-id)))
+(define-function (for-follower/candidate [metadata ElectionMeta])
+  (StateMetadata (: metadata current-term) (hash) (: metadata last-used-timeout-id)))
 
-;; (define-function (for-follower/leader [metadata LeaderMeta])
-;;   (StateMetadata (: metadata current-term) (hash) (: metadata last-used-timeout-id)))
+(define-function (for-follower/leader [metadata LeaderMeta])
+  (StateMetadata (: metadata current-term) (hash) (: metadata last-used-timeout-id)))
 
-;; (define-function (for-leader [metadata ElectionMeta])
-;;   (LeaderMeta (: metadata current-term) (: metadata last-used-timeout-id)))
+(define-function (for-leader [metadata ElectionMeta])
+  (LeaderMeta (: metadata current-term) (: metadata last-used-timeout-id)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Election
@@ -242,21 +244,21 @@
     (send timer (SetTimer election-timer-name target next-id deadline false))
     (! m [last-used-timeout-id next-id])))
 
-;; (define-function (reset-election-deadline/candidate [timer (Addr TimerMessage)]
-;;                                            [target (Addr Nat)]
-;;                                            [m ElectionMeta])
-;;   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
-;;         [next-id (+ 1 (: m last-used-timeout-id))])
-;;     (send timer (SetTimer election-timer-name target next-id deadline false))
-;;     (! m [last-used-timeout-id next-id])))
+(define-function (reset-election-deadline/candidate [timer (Addr TimerMessage)]
+                                           [target (Addr Nat)]
+                                           [m ElectionMeta])
+  (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
+        [next-id (+ 1 (: m last-used-timeout-id))])
+    (send timer (SetTimer election-timer-name target next-id deadline false))
+    (! m [last-used-timeout-id next-id])))
 
-;; (define-function (reset-election-deadline/leader [timer (Addr TimerMessage)]
-;;                                         [target (Addr Nat)]
-;;                                         [m LeaderMeta])
-;;   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
-;;         [next-id (+ 1 (: m last-used-timeout-id))])
-;;     (send timer (SetTimer election-timer-name target next-id deadline false))
-;;     (! m [last-used-timeout-id next-id])))
+(define-function (reset-election-deadline/leader [timer (Addr TimerMessage)]
+                                        [target (Addr Nat)]
+                                        [m LeaderMeta])
+  (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
+        [next-id (+ 1 (: m last-used-timeout-id))])
+    (send timer (SetTimer election-timer-name target next-id deadline false))
+    (! m [last-used-timeout-id next-id])))
 
 ;; (define-function (cancel-election-deadline [timer (Addr TimerMessage)])
 ;;   (send timer (CancelTimer election-timer-name)))
@@ -297,42 +299,8 @@
 ;;            (+ total (if (hash-has-key? (: m votes-received) member) 1 0)))])
 ;;     (> total-votes-received (/ (length (: config members)) 2))))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Misc.
-
-;; (define-function (leader-is-lagging [append-entries-term Nat] [m StateMetadata])
-;;   (< append-entries-term (: m current-term)))
-
-;; (define-function (is-heartbeat [append-entries-entries (Vectorof Entry)])
-;;   (= 0 (vector-length append-entries-entries)))
-
-;; (define-function (AppendEntries-apply [term Nat]
-;;                              [replicated-log ReplicatedLog]
-;;                              [from-index Nat]
-;;                              [leader-commit-id Nat]
-;;                              [leader (Addr RaftMessage)]
-;;                              [leader-client (Addr ClientMessage)])
-;;   (let ([entries (replicated-log-entries-batch-from replicated-log from-index)])
-;;     (cond
-;;       [(> (vector-length entries) 0)
-;;        (let ([head (vector-ref entries 0)])
-;;          (AppendEntries term
-;;                         (replicated-log-term-at replicated-log (entry-prev-index head))
-;;                         (entry-prev-index head)
-;;                         entries
-;;                         leader-commit-id
-;;                         leader
-;;                         leader-client))]
-;;       [else (AppendEntries term
-;;                            (replicated-log-term-at replicated-log (- from-index 1))
-;;                            (- from-index 1)
-;;                            entries
-;;                            leader-commit-id
-;;                            leader
-;;                            leader-client)])))
-
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Replicated log
+;; ---------------------------------------------------------------------------------------------------
+;; Replicated log
 
 (define-function (replicated-log-empty)
   (ReplicatedLog (vector) 0))
@@ -382,59 +350,65 @@
 ;;                                           [prev-log-index Nat])
 ;;   (= (replicated-log-term-at replicated-log prev-log-index) prev-log-term))
 
-;; (define-variant FindTermResult (NoTerm) (FoundTerm [term Nat]))
-;; (define-function (replicated-log-term-at [replicated-log ReplicatedLog] [index Nat])
-;;   (cond
-;;     [(<= index 0) 0]
-;;     [else
-;;      ;; Note: this code is uglier than it would be if we used more general list-traversal functions
-;;      (let ([fold-result
-;;                  (for/fold ([result (NoTerm)])
-;;                            ([entry (: replicated-log entries)])
-;;                    (case result
-;;                      [NoTerm ()
-;;                              (cond
-;;                                [(= (: entry index) index) (FoundTerm (: entry term))]
-;;                                [else (NoTerm)])]
-;;                      [FoundTerm (t) result]))])
-;;        (case fold-result
-;;          [FoundTerm (t) t]
-;;          [NoTerm ()
-;;                  ;; If no term was found, just return 0, although this should really be a fatal error
-;;                  0]))]))
+(define-variant FindTermResult (NoTerm) (FoundTerm [term Nat]))
+(define-function (replicated-log-term-at [replicated-log ReplicatedLog] [index Nat])
+  (cond
+    [(<= index 0) 0]
+    [else
+     ;; Note: this code is uglier than it would be if we used more general list-traversal functions
+     (let ([fold-result
+            (NoTerm) ; TODO: remove this line
+            ;; TODO:
+                 ;; (for/fold ([result (NoTerm)])
+                 ;;           ([entry (: replicated-log entries)])
+                 ;;   (case result
+                 ;;     [NoTerm ()
+                 ;;             (cond
+                 ;;               [(= (: entry index) index) (FoundTerm (: entry term))]
+                 ;;               [else (NoTerm)])]
+                 ;;     [FoundTerm (t) result]))
+                 ])
+       (case fold-result
+         [(FoundTerm t) t]
+         [(NoTerm)
+                 ;; If no term was found, just return 0, although this should really be a fatal error
+                 0]))]))
 
 ;; ;; Returns a vector of entries from the log, starting at the from-including index and including either
 ;; ;; all entries with the same term or a total of 5 entries, whichever is less. We assume from-including
 ;; ;; is no less than 1 and no more than 1 + the last index in the log.
-;; (define-function (replicated-log-entries-batch-from [replicated-log ReplicatedLog] [from-including Nat])
-;;   (let* ([how-many 5] ; this is the default parameter in akka-raft
-;;          [first-impl-index 0]
-;;          [first-semantic-index
-;;           (if (= (vector-length (: replicated-log entries)) 0)
-;;               1
-;;               (: (vector-ref (: replicated-log entries) 0) index))]
-;;          [semantic->impl-offset (- first-impl-index first-semantic-index)]
-;;          [from-including-impl (+ from-including semantic->impl-offset)]
-;;          [to-send (vector-slice (: replicated-log entries)
-;;                                 from-including-impl
-;;                                 (+ from-including-impl how-many))])
-;;     (cond
-;;       [(> (vector-length to-send) 0)
-;;        (let* ([head (vector-ref to-send 0)]
-;;               [batch-term (: head term)])
-;;          ;; this for/fold implements the takeWhile
-;;          (for/fold ([result (vector)])
-;;                    ([entry to-send])
-;;            (cond
-;;              [(= (: entry term) batch-term) (vector-append result (vector entry))]
-;;              [else result])))]
-;;       [else (vector)])))
+(define-function (replicated-log-entries-batch-from [replicated-log ReplicatedLog] [from-including Nat])
+  (let* ([how-many 5] ; this is the default parameter in akka-raft
+         [first-impl-index 0]
+         [first-semantic-index
+          (if (= (vector-length (: replicated-log entries)) 0)
+              1
+              (: (vector-ref (: replicated-log entries) 0) index))]
+         [semantic->impl-offset (- first-impl-index first-semantic-index)]
+         [from-including-impl (+ from-including semantic->impl-offset)]
+         [to-send (vector-slice (: replicated-log entries)
+                                from-including-impl
+                                (+ from-including-impl how-many))])
+    (cond
+      [(> (vector-length to-send) 0)
+       (let* ([head (vector-ref to-send 0)]
+              [batch-term (: head term)])
+         ;; TODO:
+         ;; this for/fold implements the takeWhile
+         ;; (for/fold ([result (vector)])
+         ;;           ([entry to-send])
+         ;;   (cond
+         ;;     [(= (: entry term) batch-term) (vector-append result (vector entry))]
+         ;;     [else result]))
+         (vector) ;; TODO: remove this line
+         )]
+      [else (vector)])))
 
 ;; (define-function (min [a Nat] [b Nat])
 ;;   (cond [(< a b) a] [else b]))
 
-;; (define-function (entry-prev-index [entry Entry])
-;;   (- (: entry index) 1))
+(define-function (entry-prev-index [entry Entry])
+  (- (: entry index) 1))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; LogIndexMap
@@ -461,13 +435,13 @@
       [(< old-value value) (hash-set map member value)]
       [else map])))
 
-;; (define-function (log-index-map-put-if-smaller [map (Hash (Addr RaftMessage) Nat)]
-;;                                       [member (Addr RaftMessage)]
-;;                                       [value Nat])
-;;   (let ([old-value (log-index-map-value-for map member)])
-;;     (cond
-;;       [(> old-value value) (hash-set map member value)]
-;;       [else map])))
+(define-function (log-index-map-put-if-smaller [map (Hash (Addr RaftMessage) Nat)]
+                                      [member (Addr RaftMessage)]
+                                      [value Nat])
+  (let ([old-value (log-index-map-value-for map member)])
+    (cond
+      [(> old-value value) (hash-set map member value)]
+      [else map])))
 
 ;; ;; NOTE: because the akka-raft version of this is completely wrong, I'm writing my own
 ;; ;; Returns the greatest index that a majority of entries in the map agree on
@@ -484,6 +458,40 @@
          ])
     (list-ref (sort-numbers-descending all-indices)
               (- (ceiling (/ (length (: config members)) 2)) 1))))
+
+;; ;; ---------------------------------------------------------------------------------------------------
+;; ;; Misc.
+
+;; (define-function (leader-is-lagging [append-entries-term Nat] [m StateMetadata])
+;;   (< append-entries-term (: m current-term)))
+
+;; (define-function (is-heartbeat [append-entries-entries (Vectorof Entry)])
+;;   (= 0 (vector-length append-entries-entries)))
+
+(define-function (AppendEntries-apply [term Nat]
+                             [replicated-log ReplicatedLog]
+                             [from-index Nat]
+                             [leader-commit-id Nat]
+                             [leader (Addr RaftMessage)]
+                             [leader-client (Addr ClientMessage)])
+  (let ([entries (replicated-log-entries-batch-from replicated-log from-index)])
+    (cond
+      [(> (vector-length entries) 0)
+       (let ([head (vector-ref entries 0)])
+         (AppendEntries term
+                        (replicated-log-term-at replicated-log (entry-prev-index head))
+                        (entry-prev-index head)
+                        entries
+                        leader-commit-id
+                        leader
+                        leader-client))]
+      [else (AppendEntries term
+                           (replicated-log-term-at replicated-log (- from-index 1))
+                           (- from-index 1)
+                           entries
+                           leader-commit-id
+                           leader
+                           leader-client)])))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Vector and list helpers
@@ -649,19 +657,19 @@
       ;;                                       peer-messages
       ;;                                       client-messages))))
 
-      ;; (define-function (send-entries [follower (Addr RaftMessage)]
-      ;;                       [m LeaderMeta]
-      ;;                       [replicated-log ReplicatedLog]
-      ;;                       [next-index Nat]
-      ;;                       [leader-commit-id Nat]
-      ;;                       [leader (Addr RaftMessage)]
-      ;;                       [leader-client (Addr ClientMessage)])
-      ;;   (send follower (AppendEntries-apply (: m current-term)
-      ;;                                       replicated-log
-      ;;                                       (log-index-map-value-for next-index follower)
-      ;;                                       (: replicated-log committed-index)
-      ;;                                       peer-messages
-      ;;                                       client-messages)))
+      (define-function (send-entries [follower (Addr RaftMessage)]
+                            [m LeaderMeta]
+                            [replicated-log ReplicatedLog]
+                            [next-index Nat]
+                            [leader-commit-id Nat]
+                            [leader (Addr RaftMessage)]
+                            [leader-client (Addr ClientMessage)])
+        (send follower (AppendEntries-apply (: m current-term)
+                                            replicated-log
+                                            (log-index-map-value-for next-index follower)
+                                            (: replicated-log committed-index)
+                                            peer-messages
+                                            client-messages)))
 
        (define-function (maybe-commit-entry [match-index (Hash (Addr RaftMessage) Nat)]
                                             [replicated-log ReplicatedLog]
@@ -690,29 +698,35 @@
                [replicated-log (maybe-commit-entry match-index replicated-log config)])
           (goto Leader m next-index match-index replicated-log config)))
 
-      ;; (define-function (register-append-rejected [follower-term Nat]
-      ;;                                   [follower-index Nat]
-      ;;                                   [member (Addr RaftMessage)]
-      ;;                                   [m LeaderMeta]
-      ;;                                   [next-index (Hash (Addr RaftMessage) Nat)]
-      ;;                                   [match-index (Hash (Addr RaftMessage) Nat)]
-      ;;                                   [replicated-log ReplicatedLog]
-      ;;                                   [config ClusterConfiguration])
-      ;;   (let ([next-index (log-index-map-put-if-smaller next-index member (+ 1 follower-index))])
-      ;;     (send-entries member
-      ;;                   m
-      ;;                   replicated-log
-      ;;                   next-index
-      ;;                   (: replicated-log committed-index)
-      ;;                   peer-messages
-      ;;                   client-messages)
-      ;;     (goto (Leader m next-index match-index replicated-log config))))
+      (define-function (register-append-rejected [follower-term Nat]
+                                        [follower-index Nat]
+                                        [member (Addr RaftMessage)]
+                                        [m LeaderMeta]
+                                        [next-index (Hash (Addr RaftMessage) Nat)]
+                                        [match-index (Hash (Addr RaftMessage) Nat)]
+                                        [replicated-log ReplicatedLog]
+                                        [config ClusterConfiguration])
+        (let ([next-index (log-index-map-put-if-smaller next-index member (+ 1 follower-index))])
+          (send-entries member
+                        m
+                        replicated-log
+                        next-index
+                        (: replicated-log committed-index)
+                        peer-messages
+                        client-messages)
+          (goto Leader m next-index match-index replicated-log config)))
 
-      ;; (define-function (step-down [m LeaderMeta] [replicated-log ReplicatedLog] [config ClusterConfiguration])
-      ;;   (let ([m (reset-election-deadline/leader timer-manager timeouts m)])
-      ;;     (goto (Follower (NoLeader) (for-follower/leader m) replicated-log config))))
-       )
+      (define-function (step-down [m LeaderMeta] [replicated-log ReplicatedLog] [config ClusterConfiguration])
+        (let ([m (reset-election-deadline/leader timer-manager timeouts m)])
+          (goto Follower (NoLeader) (for-follower/leader m) replicated-log config))))
+
+      ;; ---------------------------------------------------------------------------------------------------
+      ;; Behavior
+
       (goto Init)
+
+      ;; ---------------------------------------------------------------------------------------------------
+      ;; States
 
       (define-state (Init) (m)
         (case m
@@ -770,8 +784,8 @@
                          ;;                                  replicated-log
                          ;;                                  config
                          ;;                                  recently-contacted-by-leader))]
-                         ;; [AppendRejected (t l m)
-                         ;;                 (goto (Follower recently-contacted-by-leader metadata replicated-log config))]
+                         [(AppendRejected t l m)
+                                         (goto Follower recently-contacted-by-leader metadata replicated-log config)]
                          [(AppendSuccessful t l m)
                                            (goto Follower recently-contacted-by-leader metadata replicated-log config)])]
       [(Config c) (goto Follower recently-contacted-by-leader metadata replicated-log config)]
@@ -847,7 +861,7 @@
                          ;;                                           peer-messages))
                          ;;                     (goto (Candidate m replicated-log config))]))]
                          [(AppendSuccessful t i member) (goto Candidate m replicated-log config)]
-                         ;; [(AppendRejected t i member) (goto Candidate m replicated-log config)]
+                         [(AppendRejected t i member) (goto Candidate m replicated-log config)]
                          )]
       ;;   [timeouts (id)
       ;;             (cond
@@ -924,15 +938,15 @@
                          ;;                                 peer-messages
                          ;;                                 client-messages)
                          ;;                   (goto (Leader m next-index match-index replicated-log config))])]
-                         ;; [AppendRejected (term last-index member)
-                         ;;                 (register-append-rejected term
-                         ;;                                           last-index
-                         ;;                                           member
-                         ;;                                           m
-                         ;;                                           next-index
-                         ;;                                           match-index
-                         ;;                                           replicated-log
-                         ;;                                           config)]
+                         [(AppendRejected term last-index member)
+                                         (register-append-rejected term
+                                                                   last-index
+                                                                   member
+                                                                   m
+                                                                   next-index
+                                                                   match-index
+                                                                   replicated-log
+                                                                   config)]
                          [(AppendSuccessful term last-index member)
                                            (register-append-successful term
                                                                        last-index
@@ -978,7 +992,8 @@
 
 (define desugared-raft-message-type
   `(Union
-    (AppendSuccessful Nat Nat Nat)) ; TODO: add the minfixpt here
+    (AppendRejected Nat Nat (Addr Nat)) ; TODO: add the minfixpt here
+    (AppendSuccessful Nat Nat (Addr Nat)))   ; TODO: add the minfixpt here
   )
 ;; 4. Run the verifier
 (check-true (analyze raft-config
