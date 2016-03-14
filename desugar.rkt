@@ -278,17 +278,50 @@
    `((case (< a b) [(variant True) 1] [(variant False) 0]))))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Desugar let*
+
+(define-language csa/desugared-let*
+  (extends csa/desugared-if)
+  (Exp (e)
+       (- (let* ([x e] ...) e2))))
+
+(define-parser parse-csa/desugared-let* csa/desugared-let*)
+
+(define-pass desugar-let* : csa/desugared-if (P) -> csa/desugared-let* ()
+  (Exp : Exp (e) -> Exp ()
+       [(let* ([,x ,[e]] [,x* ,e*] ...) ,body)
+        `(let ([,x ,e])
+           ,(Exp (with-output-language (csa/desugared-if Exp)
+                   `(let* ([,x* ,e*] ...) ,body))))]
+       [(let* () ,[e]) e]))
+
+(module+ test
+  ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
+  (check-equal?
+   (unparse-csa/desugared-let*
+    (desugar-let*
+     (parse-csa/desugared-if
+      `((let* ([a 1]
+               [b (+ a 2)]
+               [c (+ a b)])
+          (+ c 5))))))
+   `((let ([a 1])
+       (let ([b (+ a 2)])
+         (let ([c (+ a b)])
+           (+ c 5)))))))
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Variant desugaring
 
 (define-language csa/desugared-variants
-  (extends csa/desugared-if)
+  (extends csa/desugared-let*)
   (ProgItem (PI)
             (- (define-variant T (V [x τ] ...) ...))))
 
 (define-parser parse-csa/desugared-variants csa/desugared-variants)
 
 ;; TODO: consider leaving the multi-arity variants in
-(define-pass desugar-variants : csa/desugared-if (P) -> csa/desugared-variants ()
+(define-pass desugar-variants : csa/desugared-let* (P) -> csa/desugared-variants ()
   (Prog : Prog (P items-to-add) -> Prog ()
         [((define-variant ,T (,V [,x ,[τ]] ...) ...) ,PI ... ,e)
          (define constructor-defs
@@ -298,7 +331,7 @@
                 ;; TODO: field names must be different...
                 `(define-function (,name [,field-list ,types] ...) (variant ,name ,field-list ...))))
             V x τ))
-         (Prog (with-output-language (csa/desugared-if Prog) `(,PI ... ,e))
+         (Prog (with-output-language (csa/desugared-let* Prog) `(,PI ... ,e))
                (append items-to-add
                        (append
                         constructor-defs
@@ -306,7 +339,7 @@
                         (with-output-language (csa/desugared-variants ProgItem)
                           `(define-type ,T (Union [,V ,τ ...] ...)))))))]
         [(,[PI1] ,PI* ... ,e)
-         (Prog (with-output-language (csa/desugared-if Prog) `(,PI* ... ,e))
+         (Prog (with-output-language (csa/desugared-let* Prog) `(,PI* ... ,e))
                (append items-to-add (list PI1)))]
         [(,[e]) `(,items-to-add ... ,e)])
   (Prog P null))
@@ -316,7 +349,7 @@
   (check-equal?
    (unparse-csa/desugared-variants
     (desugar-variants
-     (with-output-language (csa/desugared-if Prog)
+     (with-output-language (csa/desugared-let* Prog)
        `((define-variant List (Null) (Cons [element Nat] [list List]))
          (case (app Null)
            [(Null) 0]
@@ -722,6 +755,7 @@
      inline-type-aliases
      inline-records
      desugar-variants
+     desugar-let*
      desugar-if
      desugar-cond
      wrap-multi-exp-bodies
