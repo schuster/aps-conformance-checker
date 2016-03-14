@@ -92,7 +92,10 @@ Remaining big challenges I see in the analysis:
             (for ([possible-transition possible-transitions])
               (match (find-matching-spec-transition possible-transition spec state-matches)
                 [(list)
-                 ;; (printf "couldn't find any match for ~s\n" possible-transition)
+                 ;; (printf "couldn't find any match for ~s from state ~s, in spec state ~s\n"
+                 ;;         possible-transition
+                 ;;         (csa#-actor-current-state (csa#-config-only-actor prog))
+                 ;;         (aps#-instance-state spec))
                  (return-early #f)]
                 [(list spec-goto-exp)
                  (enqueue! to-visit

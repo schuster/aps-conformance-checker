@@ -17,7 +17,8 @@
  aps#-transition-expression
  aps#-commitment-address
  aps#-commitment-pattern
- aps#-goto-state)
+ aps#-goto-state
+ aps#-instance-state)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -297,3 +298,17 @@
   (define commitment (term [(* (Addr Nat)) (variant Null *)]))
   (check-equal? (aps#-commitment-address commitment) (term (* (Addr Nat))))
   (check-equal? (aps#-commitment-pattern commitment) (term (variant Null *))))
+
+(define (aps#-instance-state z)
+  (term (instance-state/mf ,z)))
+
+(define-metafunction aps#
+  instance-state/mf : z -> s
+  [(instance-state/mf (_ (goto s _ ...) _)) s])
+
+(module+ test
+  (check-equal?
+   (aps#-instance-state (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
+                               (goto Always (* (Addr Nat)) (* (Addr Nat)))
+                               null)))
+   (term Always)))
