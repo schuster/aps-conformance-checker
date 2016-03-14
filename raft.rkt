@@ -132,15 +132,15 @@
   [votes (Hash Nat (Addr RaftMessage))]
   [last-used-timeout-id Nat])
 
-;; (define-record ElectionMeta
-;;   [current-term Nat]
-;;   [votes-received (Hash (Addr RaftMessage) Bool)]
-;;   [votes (Hash Nat (Addr RaftMessage))]
-;;   [last-used-timeout-id Nat])
+(define-record ElectionMeta
+  [current-term Nat]
+  [votes-received (Hash (Addr RaftMessage) Boolean)]
+  [votes (Hash Nat (Addr RaftMessage))]
+  [last-used-timeout-id Nat])
 
-;; (define-record LeaderMeta
-;;   [current-term Nat]
-;;   [last-used-timeout-id Nat])
+(define-record LeaderMeta
+  [current-term Nat]
+  [last-used-timeout-id Nat])
 
 (define-variant TimerMessage
   (SetTimer [timer-name String] [target (Addr Unit)] [id Nat] [duration Duration] [repeat? Boolean])
@@ -594,7 +594,7 @@
 
       ;; (define-function (commit-until-index [replicated-log ReplicatedLog]
       ;;                             [last-index-to-commit Nat]
-      ;;                             [notify-client? Bool])
+      ;;                             [notify-client? Boolean])
       ;;   (let ([entries (replicated-log-between replicated-log
       ;;                                          (: replicated-log committed-index)
       ;;                                          last-index-to-commit)])
@@ -715,7 +715,8 @@
                               [metadata StateMetadata]
                               [replicated-log ReplicatedLog]
                               [config ClusterConfiguration]) (m)
-                              (goto Follower recently-contacted-by-leader metadata replicated-log config)
+        (case m
+
       ;;   [client-messages (m)
       ;;                    (case m
       ;;                      [ClientMessage (client command)
@@ -758,7 +759,7 @@
       ;;                                    (goto (Follower recently-contacted-by-leader metadata replicated-log config))]
       ;;                    [AppendSuccessful (t l m)
       ;;                                      (goto (Follower recently-contacted-by-leader metadata replicated-log config))])]
-      ;;   [configs (c) (goto (Follower recently-contacted-by-leader metadata replicated-log config))]
+      [(Config c) (goto Follower recently-contacted-by-leader metadata replicated-log config)]
       ;;   [timeouts (id)
       ;;             (cond
       ;;               [(= id (: metadata last-used-timeout-id))
@@ -770,13 +771,11 @@
       ;;                      (goto (Follower recently-contacted-by-leader metadata replicated-log config))]
       ;;   [send-heartbeat-timeouts (id)
       ;;                            (goto (Follower recently-contacted-by-leader metadata replicated-log config))]
- )
-      (define-state (Candidate [m Nat ;; ElectionMeta
-                                  ]
-                               [replicated-log Nat ;; ReplicatedLog
-                                               ]
-                               [config ClusterConfiguration]) (m)
-                               (goto Candidate)
+ ))
+      (define-state (Candidate [m ElectionMeta]
+                               [replicated-log ReplicatedLog]
+                               [config ClusterConfiguration]) (message)
+        (case message
       ;;   [client-messages (m)
       ;;                    (case m
       ;;                      [ClientMessage (client command)
@@ -853,18 +852,14 @@
       ;;                                                     replicated-log config))))]
       ;;   [elected-as-leader () (goto (Candidate m replicated-log config))]
       ;;   [send-heartbeat-timeouts (id) (goto (Candidate m replicated-log config))]
-                               )
+                               ))
       ;; TODO:
-      (define-state (Leader [m Nat ;;LeaderMeta
-                               ]
-                            [next-index Nat ;; (Hash (Addr RaftMessage) Nat)
-                                        ]
-                            [match-index Nat;; (Hash (Addr RaftMessage) Nat)
-                                         ]
-                            [replicated-log Nat ;; ReplicatedLog
-                                            ]
-                            [config ClusterConfiguration]) (m)
-                            (goto Leader)
+      (define-state (Leader [m LeaderMeta]
+                            [next-index (Hash (Addr RaftMessage) Nat)]
+                            [match-index (Hash (Addr RaftMessage) Nat)]
+                            [replicated-log ReplicatedLog]
+                            [config ClusterConfiguration]) (message)
+        (case message
       ;;   [client-messages (msg)
       ;;                    (case msg
       ;;                      [ClientMessage (client command)
@@ -931,7 +926,7 @@
       ;;                                                                  match-index
       ;;                                                                  replicated-log
       ;;                                                                  config)])]
-      ;;   [configs (c) (goto (Leader m next-index match-index replicated-log config))]
+      [(Config c) (goto Leader m next-index match-index replicated-log config)]
       ;;   [timeouts (id) (goto (Leader m next-index match-index replicated-log config))]
       ;;   [begin-election-alerts () (goto (Leader m next-index match-index replicated-log config))]
       ;;   [elected-as-leader ()
@@ -943,7 +938,7 @@
       ;;   [send-heartbeat-timeouts (id)
       ;;                            (send-heartbeat m next-index replicated-log config)
       ;;                            (goto (Leader m next-index match-index replicated-log config))]
-                            ))
+                            )))
 ;; TODO: think of a way to not have to give concrete addresses here
     (spawn RaftActor (addr 2) (addr 3)))))
 
