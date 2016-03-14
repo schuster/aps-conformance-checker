@@ -56,6 +56,7 @@
       (variant t e# ...)
       (record [l e#] ...)
       (: e# l)
+      (! e# [l e#])
       (primop e# ...)
       a#
       x
@@ -81,11 +82,14 @@
       (send E# e#)
       (send v# E#)
       (begin E# e# ...)
-      (let ([x E#] [x e#] ...) e#)
+      (let ([x v#] ... [x E#] [x e#] ...) e#)
       (case E# [(t x ...) e#] ...)
       (variant t v# ... E# e# ...)
       (record [l v#] ... [l E#] [l e#] ...)
-      (: E# l)))
+      (: E# l)
+      (! E# [l e#])
+      (! v# [l E#])
+      (primop v# ... E# e# ...)))
 
   ;; (define-metafunction csa#
   ;;   abstract : K -> K#
@@ -396,6 +400,14 @@
     (==> (: (* (Record _ ... [l τ] _ ...)) l)
          (* τ)
          RecordWildcardLookup)
+    (==> (! (record any_1 ... [l _] any_2 ...) [l v#])
+         (record any_1 ... [l v#] any_2 ...)
+         RecordUpdate)
+    (==> (! (* (Record any_1 ... [l τ] any_2 ...)) [l v#])
+         ;; TODO: should I do something more precise here? That might violate the depth rules,
+         ;; though...
+         (* (Record any_1 ... [l τ] any_2 ...))
+         RecordWildcardUpdate)
 
     ;; Primops
     (==> (< (* Nat) (* Nat))
@@ -405,9 +417,14 @@
          (variant False)
          LessThan2)
 
-    (==> (/ (* Nat) (* Nat))
+    (==> (primop (* Nat) (* Nat))
          (* Nat)
-         Div)
+         (side-condition (member (term primop) (list '+ '- '* '/)))
+         Arith)
+
+    (==> (random (* Nat))
+         (* Nat)
+         Random)
 
     (--> ((in-hole E# (send a# v#)) (any_outputs ...))
          ((in-hole E# v#)           (any_outputs ... [a# v#]))
@@ -514,6 +531,8 @@
   [(csa#-subst (primop e# ...) x v#) (primop (csa#-subst e# x v#) ...)]
   [(csa#-subst (record [l e#] ...) x v#) (record [l (csa#-subst e# x v#)] ...)]
   [(csa#-subst (: e# l) x v#) (: (csa#-subst e# x v#) l)]
+  [(csa#-subst (! e#_1 [l e#_2]) x v#)
+   (! (csa#-subst e#_1 x v#) [l (csa#-subst e#_2 x v#)])]
   ;; [(csa#-subst (rcv (x) e) x v) (rcv (x) e)]
   ;; [(csa#-subst (rcv (x_h) e) x v) (rcv (x_h) (csa#-subst e x v))]
   ;; [(csa#-subst (rcv (x) e [(timeout n) e_timeout]) x v) (rcv (x) e [(timeout n) e_timeout])]
@@ -598,11 +617,16 @@
   ;; TODO: check for the depth=0 case on records
   [(α-e (record [l e] ...) natural_depth)
    ;; TODO: take out the "max" issue here
-   (record [l (α-e e (max 0 ,(sub1 (term natural_depth))))] ...)]
-  [(α-e (: e l) natural_depth) (: (α-e e natural_depth) l)])
+   (record [l (α-e e ,(max 0 (sub1 (term natural_depth))))] ...)]
+  [(α-e (: e l) natural_depth) (: (α-e e natural_depth) l)]
+  [(α-e (! e_1 [l e_2]) natural_depth) (! (α-e e_1 natural_depth) [l (α-e e_2 natural_depth)])])
 
 ;; TODO: write tests for the variant/record case, because the crappy version I have here isn't good
 ;; enough
+
+(module+ test
+  (check-equal? (term (α-e (record [f1 1] [f2 2]) 1))
+                (term (record [f1 (* Nat)] [f2 (* Nat)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors

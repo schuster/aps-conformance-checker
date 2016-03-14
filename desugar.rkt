@@ -41,19 +41,10 @@
 
 (define (name? x)
   (and (symbol? x)
-       (not (PrimOp? x))
        (not (PrimitiveType? x))))
 
-(define (PrimOp? x) (not (not (member x (list '+ '-)))))
-
 (define (PrimitiveType? x)
-  (not (not (member x (list 'Nat)))))
-
-(module+ test
-  (check-not-false (PrimOp? '+))
-  (check-false (name? '+))
-  (check-false (PrimOp? 'x))
-  (check-true (name? 'x)))
+  (not (not (member x (list 'Nat 'String)))))
 
 (define-language csa/surface
   (terminals
@@ -84,11 +75,17 @@
        (send e1 e2)
        (spawn a e ...)
        (record [x e] ...)
+       (variant V e ...)
        (: e x)
+       (! e [x e2])
        (case e1 [(V x ...) e2 e* ...] ...)
        ;; (po e ...)
-       (+ e ...)
-       (- e ...)
+       ;; TODO: find a way to generalize these to primops (ideal solution requires "tagless" fix in Nanopass)
+       (+ e1 e2)
+       (- e1 e2)
+       (* e1 e2)
+       (/ e1 e2)
+       (random e)
        (let ([x e] ...) e2 e* ...)
        (let* ([x e] ...) e2 e* ...)
        (addr n) ; only for giving the initial output addresses
@@ -145,7 +142,22 @@
        [(let ([,x ,[e]] ...) ,[e2] ,[e*] ...)
         `(let ([,x ,e] ...) (begin ,e2 ,e* ...))]
        [(let* ([,x ,[e]] ...) ,[e2] ,[e*] ...)
-        `(let* ([,x ,e] ...) (begin ,e2 ,e* ...))]))
+        `(let* ([,x ,e] ...) (begin ,e2 ,e* ...))])
+  ;; Non-working version that only places begins where necessary
+  ;;   (StateDef : StateDef (S) -> StateDef ()
+  ;;           [(define-state (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e2] ,[e*] ...)
+  ;;            `(define-state (,s [,x ,τ] ...) (,x2) (begin ,e1 ,e2 ,e* ...))])
+  ;; (FuncDef : FuncDef (fd) -> FuncDef ()
+  ;;          [(define-function (,f [,x ,[τ]] ...) ,[e1] ,[e2] ,[e*] ...)
+  ;;           `(define-function (,f [,x ,τ] ...) (begin ,e1 ,e2 ,e* ...))])
+  ;; (Exp : Exp (e) -> Exp ()
+  ;;      [(case ,[e1] [(,V ,x ...) ,[e2] ,[e3] ,[e*] ...] ...)
+  ;;       `(case ,e1 [(,V ,x ...) (begin ,e2 ,e3 ,e* ...)] ...)]
+  ;;      [(let ([,x ,[e]] ...) ,[e2] ,[e3] ,[e*] ...)
+  ;;       `(let ([,x ,e] ...) (begin ,e2 ,e3 ,e* ...))]
+  ;;      [(let* ([,x ,[e]] ...) ,[e2] ,[e3] ,[e*] ...)
+  ;;       `(let* ([,x ,e] ...) (begin ,e2 ,e3 ,e* ...))])
+  )
 
 (module+ test
   ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
@@ -230,7 +242,7 @@
   ;; TODO: I could really use something like syntax-parse's splicing forms so I could look at items
   ;; individually and splice them back in
   (Prog : Prog (P items-to-add) -> Prog ()
-        [((define-record ,T [,x ,τ] ...) ,PI ... ,e)
+        [((define-record ,T [,x ,[τ]] ...) ,PI ... ,e)
          ;; TODO: would be nice if there were a shortcut syntax for saying "create something of the
          ;; source language type
          (Prog (with-output-language (csa/desugared-variants Prog) `(,PI ... ,e))
@@ -292,7 +304,7 @@
          `(,items-to-add ... ,e)])
   (Type : Type (τ) -> Type ()
         [,T
-         (hash-ref aliases-so-far T (lambda () (error ~s "Could not find alias for type ~s" T)))])
+         (hash-ref aliases-so-far T (lambda () (error 'inline-type-aliases "Could not find alias for type ~s" T)))])
   (Prog P null))
 
 (module+ test
@@ -565,7 +577,7 @@
 
 (define-parser parse-actor-def-csa/surface csa/surface)
 
-(define (desugar-single-actor-program single-actor-prog address)
+(define (desugar-single-actor-program single-actor-prog)
   (define pass
     (compose
      unparse-csa/inlined-actors
@@ -577,4 +589,4 @@
      desugar-variants
      wrap-multi-exp-bodies
      parse-actor-def-csa/surface))
-  (single-agent-prog->config (pass single-actor-prog) address))
+  (pass single-actor-prog))

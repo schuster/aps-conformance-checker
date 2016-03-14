@@ -25,7 +25,6 @@
   (e (spawn τ e S ...)
      (goto s e ...)
      (send e e)
-     self
      (begin e ... e)
      ;; TODO: let should probably be syntactic sugar for a special kind of case statement
      (let ([x e] ...) e)
@@ -35,13 +34,14 @@
      (variant t e ...)
      (record [l e] ...)
      (: e l) ; record lookup
+     (! e [l e]) ; record (functional) update
      (primop e ...)
      string
      x
      n)
   (S (define-state (s [x τ] ...) (x) e)
      (define-state (s [x τ] ...) (x) e [(timeout n) e]))
-  (primop < /)
+  (primop < / + - random)
   ((x s t l) variable-not-otherwise-mentioned)
   (n natural)
   (τ Nat ; TODO: change this to Int or something
@@ -76,11 +76,13 @@
      (send E e)
      (send v E)
      (begin E e ...)
-     (let ([x E] [x e] ...) e)
+     (let ([x v] ... [x E] [x e] ...) e)
      (case E _ ...)
      (variant t v ... E e ...)
      (record [l v] ... [l E] [l e] ...)
      (: E l)
+     (! E [l e])
+     (! v [l E])
      (primop v ... E e ...)))
 
 (define (make-single-agent-config agent)
@@ -165,6 +167,7 @@
   [(subst x x_2 v) x]
   [(subst n x v) n]
   [(subst a x v) a]
+  [(subst string x v) string]
   [(subst (spawn τ e S ...) self v) (spawn τ e S ...)]
   [(subst (spawn τ e S ...) x v)
     (spawn τ (subst e x v) (subst/S S x v) ...)]
@@ -179,8 +182,12 @@
    (let ([x_let (subst e x v)] ...) (subst e_body x v))]
   [(subst (case e [(t x_clause ...) e_clause] ...) x v)
    (case (subst e x v) (subst/case-clause [(t x_clause ...) e_clause] x v) ...)]
+  [(subst (record [l e] ...) x v) (record [l (subst e x v)] ...)]
+  [(subst (: e_1 l) x v) (: (subst e_1 x v) l)]
+  [(subst (! e_1 [l e_2]) x v) (! (subst e_1 x v) [l (subst e_2 x v)])]
+  [(subst (record [l e] ...) x v) (record [l (subst e x v)] ...)]
   [(subst (variant t e ...) x v) (variant t (subst e x v) ...)]
-  ;; TODO: records, record lookup
+  [(subst (primop e ...) x v) (primop (subst e x v) ...)]
   [(subst (rcv (x) e) x v) (rcv (x) e)]
   [(subst (rcv (x_h) e) x v) (rcv (x_h) (subst e x v))]
   [(subst (rcv (x) e [(timeout n) e_timeout]) x v) (rcv (x) e [(timeout n) e_timeout])]
@@ -216,7 +223,7 @@
 (define-metafunction csa-eval
   subst-n/S : S [x v] ... -> S
   [(subst-n/S S) S]
-  [(subst-n/S [x v] any_rest ...)
+  [(subst-n/S S [x v] any_rest ...)
    (subst-n/S (subst/S S x v) any_rest ...)])
 
 (module+ test
@@ -233,6 +240,17 @@
 
   (check-equal? (term (subst-n (goto s x y z) (x 0) (y 1)))
                 (term (goto s 0 1 z)))
+  (check-equal? (term (subst (+ a b) a 1))
+                (term (+ 1 b)))
+  (check-equal? (term (subst (record [r1 x] [r2 y]) x 2))
+                (term (record [r1 2] [r2 y])))
+  (check-equal? (term (subst (: rec field) rec (record [field 1])))
+                (term (: (record [field 1])  field)))
+  (check-equal? (term (subst (! rec [field 2]) rec (record [field 1])))
+                (term (! (record [field 1]) [field 2])))
+  (check-equal?
+   (term (subst-n/S (define-state (S1 [a Nat]) (m) (+ a b)) [a 1] [b 2] [m 3]))
+   (term (define-state (S1 [a Nat]) (m) (+ a 2))))
   ;; TODO: more tests
   )
 

@@ -39,7 +39,18 @@
    (
     (define-type Unit (Record))
     (define-type Duration Nat) ; number of seconds
-    (define-type Boolean (Union (True) (False)))
+    (define-variant Boolean (True) (False))
+    ;; TODO: actually define Int
+    (define-type Int Nat)
+
+    ;; ---------------------------------------------------------------------------------------------------
+    ;; Fake Vector and Hash Definitions
+
+    (define-function (vector) (variant DummyVector))
+    (define-function (hash) (variant DummyHash))
+
+    ;; ---------------------------------------------------------------------------------------------------
+
 
     (define-record ClusterConfiguration
       ;; TODO:
@@ -64,53 +75,59 @@
     ;;   (NoLeader)
     ;;   (JustLeader [leader (Address ClientMessage)]))
 
-;; (define-record Entry
-;;   [command String]
-;;   [term Nat]
-;;   [index Nat]
-;;   [client (Addr String)])
+(define-record Entry
+  [command String]
+  [term Nat]
+  [index Nat]
+  [client (Addr String)])
 
-;; (define-variant RaftMessage
-;;   (RequestVote
-;;    [term Nat]
-;;    [candidate (Addr RaftMessage)]
-;;    [last-log-term Nat]
-;;    [last-log-index Nat])
-;;   (VoteCandidate
-;;    [term Nat]
-;;    [follower (Addr RaftMessage)])
-;;   (DeclineCandidate
-;;    [term Term]
-;;    [follower (Addr RaftMessage)])
-;;   (AppendEntries
-;;    [term Nat]
-;;    [prev-log-term Nat]
-;;    [prev-log-index Nat]
-;;    [entries (Vectorof Entry)]
-;;    [leader-commit-id Nat]
-;;    [leader (Addr RaftMessage)]
-;;    [leader-client (Addr ClientMessage)])
-;;   ;; A note on last-index: In the paper, this is the optimization at the bottom of p. 7 that allows
-;;   ;; for quicker recovery of a node that has fallen behind in its log. In RaftScope, they call this
-;;   ;; "matchIndex", which indicates the lat index in the log (or 0 for AppendRejected). In akka-raft,
-;;   ;; this is always the last index of the log (for both success and failure)
-;;   (AppendRejected
-;;    [term Nat]
-;;    [last-index Nat]
-;;    [member (Addr RaftMessage)])
-;;   (AppendSuccessful
-;;    [term Nat]
-;;    [last-index Nat]
-;;    [member (Addr RaftMessage)]))
+(define-variant RaftMessage
+  (RequestVote
+   [term Nat]
+   ;; TODO: allow for fixpoint types
+   ;; [candidate (Addr RaftMessage)]
+   [last-log-term Nat]
+   [last-log-index Nat])
+  (VoteCandidate
+   [term Nat]
+   ;; [follower (Addr RaftMessage)]
+   )
+  (DeclineCandidate
+   [term Nat]
+   ;; [follower (Addr RaftMessage)]
+   )
+  (AppendEntries
+   [term Nat]
+   [prev-log-term Nat]
+   [prev-log-index Nat]
+   ;; [entries (Vectorof Entry)]
+   [leader-commit-id Nat]
+   ;; [leader (Addr RaftMessage)]
+   ;; [leader-client (Addr ClientMessage)]
+   )
+  ;; A note on last-index: In the paper, this is the optimization at the bottom of p. 7 that allows
+  ;; for quicker recovery of a node that has fallen behind in its log. In RaftScope, they call this
+  ;; "matchIndex", which indicates the lat index in the log (or 0 for AppendRejected). In akka-raft,
+  ;; this is always the last index of the log (for both success and failure)
+  (AppendRejected
+   [term Nat]
+   [last-index Nat]
+   ;; [member (Addr RaftMessage)]
+   )
+  (AppendSuccessful
+   [term Nat]
+   [last-index Nat]
+   ;; [member (Addr RaftMessage)]
+   ))
 
 ;; (define-variant MaybePeer
 ;;   (NoPeer)
 ;;   (JustPeer [peer (Addr RaftMessage)]))
 
-;; (define-record StateMetadata
-;;   [current-term Nat]
-;;   [votes (Hash Nat (Addr RaftMessage))]
-;;   [last-used-timeout-id Nat])
+(define-record StateMetadata
+  [current-term Nat]
+  [votes (Hash Nat (Addr RaftMessage))]
+  [last-used-timeout-id Nat])
 
 ;; (define-record ElectionMeta
 ;;   [current-term Nat]
@@ -130,9 +147,9 @@
 ;;   [message RaftMessage]
 ;;   [log ReplicatedLog])
 
-;; (define-record ReplicatedLog
-;;   [entries (Vectorof Entry)]
-;;   [committed-index Int])
+(define-record ReplicatedLog
+  [entries (Vectorof Entry)]
+  [committed-index Int])
 
     ;;;; Program-level Functions
     ;; ---------------------------------------------------------------------------------------------------
@@ -147,7 +164,7 @@
 ;;   (and (>= term (: metadata current-term))
 ;;        (candidate-at-least-as-up-to-date? log last-log-term last-log-index)
 ;;        (case (hash-ref (: metadata votes) term)
-;;          [Nothing () true]
+;;          [Nothing () (True)]
 ;;          [Just (c) (= candidate c)])))
 
 ;; (define-function (grant-vote?/candidate [metadata StateMetadata]
@@ -159,7 +176,7 @@
 ;;   (and (>= term (: metadata current-term))
 ;;        (candidate-at-least-as-up-to-date? log last-log-term last-log-index)
 ;;        (case (hash-ref (: metadata votes) term)
-;;          [Nothing () true]
+;;          [Nothing () (True)]
 ;;          [Just (c) (= candidate c)])))
 
 ;; (define-function (grant-vote?/leader [metadata StateMetadata]
@@ -182,8 +199,8 @@
 ;; (define-function (with-vote [metadata StateMetadata] [term Nat] [candidate (Addr RaftMessage)])
 ;;   (! metadata [votes (hash-set (: metadata votes) term candidate)]))
 
-;; (define-function (initial-metadata)
-;;   (StateMetadata 0 (hash) 0))
+(define-function (initial-metadata)
+  (StateMetadata 0 (hash) 0))
 
 ;; (define-function (for-follower/candidate [metadata ElectionMeta])
 ;;   (StateMetadata (: metadata current-term) (hash) (: metadata last-used-timeout-id)))
@@ -210,7 +227,8 @@
                                                    [m StateMetadata])
   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
         [next-id (+ 1 (: m last-used-timeout-id))])
-    (send timer (SetTimer election-timer-name target next-id deadline false))
+    (send timer 0 ;; (SetTimer election-timer-name target next-id deadline (False))
+          )
     (! m [last-used-timeout-id next-id])))
 
 ;; (define-function (reset-election-deadline/candidate [timer (Addr TimerMessage)]
@@ -218,7 +236,7 @@
 ;;                                            [m ElectionMeta])
 ;;   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
 ;;         [next-id (+ 1 (: m last-used-timeout-id))])
-;;     (send timer (SetTimer election-timer-name target next-id deadline false))
+;;     (send timer (SetTimer election-timer-name target next-id deadline (False)))
 ;;     (! m [last-used-timeout-id next-id])))
 
 ;; (define-function (reset-election-deadline/leader [timer (Addr TimerMessage)]
@@ -226,7 +244,7 @@
 ;;                                         [m LeaderMeta])
 ;;   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
 ;;         [next-id (+ 1 (: m last-used-timeout-id))])
-;;     (send timer (SetTimer election-timer-name target next-id deadline false))
+;;     (send timer (SetTimer election-timer-name target next-id deadline (False)))
 ;;     (! m [last-used-timeout-id next-id])))
 
 ;; (define-function (cancel-election-deadline [timer (Addr TimerMessage)])
@@ -258,7 +276,7 @@
 ;;     (if (not (= member self)) (cons member result) result)))
 
 ;; (define-function (inc-vote [m ElectionMeta] [follower (Addr RaftMessage)])
-;;   (! m [votes-received (hash-set (: m votes-received) follower true)]))
+;;   (! m [votes-received (hash-set (: m votes-received) follower (True))]))
 
 ;; (define-function (has-majority [m ElectionMeta] [config ClusterConfiguration])
 ;;   ;; TODO: figure out what the type for division is here (or maybe rewrite to not use division)
@@ -305,8 +323,8 @@
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Replicated log
 
-;; (define-function (replicated-log-empty)
-;;   (ReplicatedLog (vector) 0))
+(define-function (replicated-log-empty)
+  (ReplicatedLog (vector) 0))
 
 ;; (define-function (replicated-log+ [replicated-log ReplicatedLog] [entry Entry])
 ;;   (replicated-log-append replicated-log (vector entry) (vector-length (: replicated-log entries))))
@@ -346,7 +364,7 @@
 ;;       [(= 0 (vector-length entries)) 1]
 ;;       [else (+ (: (vector-ref entries (- (vector-length entries) 1)) index) 1)])))
 
-;; ;; Returns true if the leader's previous log is consistent with ours (i.e. the term of the previous
+;; ;; Returns (True) if the leader's previous log is consistent with ours (i.e. the term of the previous
 ;; ;; index matches the term at that index in our log)
 ;; (define-function (replicated-log-consistent-update [replicated-log Replicated-Log]
 ;;                                           [prev-log-term Nat]
@@ -465,7 +483,8 @@
 
 
 
-    (define-actor RaftActorMessage (RaftActor)
+(define-actor RaftActorMessage (RaftActor [timer-manager (Addr TimerMessage)]
+                                          [application (Addr String)])
       ;; (in: [client-messages ClientMessage]
       ;;      [peer-messages RaftMessage]
       ;;      [configs ClusterConfiguration]
@@ -537,7 +556,7 @@
       ;;      (let ([meta-with-updated-term (! m [current-term term])])
       ;;        (define append-result (append replicated-log prev-log-index entries meta-with-updated-term))
       ;;        (send leader (: append-result message))
-      ;;        (let  ([replicated-log (commit-until-index (: append-result log) leader-commit-id false)])
+      ;;        (let  ([replicated-log (commit-until-index (: append-result log) leader-commit-id (False))])
       ;;          (accept-heartbeat meta-with-updated-term
       ;;                            replicated-log
       ;;                            config
@@ -590,7 +609,7 @@
       ;;                          [config ClusterConfiguration])
       ;;   (send-heartbeat m next-index replicated-log config)
       ;;   (send timer-manager
-      ;;         (SetTimer heartbeat-timer-name send-heartbeat-timeouts 1 heartbeat-interval true)))
+      ;;         (SetTimer heartbeat-timer-name send-heartbeat-timeouts 1 heartbeat-interval (True))))
 
       ;; (define-function (stop-heartbeat)
       ;;   (send timer-manager (CancelTimer heartbeat-timer-name)))
@@ -669,7 +688,7 @@
       ;;   (let ([index-on-majority (log-index-map-consensus-for-index match-index config)])
       ;;     (let ([will-commit (> index-on-majority (: replicated-log committed-index))])
       ;;       (cond
-      ;;         [will-commit (commit-until-index replicated-log index-on-majority true)]
+      ;;         [will-commit (commit-until-index replicated-log index-on-majority (True))]
       ;;         [else replicated-log]))))
 
       ;; (define-function (step-down [m LeaderMeta] [replicated-log ReplicatedLog] [config ClusterConfiguration])
@@ -682,8 +701,7 @@
         (case m
           [(Config config)
            ;; TODO:
-            (let ([metadata 5 ;; (reset-election-deadline/follower timer-manager timeouts (initial-metadata))
-                            ])
+            (let ([metadata (reset-election-deadline/follower timer-manager self (initial-metadata))])
               (goto Follower
                     5 ; (NoLeader)
                     metadata
@@ -926,15 +944,19 @@
       ;;   [send-heartbeat-timeouts (id)
       ;;                            (send-heartbeat m next-index replicated-log config)
       ;;                            (goto (Leader m next-index match-index replicated-log config))]
-        ))
-    (spawn RaftActor))))
+                            ))
+;; TODO: think of a way to not have to give concrete addresses here
+    (spawn RaftActor (addr 2) (addr 3)))))
 
 ;; TODO: write a test that checks the Raft program's grammar (later: and type-checks it)
 
 ;; 2. Desugar that into the actor definition the verifier needs/translate it into the structural
 ;; version, using arbitrary addresses for each initial output address
-(define desugared-raft-actor (desugar-single-actor-program raft-actor-surface-prog single-agent-concrete-addr))
+(define desugared-raft-program (desugar-single-actor-program raft-actor-surface-prog))
+(define desugared-raft-actor
+  (single-agent-prog->config desugared-raft-program single-agent-concrete-addr))
 
+(check-not-false (redex-match csa-eval e desugared-raft-program))
 (check-not-false (redex-match csa-eval αn desugared-raft-actor))
 (check-not-false (redex-match aps-eval z raft-spec))
 
