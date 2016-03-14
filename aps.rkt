@@ -6,7 +6,8 @@
          aps-eval
          subst-n/aps
          subst/aps
-         aps-valid-instance?)
+         aps-valid-instance?
+         instance-observable-addresses)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; APS
@@ -14,6 +15,9 @@
 (require
  redex/reduction-semantics
  "csa.rkt")
+
+(module+ test
+  (require rackunit))
 
 (define-extended-language aps
   csa-eval
@@ -83,3 +87,21 @@
 
 (define (aps-valid-instance? i)
   (if (redex-match aps-eval z i) #t #f))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Misc.
+
+(define (instance-observable-addresses spec-instance)
+  (term (instance-observable-addresses/mf ,spec-instance)))
+
+(define-metafunction aps-eval
+  instance-observable-addresses/mf : z -> (a ...)
+  [(instance-observable-addresses/mf (_ (goto s a ...) _))
+   (a ...)])
+
+(module+ test
+  (check-equal?
+   (instance-observable-addresses (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
+                                         (goto Always (addr 3) (addr 4))
+                                         (addr 1))))
+   (term ((addr 3) (addr 4)))))

@@ -65,7 +65,7 @@ Remaining big challenges I see in the analysis:
     ;; message generation
     (define initial-tuple
       ;; TODO: get the max depth from somewhere
-      (list (α-config initial-prog-config 10)
+      (list (α-config initial-prog-config (instance-observable-addresses initial-spec-instance) 10)
             (aps#-α-z initial-spec-instance)
             init-obs-type
             init-unobs-type))
@@ -267,17 +267,23 @@ Remaining big challenges I see in the analysis:
          [* -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
       (goto Always ,static-response-address)
       ,single-agent-concrete-addr)))
+  (define ignore-all-with-addr-spec-instance
+    (term
+     (((define-state (Always response-dest) [* -> (goto Always)]))
+      (goto Always ,static-response-address)
+      ,single-agent-concrete-addr)))
 
   (check-not-false (redex-match csa-eval αn static-response-agent))
   (check-not-false (redex-match csa-eval αn static-double-response-agent))
   (check-not-false (redex-match aps-eval z static-response-spec))
+  (check-not-false (redex-match aps-eval z ignore-all-with-addr-spec-instance))
 
   (check-true (analyze (make-single-agent-config static-response-agent)
                        static-response-spec
                        (term Nat) (term (Union))
                        (hash 'Always 'Always)))
   (check-false (analyze (make-single-agent-config static-response-agent)
-                        ignore-all-spec-instance
+                        ignore-all-with-addr-spec-instance
                         (term Nat) (term (Union))
                         (hash 'Always 'Always)))
   (check-false (analyze (make-single-agent-config static-double-response-agent)

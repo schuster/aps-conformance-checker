@@ -562,71 +562,79 @@
 
 ;; TODO: test these functions
 
-(define (α-config concrete-config max-depth)
-  (term (α-config/mf ,concrete-config ,max-depth)))
+(define (α-config concrete-config spec-initial-observables max-depth)
+  (term (α-config/mf ,concrete-config ,spec-initial-observables ,max-depth)))
 
 ;; NOTE: currently only supports single-actor, no-externals configs
 (define-metafunction csa#
-  α-config/mf : K natural -> K#
+  α-config/mf : K (a ...) natural -> K#
   [(α-config/mf ((αn) ; actors
                  () ; messages-in-transit
                  ((addr 0)) ; receptionists
                  () ; externals
                  )
+                (a ...)
                 natural_depth)
    ((α#n) () (SINGLE-ACTOR-ADDR) ())
-   (where α#n (α-actor αn natural_depth))])
+   (where α#n (α-actor αn (a ...) natural_depth))])
 
 ;; NOTE: currently assumes address 0
 (define-metafunction csa#
-  α-actor : αn natural_depth -> α#n
-  [(α-actor ((addr 0) ((S ...) e)) natural_depth)
-   (SINGLE-ACTOR-ADDR (((α-S S natural_depth) ...) (α-e e natural_depth)))])
+  α-actor : αn (a ...) natural_depth -> α#n
+  [(α-actor ((addr 0) ((S ...) e)) (a ...) natural_depth)
+   (SINGLE-ACTOR-ADDR (((α-S S (a ...) natural_depth) ...) (α-e e (a ...) natural_depth)))])
 
 ;; NOTE: does not support timeouts yet
 (define-metafunction csa#
-  α-S : S natural_depth -> S#
-  [(α-S (define-state (s [x τ] ...) (x_m)  e) natural_depth)
-   (define-state (s [x τ] ...) (x_m) (α-e e natural_depth))])
+  α-S : S (a ...) natural_depth -> S#
+  [(α-S (define-state (s [x τ] ...) (x_m) e) (a ...) natural_depth)
+   (define-state (s [x τ] ...) (x_m) (α-e e (a ...) natural_depth))])
 
 ;; NOTE: does not yet support abstraction for addresses or spawns
 (define-metafunction csa#
-  α-e : e natural_depth -> e#
-  [(α-e natural _) (* Nat)]
-  [(α-e string _) (* String)]
-  [(α-e x _) x]
+  α-e : e (a ...) natural_depth -> e#
+  [(α-e natural _ _) (* Nat)]
+  [(α-e string _ _) (* String)]
+  [(α-e x _ _) x]
   ;; TODO: is there any way this will ever be used for anything but the initial addresses?
-  [(α-e (addr natural) _) (init-addr natural)]
-  [(α-e (goto s e ...) natural_depth) (goto s (α-e e natural_depth) ...)]
-  [(α-e (begin e ...) natural_depth) (begin (α-e e natural_depth) ...)]
-  [(α-e (send e_1 e_2) natural_depth)
-   (send (α-e e_1 natural_depth) (α-e e_2 natural_depth))]
-  [(α-e (let ([x e_binding] ...) e_body) natural)
-   (let ([x (α-e e_binding natural)] ...) (α-e e_body natural))]
-  [(α-e (case e_val [(t x ...) e_clause] ...) natural_depth)
-   (case (α-e e_val natural_depth) [(t x ...) (α-e e_clause natural_depth)] ...)]
-  [(α-e (primop e ...) natural_depth) (primop (α-e e natural_depth) ...)]
+  ;; TODO: deal with the self-address here
+  [(α-e (addr natural) (_ ... (addr natural) _ ...) _) (init-addr natural)]
+  [(α-e a _ _) (* (Addr Nat))] ; TODO: fill in the real type here
+  [(α-e (goto s e ...) (a ...) natural_depth) (goto s (α-e e (a ...) natural_depth) ...)]
+  [(α-e (begin e ...) (a ...) natural_depth) (begin (α-e e (a ...) natural_depth) ...)]
+  [(α-e (send e_1 e_2) (a ...) natural_depth)
+   (send (α-e e_1 (a ...) natural_depth) (α-e e_2 (a ...) natural_depth))]
+  [(α-e (let ([x e_binding] ...) e_body) (a ...) natural)
+   (let ([x (α-e e_binding (a ...) natural)] ...) (α-e e_body (a ...) natural))]
+  [(α-e (case e_val [(t x ...) e_clause] ...) (a ...) natural_depth)
+   (case (α-e e_val (a ...) natural_depth) [(t x ...) (α-e e_clause (a ...) natural_depth)] ...)]
+  [(α-e (primop e ...) (a ...) natural_depth) (primop (α-e e (a ...) natural_depth) ...)]
   ;; TODO: do something much better here - figure out how to limit the depth
   ;; [(α-e (tuple e ...) 0)
   ;;  ;; TODO: give the actual type here
   ;;  (* (Tuple))]
   ;; TODO: check for the depth=0 case on variants
-  [(α-e (variant t e ...) natural_depth)
+  [(α-e (variant t e ...) (a ...) natural_depth)
    ;; TODO: take out the "max" issue here
-   (variant t (α-e e ,(max 0 (- (term natural_depth) 1))) ...)]
+   (variant t (α-e e (a ...) ,(max 0 (- (term natural_depth) 1))) ...)]
   ;; TODO: check for the depth=0 case on records
-  [(α-e (record [l e] ...) natural_depth)
+  [(α-e (record [l e] ...) (a ...) natural_depth)
    ;; TODO: take out the "max" issue here
-   (record [l (α-e e ,(max 0 (sub1 (term natural_depth))))] ...)]
-  [(α-e (: e l) natural_depth) (: (α-e e natural_depth) l)]
-  [(α-e (! e_1 [l e_2]) natural_depth) (! (α-e e_1 natural_depth) [l (α-e e_2 natural_depth)])])
+   (record [l (α-e e (a ...) ,(max 0 (sub1 (term natural_depth))))] ...)]
+  [(α-e (: e l) (a ...) natural_depth) (: (α-e e (a ...) natural_depth) l)]
+  [(α-e (! e_1 [l e_2]) (a ...) natural_depth)
+   (! (α-e e_1 (a ...) natural_depth) [l (α-e e_2 (a ...) natural_depth)])])
 
 ;; TODO: write tests for the variant/record case, because the crappy version I have here isn't good
 ;; enough
 
 (module+ test
-  (check-equal? (term (α-e (record [f1 1] [f2 2]) 1))
-                (term (record [f1 (* Nat)] [f2 (* Nat)]))))
+  (check-equal? (term (α-e (record [f1 1] [f2 2]) () 1))
+                (term (record [f1 (* Nat)] [f2 (* Nat)])))
+  (check-not-false
+   (redex-match? csa#
+                 (variant Foo (init-addr 1) (* (Addr τ)))
+                 (term (α-e (variant Foo (addr 1) (addr 2)) ((addr 1)) 10)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
