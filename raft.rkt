@@ -20,10 +20,16 @@
        [unobs -> (goto Running)]
        [(variant PeerMessage *) -> (goto Init)])
      (define-state (Running)
-       ;; [(RequestVote * candidate * *) -> ]
-       ;; [(VoteCandidate * *) -> ???]
-       ;; [(DeclineCandidate * *) -> ???]
-       ;; [(AppendEntries * * * * * leader *) -> ???]
+       ;; TODO: consider removing the "PeerMessage" part of the type, just to make things more
+       ;; concise, esp. for sending back *out*
+       ;;
+       ;; [(variant PeerMessage (variant RequestVote * candidate * *)) -> ]
+       [(variant PeerMessage (variant VoteCandidate * *)) -> (goto Running)]
+       [(variant PeerMessage (variant DeclineCandidate * *)) -> (goto Running)]
+       ;; [(variant PeerMessage (variant AppendEntries * * * * * leader *)) ->
+       ;;  (with-outputs ([leader (variant PeerMessage (or (variant AppendRejected * * *)
+       ;;                                                  (variant AppendSuccessful * * *)))])
+       ;;    (goto Running))]
        [(variant PeerMessage (variant AppendRejected * * *)) -> (goto Running)]
        [(variant PeerMessage (variant AppendSuccessful * * *)) -> (goto Running)]))
     ;; TODO: switch the order of the init exp and the states
@@ -94,14 +100,15 @@
   ;;  ;; [candidate (Addr RaftMessage)]
   ;;  [last-log-term Nat]
   ;;  [last-log-index Nat])
-  ;; (VoteCandidate
-  ;;  [term Nat]
-  ;;  ;; [follower (Addr RaftMessage)]
-  ;;  )
-  ;; (DeclineCandidate
-  ;;  [term Nat]
-  ;;  ;; [follower (Addr RaftMessage)]
-  ;;  )
+  (VoteCandidate
+   [term Nat]
+   ;; TODO:
+   [follower (Addr Nat ;; RaftMessage
+                   )])
+  (DeclineCandidate
+   [term Nat]
+   [follower (Addr Nat ;; TODO: RaftMessage
+                   )])
   (AppendEntries
    [term Nat]
    [prev-log-term Nat]
@@ -132,7 +139,8 @@
 
 (define-variant RaftActorMessage
   (Config [config ClusterConfiguration])
-  (PeerMessage [m RaftMessage]))
+  (PeerMessage [m RaftMessage])
+  (ElectedAsLeader))
 
 (define-variant MaybePeer
   (NoPeer)
@@ -260,8 +268,8 @@
     (send timer (SetTimer election-timer-name target next-id deadline false))
     (! m [last-used-timeout-id next-id])))
 
-;; (define-function (cancel-election-deadline [timer (Addr TimerMessage)])
-;;   (send timer (CancelTimer election-timer-name)))
+(define-function (cancel-election-deadline [timer (Addr TimerMessage)])
+  (send timer (CancelTimer election-timer-name)))
 
 ;; ;; Because this language does not have traits, I separate forNewElection into two functions
 ;; (define-function (for-new-election/follower [m StateMetadata])
@@ -288,16 +296,19 @@
 ;;             ([member (: config members)])
 ;;     (if (not (= member self)) (cons member result) result)))
 
-;; (define-function (inc-vote [m ElectionMeta] [follower (Addr RaftMessage)])
-;;   (! m [votes-received (hash-set (: m votes-received) follower true)]))
+(define-function (inc-vote [m ElectionMeta] [follower (Addr RaftMessage)])
+  (! m [votes-received (hash-set (: m votes-received) follower true)]))
 
-;; (define-function (has-majority [m ElectionMeta] [config ClusterConfiguration])
-;;   ;; TODO: figure out what the type for division is here (or maybe rewrite to not use division)
-;;   (let ([total-votes-received
-;;          (for/fold ([total 0])
-;;                    ([member (: config members)])
-;;            (+ total (if (hash-has-key? (: m votes-received) member) 1 0)))])
-;;     (> total-votes-received (/ (length (: config members)) 2))))
+(define-function (has-majority [m ElectionMeta] [config ClusterConfiguration])
+  ;; TODO: figure out what the type for division is here (or maybe rewrite to not use division)
+  (let ([total-votes-received
+         ;; TODO:
+         ;; (for/fold ([total 0])
+         ;;           ([member (: config members)])
+         ;;   (+ total (if (hash-has-key? (: m votes-received) member) 1 0)))
+         0 ;; TODO: remove this line
+         ])
+    (> total-votes-received (/ (length (: config members)) 2))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Replicated log
@@ -768,10 +779,10 @@
                          ;;                   (send candidate (DeclineCandidate (: metadata current-term) peer-messages))
                          ;;                   ;; TODO: change this to goto-this-state, once I reimplement/find that
                          ;;                   (goto Follower recently-contacted-by-leader metadata replicated-log config))])]
-                         ;; [(VoteCandidate t f)
-                         ;;                (goto Follower recently-contacted-by-leader metadata replicated-log config)]
-                         ;; [(DeclineCandidate t f)
-                         ;;                   (goto Follower recently-contacted-by-leader metadata replicated-log config)]
+                         [(VoteCandidate t f)
+                                        (goto Follower recently-contacted-by-leader metadata replicated-log config)]
+                         [(DeclineCandidate t f)
+                                           (goto Follower recently-contacted-by-leader metadata replicated-log config)]
                          ;; [(AppendEntries term prev-term prev-index entries leader-commit-id leader leader-client)
                          ;;                (let ([recently-contacted-by-leader (JustLeader leader-client)])
                          ;;                  (append-entries term
@@ -823,20 +834,21 @@
                          ;;                 (let ([m (! m [current-term (max term (: m current-term))])])
                          ;;                   (send candidate (DeclineCandidate (: m current-term) peer-messages))
                          ;;                   (goto Candidate m replicated-log config))])]
-                         ;; [(VoteCandidate term follower)
-                         ;;                (cond
-                         ;;                  [(= term (: m current-term))
-                         ;;                   (let ([including-this-vote (inc-vote m follower)])
-                         ;;                     (cond
-                         ;;                       [(has-majority including-this-vote config)
-                         ;;                        (send elected-as-leader)
-                         ;;                        (cancel-election-deadline timer-manager)
-                         ;;                        ;; NOTE: have to just make up fake temporary values for the log index maps, for now
-                         ;;                        (goto Leader (for-leader m) (hash) (hash) replicated-log config)]
-                         ;;                       [else
-                         ;;                        (goto Candidate including-this-vote replicated-log config)]))]
-                         ;;                  [else (goto Candidate m replicated-log config)])]
-                         ;; [(DeclineCandidate term server) (goto Candidate m replicated-log config)]
+                         [(VoteCandidate term follower)
+                                        (cond
+                                          [(= term (: m current-term))
+                                           (let ([including-this-vote (inc-vote m follower)])
+                                             (cond
+                                               [(has-majority including-this-vote config)
+                                                ;; TODO:
+                                                ;; (send self (ElectedAsLeader))
+                                                (cancel-election-deadline timer-manager)
+                                                ;; NOTE: have to just make up fake temporary values for the log index maps, for now
+                                                (goto Leader (for-leader m) (hash) (hash) replicated-log config)]
+                                               [else
+                                                (goto Candidate including-this-vote replicated-log config)]))]
+                                          [else (goto Candidate m replicated-log config)])]
+                         [(DeclineCandidate term server) (goto Candidate m replicated-log config)]
                          ;; [(AppendEntries term
                          ;;                 prev-log-term
                          ;;                 prev-log-index
@@ -915,8 +927,8 @@
                          ;;                [else
                          ;;                 (send candidate (DeclineCandidate (: m current-term) peer-messages))
                          ;;                 (goto Leader m next-index match-index replicated-log config)])]
-                         ;; [(VoteCandidate t s) (goto Leader m next-index match-index replicated-log config)]
-                         ;; [(DeclineCandidate t s) (goto Leader m next-index match-index replicated-log config)]
+                         [(VoteCandidate t s) (goto Leader m next-index match-index replicated-log config)]
+                         [(DeclineCandidate t s) (goto Leader m next-index match-index replicated-log config)]
                          ;; [(AppendEntries term
                          ;;                 prev-log-term
                          ;;                 prev-log-index
@@ -992,6 +1004,8 @@
 
 (define desugared-raft-message-type
   `(Union
+    (VoteCandidate Nat (Addr Nat))
+    (DeclineCandidate Nat (Addr Nat)) ;; TODO: add the minfixpt here
     (AppendRejected Nat Nat (Addr Nat)) ; TODO: add the minfixpt here
     (AppendSuccessful Nat Nat (Addr Nat)))   ; TODO: add the minfixpt here
   )
