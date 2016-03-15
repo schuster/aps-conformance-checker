@@ -358,9 +358,11 @@
                                   (((in-hole E# (goto s v#_param ...)) ([a#ext v#_out] ...)) ...)
                                   non-abstraction-stuck-results)
                (error 'csa#-eval-transition
-                      "Abstract evaluation did not complete\nInitial config: ~s\nFinal configs:~s"
+                      "Abstract evaluation did not complete\nInitial config: ~s\nFinal stuck configs:~s"
                       initial-config
-                      non-abstraction-stuck-results))
+                      (filter (lambda (c)
+                                (not (redex-match csa# ((in-hole E# (goto s v#_param ...)) ([a#ext v#_out] ...)) c)))
+                              non-abstraction-stuck-results)))
              non-abstraction-stuck-results))
 
 ;; Returns true if the config is one that is unable to step because of an over-approximation in the
