@@ -23,7 +23,10 @@
        ;; TODO: consider removing the "PeerMessage" part of the type, just to make things more
        ;; concise, esp. for sending back *out*
        ;;
-       ;; [(variant PeerMessage (variant RequestVote * candidate * *)) -> ]
+       [(variant PeerMessage (variant RequestVote * candidate * *)) ->
+        (with-outputs ([candidate (variant PeerMessage (or (variant VoteCandidate * *)
+                                                           (variant DeclineCandidate * *)))])
+          (goto Running))]
        [(variant PeerMessage (variant VoteCandidate * *)) -> (goto Running)]
        [(variant PeerMessage (variant DeclineCandidate * *)) -> (goto Running)]
        ;; [(variant PeerMessage (variant AppendEntries * * * * * leader *)) ->
@@ -41,6 +44,7 @@
   (term
    ((define-type Unit (Record))
     (define-type Duration Nat) ; number of seconds
+    ;; TODO: move these into the core language
     (define-variant Boolean (True) (False))
     ;; TODO: use these constants
     (define-constant true (variant True))
@@ -49,24 +53,33 @@
     (define-type Int Nat)
 
     ;; ---------------------------------------------------------------------------------------------------
-    ;; Fake Vector, List, and Hash Definitions
+    ;; Standard Library Functions and Other Definitions
+
+    (define-function (max [a Nat] [b Nat])
+      (if (> a b) a b))
+    (define-function (min [a Nat] [b Nat])
+      (if (< a b) a b))
 
     (define-variant MaybeHashResult
       (Nothing)
-      (Just [val Nat]))
-    (define-constant null (variant Null))
-    (define-function (list-ref [l Nat] [index Nat]) 0)
-    (define-function (vector) (variant DummyVector))
-    (define-function (vector-slice [v Nat] [start-index Nat] [end-index Nat]) (vector))
-    (define-function (hash) (variant DummyHash))
-    (define-function (hash-set [hash (Hash Nat Nat)] [key Nat] [value Nat]) (variant DummyHash))
-    (define-function (hash-ref [hash (Hash Nat Nat)] [key Nat]) (Nothing))
+      (Just [val Nat])) ; TODO: come up with an accurate type
+
+    ;; ---------------------------------------------------------------------------------------------------
+    ;; Vector and list helpers
+
+    ;; Works like Scala's list slice (i.e. returns empty list instead of returning errors)
+    ;; TODO: give an accurate type here
+    (define-function (vector-slice [v (Vectorof Nat)] [from-index Int] [to-index Int])
+      (vector-copy v
+                   (min from-index (vector-length v))
+                   (min to-index   (vector-length v))))
 
     ;; ---------------------------------------------------------------------------------------------------
 
     (define-record ClusterConfiguration
       ;; TODO:
-      [members Nat ;; (Listof (Addr RaftMessage))
+      [members (Listof (Addr Nat ;; RaftMessage
+                             ))
                ]
       ;; ignoring other config fields for now, since I'm not implementing configuration changes
       )
@@ -94,12 +107,12 @@
   [client (Addr String)])
 
 (define-variant RaftMessage
-  ;; (RequestVote
-  ;;  [term Nat]
-  ;;  ;; TODO: allow for fixpoint types
-  ;;  ;; [candidate (Addr RaftMessage)]
-  ;;  [last-log-term Nat]
-  ;;  [last-log-index Nat])
+  (RequestVote
+   [term Nat]
+   [candidate (Addr Nat ;; TODO: RaftMessage
+                    )]
+   [last-log-term Nat]
+   [last-log-index Nat])
   (VoteCandidate
    [term Nat]
    ;; TODO:
@@ -113,8 +126,7 @@
    [term Nat]
    [prev-log-term Nat]
    [prev-log-index Nat]
-   [entries Nat ; TODO: (Vectorof Entry)
-            ]
+   [entries (Vectorof Entry)]
    [leader-commit-id Nat]
    [leader (Addr Nat ; TODO: RaftMessage
                  )]
@@ -134,8 +146,7 @@
    [last-index Nat]
    ;; TODO:
    [member (Addr Nat ;; RaftMessage
-                 )]
-   ))
+                 )]))
 
 (define-variant RaftActorMessage
   (Config [config ClusterConfiguration])
@@ -174,141 +185,6 @@
   [committed-index Int])
 
     ;;;; Program-level Functions
-    ;; ---------------------------------------------------------------------------------------------------
-;; State metadata helpers
-
-;; (define-function (grant-vote?/follower [metadata StateMetadata]
-;;                               [log ReplicatedLog]
-;;                               [term Nat]
-;;                               [candidate (Addr RaftMessage)]
-;;                               [last-log-term Nat]
-;;                               [last-log-index Nat])
-;;   (and (>= term (: metadata current-term))
-;;        (candidate-at-least-as-up-to-date? log last-log-term last-log-index)
-;;        (case (hash-ref (: metadata votes) term)
-;;          [(Nothing) true]
-;;          [(Just c) (= candidate c)])))
-
-;; (define-function (grant-vote?/candidate [metadata StateMetadata]
-;;                                [log ReplicatedLog]
-;;                                [term Nat]
-;;                                [candidate (Addr RaftMessage)]
-;;                                [last-log-term Nat]
-;;                                [last-log-index Nat])
-;;   (and (>= term (: metadata current-term))
-;;        (candidate-at-least-as-up-to-date? log last-log-term last-log-index)
-;;        (case (hash-ref (: metadata votes) term)
-;;          [(Nothing) true]
-;;          [(Just c) (= candidate c)])))
-
-;; (define-function (grant-vote?/leader [metadata StateMetadata]
-;;                             [log ReplicatedLog]
-;;                             [term Nat]
-;;                             [candidate (Addr RaftMessage)]
-;;                             [last-log-term Nat]
-;;                             [last-log-index Nat])
-;;   (and (>= term (: metadata current-term))
-;;        (candidate-at-least-as-up-to-date? log last-log-term last-log-index)))
-
-;; (define-function (candidate-at-least-as-up-to-date? [log ReplicatedLog]
-;;                                            [candidate-log-term Nat]
-;;                                            [candidate-log-index Nat])
-;;   (let ([my-last-log-term (replicated-log-last-term log)])
-;;     (or (> candidate-log-term my-last-log-term)
-;;         (and (= candidate-log-term my-last-log-term)
-;;              (>= candidate-log-index (replicated-log-last-index log))))))
-
-;; (define-function (with-vote [metadata StateMetadata] [term Nat] [candidate (Addr RaftMessage)])
-;;   (! metadata [votes (hash-set (: metadata votes) term candidate)]))
-
-(define-function (initial-metadata)
-  (StateMetadata 0 (hash) 0))
-
-(define-function (for-follower/candidate [metadata ElectionMeta])
-  (StateMetadata (: metadata current-term) (hash) (: metadata last-used-timeout-id)))
-
-(define-function (for-follower/leader [metadata LeaderMeta])
-  (StateMetadata (: metadata current-term) (hash) (: metadata last-used-timeout-id)))
-
-(define-function (for-leader [metadata ElectionMeta])
-  (LeaderMeta (: metadata current-term) (: metadata last-used-timeout-id)))
-
-;; ---------------------------------------------------------------------------------------------------
-;; Election
-
-;; ;; All times are in milliseconds
-;; TODO: define these as constants in the program
-(define-constant election-timeout-min 0)
-(define-constant election-timeout-max 100)
-(define-constant election-timer-name "ElectionTimer")
-
-;; ;; Resets the timer for the election deadline and returns the metadata with the new expected next
-;; ;; timeout ID
-(define-function (reset-election-deadline/follower [timer (Addr TimerMessage)]
-                                                   [target (Addr Nat)]
-                                                   [m StateMetadata])
-  (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
-        [next-id (+ 1 (: m last-used-timeout-id))])
-    (send timer (SetTimer election-timer-name target next-id deadline false))
-    (! m [last-used-timeout-id next-id])))
-
-(define-function (reset-election-deadline/candidate [timer (Addr TimerMessage)]
-                                           [target (Addr Nat)]
-                                           [m ElectionMeta])
-  (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
-        [next-id (+ 1 (: m last-used-timeout-id))])
-    (send timer (SetTimer election-timer-name target next-id deadline false))
-    (! m [last-used-timeout-id next-id])))
-
-(define-function (reset-election-deadline/leader [timer (Addr TimerMessage)]
-                                        [target (Addr Nat)]
-                                        [m LeaderMeta])
-  (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
-        [next-id (+ 1 (: m last-used-timeout-id))])
-    (send timer (SetTimer election-timer-name target next-id deadline false))
-    (! m [last-used-timeout-id next-id])))
-
-(define-function (cancel-election-deadline [timer (Addr TimerMessage)])
-  (send timer (CancelTimer election-timer-name)))
-
-;; ;; Because this language does not have traits, I separate forNewElection into two functions
-;; (define-function (for-new-election/follower [m StateMetadata])
-;;   (ElectionMeta (next (: m current-term)) (hash) (: m votes) (: m last-used-timeout-id)))
-
-;; (define-function (for-new-election/candidate [m StateMetadata])
-;;   (ElectionMeta (next (: m current-term)) (hash) (: m votes) (: m last-used-timeout-id)))
-
-;; ;; this effectively duplicates the logic of withVote, but it follows the akka-raft code
-;; (define-function (with-vote-for [m ElectionMeta] [term Nat] [candidate (Addr RaftMessage)])
-;;   (! m [votes (hash-set (: m votes) term candidate)]))
-
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Terms
-
-;; (define-function (next [term Nat])
-;;   (+ 1 term))
-
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Config helpers
-
-;; (define-function (members-except-self [config ClusterConfiguration] [self (Addr RaftMessage)])
-;;   (for/fold ([result null])
-;;             ([member (: config members)])
-;;     (if (not (= member self)) (cons member result) result)))
-
-(define-function (inc-vote [m ElectionMeta] [follower (Addr RaftMessage)])
-  (! m [votes-received (hash-set (: m votes-received) follower true)]))
-
-(define-function (has-majority [m ElectionMeta] [config ClusterConfiguration])
-  ;; TODO: figure out what the type for division is here (or maybe rewrite to not use division)
-  (let ([total-votes-received
-         ;; TODO:
-         ;; (for/fold ([total 0])
-         ;;           ([member (: config members)])
-         ;;   (+ total (if (hash-has-key? (: m votes-received) member) 1 0)))
-         0 ;; TODO: remove this line
-         ])
-    (> total-votes-received (/ (length (: config members)) 2))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Replicated log
@@ -335,17 +211,17 @@
         [vector-to-index   (- to-index   1)])
       (vector-slice (: replicated-log entries) (+ 1 vector-from-index) (+ 1 vector-to-index))))
 
-;; (define-function (replicated-log-last-index [replicated-log ReplicatedLog])
-;;   (let ([entries (: replicated-log entries)])
-;;     (cond
-;;       [(= 0 (vector-length entries)) 0]
-;;       [else (: (vector-ref entries (- (vector-length entries) 1)) index)])))
+(define-function (replicated-log-last-index [replicated-log ReplicatedLog])
+  (let ([entries (: replicated-log entries)])
+    (cond
+      [(= 0 (vector-length entries)) 0]
+      [else (: (vector-ref entries (- (vector-length entries) 1)) index)])))
 
-;; (define-function (replicated-log-last-term [replicated-log ReplicatedLog])
-;;   (let ([entries (: replicated-log entries)])
-;;     (cond
-;;       [(= 0 (vector-length entries)) 0]
-;;       [else (: (vector-ref entries (- (vector-length entries) 1)) term)])))
+(define-function (replicated-log-last-term [replicated-log ReplicatedLog])
+  (let ([entries (: replicated-log entries)])
+    (cond
+      [(= 0 (vector-length entries)) 0]
+      [else (: (vector-ref entries (- (vector-length entries) 1)) term)])))
 
 ;; ;; NOTE: this differs from the akka-raft version, which is broken
 ;; (define-function (replicated-log-next-index [replicated-log ReplicatedLog])
@@ -421,6 +297,143 @@
 (define-function (entry-prev-index [entry Entry])
   (- (: entry index) 1))
 
+;; ---------------------------------------------------------------------------------------------------
+;; State metadata helpers
+
+(define-function (candidate-at-least-as-up-to-date? [log ReplicatedLog]
+                                           [candidate-log-term Nat]
+                                           [candidate-log-index Nat])
+  (let ([my-last-log-term (replicated-log-last-term log)])
+    (or (> candidate-log-term my-last-log-term)
+        (and (= candidate-log-term my-last-log-term)
+             (>= candidate-log-index (replicated-log-last-index log))))))
+
+
+(define-function (grant-vote?/follower [metadata StateMetadata]
+                              [log ReplicatedLog]
+                              [term Nat]
+                              [candidate (Addr RaftMessage)]
+                              [last-log-term Nat]
+                              [last-log-index Nat])
+  (and (>= term (: metadata current-term))
+       (candidate-at-least-as-up-to-date? log last-log-term last-log-index)
+       (case (hash-ref (: metadata votes) term)
+         [(Nothing) true]
+         [(Just c) (= candidate c)])))
+
+(define-function (grant-vote?/candidate [metadata StateMetadata]
+                               [log ReplicatedLog]
+                               [term Nat]
+                               [candidate (Addr RaftMessage)]
+                               [last-log-term Nat]
+                               [last-log-index Nat])
+  (and (>= term (: metadata current-term))
+       (candidate-at-least-as-up-to-date? log last-log-term last-log-index)
+       (case (hash-ref (: metadata votes) term)
+         [(Nothing) true]
+         [(Just c) (= candidate c)])))
+
+(define-function (grant-vote?/leader [metadata StateMetadata]
+                            [log ReplicatedLog]
+                            [term Nat]
+                            [candidate (Addr RaftMessage)]
+                            [last-log-term Nat]
+                            [last-log-index Nat])
+  (and (>= term (: metadata current-term))
+       (candidate-at-least-as-up-to-date? log last-log-term last-log-index)))
+
+(define-function (with-vote [metadata StateMetadata] [term Nat] [candidate (Addr RaftMessage)])
+  (! metadata [votes (hash-set (: metadata votes) term candidate)]))
+
+(define-function (initial-metadata)
+  (StateMetadata 0 (hash) 0))
+
+(define-function (for-follower/candidate [metadata ElectionMeta])
+  (StateMetadata (: metadata current-term) (hash) (: metadata last-used-timeout-id)))
+
+(define-function (for-follower/leader [metadata LeaderMeta])
+  (StateMetadata (: metadata current-term) (hash) (: metadata last-used-timeout-id)))
+
+(define-function (for-leader [metadata ElectionMeta])
+  (LeaderMeta (: metadata current-term) (: metadata last-used-timeout-id)))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Election
+
+;; ;; All times are in milliseconds
+;; TODO: define these as constants in the program
+(define-constant election-timeout-min 0)
+(define-constant election-timeout-max 100)
+(define-constant election-timer-name "ElectionTimer")
+
+;; ;; Resets the timer for the election deadline and returns the metadata with the new expected next
+;; ;; timeout ID
+(define-function (reset-election-deadline/follower [timer (Addr TimerMessage)]
+                                                   [target (Addr Nat)]
+                                                   [m StateMetadata])
+  (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
+        [next-id (+ 1 (: m last-used-timeout-id))])
+    (send timer (SetTimer election-timer-name target next-id deadline false))
+    (! m [last-used-timeout-id next-id])))
+
+(define-function (reset-election-deadline/candidate [timer (Addr TimerMessage)]
+                                           [target (Addr Nat)]
+                                           [m ElectionMeta])
+  (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
+        [next-id (+ 1 (: m last-used-timeout-id))])
+    (send timer (SetTimer election-timer-name target next-id deadline false))
+    (! m [last-used-timeout-id next-id])))
+
+(define-function (reset-election-deadline/leader [timer (Addr TimerMessage)]
+                                        [target (Addr Nat)]
+                                        [m LeaderMeta])
+  (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
+        [next-id (+ 1 (: m last-used-timeout-id))])
+    (send timer (SetTimer election-timer-name target next-id deadline false))
+    (! m [last-used-timeout-id next-id])))
+
+(define-function (cancel-election-deadline [timer (Addr TimerMessage)])
+  (send timer (CancelTimer election-timer-name)))
+
+;; ;; Because this language does not have traits, I separate forNewElection into two functions
+;; (define-function (for-new-election/follower [m StateMetadata])
+;;   (ElectionMeta (next (: m current-term)) (hash) (: m votes) (: m last-used-timeout-id)))
+
+;; (define-function (for-new-election/candidate [m StateMetadata])
+;;   (ElectionMeta (next (: m current-term)) (hash) (: m votes) (: m last-used-timeout-id)))
+
+;; ;; this effectively duplicates the logic of withVote, but it follows the akka-raft code
+;; (define-function (with-vote-for [m ElectionMeta] [term Nat] [candidate (Addr RaftMessage)])
+;;   (! m [votes (hash-set (: m votes) term candidate)]))
+
+;; ;; ---------------------------------------------------------------------------------------------------
+;; ;; Terms
+
+;; (define-function (next [term Nat])
+;;   (+ 1 term))
+
+;; ;; ---------------------------------------------------------------------------------------------------
+;; ;; Config helpers
+
+;; (define-function (members-except-self [config ClusterConfiguration] [self (Addr RaftMessage)])
+;;   (for/fold ([result (list)])
+;;             ([member (: config members)])
+;;     (if (not (= member self)) (cons member result) result)))
+
+(define-function (inc-vote [m ElectionMeta] [follower (Addr RaftMessage)])
+  (! m [votes-received (hash-set (: m votes-received) follower true)]))
+
+(define-function (has-majority [m ElectionMeta] [config ClusterConfiguration])
+  ;; TODO: figure out what the type for division is here (or maybe rewrite to not use division)
+  (let ([total-votes-received
+         ;; TODO:
+         ;; (for/fold ([total 0])
+         ;;           ([member (: config members)])
+         ;;   (+ total (if (hash-has-key? (: m votes-received) member) 1 0)))
+         0 ;; TODO: remove this line
+         ])
+    (> total-votes-received (/ (length (: config members)) 2))))
+
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; LogIndexMap
 
@@ -459,9 +472,9 @@
 (define-function (log-index-map-consensus-for-index [map (Hash (Addr RaftMessage) Nat)]
                                                     [config ClusterConfiguration])
   (let ([all-indices
-         null ;; TODO: remove this line
+         (list) ;; TODO: remove this line
                      ;; TODO:
-         ;; (for/fold ([indices-so-far null])
+         ;; (for/fold ([indices-so-far (list)])
          ;;           ([member (: config members)])
          ;;   (case (hash-ref map member)
          ;;     [(Nothing) indices-so-far] ; NOTE: this should never happen
@@ -503,18 +516,6 @@
                            leader-commit-id
                            leader
                            leader-client)])))
-
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Vector and list helpers
-
-;; ;; Works like Scala's list slice (i.e. returns empty list instead of returning errors)
-;; (define-function (vector-slice [v (Vectorof Entries)] [from-index Int] [to-index Int])
-;;   (vector-copy v
-;;                (min from-index (vector-length v))
-;;                (min to-index   (vector-length v))))
-
-
-
 
 (define-actor RaftActorMessage (RaftActor [timer-manager (Addr TimerMessage)]
                                           [application (Addr String)])
@@ -764,21 +765,20 @@
       ;;                                     (goto Follower recently-contacted-by-leader metadata replicated-log config)])]
         [(PeerMessage m)
                        (case m
-                         ;; [(RequestVote term candidate last-term last-index)
-                         ;;              (cond
-                         ;;                [(grant-vote?/follower metadata replicated-log term candidate last-term last-index)
-                         ;;                 (send candidate (VoteCandidate term peer-messages))
-                         ;;                 ;; NOTE: akka-raft did not update the term here, which I think is a bug
-                         ;;                 (let ([metadata (reset-election-deadline/follower timer-manager timeouts metadata)])
-                         ;;                   (goto Follower recently-contacted-by-leader
-                         ;;                                         (! (with-vote metadata term candidate) [current-term term])
-                         ;;                                         replicated-log
-                         ;;                                         config))]
-                         ;;                [else
-                         ;;                 (let ([metadata (! metadata [current-term (max term (: metadata current-term))])])
-                         ;;                   (send candidate (DeclineCandidate (: metadata current-term) peer-messages))
-                         ;;                   ;; TODO: change this to goto-this-state, once I reimplement/find that
-                         ;;                   (goto Follower recently-contacted-by-leader metadata replicated-log config))])]
+                         [(RequestVote term candidate last-term last-index)
+                                      (cond
+                                        [(grant-vote?/follower metadata replicated-log term candidate last-term last-index)
+                                         (send candidate (VoteCandidate term peer-messages))
+                                         ;; NOTE: akka-raft did not update the term here, which I think is a bug
+                                         (let ([metadata (reset-election-deadline/follower timer-manager timeouts metadata)])
+                                           (goto Follower recently-contacted-by-leader
+                                                                 (! (with-vote metadata term candidate) [current-term term])
+                                                                 replicated-log
+                                                                 config))]
+                                        [else
+                                         (let ([metadata (! metadata [current-term (max term (: metadata current-term))])])
+                                           (send candidate (DeclineCandidate (: metadata current-term) peer-messages))
+                                           (goto Follower recently-contacted-by-leader metadata replicated-log config))])]
                          [(VoteCandidate t f)
                                         (goto Follower recently-contacted-by-leader metadata replicated-log config)]
                          [(DeclineCandidate t f)
@@ -1004,6 +1004,10 @@
 
 (define desugared-raft-message-type
   `(Union
+    (RequestVote Nat
+                 (Addr Nat) ;; TODO: add the minfixpt here
+                 Nat
+                 Nat)
     (VoteCandidate Nat (Addr Nat))
     (DeclineCandidate Nat (Addr Nat)) ;; TODO: add the minfixpt here
     (AppendRejected Nat Nat (Addr Nat)) ; TODO: add the minfixpt here
