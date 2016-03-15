@@ -449,7 +449,7 @@
     ;; Primops
     (==> (primop (* Nat) (* Nat))
          (variant True)
-         (side-condition (member (term primop) (list '< '>)))
+         (side-condition (member (term primop) (list '< '<= '> '>= '=)))
          BinaryNumericPredicate1)
     (==> (primop (* Nat) (* Nat))
          (variant False)

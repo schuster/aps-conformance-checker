@@ -760,4 +760,62 @@ Remaining big challenges I see in the analysis:
   (check-false (analyze (make-single-agent-config static-double-response-let-agent)
                         static-response-spec
                         (term Nat) (term (Union))
-                        (hash 'Always 'Always))))
+                        (hash 'Always 'Always)))
+
+  ;; Check that = gives both results
+  (define equal-agent-wrong1
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (A [dest (Addr Nat)]) (m)
+          (begin
+            (send dest 0)
+            (case (= m 0)
+              [(True) (goto A dest)]
+              [(False) (goto B)])))
+        (define-state (B) (m) (goto B)))
+       (goto A ,static-response-address)))))
+  (define equal-agent-wrong2
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (A [dest (Addr Nat)]) (m)
+          (begin
+            (send dest 0)
+            (case (= m 0)
+              [(True) (goto B)]
+              [(False) (goto A dest)])))
+        (define-state (B) (m) (goto B)))
+       (goto A ,static-response-address)))))
+    (define equal-agent
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (A [dest (Addr Nat)]) (m)
+          (begin
+            (send dest 0)
+            (case (= m 0)
+              [(True) (goto B dest)]
+              [(False) (goto A dest)])))
+        (define-state (B [dest (Addr Nat)]) (m)
+          (begin
+            (send dest 0)
+            (goto B dest))))
+       (goto A ,static-response-address)))))
+
+  (check-not-false (redex-match csa-eval αn equal-agent-wrong1))
+  (check-not-false (redex-match csa-eval αn equal-agent-wrong2))
+  (check-not-false (redex-match csa-eval αn equal-agent))
+
+  (check-false
+   (analyze (make-single-agent-config equal-agent-wrong1)
+            static-response-spec
+            (term Nat) (term (Union))
+            (hash 'A 'Always 'B 'Always)))
+  (check-false
+   (analyze (make-single-agent-config equal-agent-wrong2)
+            static-response-spec
+            (term Nat) (term (Union))
+            (hash 'A 'Always 'B 'Always)))
+  (check-true
+   (analyze (make-single-agent-config equal-agent)
+            static-response-spec
+            (term Nat) (term (Union))
+            (hash 'A 'Always 'B 'Always))))
