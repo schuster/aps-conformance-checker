@@ -38,7 +38,10 @@
      (primop e ...)
      string
      x
-     n)
+     n
+     (list e ...)
+     (vector e ...)
+     (hash))
   (S (define-state (s [x τ] ...) (x) e)
      (define-state (s [x τ] ...) (x) e [(timeout n) e]))
   (primop
@@ -55,10 +58,14 @@
    not
    random
    ceiling
+   list-ref
    length
-   sort-numbers-descending
    vector-length
-   vector-ref)
+   vector-ref
+   vector-copy
+   hash-ref
+   hash-set
+   sort-numbers-descending)
   ((x s t l) variable-not-otherwise-mentioned)
   (n natural)
   (τ Nat ; TODO: change this to Int or something
@@ -68,6 +75,7 @@
      (Union [t τ ...] ...)
      (Record [l τ] ...)
      (Addr τ)
+     (Listof τ)
      (Vectorof τ)
      (Hash τ τ))
   (X variable-not-otherwise-mentioned))
@@ -85,7 +93,14 @@
      a
      (rcv (x) e)
      (rcv (x) e [(timeout n) e]))
-  (v n (variant t v ...) (record [l v] ...) a string)
+  (v n
+     (variant t v ...)
+     (record [l v] ...)
+     a
+     string
+     (list v ...)
+     (vector v ...)
+     (hash [v v] ...))
   (a (addr natural))
   (A ((any_1 ... hole any_2 ...) μ ρ χ))
   (E hole
@@ -100,7 +115,9 @@
      (: E l)
      (! E [l e])
      (! v [l E])
-     (primop v ... E e ...)))
+     (primop v ... E e ...)
+     (list v ... E e ...)
+     (vector v ... E e ...)))
 
 (define (make-single-agent-config agent)
   (term (make-single-agent-config/mf ,agent)))
@@ -205,6 +222,9 @@
   [(subst (record [l e] ...) x v) (record [l (subst e x v)] ...)]
   [(subst (variant t e ...) x v) (variant t (subst e x v) ...)]
   [(subst (primop e ...) x v) (primop (subst e x v) ...)]
+  [(subst (list e ...) x v) (list (subst e x v) ...)]
+  [(subst (vector e ...) x v) (vector (subst e x v) ...)]
+  [(subst (hash) x v) (hash)]
   [(subst (rcv (x) e) x v) (rcv (x) e)]
   [(subst (rcv (x_h) e) x v) (rcv (x_h) (subst e x v))]
   [(subst (rcv (x) e [(timeout n) e_timeout]) x v) (rcv (x) e [(timeout n) e_timeout])]

@@ -40,11 +40,17 @@
   (v# a# ; TODO: replace this one with a special pattern
       (variant t v# ...)
       (record [l v#] ...)
-      (* τ))
+      (* τ)
+      (list v# ...)
+      (vector v# ...)
+      (hash v# ...))
   (v#template
    ADDR-HOLE
    (variant t v#template ...)
    (record [l v#template] ...)
+   (list v#template ...)
+   (vector v#template ...)
+   (hash v#template ...)
    (* τ))
   (e# (spawn τ e# S ...)
       (goto s e# ...)
@@ -58,6 +64,9 @@
       (: e# l)
       (! e# [l e#])
       (primop e# ...)
+      (list e# ...)
+      (vector e# ...)
+      (hash)
       a#
       x
       (* τ))
@@ -89,7 +98,9 @@
       (: E# l)
       (! E# [l e#])
       (! v# [l E#])
-      (primop v# ... E# e# ...)))
+      (primop v# ... E# e# ...)
+      (list v# ... E# e# ...)
+      (vector v# ... E# e# ...)))
 
   ;; (define-metafunction csa#
   ;;   abstract : K -> K#
@@ -339,12 +350,29 @@
              ;; (printf "Expression to be run: ~s\n" (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...)))
              (define initial-config (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...))))
              (define results (apply-reduction-relation* handler-step# initial-config))
-             (unless (redex-match csa# (((in-hole E# (goto s v#_param ...)) ([a#ext v#_out] ...)) ...) results)
+             (define non-abstraction-stuck-results
+               (filter (compose not stuck-abstraction-handler-config?) results))
+             (unless (redex-match csa#
+                                  (((in-hole E# (goto s v#_param ...)) ([a#ext v#_out] ...)) ...)
+                                  non-abstraction-stuck-results)
                (error 'csa#-eval-transition
                       "Abstract evaluation did not complete\nInitial config: ~s\nFinal configs:~s"
                       initial-config
-                      results))
-             results))
+                      non-abstraction-stuck-results))
+             non-abstraction-stuck-results))
+
+;; Returns true if the config is one that is unable to step because of an over-approximation in the
+;; abstraction
+(define (stuck-abstraction-handler-config? c)
+  (or (redex-match csa#
+                   ((in-hole E# (list-ref (list) v#)) ([a#ext v#_out] ...))
+                   c)
+      (redex-match csa#
+                   ((in-hole E# (vector-ref (vector) v#)) ([a#ext v#_out] ...))
+                   c)
+      (redex-match csa#
+                   ((in-hole E# (hash-ref (hash) v# v#_2)) ([a#ext v#_out] ...))
+                   c)))
 
 (define (inject/H# exp)
   (redex-let csa#
@@ -447,10 +475,61 @@
          (csa#-not (canonicalize-boolean v#))
          Not)
 
-    ;; TODO: use the actual list representation here
-    (==> (length v#)
+    ;; Vectors, Lists, and Hashes
+    ;; TODO: keep the elements in a canonical order, so that equivalent abstract values are equal?
+
+    (==> (list-ref (list _ ... v# _ ...) (* Nat))
+         v#
+         ListRef)
+    (==> (list-ref (* (Listof τ)) (* Nat))
+         (* τ)
+         WildcardListRef)
+    (==> (length (list v# ...))
          (* Nat)
-         Length)
+         ListLength)
+    (==> (length (* (Listof _)))
+         (* Nat)
+         WildcardListLength)
+    (==> (vector-ref (vector _ .... v# _ ...) (* Nat))
+         v#
+         VectorRef)
+    (==> (vector-ref (* (Vectorof τ)) (* Nat))
+         (* τ)
+         VectorWildcardRef)
+    (==> (vector-length (vector v# ...))
+         (* Nat)
+         VectorLength)
+    (==> (vector-length (* (VectorOf τ)))
+         (* Nat)
+         VectorWildcardLength)
+    (==> (vector-copy (vector v# ...) (* Nat) (* Nat))
+         (vector v# ...)
+         VectorCopy)
+    (==> (vector-copy (* (Vector τ)) (* Nat) (* Nat))
+         (* (Vector τ))
+         VectorWildcardCopy)
+    (==> (hash-ref (hash _ ... v# _ ...) v#_key)
+         (variant Just v#)
+         HashRefSuccess)
+    (==> (hash-ref (* Hash τ_1 τ_2) v#_key)
+         (variant Just (* τ_2))
+         HashWildcardRefSuccess)
+    (==> (hash-ref (hash _ ...) v#_key)
+         (variant Nothing)
+         HashRefFailure)
+    (==> (hash-ref (* Hash τ_1 τ_2) v#_key)
+         (variant Nothing)
+         HashWildcardRefFailure)
+    (==> (hash-set (hash v#_1 ... v#_value v#_2 ...) v#_key v#_value)
+         (hash-set (hash v#_1 ... v#_value v#_2 ...) v#_key v#_value)
+         HashSetExists)
+    (==> (hash-set (hash v#_current ...) v#_key v#_value)
+         (hash-set (hash v#_current ... v#_value))
+         (side-condition (not (member (term v#_value) (term (v#_current ...)))))
+         HashSetNewItem)
+    (==> (hash-set (* Hash τ_1 τ_2) v#_key v#_value)
+         (* Hash τ_1 τ_2)
+         HashWildcardSet)
 
     ;; TODO: make an actual implementation here (although this might be the real implementation once I
     ;; figure out the representation for lsits
@@ -458,21 +537,11 @@
          v#
          Sort)
 
-    ;; TODO: use the actual vector rep. here
-    (==> (vector-length v#)
-         (* Nat)
-         VectorLength)
-
-    ;; TODO: use the actual vector rep. here
-    (==> (vector-ref v# (* Nat))
-         (* Nat) ; TODO: return a vector element here
-         VectorRef)
+    ;; Communication
 
     (--> ((in-hole E# (send a# v#)) (any_outputs ...))
          ((in-hole E# v#)           (any_outputs ... [a# v#]))
          Send)
-
-    ;; TODO: let
 
     with
     [(--> ((in-hole E# old) ([a#ext v#] ...))
@@ -575,6 +644,9 @@
   [(csa#-subst (: e# l) x v#) (: (csa#-subst e# x v#) l)]
   [(csa#-subst (! e#_1 [l e#_2]) x v#)
    (! (csa#-subst e#_1 x v#) [l (csa#-subst e#_2 x v#)])]
+  [(csa#-subst (list e ...) x v#) (list (csa#-subst e x v#) ...)]
+  [(csa#-subst (vector e ...) x v#) (vector (csa#-subst e x v#) ...)]
+  [(csa#-subst (hash) x v#) (hash)]
   ;; [(csa#-subst (rcv (x) e) x v) (rcv (x) e)]
   ;; [(csa#-subst (rcv (x_h) e) x v) (rcv (x_h) (csa#-subst e x v))]
   ;; [(csa#-subst (rcv (x) e [(timeout n) e_timeout]) x v) (rcv (x) e [(timeout n) e_timeout])]
@@ -633,6 +705,9 @@
    (define-state (s [x τ] ...) (x_m) (α-e e (a ...) natural_depth))])
 
 ;; NOTE: does not yet support abstraction for addresses or spawns
+;;
+;; Abstracts the given expression to
+;; the given depth, using the given list of addresses as the addresses to leave observable
 (define-metafunction csa#
   α-e : e (a ...) natural_depth -> e#
   [(α-e natural _ _) (* Nat)]
@@ -665,7 +740,13 @@
    (record [l (α-e e (a ...) ,(max 0 (sub1 (term natural_depth))))] ...)]
   [(α-e (: e l) (a ...) natural_depth) (: (α-e e (a ...) natural_depth) l)]
   [(α-e (! e_1 [l e_2]) (a ...) natural_depth)
-   (! (α-e e_1 (a ...) natural_depth) [l (α-e e_2 (a ...) natural_depth)])])
+   (! (α-e e_1 (a ...) natural_depth) [l (α-e e_2 (a ...) natural_depth)])]
+  ;; TODO: check for the depth=0 case on lists and vectors
+  [(α-e (list e ...) (a ...) natural_depth)
+   (list (α-e e (a ...) ,(max 0 (sub1 (term natural_depth)))) ...)]
+  [(α-e (vector e ...) (a ...) natural_depth)
+   (vector (α-e e (a ...) ,(max 0 (sub1 (term natural_depth)))) ...)]
+  [(α-e (hash) _ _) (hash)])
 
 ;; TODO: write tests for the variant/record case, because the crappy version I have here isn't good
 ;; enough
