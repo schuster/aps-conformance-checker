@@ -50,6 +50,9 @@
    /
    +
    -
+   and
+   or
+   not
    random
    ceiling
    length

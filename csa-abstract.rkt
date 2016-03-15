@@ -436,6 +436,17 @@
          (side-condition (member (term primop) (list 'random 'ceiling)))
          UnaryNumericOp)
 
+    ;; TODO: make a check that both operands are booleans
+    (==> (and v#_1 v#_2)
+         (csa#-and (canonicalize-boolean v#_1) (canonicalize-boolean v#_2))
+         And)
+    (==> (or v#_1 v#_2)
+         (csa#-or (canonicalize-boolean v#_1) (canonicalize-boolean v#_2))
+         Or)
+    (==> (not v#)
+         (csa#-not (canonicalize-boolean v#))
+         Not)
+
     ;; TODO: use the actual list representation here
     (==> (length v#)
          (* Nat)
@@ -686,3 +697,54 @@
   [(config-only-actor/mf (α# _ _ _))
    α#n
    (where (α#n) α#)])
+
+;; ---------------------------------------------------------------------------------------------------
+;; Boolean Logic
+
+;; TODO: make these contracts tighter
+
+(define-metafunction csa#
+  canonicalize-boolean : v# -> v#
+  [(canonicalize-boolean (variant True)) (variant True)]
+  [(canonicalize-boolean (variant False)) (variant False)]
+  [(canonicalize-boolean (* (Union (True) (False)))) (* (Union (True) (False)))]
+  [(canonicalize-boolean (* (Union (False) (True)))) (* (Union (True) (False)))]
+  [(canonicalize-boolean (* (Union (True)))) (variant True)]
+  [(canonicalize-boolean (* (Union (False)))) (variant False)])
+
+(define-metafunction csa#
+  csa#-and : v# v# -> v#
+  [(csa#-and (variant False) _) (variant False)]
+  [(csa#-and _ (variant False)) (variant False)]
+  [(csa#-and (variant True) (variant True)) (variant True)]
+  [(csa#-and _ _) (* (Union (True) (False)))])
+
+(define-metafunction csa#
+  csa#-or : v# v# -> v#
+  [(csa#-or (variant True) _) (variant True)]
+  [(csa#-or _ (variant True)) (variant True)]
+  [(csa#-or (variant False) (variant False)) (variant False)]
+  [(csa#-or _ _) (* (Union (True) (False)))])
+
+(define-metafunction csa#
+  csa#-not : v# -> v#
+  [(csa#-not (variant True)) (variant False)]
+  [(csa#-not (variant False)) (variant True)]
+  [(csa#-not (* (Union (True) (False)))) (* (Union (True) (False)))])
+
+(module+ test
+  (define boolean-maybe (term (* (Union (True) (False)))))
+  (check-equal? (term (csa#-and (variant False) ,boolean-maybe)) (term (variant False)))
+  (check-equal? (term (csa#-and (variant True) ,boolean-maybe)) boolean-maybe)
+  (check-equal? (term (csa#-and (variant True) (variant True))) (term (variant True)))
+  (check-equal? (term (csa#-and (variant False) (variant False))) (term (variant False)))
+
+  (check-equal? (term (csa#-or (variant False) ,boolean-maybe)) boolean-maybe)
+  (check-equal? (term (csa#-or (variant True) ,boolean-maybe)) (term (variant True)))
+  (check-equal? (term (csa#-or (variant True) (variant True))) (term (variant True)))
+  (check-equal? (term (csa#-or (variant False) (variant False))) (term (variant False)))
+
+  (check-equal? (term (csa#-not (variant False))) (term (variant True)))
+  (check-equal? (term (csa#-not (variant True))) (term (variant False)))
+  (check-equal? (term (csa#-not (canonicalize-boolean (* (Union (False) (True))))))
+                (term (* (Union (True) (False))))))
