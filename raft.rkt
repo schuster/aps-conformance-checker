@@ -150,8 +150,10 @@
 
 (define-variant RaftActorMessage
   (Config [config ClusterConfiguration])
+  (ClientMessage [m ClientMessage])
   (PeerMessage [m RaftMessage])
-  (ElectedAsLeader))
+  (ElectedAsLeader)
+  (BeginElectionAlerts))
 
 (define-variant MaybePeer
   (NoPeer)
@@ -173,7 +175,7 @@
   [last-used-timeout-id Nat])
 
 (define-variant TimerMessage
-  (SetTimer [timer-name String] [target (Addr Unit)] [id Nat] [duration Duration] [repeat? Boolean])
+  (SetTimer [timer-name String] [target (Addr (Union (Timeout Nat)))] [id Nat] [duration Duration] [repeat? Boolean])
   (CancelTimer [timer-name String]))
 
 ;; (define-record AppendResult
@@ -358,6 +360,12 @@
   (LeaderMeta (: metadata current-term) (: metadata last-used-timeout-id)))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Terms
+
+(define-function (next [term Nat])
+  (+ 1 term))
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Election
 
 ;; ;; All times are in milliseconds
@@ -396,29 +404,26 @@
   (send timer (CancelTimer election-timer-name)))
 
 ;; ;; Because this language does not have traits, I separate forNewElection into two functions
-;; (define-function (for-new-election/follower [m StateMetadata])
-;;   (ElectionMeta (next (: m current-term)) (hash) (: m votes) (: m last-used-timeout-id)))
+(define-function (for-new-election/follower [m StateMetadata])
+  (ElectionMeta (next (: m current-term)) (hash) (: m votes) (: m last-used-timeout-id)))
 
-;; (define-function (for-new-election/candidate [m StateMetadata])
-;;   (ElectionMeta (next (: m current-term)) (hash) (: m votes) (: m last-used-timeout-id)))
+(define-function (for-new-election/candidate [m StateMetadata])
+  (ElectionMeta (next (: m current-term)) (hash) (: m votes) (: m last-used-timeout-id)))
 
 ;; ;; this effectively duplicates the logic of withVote, but it follows the akka-raft code
-;; (define-function (with-vote-for [m ElectionMeta] [term Nat] [candidate (Addr RaftMessage)])
-;;   (! m [votes (hash-set (: m votes) term candidate)]))
-
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Terms
-
-;; (define-function (next [term Nat])
-;;   (+ 1 term))
+(define-function (with-vote-for [m ElectionMeta] [term Nat] [candidate (Addr RaftMessage)])
+  (! m [votes (hash-set (: m votes) term candidate)]))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Config helpers
 
-;; (define-function (members-except-self [config ClusterConfiguration] [self (Addr RaftMessage)])
-;;   (for/fold ([result (list)])
-;;             ([member (: config members)])
-;;     (if (not (= member self)) (cons member result) result)))
+(define-function (members-except-self [config ClusterConfiguration] [self (Addr RaftMessage)])
+  ;; TODO:
+  ;; (for/fold ([result (list)])
+  ;;           ([member (: config members)])
+  ;;   (if (not (= member self)) (cons member result) result))
+  (list) ;; TODO: remove this line
+  )
 
 (define-function (inc-vote [m ElectionMeta] [follower (Addr RaftMessage)])
   (! m [votes-received (hash-set (: m votes-received) follower true)]))
@@ -486,18 +491,18 @@
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Misc.
 
-;; (define-function (leader-is-lagging [append-entries-term Nat] [m StateMetadata])
-;;   (< append-entries-term (: m current-term)))
+(define-function (leader-is-lagging [append-entries-term Nat] [m StateMetadata])
+  (< append-entries-term (: m current-term)))
 
-;; (define-function (is-heartbeat [append-entries-entries (Vectorof Entry)])
-;;   (= 0 (vector-length append-entries-entries)))
+(define-function (is-heartbeat [append-entries-entries (Vectorof Entry)])
+  (= 0 (vector-length append-entries-entries)))
 
 (define-function (AppendEntries-apply [term Nat]
                              [replicated-log ReplicatedLog]
                              [from-index Nat]
                              [leader-commit-id Nat]
-                             [leader (Addr RaftMessage)]
-                             [leader-client (Addr ClientMessage)])
+                             [leader (Addr (Union (PeerMessage RaftMessage)))]
+                             [leader-client (Addr (Union (ClientMessage ClientMessage)))])
   (let ([entries (replicated-log-entries-batch-from replicated-log from-index)])
     (cond
       [(> (vector-length entries) 0)
@@ -532,26 +537,27 @@
       ; the functions go here
       (
       ;; ;; Only called from Follower state on receiving an election timeout
-      ;; (define-function (begin-election [timer (Addr TimerMessage)]
-      ;;                         [election-timeout-target (Addr Nat)]
-      ;;                         [metadata StateMetadata]
-      ;;                         [replicated-log ReplicatedLog]
-      ;;                         [config ClusterConfiguration]
-      ;;                         [begin-election-alerts (Addr)])
-      ;;   ;; unlike akka-raft, we assume the config is full, because we don't deal with dynamic
-      ;;   ;; configuration changes
-      ;;   ;;
-      ;;   ;; BUG: this reset should not happen, because the begin-election-alerts handler will do a reset
-      ;;   ;; for us
-      ;;   ;(let ([metadata (reset-election-deadline/follower timer election-timeout-target metadata)])
-      ;;   ;; these next two lines are from the onTransition code. The duplicate call to
-      ;;   ;; reset-election-deadline is a bug from the original akka-raft code
-      ;;   (send begin-election-alerts)
-      ;;   ;BUG: (let ([metadata (reset-election-deadline timer election-timeout-target metadata)])
-      ;;   (goto Candidate (for-new-election/follower metadata) replicated-log config)
-      ;;   ;)
-      ;;   ;)
-      ;;   )
+      (define-function (begin-election [timer (Addr TimerMessage)]
+                              [election-timeout-target (Addr Nat)]
+                              [metadata StateMetadata]
+                              [replicated-log ReplicatedLog]
+                              [config ClusterConfiguration]
+                              [begin-election-alerts (Addr (Union (BeginElectionAlerts)))])
+        ;; unlike akka-raft, we assume the config is full, because we don't deal with dynamic
+        ;; configuration changes
+        ;;
+        ;; BUG: this reset should not happen, because the begin-election-alerts handler will do a reset
+        ;; for us
+        ;(let ([metadata (reset-election-deadline/follower timer election-timeout-target metadata)])
+        ;; these next two lines are from the onTransition code. The duplicate call to
+        ;; reset-election-deadline is a bug from the original akka-raft code
+        ;; TODO: deal with self-sends
+        (send self (BeginElectionAlerts))
+        ;BUG: (let ([metadata (reset-election-deadline timer election-timeout-target metadata)])
+        (goto Candidate (for-new-election/follower metadata) replicated-log config)
+        ;)
+        ;)
+        )
 
       ;; ;; TODO: consider making AppendEntries into a record to remove these long param lists and better
       ;; ;; match akka-raft
@@ -569,7 +575,7 @@
       ;;     [(leader-is-lagging term m)
       ;;      (send leader (AppendRejected (: m current-term)
       ;;                                   (replicated-log-last-index replicated-log)
-      ;;                                   peer-messages))
+      ;;                                   self))
       ;;      ;; akka-raft does not respond to heartbeats in this case, but I think it should
       ;;      ;; (cond
       ;;      ;;   [(not (is-heartbeat entries))
@@ -581,7 +587,7 @@
       ;;      (let ([meta-with-updated-term (! m [current-term term])])
       ;;        (send leader (AppendRejected (: meta-with-updated-term current-term)
       ;;                                     (replicated-log-last-index replicated-log)
-      ;;                                     peer-messages))
+      ;;                                     self))
       ;;        (accept-heartbeat meta-with-updated-term replicated-log config recently-contacted-by-leader))]
       ;;     ;; akka-raft does not do the append/commit logic for heartbeats, even though it should
       ;;     ;; [(is-heartbeat entries)
@@ -605,7 +611,7 @@
       ;;     [(is-heartbeat entries)
       ;;      (AppendResult (AppendSuccessful (: m current-term)
       ;;                                      (replicated-log-last-index replicated-log)
-      ;;                                      peer-messages)
+      ;;                                      self)
       ;;                    replicated-log)]
       ;;     [else
       ;;      ;; NOTE: this num-entries-to-keep calculation is too naive if we do log compaction
@@ -613,7 +619,7 @@
       ;;        (let ([replicated-log (replicated-log-append replicated-log entries num-entries-to-keep)])
       ;;          (AppendResult (AppendSuccessful (replicated-log-last-term replicated-log)
       ;;                                          (replicated-log-last-index replicated-log)
-      ;;                                          peer-messages)
+      ;;                                          self)
       ;;                        replicated-log)))]))
 
       ;; ;; NOTE: only works for follower, but fortunately only used there
@@ -621,7 +627,7 @@
       ;;                           [replicated-log ReplicatedLog]
       ;;                           [config ClusterConfiguration]
       ;;                           [recently-contacted-by-leader MaybeLeader])
-      ;;   (let ([m (reset-election-deadline/follower timer-manager timeouts m)])
+      ;;   (let ([m (reset-election-deadline/follower timer-manager self m)])
       ;;     (goto Follower recently-contacted-by-leader m replicated-log config)))
 
       (define-function (commit-until-index [replicated-log ReplicatedLog]
@@ -646,10 +652,10 @@
       ;;                          [config ClusterConfiguration])
       ;;   (send-heartbeat m next-index replicated-log config)
       ;;   (send timer-manager
-      ;;         (SetTimer heartbeat-timer-name send-heartbeat-timeouts 1 heartbeat-interval true)))
+      ;;         (SetTimer heartbeat-timer-name self 1 heartbeat-interval true)))
 
-      ;; (define-function (stop-heartbeat)
-      ;;   (send timer-manager (CancelTimer heartbeat-timer-name)))
+      (define-function (stop-heartbeat)
+        (send timer-manager (CancelTimer heartbeat-timer-name)))
 
       ;; (define-function (send-heartbeat [m LeaderMeta]
       ;;                         [next-index (Hash (Addr RaftMessage) Nat)]
@@ -661,13 +667,13 @@
       ;;                        [next-index (Hash (Addr RaftMessage) Nat)]
       ;;                        [replicated-log ReplicatedLog]
       ;;                        [config ClusterConfiguration])
-      ;;   (for ([member (members-except-self config peer-messages)])
+      ;;   (for ([member (members-except-self config self)])
       ;;     (send member (AppendEntries-apply (: m current-term)
       ;;                                       replicated-log
       ;;                                       (log-index-map-value-for next-index member)
       ;;                                       (: replicated-log committed-index)
-      ;;                                       peer-messages
-      ;;                                       client-messages))))
+      ;;                                       self
+      ;;                                       self))))
 
       (define-function (send-entries [follower (Addr RaftMessage)]
                             [m LeaderMeta]
@@ -680,8 +686,8 @@
                                             replicated-log
                                             (log-index-map-value-for next-index follower)
                                             (: replicated-log committed-index)
-                                            peer-messages
-                                            client-messages)))
+                                            self
+                                            self)))
 
        (define-function (maybe-commit-entry [match-index (Hash (Addr RaftMessage) Nat)]
                                             [replicated-log ReplicatedLog]
@@ -724,12 +730,12 @@
                         replicated-log
                         next-index
                         (: replicated-log committed-index)
-                        peer-messages
-                        client-messages)
+                        self
+                        self)
           (goto Leader m next-index match-index replicated-log config)))
 
       (define-function (step-down [m LeaderMeta] [replicated-log ReplicatedLog] [config ClusterConfiguration])
-        (let ([m (reset-election-deadline/leader timer-manager timeouts m)])
+        (let ([m (reset-election-deadline/leader timer-manager self m)])
           (goto Follower (NoLeader) (for-follower/leader m) replicated-log config))))
 
       ;; ---------------------------------------------------------------------------------------------------
@@ -750,7 +756,8 @@
                     metadata
                     (replicated-log-empty)
                     config))]
-          [(PeerMessage r) (goto Init)]))
+          [(PeerMessage r) (goto Init)]
+          [(Timeout id) (goto Init)]))
 
       (define-state (Follower [recently-contacted-by-leader MaybeLeader]
                               [metadata StateMetadata]
@@ -768,16 +775,16 @@
                          [(RequestVote term candidate last-term last-index)
                                       (cond
                                         [(grant-vote?/follower metadata replicated-log term candidate last-term last-index)
-                                         (send candidate (VoteCandidate term peer-messages))
+                                         (send candidate (PeerMessage (VoteCandidate term self)))
                                          ;; NOTE: akka-raft did not update the term here, which I think is a bug
-                                         (let ([metadata (reset-election-deadline/follower timer-manager timeouts metadata)])
+                                         (let ([metadata (reset-election-deadline/follower timer-manager self metadata)])
                                            (goto Follower recently-contacted-by-leader
                                                                  (! (with-vote metadata term candidate) [current-term term])
                                                                  replicated-log
                                                                  config))]
                                         [else
                                          (let ([metadata (! metadata [current-term (max term (: metadata current-term))])])
-                                           (send candidate (DeclineCandidate (: metadata current-term) peer-messages))
+                                           (send candidate (PeerMessage (DeclineCandidate (: metadata current-term) self)))
                                            (goto Follower recently-contacted-by-leader metadata replicated-log config))])]
                          [(VoteCandidate t f)
                                         (goto Follower recently-contacted-by-leader metadata replicated-log config)]
@@ -800,11 +807,11 @@
                          [(AppendSuccessful t l m)
                                            (goto Follower recently-contacted-by-leader metadata replicated-log config)])]
       [(Config c) (goto Follower recently-contacted-by-leader metadata replicated-log config)]
-      ;;   [(timeouts id)
-      ;;             (cond
-      ;;               [(= id (: metadata last-used-timeout-id))
-      ;;                (begin-election timer-manager timeouts metadata replicated-log config begin-election-alerts)]
-      ;;               [else (goto Follower recently-contacted-by-leader metadata replicated-log config)])]
+        [(Timeout id)
+                  (cond
+                    [(= id (: metadata last-used-timeout-id))
+                     (begin-election timer-manager self metadata replicated-log config self)]
+                    [else (goto Follower recently-contacted-by-leader metadata replicated-log config)])]
       ;;   [(begin-election-alerts )
       ;;                          (goto Follower recently-contacted-by-leader metadata replicated-log config)]
       ;;   [(elected-as-leader)
@@ -815,6 +822,7 @@
       (define-state (Candidate [m ElectionMeta]
                                [replicated-log ReplicatedLog]
                                [config ClusterConfiguration]) (message)
+                                                           (printf "became candidate\n")
         (case message
       ;;   [client-messages (m)
       ;;                    (case m
@@ -823,17 +831,17 @@
       ;;                                     (goto Candidate m replicated-log config)])]
         [(PeerMessage msg)
                        (case msg
-                         ;; [(RequestVote term candidate last-log-term last-log-index)
-                         ;;              (cond
-                         ;;                [(grant-vote?/candidate m replicated-log term candidate last-log-term last-log-index)
-                         ;;                 (send candidate (VoteCandidate term peer-messages))
-                         ;;                 ;; TODO: this seems wrong that we stay in candidate instead of
-                         ;;                 ;; going to Follower. Some test should probably break this
-                         ;;                 (goto Candidate (with-vote-for m term candidate) replicated-log config)]
-                         ;;                [else
-                         ;;                 (let ([m (! m [current-term (max term (: m current-term))])])
-                         ;;                   (send candidate (DeclineCandidate (: m current-term) peer-messages))
-                         ;;                   (goto Candidate m replicated-log config))])]
+                         [(RequestVote term candidate last-log-term last-log-index)
+                                      (cond
+                                        [(grant-vote?/candidate m replicated-log term candidate last-log-term last-log-index)
+                                         (send candidate (PeerMessage (VoteCandidate term self)))
+                                         ;; TODO: this seems wrong that we stay in candidate instead of
+                                         ;; going to Follower. Some test should probably break this
+                                         (goto Candidate (with-vote-for m term candidate) replicated-log config)]
+                                        [else
+                                         (let ([m (! m [current-term (max term (: m current-term))])])
+                                           (send candidate (PeerMessage (DeclineCandidate (: m current-term) self)))
+                                           (goto Candidate m replicated-log config))])]
                          [(VoteCandidate term follower)
                                         (cond
                                           [(= term (: m current-term))
@@ -859,8 +867,8 @@
                          ;;                (let ([leader-is-ahead (>= term (: m current-term))])
                          ;;                  (cond
                          ;;                    [leader-is-ahead
-                         ;;                     (send peer-messages msg)
-                         ;;                     (let ([m (reset-election-deadline/candidate timer-manager timeouts m)])
+                         ;;                     (send self msg)
+                         ;;                     (let ([m (reset-election-deadline/candidate timer-manager self m)])
                          ;;                       (goto Follower (Just leader-client)
                          ;;                                             (for-follower/candidate m)
                          ;;                                             replicated-log
@@ -870,27 +878,28 @@
                          ;;                     (send leader
                          ;;                           (AppendRejected (: m current-term)
                          ;;                                           (replicated-log-last-index replicated-log)
-                         ;;                                           peer-messages))
+                         ;;                                           self))
                          ;;                     (goto Candidate m replicated-log config)]))]
                          [(AppendSuccessful t i member) (goto Candidate m replicated-log config)]
                          [(AppendRejected t i member) (goto Candidate m replicated-log config)]
                          )]
-      ;;   [(timeouts id)
-      ;;             (cond
-      ;;               [(= id (: m last-used-timeout-id))
-      ;;                (send begin-election-alerts)
-      ;;                (goto Candidate (for-new-election/candidate m) replicated-log config)]
-      ;;               [else (goto Candidate m replicated-log config)])]
+        [(Timeout id)
+                  (cond
+                    [(= id (: m last-used-timeout-id))
+                     ;; TODO: deal with self-sends
+                     (send self (BeginElectionAlerts))
+                     (goto Candidate (for-new-election/candidate m) replicated-log config)]
+                    [else (goto Candidate m replicated-log config)])]
       ;;   [(begin-election-alerts)
       ;;                          (let ([request (RequestVote (: m current-term)
-      ;;                                                      peer-messages
+      ;;                                                      self
       ;;                                                      (replicated-log-last-term replicated-log)
       ;;                                                      (replicated-log-last-index replicated-log))])
-      ;;                            (for ([member (members-except-self config peer-messages)])
+      ;;                            (for ([member (members-except-self config self)])
       ;;                              (send member request))
-      ;;                            (let* ([m (reset-election-deadline/candidate timer-manager timeouts m)]
-      ;;                                   [including-this-vote (inc-vote m peer-messages)]) ; this is the self vote
-      ;;                              (goto Candidate (with-vote-for including-this-vote (: m current-term) peer-messages)
+      ;;                            (let* ([m (reset-election-deadline/candidate timer-manager self m)]
+      ;;                                   [including-this-vote (inc-vote m self)]) ; this is the self vote
+      ;;                              (goto Candidate (with-vote-for including-this-vote (: m current-term) self)
       ;;                                                     replicated-log config)))]
       ;;   [(elected-as-leader) (goto Candidate m replicated-log config)]
       ;;   [(send-heartbeat-timeouts id) (goto Candidate m replicated-log config)]
@@ -901,6 +910,7 @@
                             [match-index (Hash (Addr RaftMessage) Nat)]
                             [replicated-log ReplicatedLog]
                             [config ClusterConfiguration]) (message)
+                            (printf "became leader\n")
         (case message
       ;;   [(client-messages msg)
       ;;                    (case msg
@@ -909,24 +919,24 @@
       ;;                                                          (: m current-term) (replicated-log-next-index replicated-log)
       ;;                                                          client)]
       ;;                                            [replicated-log (replicated-log+ replicated-log entry)]
-      ;;                                            [match-index (hash-set match-index peer-messages (: entry index))])
+      ;;                                            [match-index (hash-set match-index self (: entry index))])
       ;;                                       (replicate-log m next-index replicated-log config)
       ;;                                       (goto Leader m next-index match-index replicated-log config))])]
         [(PeerMessage msg)
                        (case msg
-                         ;; [(RequestVote term candidate last-log-term last-log-index)
-                         ;;              (cond
-                         ;;                [(grant-vote?/leader m replicated-log term candidate last-log-term last-log-index)
-                         ;;                 (send candidate (VoteCandidate term peer-messages))
-                         ;;                 (stop-heartbeat)
-                         ;;                 (step-down m replicated-log config)]
-                         ;;                [(> term (: m current-term))
-                         ;;                 (let ([m (! m [current-term term])])
-                         ;;                   (send candidate (DeclineCandidate term peer-messages))
-                         ;;                   (step-down m replicated-log config))]
-                         ;;                [else
-                         ;;                 (send candidate (DeclineCandidate (: m current-term) peer-messages))
-                         ;;                 (goto Leader m next-index match-index replicated-log config)])]
+                         [(RequestVote term candidate last-log-term last-log-index)
+                                      (cond
+                                        [(grant-vote?/leader m replicated-log term candidate last-log-term last-log-index)
+                                         (send candidate (PeerMessage (VoteCandidate term self)))
+                                         (stop-heartbeat)
+                                         (step-down m replicated-log config)]
+                                        [(> term (: m current-term))
+                                         (let ([m (! m [current-term term])])
+                                           (send candidate (PeerMessage (DeclineCandidate term self)))
+                                           (step-down m replicated-log config))]
+                                        [else
+                                         (send candidate (PeerMessage (DeclineCandidate (: m current-term) self)))
+                                         (goto Leader m next-index match-index replicated-log config)])]
                          [(VoteCandidate t s) (goto Leader m next-index match-index replicated-log config)]
                          [(DeclineCandidate t s) (goto Leader m next-index match-index replicated-log config)]
                          ;; [(AppendEntries term
@@ -939,7 +949,7 @@
                          ;;                (cond
                          ;;                  [(> term (: m current-term))
                          ;;                   (stop-heartbeat)
-                         ;;                   (send peer-messages msg)
+                         ;;                   (send self msg)
                          ;;                   (step-down m replicated-log config)]
                          ;;                  [else
                          ;;                   (send-entries leader
@@ -947,8 +957,8 @@
                          ;;                                 replicated-log
                          ;;                                 next-index
                          ;;                                 (: replicated-log committed-index)
-                         ;;                                 peer-messages
-                         ;;                                 client-messages)
+                         ;;                                 self
+                         ;;                                 self)
                          ;;                   (goto Leader m next-index match-index replicated-log config)])]
                          [(AppendRejected term last-index member)
                                          (register-append-rejected term
@@ -969,7 +979,7 @@
                                                                        replicated-log
                                                                        config)])]
       [(Config c) (goto Leader m next-index match-index replicated-log config)]
-      ;;   [(timeouts id) (goto Leader m next-index match-index replicated-log config)]
+        [(Timeout id) (goto Leader m next-index match-index replicated-log config)]
       ;;   [(begin-election-alerts) (goto Leader m next-index match-index replicated-log config)]
       ;;   [(elected-as-leader)
       ;;                      (let ([next-index (log-index-map-initialize (: config members)
@@ -1017,7 +1027,8 @@
 (check-true (analyze raft-config
                      raft-spec
                      (term (Union (PeerMessage ,desugared-raft-message-type)))
-                     (term (Union ,cluster-config-variant))
+                     (term (Union ,cluster-config-variant
+                                  (Timeout Nat)))
                      (hash 'Init 'Init
                            'Follower 'Running
                            'Candidate 'Running
