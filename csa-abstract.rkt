@@ -68,9 +68,8 @@
       (list e# ...)
       (vector e# ...)
       (hash)
-      a#
       x
-      (* τ))
+      v#)
   (a# a#int a#ext) ; internal and external addresses
   (a#int SINGLE-ACTOR-ADDR)
   (a#ext
@@ -525,10 +524,10 @@
          (variant Nothing)
          HashWildcardRefFailure)
     (==> (hash-set (hash v#_1 ... v#_value v#_2 ...) v#_key v#_value)
-         (hash-set (hash v#_1 ... v#_value v#_2 ...) v#_key v#_value)
+         (hash v#_1 ... v#_value v#_2 ...)
          HashSetExists)
     (==> (hash-set (hash v#_current ...) v#_key v#_value)
-         (hash-set (hash v#_current ... v#_value))
+         (hash v#_current ... v#_value)
          (side-condition (not (member (term v#_value) (term (v#_current ...)))))
          HashSetNewItem)
     (==> (hash-set (* Hash τ_1 τ_2) v#_key v#_value)
@@ -658,7 +657,7 @@
    (! (csa#-subst e#_1 x v#) [l (csa#-subst e#_2 x v#)])]
   [(csa#-subst (list e ...) x v#) (list (csa#-subst e x v#) ...)]
   [(csa#-subst (vector e ...) x v#) (vector (csa#-subst e x v#) ...)]
-  [(csa#-subst (hash) x v#) (hash)]
+  [(csa#-subst (hash v#_element ...) x v#) (hash (csa#-subst v#_element x v#) ...)]
   ;; [(csa#-subst (rcv (x) e) x v) (rcv (x) e)]
   ;; [(csa#-subst (rcv (x_h) e) x v) (rcv (x_h) (csa#-subst e x v))]
   ;; [(csa#-subst (rcv (x) e [(timeout n) e_timeout]) x v) (rcv (x) e [(timeout n) e_timeout])]
