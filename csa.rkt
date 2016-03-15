@@ -65,7 +65,9 @@
    vector-copy
    hash-ref
    hash-set
-   sort-numbers-descending)
+   sort-numbers-descending
+   ;; printf for debugging only
+   printf )
   ((x s t l) variable-not-otherwise-mentioned)
   (n natural)
   (τ Nat ; TODO: change this to Int or something

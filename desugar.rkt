@@ -115,6 +115,7 @@
        (hash-ref e1 e2)
        (hash-set e1 e2 e3)
        (sort-numbers-descending e)
+       (printf e1 e* ...)
        (let ([x e] ...) e2 e* ...)
        (let* ([x e] ...) e2 e* ...)
        (addr n) ; only for giving the initial output addresses

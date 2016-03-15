@@ -64,6 +64,7 @@
       (: e# l)
       (! e# [l e#])
       (primop e# ...)
+      (printf string e# ...) ; for debugging only
       (list e# ...)
       (vector e# ...)
       (hash)
@@ -543,6 +544,13 @@
          ((in-hole E# v#)           (any_outputs ... [a# v#]))
          Send)
 
+    ;; Debugging
+
+    (==> (printf string v# ...)
+         (* Nat)
+         (side-condition (apply printf (term (string v# ...))))
+         Printf)
+
     with
     [(--> ((in-hole E# old) ([a#ext v#] ...))
           ((in-hole E# new) ([a#ext v#] ...)))
@@ -639,6 +647,7 @@
   [(csa#-subst (case e# [(t x_clause ...) e#_clause] ...) x v#)
    (case (csa#-subst e# x v#) (csa#-subst/case-clause [(t x_clause ...) e#_clause] x v#) ...)]
   [(csa#-subst (variant t e# ...) x v#) (variant t (csa#-subst e# x v#) ...)]
+  [(csa#-subst (printf string e# ...) x v#) (printf string (csa#-subst e# x v#) ...)]
   [(csa#-subst (primop e# ...) x v#) (primop (csa#-subst e# x v#) ...)]
   [(csa#-subst (record [l e#] ...) x v#) (record [l (csa#-subst e# x v#)] ...)]
   [(csa#-subst (: e# l) x v#) (: (csa#-subst e# x v#) l)]
@@ -725,6 +734,8 @@
    (let ([x (α-e e_binding (a ...) natural)] ...) (α-e e_body (a ...) natural))]
   [(α-e (case e_val [(t x ...) e_clause] ...) (a ...) natural_depth)
    (case (α-e e_val (a ...) natural_depth) [(t x ...) (α-e e_clause (a ...) natural_depth)] ...)]
+  [(α-e (printf string e ...) (a ...) natural_depth)
+   (printf string (α-e e (a ...) natural_depth) ...)]
   [(α-e (primop e ...) (a ...) natural_depth) (primop (α-e e (a ...) natural_depth) ...)]
   ;; TODO: do something much better here - figure out how to limit the depth
   ;; [(α-e (tuple e ...) 0)
