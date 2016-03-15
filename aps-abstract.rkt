@@ -88,7 +88,7 @@
   [(subst/aps#/po x_2 x v-hat) x_2]
   [(subst/aps#/po a x v-hat) a]
   [(subst/aps#/po a-hat x v-hat) a-hat]
-  ;; TODO: do this for variants and records
+  ;; TODO: do this for variants, records, and or
   [(subst/aps#/po * x v-hat) *])
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -234,7 +234,11 @@
 
   [(aps#-matches-po?/j (* τ) po) ...
    -----
-   (aps#-matches-po?/j (* (Union _ ... [t τ ..._n] _ ...)) (variant t po ..._n))])
+   (aps#-matches-po?/j (* (Union _ ... [t τ ..._n] _ ...)) (variant t po ..._n))]
+
+  [(aps#-matches-po?/j v# po)
+   ------------------------------------------------------------
+   (aps#-matches-po?/j v# (or _ ... po _ ...))])
 
 (module+ test
     ;; TODO: rewrite these tests
@@ -243,15 +247,14 @@
   ;; (check-true (aps#-matches-po? (term (* 'a)) (term 'a)))
   ;; (check-false (aps#-matches-po? (term (* 'a)) (term 'b)))
 
-;;   (check-true (aps#-matches-po? (term (* (Tuple 'a 'b))) (term (tuple 'a 'b))))
-;;   (check-false (aps#-matches-po? (term (* (Tuple 'a 'b))) (term (tuple 'a 'c))))
-;;   (check-true (aps#-matches-po? (term (tuple (* 'a))) (term (tuple 'a))))
-;;   (check-true (aps#-matches-po? (term (tuple (quote b) (* Nat)))
-;;                                 (term (tuple (quote b) *))
-;; ))
-  )
-
-
+  ;; (check-true (aps#-matches-po? (term (* (Tuple 'a 'b))) (term (tuple 'a 'b))))
+  ;; (check-false (aps#-matches-po? (term (* (Tuple 'a 'b))) (term (tuple 'a 'c))))
+  ;; (check-true (aps#-matches-po? (term (tuple (* 'a))) (term (tuple 'a))))
+  ;; (check-true (aps#-matches-po? (term (tuple (quote b) (* Nat)))
+  ;;                               (term (tuple (quote b) *))))
+  (check-true (aps#-matches-po? (term (variant A)) (term (or (variant A) (variant B)))))
+  (check-true (aps#-matches-po? (term (variant B)) (term (or (variant A) (variant B)))))
+  (check-false (aps#-matches-po? (term (variant C)) (term (or (variant A) (variant B))))))
 
 ;; TODO: add tests for the match predicate
 

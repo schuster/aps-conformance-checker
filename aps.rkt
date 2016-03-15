@@ -38,7 +38,8 @@
       self
       t
       (variant t po ...)
-      (record [l po] ...)))
+      (record [l po] ...)
+      (or po po ...)))
 
 (define-extended-language aps-eval
   aps
@@ -80,7 +81,9 @@
   [(subst/aps/po * x v-hat) *]
   [(subst/aps/po (variant t po ...) x v-hat) (variant t (subst/aps/po po x v-hat) ...)]
   [(subst/aps/po (record [l po] ...) x v-hat)
-   (record [l (subst/aps/po x v-hat)] ...)])
+   (record [l (subst/aps/po x v-hat)] ...)]
+  [(subst/aps/po (or po_1 po_rest ...) x v-hat)
+   (or (subst/aps/po po_1 x v-hat) (subst/aps/po po_rest x v-hat) ...)])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Predicates
