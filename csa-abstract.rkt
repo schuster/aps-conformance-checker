@@ -100,6 +100,7 @@
       (! E# [l e#])
       (! v# [l E#])
       (primop v# ... E# e# ...)
+      (printf string v# ... E# e# ...)
       (list v# ... E# e# ...)
       (vector v# ... E# e# ...)))
 
