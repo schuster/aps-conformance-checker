@@ -560,6 +560,12 @@
          ((in-hole E# v#)           (any_outputs ... [a# v#]))
          Send)
 
+    ;; Goto context removal
+    (--> ((in-hole E# (goto s v# ...)) (any_outputs ...))
+         ((goto s v# ...) (any_outputs ...))
+         (side-condition (not (redex-match csa# hole (term E#))))
+         GotoRemoveContext)
+
     ;; Debugging
 
     (==> (printf string v# ...)
