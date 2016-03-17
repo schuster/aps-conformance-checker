@@ -33,7 +33,12 @@
        ;;  (with-outputs ([leader (variant PeerMessage (or (variant AppendRejected * * *)
        ;;                                                  (variant AppendSuccessful * * *)))])
        ;;    (goto Running))]
+       ;; TODO: break these out into separate states so that the append retry can only happen when in the leader state (and otherwise the leader must fall back to being a follower)
        [(variant PeerMessage (variant AppendRejected * * *)) -> (goto Running)]
+       [(variant PeerMessage (variant AppendRejected * * member)) ->
+        ;; TODO: should I require that the self address is in this response?
+        (with-outputs ([member (variant PeerMessage (variant AppendEntries * * * * * * *))])
+          (goto Running))]
        [(variant PeerMessage (variant AppendSuccessful * * *)) -> (goto Running)]))
     ;; TODO: switch the order of the init exp and the states
     (goto Init)
@@ -645,35 +650,37 @@
           replicated-log ; TODO: remove this line
           ))
 
-      ;; (define-constant heartbeat-timer-name "HeartbeatTimer")
-      ;; (define-constant heartbeat-interval 50)
-      ;; (define-function (start-heartbeat [m LeaderMeta] [next-index (Hash (Addr RaftMessage) Nat)]
-      ;;                          [replicated-log ReplicatedLog]
-      ;;                          [config ClusterConfiguration])
-      ;;   (send-heartbeat m next-index replicated-log config)
-      ;;   (send timer-manager
-      ;;         (SetTimer heartbeat-timer-name self 1 heartbeat-interval true)))
+      (define-function (replicate-log [m LeaderMeta]
+                             [next-index (Hash (Addr RaftMessage) Nat)]
+                             [replicated-log ReplicatedLog]
+                             [config ClusterConfiguration])
+        0 ;; TODO: add this for loop back in
+        ;; (for ([member (members-except-self config self)])
+        ;;   (send member (AppendEntries-apply (: m current-term)
+        ;;                                     replicated-log
+        ;;                                     (log-index-map-value-for next-index member)
+        ;;                                     (: replicated-log committed-index)
+        ;;                                     self
+        ;;                                     self)))
+        )
+
+      (define-function (send-heartbeat [m LeaderMeta]
+                              [next-index (Hash (Addr RaftMessage) Nat)]
+                              [replicated-log ReplicatedLog]
+                              [config ClusterConfiguration])
+        (replicate-log m next-index replicated-log config))
+
+      (define-constant heartbeat-timer-name "HeartbeatTimer")
+      (define-constant heartbeat-interval 50)
+      (define-function (start-heartbeat [m LeaderMeta] [next-index (Hash (Addr RaftMessage) Nat)]
+                               [replicated-log ReplicatedLog]
+                               [config ClusterConfiguration])
+        (send-heartbeat m next-index replicated-log config)
+        (send timer-manager
+              (SetTimer heartbeat-timer-name self 1 heartbeat-interval true)))
 
       (define-function (stop-heartbeat)
         (send timer-manager (CancelTimer heartbeat-timer-name)))
-
-      ;; (define-function (send-heartbeat [m LeaderMeta]
-      ;;                         [next-index (Hash (Addr RaftMessage) Nat)]
-      ;;                         [replicated-log ReplicatedLog]
-      ;;                         [config ClusterConfiguration])
-      ;;   (replicate-log m next-index replicated-log config))
-
-      ;; (define-function (replicate-log [m LeaderMeta]
-      ;;                        [next-index (Hash (Addr RaftMessage) Nat)]
-      ;;                        [replicated-log ReplicatedLog]
-      ;;                        [config ClusterConfiguration])
-      ;;   (for ([member (members-except-self config self)])
-      ;;     (send member (AppendEntries-apply (: m current-term)
-      ;;                                       replicated-log
-      ;;                                       (log-index-map-value-for next-index member)
-      ;;                                       (: replicated-log committed-index)
-      ;;                                       self
-      ;;                                       self))))
 
       (define-function (send-entries [follower (Addr RaftMessage)]
                             [m LeaderMeta]
@@ -682,12 +689,14 @@
                             [leader-commit-id Nat]
                             [leader (Addr RaftMessage)]
                             [leader-client (Addr ClientMessage)])
-        (send follower (AppendEntries-apply (: m current-term)
-                                            replicated-log
-                                            (log-index-map-value-for next-index follower)
-                                            (: replicated-log committed-index)
-                                            self
-                                            self)))
+        (send follower
+              (PeerMessage
+               (AppendEntries-apply (: m current-term)
+                                    replicated-log
+                                    (log-index-map-value-for next-index follower)
+                                    (: replicated-log committed-index)
+                                    self
+                                    self))))
 
        (define-function (maybe-commit-entry [match-index (Hash (Addr RaftMessage) Nat)]
                                             [replicated-log ReplicatedLog]
@@ -883,6 +892,7 @@
                          [(AppendSuccessful t i member) (goto Candidate m replicated-log config)]
                          [(AppendRejected t i member) (goto Candidate m replicated-log config)]
                          )]
+        [(Config c) (goto Candidate m replicated-log config)]
         [(Timeout id)
                   (cond
                     [(= id (: m last-used-timeout-id))
@@ -1010,7 +1020,9 @@
 (define raft-config (make-single-agent-config desugared-raft-actor))
 
 (define cluster-config-variant
-  (term (Config (Record [members Nat]))))
+  ;; TODO:
+  (term (Config (Record [members (Listof (Addr Nat ;; RaftMessage
+                             ))]))))
 
 (define desugared-raft-message-type
   `(Union
