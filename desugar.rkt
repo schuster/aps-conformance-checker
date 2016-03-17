@@ -63,14 +63,17 @@
   (ProgItem (PI)
             ad
             fd
-            (define-constant x e) ; TODO: should really only be literals
+            cd
             (define-type T τ)
             (define-record T [x τ] ...)
             (define-variant T (V [x τ] ...) ...))
   (ActorDef (ad)
-    (define-actor τ (a [x τ2] ...) (fd ...) e S ...))
+    (define-actor τ (a [x τ2] ...) (AI ...) e S ...))
   (StateDef (S)
     (define-state (s [x τ] ...) (x2) e1 e* ...))
+  (ActorItem (AI)
+    fd
+    cd)
   (Exp (e body)
        n
        b
@@ -122,6 +125,8 @@
        (f e ...))
   (FuncDef (fd)
            (define-function (f [x τ] ...) e1 e* ...))
+  (ConstDef (cd)
+            (define-constant x e)) ; TODO: should really only be literals
   (Type (τ)
         pτ
         (Addr τ)
@@ -152,7 +157,6 @@
 (define-pass wrap-function-calls : csa/surface (P) -> csa/wrapped-calls ()
   (Exp : Exp (e) -> Exp ()
        [(,f ,[e] ...) `(app ,f ,e ...)]))
-
 
 (module+ test
   ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
@@ -486,8 +490,7 @@
 (define-language csa/inlined-program-definitions
   (extends csa/inlined-types)
   (ProgItem (PI)
-            (- fd
-               (define-constant x e))))
+            (- fd cd)))
 
 (define-parser parse-csa/inlined-program-definitions csa/inlined-program-definitions)
 
@@ -564,49 +567,62 @@
      (spawn A))))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Actor function inlining
+;; Actor func/const definition inlining
 
-(define-language csa/inlined-actor-functions
+(define-language csa/inlined-actor-definitions
   (extends csa/inlined-program-definitions)
   (ActorDef (ad)
-            (- (define-actor τ (a [x τ2] ...) (fd ...) e S ...))
+            (- (define-actor τ (a [x τ2] ...) (AI ...) e S ...))
             (+ (define-actor τ (a [x τ2] ...)          e S ...)))
   (Exp (e) (- (app f e ...))))
 
-(define-parser parse-csa/inlined-actor-functions csa/inlined-actor-functions)
+(define-parser parse-csa/inlined-actor-definitions csa/inlined-actor-definitions)
 
 (struct func-record (formals body))
 
-(define-pass inline-actor-functions : csa/inlined-program-definitions (P) -> csa/inlined-actor-functions ()
+(define-pass inline-actor-definitions : csa/inlined-program-definitions (P) -> csa/inlined-actor-definitions ()
   (definitions
     ;; TODO: clear this list every time we start a new actor
-    (define funcs (make-hash)))
+    (define funcs (make-hash))
+    (define consts (make-hash)))
   (ActorDef : ActorDef (d) -> ActorDef ()
-    [(define-actor ,τ (,a [,x1 ,τ1] ...) ((define-function (,f [,x2 ,[τ2]] ...) ,[body]) ,fd* ...) ,e ,S ...)
+    [(define-actor ,τ (,a [,x1 ,τ1] ...) ((define-function (,f [,x2 ,[τ2]] ...) ,[body]) ,AI* ...) ,e ,S ...)
      (hash-set! funcs f (func-record x2 body))
      (ActorDef
       (with-output-language (csa/inlined-program-definitions ActorDef)
-        `(define-actor ,τ (,a [,x1 ,τ1] ...) (,fd* ...) ,e ,S ...)))]
+        `(define-actor ,τ (,a [,x1 ,τ1] ...) (,AI* ...) ,e ,S ...)))]
+    [(define-actor ,τ (,a [,x1 ,τ1] ...) ((define-constant ,x ,[e]) ,AI* ...) ,body ,S ...)
+     (hash-set! consts x e)
+     (ActorDef
+      (with-output-language (csa/inlined-program-definitions ActorDef)
+        `(define-actor ,τ (,a [,x1 ,τ1] ...) (,AI* ...) ,body ,S ...)))]
     [(define-actor ,[τ] (,a [,x ,[τ1]] ...) () ,[e] ,[S] ...)
      `(define-actor ,τ (,a [,x ,τ1] ...) ,e ,S ...)])
   (Exp : Exp (e) -> Exp ()
        ;; TODO: see tmp/expected-meta for why this breaks
        [(app ,f ,[e*] ...)
         (match-define (func-record formals body)
-          (hash-ref funcs f (lambda () (error 'inline-actor-functions "could not find match for function in call ~s\n" e))))
-        `(let ([,formals ,e*] ...) ,body)]))
+          (hash-ref funcs f (lambda () (error 'inline-actor-definitions "could not find match for function in call ~s\n" e))))
+        `(let ([,formals ,e*] ...) ,body)]
+       [,x
+        (match (hash-ref consts x #f)
+          [#f x]
+          [e e])]))
 
 (module+ test
   (require rackunit)
 
   (check-equal?
-   (unparse-csa/inlined-actor-functions
-    (inline-actor-functions
+   (unparse-csa/inlined-actor-definitions
+    (inline-actor-definitions
      (with-output-language (csa/inlined-program-definitions Prog)
        `((define-actor Nat (A)
-           ((define-function (foo [x Nat]) (+ x 2))
+           ((define-constant z 2)
+            (define-constant w 4)
+            (define-function (foo [x Nat]) (+ x z))
             (define-function (bar [x Nat] [y Nat]) (- x y)))
-           (app foo (app bar 3 4)))
+
+           (app foo (app bar 3 w)))
          (spawn A)))))
    `((define-actor Nat (A)
        (let ([x
@@ -617,8 +633,8 @@
      (spawn A)))
 
   (check-equal?
-   (unparse-csa/inlined-actor-functions
-    (inline-actor-functions
+   (unparse-csa/inlined-actor-definitions
+    (inline-actor-definitions
      (parse-csa/inlined-program-definitions
       `((define-actor Nat (A)
           ((define-function (double [x Nat]) (+ x x))
@@ -634,7 +650,7 @@
 ;; Inlined Actors
 
 (define-language csa/inlined-actors
-  (extends csa/inlined-actor-functions)
+  (extends csa/inlined-actor-definitions)
   (Prog (P)
     (- (PI ... e))
     (+ e))
@@ -646,12 +662,12 @@
 
 (struct actor-record (type formals body state-defs))
 
-(define-pass inline-actors : csa/inlined-actor-functions (P) -> csa/inlined-actors ()
+(define-pass inline-actors : csa/inlined-actor-definitions (P) -> csa/inlined-actors ()
   ;; TODO: I think the return "type" is not checked, because I've seen things get through when I had ActorDef instead of Prog
   (Prog : Prog (P defs-so-far) -> Prog ()
         [(
           (define-actor ,[τ] (,a [,x ,[τ1]] ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...) ,PI* ... ,e1)
-         (Prog (with-output-language (csa/inlined-actor-functions Prog) `(,PI* ... ,e1))
+         (Prog (with-output-language (csa/inlined-actor-definitions Prog) `(,PI* ... ,e1))
                ;; TODO: figure out if hash-set overwrites existing entries or not
                (hash-set defs-so-far a (actor-record τ x e S)))]
         [(,[Exp : e0 defs-so-far -> e]) e])
@@ -727,7 +743,7 @@
   (check-equal?
    (unparse-csa/inlined-actors
     (inline-actors
-     (with-output-language (csa/inlined-actor-functions Prog)
+     (with-output-language (csa/inlined-actor-definitions Prog)
        `((define-actor Nat (A [x Nat])
            (goto S1)
            (define-state (S1) (m)
@@ -742,7 +758,7 @@
   (check-equal?
    (unparse-csa/inlined-actors
     (inline-actors
-     (with-output-language (csa/inlined-actor-functions Prog)
+     (with-output-language (csa/inlined-actor-definitions Prog)
        `((define-actor Nat (A [x Nat])
            (goto S1)
            (define-state (S1) (m)
@@ -777,7 +793,7 @@
     (compose
      unparse-csa/inlined-actors
      inline-actors
-     inline-actor-functions
+     inline-actor-definitions
      inline-program-definitions
      inline-type-aliases
      inline-records
