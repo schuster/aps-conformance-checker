@@ -29,10 +29,10 @@
           (goto Running))]
        [(variant PeerMessage (variant VoteCandidate * *)) -> (goto Running)]
        [(variant PeerMessage (variant DeclineCandidate * *)) -> (goto Running)]
-       ;; [(variant PeerMessage (variant AppendEntries * * * * * leader *)) ->
-       ;;  (with-outputs ([leader (variant PeerMessage (or (variant AppendRejected * * *)
-       ;;                                                  (variant AppendSuccessful * * *)))])
-       ;;    (goto Running))]
+       [(variant PeerMessage (variant AppendEntries * * * * * leader *)) ->
+        (with-outputs ([leader (variant PeerMessage (or (variant AppendRejected * * *)
+                                                        (variant AppendSuccessful * * *)))])
+          (goto Running))]
        ;; TODO: break these out into separate states so that the append retry can only happen when in the leader state (and otherwise the leader must fall back to being a follower)
        [(variant PeerMessage (variant AppendRejected * * *)) -> (goto Running)]
        [(variant PeerMessage (variant AppendRejected * * member)) ->
@@ -183,13 +183,13 @@
   (SetTimer [timer-name String] [target (Addr (Union (Timeout Nat)))] [id Nat] [duration Duration] [repeat? Boolean])
   (CancelTimer [timer-name String]))
 
-;; (define-record AppendResult
-;;   [message RaftMessage]
-;;   [log ReplicatedLog])
-
 (define-record ReplicatedLog
   [entries (Vectorof Entry)]
   [committed-index Int])
+
+(define-record AppendResult
+  [message RaftMessage]
+  [log ReplicatedLog])
 
     ;;;; Program-level Functions
 
@@ -199,15 +199,15 @@
 (define-function (replicated-log-empty)
   (ReplicatedLog (vector) 0))
 
-;; (define-function (replicated-log+ [replicated-log ReplicatedLog] [entry Entry])
-;;   (replicated-log-append replicated-log (vector entry) (vector-length (: replicated-log entries))))
+(define-function (replicated-log+ [replicated-log ReplicatedLog] [entry Entry])
+  (replicated-log-append replicated-log (vector entry) (vector-length (: replicated-log entries))))
 
-;; ;; Takes the first *take* entries from the log and appends *entries* onto it, returning the new log
-;; (define-function (replicated-log-append [log ReplicatedLog] [entries-to-append (Vectorof Entry)] [take Nat])
-;;   (! log [entries (vector-append (vector-take (: log entries) take) entries-to-append)]))
+;; Takes the first *take* entries from the log and appends *entries* onto it, returning the new log
+(define-function (replicated-log-append [log ReplicatedLog] [entries-to-append (Vectorof Entry)] [take Nat])
+  (! log [entries (vector-append (vector-take (: log entries) take) entries-to-append)]))
 
-;; (define-function (replicated-log-commit [replicated-log ReplicatedLog] [n Int])
-;;   (! replicated-log [commit-index n]))
+(define-function (replicated-log-commit [replicated-log ReplicatedLog] [n Int])
+  (! replicated-log [commit-index n]))
 
 ;; ;; Returns the log entries from from-index (exclusive) to to-index (inclusive) (these are *semantic*
 ;; ;; indices)
@@ -231,18 +231,11 @@
       [else (: (vector-ref entries (- (vector-length entries) 1)) term)])))
 
 ;; ;; NOTE: this differs from the akka-raft version, which is broken
-;; (define-function (replicated-log-next-index [replicated-log ReplicatedLog])
-;;   (let ([entries (: replicated-log entries)])
-;;     (cond
-;;       [(= 0 (vector-length entries)) 1]
-;;       [else (+ (: (vector-ref entries (- (vector-length entries) 1)) index) 1)])))
-
-;; ;; Returns true if the leader's previous log is consistent with ours (i.e. the term of the previous
-;; ;; index matches the term at that index in our log)
-;; (define-function (replicated-log-consistent-update [replicated-log Replicated-Log]
-;;                                           [prev-log-term Nat]
-;;                                           [prev-log-index Nat])
-;;   (= (replicated-log-term-at replicated-log prev-log-index) prev-log-term))
+(define-function (replicated-log-next-index [replicated-log ReplicatedLog])
+  (let ([entries (: replicated-log entries)])
+    (cond
+      [(= 0 (vector-length entries)) 1]
+      [else (+ (: (vector-ref entries (- (vector-length entries) 1)) index) 1)])))
 
 (define-variant FindTermResult (NoTerm) (FoundTerm [term Nat]))
 (define-function (replicated-log-term-at [replicated-log ReplicatedLog] [index Nat])
@@ -266,7 +259,14 @@
          [(FoundTerm t) t]
          [(NoTerm)
                  ;; If no term was found, just return 0, although this should really be a fatal error
-                 0]))]))
+          0]))]))
+
+;; Returns true if the leader's previous log is consistent with ours (i.e. the term of the previous
+;; index matches the term at that index in our log)
+(define-function (replicated-log-consistent-update [replicated-log ReplicatedLog]
+                                          [prev-log-term Nat]
+                                          [prev-log-index Nat])
+  (= (replicated-log-term-at replicated-log prev-log-index) prev-log-term))
 
 ;; ;; Returns a vector of entries from the log, starting at the from-including index and including either
 ;; ;; all entries with the same term or a total of 5 entries, whichever is less. We assume from-including
@@ -564,76 +564,33 @@
         ;)
         )
 
-      ;; ;; TODO: consider making AppendEntries into a record to remove these long param lists and better
-      ;; ;; match akka-raft
-      ;; (define-function (append-entries [term Nat]
-      ;;                         [prev-log-term Nat]
-      ;;                         [prev-log-index Nat]
-      ;;                         [entries (Vectorof Entry)]
-      ;;                         [leader-commit-id Nat]
-      ;;                         [leader (Addr RaftMessage)]
-      ;;                         [m StateMetadata]
-      ;;                         [replicated-log ReplicatedLog]
-      ;;                         [config ClusterConfiguration]
-      ;;                         [recently-contacted-by-leader MaybeLeader])
-      ;;   (cond
-      ;;     [(leader-is-lagging term m)
-      ;;      (send leader (AppendRejected (: m current-term)
-      ;;                                   (replicated-log-last-index replicated-log)
-      ;;                                   self))
-      ;;      ;; akka-raft does not respond to heartbeats in this case, but I think it should
-      ;;      ;; (cond
-      ;;      ;;   [(not (is-heartbeat entries))
-      ;;      ;;    (send leader (AppendRejected (: m current-term)
-      ;;      ;;                                 (replicated-log-last-index replicated-log)))]
-      ;;      ;;   [else (void)])
-      ;;      (goto Follower recently-contacted-by-leader m replicated-log config)]
-      ;;     [(not (replicated-log-consistent-update replicated-log prev-log-term prev-log-index))
-      ;;      (let ([meta-with-updated-term (! m [current-term term])])
-      ;;        (send leader (AppendRejected (: meta-with-updated-term current-term)
-      ;;                                     (replicated-log-last-index replicated-log)
-      ;;                                     self))
-      ;;        (accept-heartbeat meta-with-updated-term replicated-log config recently-contacted-by-leader))]
-      ;;     ;; akka-raft does not do the append/commit logic for heartbeats, even though it should
-      ;;     ;; [(is-heartbeat entries)
-      ;;     ;;  (accept-heartbeat m replicated-log config)]
-      ;;     [else
-      ;;      (let ([meta-with-updated-term (! m [current-term term])])
-      ;;        (define append-result (append replicated-log prev-log-index entries meta-with-updated-term))
-      ;;        (send leader (: append-result message))
-      ;;        (let  ([replicated-log (commit-until-index (: append-result log) leader-commit-id false)])
-      ;;          (accept-heartbeat meta-with-updated-term
-      ;;                            replicated-log
-      ;;                            config
-      ;;                            recently-contacted-by-leader)))]))
+      ;; NOTE: only works for follower, but fortunately only used there
+      (define-function (accept-heartbeat [m StateMetadata]
+                                         [replicated-log ReplicatedLog]
+                                         [config ClusterConfiguration]
+                                         [recently-contacted-by-leader MaybeLeader])
+        (let ([m (reset-election-deadline/follower timer-manager self m)])
+          (goto Follower recently-contacted-by-leader m replicated-log config)))
 
-      ;; ;; appends the entries to the log and returns the success message to send
-      ;; (define-function (append [replicated-log ReplicatedLog]
-      ;;                 [prev-log-index Nat]
-      ;;                 [entries (Vectorof Entry)]
-      ;;                 [m StateMetadata])
-      ;;   (cond
-      ;;     [(is-heartbeat entries)
-      ;;      (AppendResult (AppendSuccessful (: m current-term)
-      ;;                                      (replicated-log-last-index replicated-log)
-      ;;                                      self)
-      ;;                    replicated-log)]
-      ;;     [else
-      ;;      ;; NOTE: this num-entries-to-keep calculation is too naive if we do log compaction
-      ;;      (let ([num-entries-to-keep prev-log-index])
-      ;;        (let ([replicated-log (replicated-log-append replicated-log entries num-entries-to-keep)])
-      ;;          (AppendResult (AppendSuccessful (replicated-log-last-term replicated-log)
-      ;;                                          (replicated-log-last-index replicated-log)
-      ;;                                          self)
-      ;;                        replicated-log)))]))
-
-      ;; ;; NOTE: only works for follower, but fortunately only used there
-      ;; (define-function (accept-heartbeat [m StateMetadata]
-      ;;                           [replicated-log ReplicatedLog]
-      ;;                           [config ClusterConfiguration]
-      ;;                           [recently-contacted-by-leader MaybeLeader])
-      ;;   (let ([m (reset-election-deadline/follower timer-manager self m)])
-      ;;     (goto Follower recently-contacted-by-leader m replicated-log config)))
+      ;; appends the entries to the log and returns the success message to send
+      (define-function (append [replicated-log ReplicatedLog]
+                               [prev-log-index Nat]
+                               [entries (Vectorof Entry)]
+                               [m StateMetadata])
+        (cond
+          [(is-heartbeat entries)
+           (AppendResult (AppendSuccessful (: m current-term)
+                                           (replicated-log-last-index replicated-log)
+                                           self)
+                         replicated-log)]
+          [else
+           ;; NOTE: this num-entries-to-keep calculation is too naive if we do log compaction
+           (let ([num-entries-to-keep prev-log-index])
+             (let ([replicated-log (replicated-log-append replicated-log entries num-entries-to-keep)])
+               (AppendResult (AppendSuccessful (replicated-log-last-term replicated-log)
+                                               (replicated-log-last-index replicated-log)
+                                               self)
+                             replicated-log)))]))
 
       (define-function (commit-until-index [replicated-log ReplicatedLog]
                                            [last-index-to-commit Nat]
@@ -649,6 +606,49 @@
           ;;   (replicated-log-commit rep-log (: entry index)))
           replicated-log ; TODO: remove this line
           ))
+
+      ;; TODO: consider making AppendEntries into a record to remove these long param lists and better
+      ;; match akka-raft
+      (define-function (append-entries [term Nat]
+                              [prev-log-term Nat]
+                              [prev-log-index Nat]
+                              [entries (Vectorof Entry)]
+                              [leader-commit-id Nat]
+                              [leader (Addr RaftMessage)]
+                              [m StateMetadata]
+                              [replicated-log ReplicatedLog]
+                              [config ClusterConfiguration]
+                              [recently-contacted-by-leader MaybeLeader])
+        (cond
+          [(leader-is-lagging term m)
+           (send leader (AppendRejected (: m current-term)
+                                        (replicated-log-last-index replicated-log)
+                                        self))
+           ;; akka-raft does not respond to heartbeats in this case, but I think it should
+           ;; (cond
+           ;;   [(not (is-heartbeat entries))
+           ;;    (send leader (AppendRejected (: m current-term)
+           ;;                                 (replicated-log-last-index replicated-log)))]
+           ;;   [else (void)])
+           (goto Follower recently-contacted-by-leader m replicated-log config)]
+          [(not (replicated-log-consistent-update replicated-log prev-log-term prev-log-index))
+           (let ([meta-with-updated-term (! m [current-term term])])
+             (send leader (AppendRejected (: meta-with-updated-term current-term)
+                                          (replicated-log-last-index replicated-log)
+                                          self))
+             (accept-heartbeat meta-with-updated-term replicated-log config recently-contacted-by-leader))]
+          ;; akka-raft does not do the append/commit logic for heartbeats, even though it should
+          ;; [(is-heartbeat entries)
+          ;;  (accept-heartbeat m replicated-log config)]
+          [else
+           (let* ([meta-with-updated-term (! m [current-term term])]
+                  [append-result (append replicated-log prev-log-index entries meta-with-updated-term)])
+             (send leader (: append-result message))
+             (let  ([replicated-log (commit-until-index (: append-result log) leader-commit-id false)])
+               (accept-heartbeat meta-with-updated-term
+                                 replicated-log
+                                 config
+                                 recently-contacted-by-leader)))]))
 
       (define-function (replicate-log [m LeaderMeta]
                              [next-index (Hash (Addr RaftMessage) Nat)]
@@ -799,18 +799,18 @@
                                         (goto Follower recently-contacted-by-leader metadata replicated-log config)]
                          [(DeclineCandidate t f)
                                            (goto Follower recently-contacted-by-leader metadata replicated-log config)]
-                         ;; [(AppendEntries term prev-term prev-index entries leader-commit-id leader leader-client)
-                         ;;                (let ([recently-contacted-by-leader (JustLeader leader-client)])
-                         ;;                  (append-entries term
-                         ;;                                  prev-term
-                         ;;                                  prev-index
-                         ;;                                  entries
-                         ;;                                  leader-commit-id
-                         ;;                                  leader
-                         ;;                                  metadata
-                         ;;                                  replicated-log
-                         ;;                                  config
-                         ;;                                  recently-contacted-by-leader))]
+                         [(AppendEntries term prev-term prev-index entries leader-commit-id leader leader-client)
+                                        (let ([recently-contacted-by-leader (JustLeader leader-client)])
+                                          (append-entries term
+                                                          prev-term
+                                                          prev-index
+                                                          entries
+                                                          leader-commit-id
+                                                          leader
+                                                          metadata
+                                                          replicated-log
+                                                          config
+                                                          recently-contacted-by-leader))]
                          [(AppendRejected t l m)
                                          (goto Follower recently-contacted-by-leader metadata replicated-log config)]
                          [(AppendSuccessful t l m)
@@ -866,29 +866,29 @@
                                                 (goto Candidate including-this-vote replicated-log config)]))]
                                           [else (goto Candidate m replicated-log config)])]
                          [(DeclineCandidate term server) (goto Candidate m replicated-log config)]
-                         ;; [(AppendEntries term
-                         ;;                 prev-log-term
-                         ;;                 prev-log-index
-                         ;;                 entries
-                         ;;                 leader-commit-id
-                         ;;                 leader
-                         ;;                 leader-client)
-                         ;;                (let ([leader-is-ahead (>= term (: m current-term))])
-                         ;;                  (cond
-                         ;;                    [leader-is-ahead
-                         ;;                     (send self msg)
-                         ;;                     (let ([m (reset-election-deadline/candidate timer-manager self m)])
-                         ;;                       (goto Follower (Just leader-client)
-                         ;;                                             (for-follower/candidate m)
-                         ;;                                             replicated-log
-                         ;;                                             config))]
-                         ;;                    [else
-                         ;;                     ;; BUG: original code left out the response
-                         ;;                     (send leader
-                         ;;                           (AppendRejected (: m current-term)
-                         ;;                                           (replicated-log-last-index replicated-log)
-                         ;;                                           self))
-                         ;;                     (goto Candidate m replicated-log config)]))]
+                         [(AppendEntries term
+                                         prev-log-term
+                                         prev-log-index
+                                         entries
+                                         leader-commit-id
+                                         leader
+                                         leader-client)
+                                        (let ([leader-is-ahead (>= term (: m current-term))])
+                                          (cond
+                                            [leader-is-ahead
+                                             (send self msg)
+                                             (let ([m (reset-election-deadline/candidate timer-manager self m)])
+                                               (goto Follower (Just leader-client)
+                                                                     (for-follower/candidate m)
+                                                                     replicated-log
+                                                                     config))]
+                                            [else
+                                             ;; BUG: original code left out the response
+                                             (send leader
+                                                   (AppendRejected (: m current-term)
+                                                                   (replicated-log-last-index replicated-log)
+                                                                   self))
+                                             (goto Candidate m replicated-log config)]))]
                          [(AppendSuccessful t i member) (goto Candidate m replicated-log config)]
                          [(AppendRejected t i member) (goto Candidate m replicated-log config)]
                          )]
@@ -949,27 +949,27 @@
                                          (goto Leader m next-index match-index replicated-log config)])]
                          [(VoteCandidate t s) (goto Leader m next-index match-index replicated-log config)]
                          [(DeclineCandidate t s) (goto Leader m next-index match-index replicated-log config)]
-                         ;; [(AppendEntries term
-                         ;;                 prev-log-term
-                         ;;                 prev-log-index
-                         ;;                 entries
-                         ;;                 leader-commit-id
-                         ;;                 leader
-                         ;;                 leader-client)
-                         ;;                (cond
-                         ;;                  [(> term (: m current-term))
-                         ;;                   (stop-heartbeat)
-                         ;;                   (send self msg)
-                         ;;                   (step-down m replicated-log config)]
-                         ;;                  [else
-                         ;;                   (send-entries leader
-                         ;;                                 m
-                         ;;                                 replicated-log
-                         ;;                                 next-index
-                         ;;                                 (: replicated-log committed-index)
-                         ;;                                 self
-                         ;;                                 self)
-                         ;;                   (goto Leader m next-index match-index replicated-log config)])]
+                         [(AppendEntries term
+                                         prev-log-term
+                                         prev-log-index
+                                         entries
+                                         leader-commit-id
+                                         leader
+                                         leader-client)
+                                        (cond
+                                          [(> term (: m current-term))
+                                           (stop-heartbeat)
+                                           (send self msg)
+                                           (step-down m replicated-log config)]
+                                          [else
+                                           (send-entries leader
+                                                         m
+                                                         replicated-log
+                                                         next-index
+                                                         (: replicated-log committed-index)
+                                                         self
+                                                         self)
+                                           (goto Leader m next-index match-index replicated-log config)])]
                          [(AppendRejected term last-index member)
                                          (register-append-rejected term
                                                                    last-index

@@ -62,7 +62,9 @@
    length
    vector-length
    vector-ref
+   vector-take
    vector-copy
+   vector-append
    hash-ref
    hash-set
    sort-numbers-descending
