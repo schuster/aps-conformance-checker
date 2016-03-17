@@ -15,7 +15,11 @@
  step-prog-final-behavior
  csa#-actor-address
  csa#-actor-current-state
- csa#-config-only-actor)
+ csa#-config-only-actor
+
+ ;; Debug helpers
+ prog-config-without-state-defs
+ )
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -842,3 +846,11 @@
   (check-equal? (term (csa#-not (variant True))) (term (variant False)))
   (check-equal? (term (csa#-not (canonicalize-boolean (* (Union (False) (True))))))
                 (term (* (Union (True) (False))))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Debug helpers
+
+(define (prog-config-without-state-defs config)
+  (redex-let csa# ([(((a#int (_ e#)) ...) μ# ρ# χ#) config])
+             (term (((a#int e#) ...) μ# ρ# χ#))))
+
