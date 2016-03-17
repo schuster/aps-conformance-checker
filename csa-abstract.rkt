@@ -482,6 +482,13 @@
          (csa#-not (canonicalize-boolean v#))
          Not)
 
+    (==> (= a#_1 a#_2)
+         (variant True)
+         AddressEqualityTrue)
+    (==> (= a#_1 a#_2)
+         (variant False)
+         AddressEqualityFalse)
+
     ;; Vectors, Lists, and Hashes
     ;; TODO: keep the elements in a canonical order, so that equivalent abstract values are equal?
 
