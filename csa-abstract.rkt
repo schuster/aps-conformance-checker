@@ -178,7 +178,10 @@
        records-so-far))]
   [(generate-abstract-messages/mf (Record) natural_max-depth)
    ((record))]
-  [(generate-abstract-messages/mf (Addr τ) _) (ADDR-HOLE)])
+  [(generate-abstract-messages/mf (Addr τ) _) (ADDR-HOLE)]
+  [(generate-abstract-messages/mf (Listof τ) _) ((* (Listof τ)))]
+  [(generate-abstract-messages/mf (Vectorof τ) _) ((* (Vectorof τ)))]
+  [(generate-abstract-messages/mf (Hash τ_1 τ_2) _) ((* (Hash τ_1 τ_2)))])
 
 (define-metafunction csa#
   generate-variants : natural t τ ... -> ((variant t v#template ...) ...)
