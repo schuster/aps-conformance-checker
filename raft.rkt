@@ -2,6 +2,8 @@
 
 ;; A full test of the Raft port to CSA, verified against its spec
 
+;; TODO: refactor this program to use records like those in akka-raft
+
 (require
  rackunit
  redex/reduction-semantics
@@ -621,10 +623,10 @@
                               [recently-contacted-by-leader MaybeLeader])
         (cond
           [(leader-is-lagging term m)
-           (send leader (AppendRejected (: m current-term)
-                                        (replicated-log-last-index replicated-log)
-                                        self))
-           ;; akka-raft does not respond to heartbeats in this case, but I think it should
+           (send leader (PeerMessage (AppendRejected (: m current-term)
+                                                     (replicated-log-last-index replicated-log)
+                                                     self)))
+           ;; BUG: akka-raft does not respond to heartbeats in this case, but I think it should
            ;; (cond
            ;;   [(not (is-heartbeat entries))
            ;;    (send leader (AppendRejected (: m current-term)
@@ -633,9 +635,9 @@
            (goto Follower recently-contacted-by-leader m replicated-log config)]
           [(not (replicated-log-consistent-update replicated-log prev-log-term prev-log-index))
            (let ([meta-with-updated-term (! m [current-term term])])
-             (send leader (AppendRejected (: meta-with-updated-term current-term)
-                                          (replicated-log-last-index replicated-log)
-                                          self))
+             (send leader (PeerMessage (AppendRejected (: meta-with-updated-term current-term)
+                                                       (replicated-log-last-index replicated-log)
+                                                       self)))
              (accept-heartbeat meta-with-updated-term replicated-log config recently-contacted-by-leader))]
           ;; akka-raft does not do the append/commit logic for heartbeats, even though it should
           ;; [(is-heartbeat entries)
@@ -643,7 +645,7 @@
           [else
            (let* ([meta-with-updated-term (! m [current-term term])]
                   [append-result (append replicated-log prev-log-index entries meta-with-updated-term)])
-             (send leader (: append-result message))
+             (send leader (PeerMessage (: append-result message)))
              (let  ([replicated-log (commit-until-index (: append-result log) leader-commit-id false)])
                (accept-heartbeat meta-with-updated-term
                                  replicated-log
@@ -876,18 +878,34 @@
                                         (let ([leader-is-ahead (>= term (: m current-term))])
                                           (cond
                                             [leader-is-ahead
-                                             (send self msg)
-                                             (let ([m (reset-election-deadline/candidate timer-manager self m)])
-                                               (goto Follower (Just leader-client)
-                                                                     (for-follower/candidate m)
-                                                                     replicated-log
-                                                                     config))]
+                                             ;; TODO: instead of doing the call to append-entries and
+                                             ;; the let, just do this self-send and Follower goto
+                                             ;; (send self msg)
+                                             ;; (let ([m (reset-election-deadline/candidate timer-manager self m)])
+                                             ;;   (goto Follower (Just leader-client)
+                                             ;;                         (for-follower/candidate m)
+                                             ;;                         replicated-log
+                                             ;;                         config))
+                                             ;; TODO: remove this code; replace with above
+                                             (let ([recently-contacted-by-leader (JustLeader leader-client)])
+                                               (append-entries term
+                                                               prev-log-term
+                                                               prev-log-index
+                                                               entries
+                                                               leader-commit-id
+                                                               leader
+                                                               (for-follower/candidate m)
+                                                               replicated-log
+                                                               config
+                                                               recently-contacted-by-leader))
+                                             ]
                                             [else
                                              ;; BUG: original code left out the response
                                              (send leader
-                                                   (AppendRejected (: m current-term)
-                                                                   (replicated-log-last-index replicated-log)
-                                                                   self))
+                                                   (PeerMessage
+                                                    (AppendRejected (: m current-term)
+                                                                    (replicated-log-last-index replicated-log)
+                                                                    self)))
                                              (goto Candidate m replicated-log config)]))]
                          [(AppendSuccessful t i member) (goto Candidate m replicated-log config)]
                          [(AppendRejected t i member) (goto Candidate m replicated-log config)]
@@ -959,16 +977,39 @@
                                         (cond
                                           [(> term (: m current-term))
                                            (stop-heartbeat)
-                                           (send self msg)
-                                           (step-down m replicated-log config)]
+                                           ;; TODO: do this self-send and step-down instead of the
+                                           ;; code below that copies the Follower code
+                                           ;;
+                                           ;; (send self msg)
+                                           ;; (step-down m replicated-log config)
+                                           ;; TODO: remove this entire let block
+                                           (let ([m (reset-election-deadline/leader timer-manager self m)])
+                                             (let ([recently-contacted-by-leader (JustLeader leader-client)])
+                                               (append-entries term
+                                                               prev-log-term
+                                                               prev-log-index
+                                                               entries
+                                                               leader-commit-id
+                                                               leader
+                                                               (for-follower/leader m)
+                                                               replicated-log
+                                                               config
+                                                               recently-contacted-by-leader)))]
                                           [else
-                                           (send-entries leader
-                                                         m
-                                                         replicated-log
-                                                         next-index
-                                                         (: replicated-log committed-index)
-                                                         self
-                                                         self)
+                                           ;; NOTE: this send is my own code, not the akka-raft code
+                                           (send leader (PeerMessage (AppendRejected (: m current-term)
+                                                                                     (replicated-log-last-index replicated-log)
+                                                                                     self)))
+                                           ;; BUG: this is where akka-raft sends entries back instead
+                                           ;; of the rejection response
+                                           ;;
+                                           ;; (send-entries leader
+                                           ;;               m
+                                           ;;               replicated-log
+                                           ;;               next-index
+                                           ;;               (: replicated-log committed-index)
+                                           ;;               self
+                                           ;;               self)
                                            (goto Leader m next-index match-index replicated-log config)])]
                          [(AppendRejected term last-index member)
                                          (register-append-rejected term
@@ -1032,6 +1073,14 @@
                  Nat)
     (VoteCandidate Nat (Addr Nat))
     (DeclineCandidate Nat (Addr Nat)) ;; TODO: add the minfixpt here
+    (AppendEntries
+     Nat
+     Nat
+     Nat
+     (Vectorof (Record [command String] [term Nat] [index Nat] [client (Addr String)]))
+     Nat
+     (Addr Nat) ; TODO: add the minfixpt here
+     (Addr Nat)) ; TODO: add a real representation of the ClientMessage type here
     (AppendRejected Nat Nat (Addr Nat)) ; TODO: add the minfixpt here
     (AppendSuccessful Nat Nat (Addr Nat)))   ; TODO: add the minfixpt here
   )
