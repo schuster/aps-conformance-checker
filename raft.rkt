@@ -160,7 +160,8 @@
   (ClientMessage [m ClientMessage])
   (PeerMessage [m RaftMessage])
   (ElectedAsLeader)
-  (BeginElectionAlerts))
+  (BeginElectionAlerts)
+  (SendHeartbeatTimeouts [id Nat]))
 
 (define-variant MaybePeer
   (NoPeer)
@@ -768,7 +769,8 @@
                     (replicated-log-empty)
                     config))]
           [(PeerMessage r) (goto Init)]
-          [(Timeout id) (goto Init)]))
+          [(Timeout id) (goto Init)]
+          [(SendHeartbeatTimeouts id) (goto Init)]))
 
       (define-state (Follower [recently-contacted-by-leader MaybeLeader]
                               [metadata StateMetadata]
@@ -827,9 +829,8 @@
       ;;                          (goto Follower recently-contacted-by-leader metadata replicated-log config)]
       ;;   [(elected-as-leader)
       ;;                      (goto Follower recently-contacted-by-leader metadata replicated-log config)]
-      ;;   [(send-heartbeat-timeouts id)
-      ;;                            (goto Follower recently-contacted-by-leader metadata replicated-log config)]
- ))
+        [(SendHeartbeatTimeouts id)
+         (goto Follower recently-contacted-by-leader metadata replicated-log config)]))
       (define-state (Candidate [m ElectionMeta]
                                [replicated-log ReplicatedLog]
                                [config ClusterConfiguration]) (message)
@@ -930,9 +931,8 @@
       ;;                              (goto Candidate (with-vote-for including-this-vote (: m current-term) self)
       ;;                                                     replicated-log config)))]
       ;;   [(elected-as-leader) (goto Candidate m replicated-log config)]
-      ;;   [(send-heartbeat-timeouts id) (goto Candidate m replicated-log config)]
-                               ))
-      ;; TODO:
+        [(SendHeartbeatTimeouts id) (goto Candidate m replicated-log config)]))
+
       (define-state (Leader [m LeaderMeta]
                             [next-index (Hash (Addr RaftMessage) Nat)]
                             [match-index (Hash (Addr RaftMessage) Nat)]
@@ -1038,10 +1038,9 @@
       ;;                            [match-index (log-index-map-initialize (: config members) 0)])
       ;;                        (start-heartbeat m next-index replicated-log config)
       ;;                        (goto Leader m next-index match-index replicated-log config))]
-      ;;   [(send-heartbeat-timeouts id)
-      ;;                            (send-heartbeat m next-index replicated-log config)
-      ;;                            (goto Leader m next-index match-index replicated-log config)]
-                            )))
+        [(SendHeartbeatTimeouts id)
+         (send-heartbeat m next-index replicated-log config)
+         (goto Leader m next-index match-index replicated-log config)])))
 ;; TODO: think of a way to not have to give concrete addresses here
     (spawn RaftActor (addr 2) (addr 3)))))
 
@@ -1089,7 +1088,8 @@
                      raft-spec
                      (term (Union (PeerMessage ,desugared-raft-message-type)))
                      (term (Union ,cluster-config-variant
-                                  (Timeout Nat)))
+                                  (Timeout Nat)
+                                  (SendHeartbeatTimeouts Nat)))
                      (hash 'Init 'Init
                            'Follower 'Running
                            'Candidate 'Running
