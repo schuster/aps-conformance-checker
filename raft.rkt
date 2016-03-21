@@ -34,7 +34,8 @@
         (with-outputs ([leader (variant PeerMessage (or (variant AppendRejected * * *)
                                                         (variant AppendSuccessful * * *)))])
           (goto Running))]
-       ;; TODO: break these out into separate states so that the append retry can only happen when in the leader state (and otherwise the leader must fall back to being a follower)
+       ;; TODO: break these out into separate states so that the append retry can only happen when in
+       ;; the leader state (and otherwise the leader must fall back to being a follower)
        [(variant PeerMessage (variant AppendRejected * * *)) -> (goto Running)]
        [(variant PeerMessage (variant AppendRejected * * member)) ->
         ;; TODO: should I require that the self address is in this response?
@@ -52,7 +53,6 @@
     (define-type Duration Nat) ; number of seconds
     ;; TODO: move these into the core language
     (define-variant Boolean (True) (False))
-    ;; TODO: use these constants
     (define-constant true (variant True))
     (define-constant false (variant False))
     ;; TODO: actually define Int
@@ -373,7 +373,6 @@
 ;; Election
 
 ;; All times are in milliseconds
-;; TODO: define these as constants in the program
 (define-constant election-timeout-min 0)
 (define-constant election-timeout-max 100)
 (define-constant election-timer-name "ElectionTimer")
@@ -433,7 +432,6 @@
   (! m [votes-received (hash-set (: m votes-received) follower true)]))
 
 (define-function (has-majority [m ElectionMeta] [config ClusterConfiguration])
-  ;; TODO: figure out what the type for division is here (or maybe rewrite to not use division)
   (let ([total-votes-received
          ;; TODO:
          ;; (for/fold ([total 0])
@@ -528,17 +526,8 @@
 
 (define-actor RaftActorMessage (RaftActor [timer-manager (Addr TimerMessage)]
                                           [application (Addr String)])
-      ;; (in: [client-messages ClientMessage]
-      ;;      [peer-messages RaftMessage]
-      ;;      [configs ClusterConfiguration]
-      ;;      [timeouts Nat]
-      ;;      [begin-election-alerts]
-      ;;      [elected-as-leader]
-      ;;      [send-heartbeat-timeouts Nat])
-      ;; (out: [timer-manager TimerMessage]
-      ;;       [application String]) ; the server sends a command here when it is applied
 
-      ; the functions go here
+      ;; the functions go here
       (
       ;; ;; Only called from Follower state on receiving an election timeout
       (define-function (begin-election [timer (Addr TimerMessage)]
@@ -716,7 +705,7 @@
                                           [match-index (Hash (Addr RaftMessage) Nat)]
                                           [replicated-log ReplicatedLog]
                                           [config ClusterConfiguration])
-        ;; TODO: why don't both indices use put-if-greater?
+        ;; TODO: (maybe akka-raft bug): why don't both indices use put-if-greater?
         (let* ([next-index (hash-set next-index member follower-index)]
                [match-index (log-index-map-put-if-greater match-index
                                                           member
@@ -757,7 +746,6 @@
       (define-state (Init) (m)
         (case m
           [(Config config)
-           ;; TODO:
             (let ([metadata (reset-election-deadline/follower timer-manager self (initial-metadata))])
               (goto Follower
                     (NoLeader)
@@ -840,7 +828,7 @@
                                       (cond
                                         [(grant-vote?/candidate m replicated-log term candidate last-log-term last-log-index)
                                          (send candidate (PeerMessage (VoteCandidate term self)))
-                                         ;; TODO: this seems wrong that we stay in candidate instead of
+                                         ;; TODO: (maybe akka-raft bug): this seems wrong that we stay in candidate instead of
                                          ;; going to Follower. Some test should probably break this
                                          (goto Candidate (with-vote-for m term candidate) replicated-log config)]
                                         [else
