@@ -156,7 +156,7 @@
 
 (define-variant RaftActorMessage
   (Config [config ClusterConfiguration])
-  (ClientMessage [m ClientMessage])
+  (ClientMessage [client (Addr ClientResponse)] [cmd String])
   (PeerMessage [m RaftMessage])
   (ElectedAsLeader)
   (BeginElectionAlerts)
@@ -201,12 +201,12 @@
 (define-function (replicated-log-empty)
   (ReplicatedLog (vector) 0))
 
-(define-function (replicated-log+ [replicated-log ReplicatedLog] [entry Entry])
-  (replicated-log-append replicated-log (vector entry) (vector-length (: replicated-log entries))))
-
 ;; Takes the first *take* entries from the log and appends *entries* onto it, returning the new log
 (define-function (replicated-log-append [log ReplicatedLog] [entries-to-append (Vectorof Entry)] [take Nat])
   (! log [entries (vector-append (vector-take (: log entries) take) entries-to-append)]))
+
+(define-function (replicated-log+ [replicated-log ReplicatedLog] [entry Entry])
+  (replicated-log-append replicated-log (vector entry) (vector-length (: replicated-log entries))))
 
 (define-function (replicated-log-commit [replicated-log ReplicatedLog] [n Int])
   (! replicated-log [commit-index n]))
@@ -764,6 +764,7 @@
                     metadata
                     (replicated-log-empty)
                     config))]
+          [(ClientMessage client cmd) (goto Init)]
           [(PeerMessage r) (goto Init)]
           [(Timeout id) (goto Init)]
           [(SendHeartbeatTimeouts id) (goto Init)]))
@@ -774,11 +775,9 @@
                               [config ClusterConfiguration]) (m)
         (case m
 
-      ;;   [client-messages (m)
-      ;;                    (case m
-      ;;                      [(ClientMessage client command)
-      ;;                                     (send client (LeaderIs recently-contacted-by-leader))
-      ;;                                     (goto Follower recently-contacted-by-leader metadata replicated-log config)])]
+        [(ClientMessage client command)
+                       (send client (LeaderIs recently-contacted-by-leader))
+                       (goto Follower recently-contacted-by-leader metadata replicated-log config)]
         [(PeerMessage m)
                        (case m
                          [(RequestVote term candidate last-term last-index)
@@ -832,11 +831,9 @@
                                [config ClusterConfiguration]) (message)
                                                            (printf "became candidate\n")
         (case message
-      ;;   [client-messages (m)
-      ;;                    (case m
-      ;;                      [ClientMessage (client command)
-      ;;                                     (send client (LeaderIs (NoLeader)))
-      ;;                                     (goto Candidate m replicated-log config)])]
+        [(ClientMessage client command)
+                       (send client (LeaderIs (NoLeader)))
+                       (goto Candidate m replicated-log config)]
         [(PeerMessage msg)
                        (case msg
                          [(RequestVote term candidate last-log-term last-log-index)
@@ -936,16 +933,14 @@
                             [config ClusterConfiguration]) (message)
                             (printf "became leader\n")
         (case message
-      ;;   [(client-messages msg)
-      ;;                    (case msg
-      ;;                      [(ClientMessage client command)
-      ;;                                     (let* ([entry (Entry command
-      ;;                                                          (: m current-term) (replicated-log-next-index replicated-log)
-      ;;                                                          client)]
-      ;;                                            [replicated-log (replicated-log+ replicated-log entry)]
-      ;;                                            [match-index (hash-set match-index self (: entry index))])
-      ;;                                       (replicate-log m next-index replicated-log config)
-      ;;                                       (goto Leader m next-index match-index replicated-log config))])]
+        [(ClientMessage client command)
+         (let* ([entry (Entry command
+                              (: m current-term) (replicated-log-next-index replicated-log)
+                              client)]
+                [replicated-log (replicated-log+ replicated-log entry)]
+                [match-index (hash-set match-index self (: entry index))])
+           (replicate-log m next-index replicated-log config)
+           (goto Leader m next-index match-index replicated-log config))]
         [(PeerMessage msg)
                        (case msg
                          [(RequestVote term candidate last-log-term last-log-index)
@@ -1084,6 +1079,8 @@
                      raft-spec
                      (term (Union (PeerMessage ,desugared-raft-message-type)))
                      (term (Union ,cluster-config-variant
+                                  (ClientMessage (Addr Nat) ; TODO: add the real type here
+                                                 String)
                                   (Timeout Nat)
                                   (SendHeartbeatTimeouts Nat)))
                      (hash 'Init 'Init
