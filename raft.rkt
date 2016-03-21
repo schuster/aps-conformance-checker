@@ -24,7 +24,6 @@
      (define-state (Running)
        ;; TODO: consider removing the "PeerMessage" part of the type, just to make things more
        ;; concise, esp. for sending back *out*
-       ;;
        [(variant PeerMessage (variant RequestVote * candidate * *)) ->
         (with-outputs ([candidate (variant PeerMessage (or (variant VoteCandidate * *)
                                                            (variant DeclineCandidate * *)))])
@@ -271,9 +270,9 @@
                                           [prev-log-index Nat])
   (= (replicated-log-term-at replicated-log prev-log-index) prev-log-term))
 
-;; ;; Returns a vector of entries from the log, starting at the from-including index and including either
-;; ;; all entries with the same term or a total of 5 entries, whichever is less. We assume from-including
-;; ;; is no less than 1 and no more than 1 + the last index in the log.
+;; Returns a vector of entries from the log, starting at the from-including index and including either
+;; all entries with the same term or a total of 5 entries, whichever is less. We assume from-including
+;; is no less than 1 and no more than 1 + the last index in the log.
 (define-function (replicated-log-entries-batch-from [replicated-log ReplicatedLog] [from-including Nat])
   (let* ([how-many 5] ; this is the default parameter in akka-raft
          [first-impl-index 0]
@@ -300,9 +299,6 @@
          (vector) ;; TODO: remove this line
          )]
       [else (vector)])))
-
-;; (define-function (min [a Nat] [b Nat])
-;;   (cond [(< a b) a] [else b]))
 
 (define-function (entry-prev-index [entry Entry])
   (- (: entry index) 1))
@@ -376,14 +372,14 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Election
 
-;; ;; All times are in milliseconds
+;; All times are in milliseconds
 ;; TODO: define these as constants in the program
 (define-constant election-timeout-min 0)
 (define-constant election-timeout-max 100)
 (define-constant election-timer-name "ElectionTimer")
 
-;; ;; Resets the timer for the election deadline and returns the metadata with the new expected next
-;; ;; timeout ID
+;; Resets the timer for the election deadline and returns the metadata with the new expected next
+;; timeout ID
 (define-function (reset-election-deadline/follower [timer (Addr TimerMessage)]
                                                    [target (Addr Nat)]
                                                    [m StateMetadata])
@@ -422,8 +418,8 @@
 (define-function (with-vote-for [m ElectionMeta] [term Nat] [candidate (Addr RaftMessage)])
   (! m [votes (hash-set (: m votes) term candidate)]))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Config helpers
+;; ---------------------------------------------------------------------------------------------------
+;; Config helpers
 
 (define-function (members-except-self [config ClusterConfiguration] [self (Addr RaftMessage)])
   ;; TODO:
@@ -447,8 +443,8 @@
          ])
     (> total-votes-received (/ (length (: config members)) 2))))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; LogIndexMap
+;; ---------------------------------------------------------------------------------------------------
+;; LogIndexMap
 
 ;; (define-function (log-index-map-initialize [members (Listof (Addr RaftMessage))] [initialize-with Nat])
 ;;   (for/fold ([map (hash)])
