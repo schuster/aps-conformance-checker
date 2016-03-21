@@ -691,8 +691,8 @@
   [(csa#-subst (: e# l) x v#) (: (csa#-subst e# x v#) l)]
   [(csa#-subst (! e#_1 [l e#_2]) x v#)
    (! (csa#-subst e#_1 x v#) [l (csa#-subst e#_2 x v#)])]
-  [(csa#-subst (list e ...) x v#) (list (csa#-subst e x v#) ...)]
-  [(csa#-subst (vector e ...) x v#) (vector (csa#-subst e x v#) ...)]
+  [(csa#-subst (list e# ...) x v#) (list (csa#-subst e# x v#) ...)]
+  [(csa#-subst (vector e# ...) x v#) (vector (csa#-subst e# x v#) ...)]
   [(csa#-subst (hash v#_element ...) x v#) (hash (csa#-subst v#_element x v#) ...)]
   ;; [(csa#-subst (rcv (x) e) x v) (rcv (x) e)]
   ;; [(csa#-subst (rcv (x_h) e) x v) (rcv (x_h) (csa#-subst e x v))]
@@ -713,7 +713,11 @@
   (check-equal? (term (csa#-subst/case-clause [(Cons p) (begin p x)] p (* Nat)))
                 (term [(Cons p) (begin p x)]))
   (check-equal? (term (csa#-subst/case-clause [(Cons p) (begin p x)] x (* Nat)))
-                (term [(Cons p) (begin p (* Nat))])))
+                (term [(Cons p) (begin p (* Nat))]))
+  (check-equal? (term (csa#-subst (list (* Nat) x) x (* Nat)))
+                (term (list (* Nat) (* Nat))))
+  (check-equal? (term (csa#-subst (vector (* Nat) x) x (* Nat)))
+                (term (vector (* Nat) (* Nat)))))
 
 (module+ test
   (check-equal? (term (csa#-subst (variant Foo (* Nat)) a (* Nat))) (term (variant Foo (* Nat)))))
