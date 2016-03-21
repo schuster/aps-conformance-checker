@@ -898,8 +898,7 @@
                                 (for-follower/candidate m)
                                 replicated-log
                                 config
-                                recently-contacted-by-leader))
-              ]
+                                recently-contacted-by-leader))]
              [else
               ;; BUG: original code left out the response
               (send leader
