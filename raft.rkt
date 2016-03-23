@@ -846,7 +846,6 @@
  (define-state (Candidate [m ElectionMeta]
                           [replicated-log ReplicatedLog]
                           [config ClusterConfiguration]) (message)
-   (printf "became candidate\n")
    (case message
      [(ClientMessage client command)
       (send client (LeaderIs (NoLeader)))
@@ -946,7 +945,6 @@
                        [match-index (Hash (Addr RaftMessage) Nat)]
                        [replicated-log ReplicatedLog]
                        [config ClusterConfiguration]) (message)
-   (printf "became leader\n")
    (case message
      [(ClientMessage client command)
       (let* ([entry (Entry command
