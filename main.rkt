@@ -87,13 +87,13 @@ Remaining big challenges I see in the analysis:
             ;; transmission result. Define this data definition in the code somewhere, because it
             ;; should really be a type (it's a new kind of data in my domain that needs to be defined
             ;; and named)
-            (set! program-transitions-checked (add1 program-transitions-checked))
-            (printf "Program state #: ~s\n" program-transitions-checked)
-            (printf "Queue size: ~s\n" (queue-length to-visit))
-            (printf "The prog config: ~s\n" (prog-config-without-state-defs prog))
 
             ;; Debugging
-            ;; (printf "next possible transitions\n\n\n")
+            (set! program-transitions-checked (add1 program-transitions-checked))
+            (printf "Program state #: ~s\n" program-transitions-checked)
+            ;; (printf "Queue size: ~s\n" (queue-length to-visit))
+            ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs prog))
+
             (define possible-transitions
               (append (transitions-from-message-of-type prog obs-type #t)
                       (transitions-from-message-of-type prog unobs-type #f)))
