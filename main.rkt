@@ -125,6 +125,10 @@ Remaining big challenges I see in the analysis:
 ;; given type
 (define (transitions-from-message-of-type prog-config type observed?)
   (define the-actor (csa#-config-only-actor prog-config))
+
+  ;; Debugging
+  ;; (printf "Number of generated messages: ~s\n" (length (generate-abstract-messages type (csa#-actor-current-state the-actor) 10 observed?)))
+
   (for/fold ([transitions-so-far null])
             ;; TODO: get the max depth from somewhere
             ([message (generate-abstract-messages type (csa#-actor-current-state the-actor) 10 observed?)])

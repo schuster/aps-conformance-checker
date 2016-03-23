@@ -360,6 +360,12 @@
              (define results (apply-reduction-relation* handler-step# initial-config))
              (define non-abstraction-stuck-results
                (filter (compose not stuck-abstraction-handler-config?) results))
+
+             ;; Debugging
+             ;; (printf "The initial config: ~s\n" initial-config)
+             ;; (printf "Number of raw results: ~s\n" (length results))
+             ;; (printf "Number of non-stuck results: ~s\n" (length non-abstraction-stuck-results))
+
              (unless (redex-match csa#
                                   (((in-hole E# (goto s v#_param ...)) ([a#ext v#_out] ...)) ...)
                                   non-abstraction-stuck-results)
@@ -580,6 +586,8 @@
     (--> ((in-hole E# (goto s v# ...)) (any_outputs ...))
          ((goto s v# ...) (any_outputs ...))
          (side-condition (not (redex-match csa# hole (term E#))))
+         ;; (side-condition (printf "running goto rule: ~s\n" (term (in-hole E# (goto s v# ...)))))
+         ;; (side-condition (printf "goto result: ~s\n" (term (goto s v# ...))))
          GotoRemoveContext)
 
     ;; Debugging
