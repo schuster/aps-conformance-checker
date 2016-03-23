@@ -357,7 +357,7 @@
              ;; TODO: deal with the case where x_m shadows an x_s
              ;; (printf "Expression to be run: ~s\n" (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...)))
              (define initial-config (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...))))
-             (define results (apply-reduction-relation* handler-step# initial-config))
+             (define results (apply-reduction-relation* handler-step# initial-config #:cache-all? #t))
              (define non-abstraction-stuck-results
                (filter (compose not stuck-abstraction-handler-config?) results))
 
