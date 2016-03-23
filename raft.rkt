@@ -81,6 +81,8 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 
+;; TODO: write code that desugars types with recursive references into types with minfixpts
+
 (define-record ClusterConfiguration
   ;; TODO:
   [members (Listof (Addr Nat ;; RaftMessage
@@ -720,7 +722,7 @@
           [will-commit (commit-until-index replicated-log index-on-majority true)]
           [else replicated-log]))))
 
-  ;; TODO: define messages like this alongside handlers in a state, so we don't have to repeat state
+  ;; TODO: define functions like this alongside handlers in a state, so we don't have to repeat state
   ;; fields so much
   (define-function (register-append-successful [follower-term Nat]
                                                [follower-index Nat]
