@@ -589,6 +589,23 @@
          (side-condition (apply printf (term (string v# ...))))
          Printf)
 
+    (==> (print-len (list v# ...))
+         (* Nat)
+         (side-condition (printf "~s" (length (term (v# ...)))))
+         PrintLenList)
+    (==> (print-len (* (Listof _)))
+         (* Nat)
+         (side-condition (printf "1"))
+         PrintLenListWildcard)
+    (==> (print-len (vector v# ...))
+         (* Nat)
+         (side-condition (printf "~s" (length (term (v# ...)))))
+         PrintLenVector)
+    (==> (print-len (* (Vectorof _)))
+         (* Nat)
+         (side-condition (printf "1"))
+         PrintLenVectorWildcard)
+
     with
     [(--> ((in-hole E# old) ([a#ext v#] ...))
           ((in-hole E# new) ([a#ext v#] ...)))

@@ -68,8 +68,9 @@
    hash-ref
    hash-set
    sort-numbers-descending
-   ;; printf for debugging only
-   printf )
+   ;; printf and abs-len for debugging only
+   printf
+   print-len)
   ((x s t l) variable-not-otherwise-mentioned)
   (n natural)
   (τ Nat ; TODO: change this to Int or something
