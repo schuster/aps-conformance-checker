@@ -429,6 +429,10 @@
 ;; Config helpers
 
 (define-function (members-except-self [config ClusterConfiguration] [self (Addr RaftMessage)])
+  ;; (printf "Members list: ")
+  ;; (print-len (: config members))
+  ;; (printf "\n")
+
   ;; TODO:
   ;; (for/fold ([result (list)])
   ;;           ([member (: config members)])
@@ -600,6 +604,10 @@
     (let ([entries (replicated-log-between replicated-log
                                            (: replicated-log committed-index)
                                            last-index-to-commit)])
+      ;; (printf "entries length: ")
+      ;; (print-len entries)
+      ;; (printf "\n")
+
       ;; TODO:
       ;; (for/fold ([rep-log replicated-log])
       ;;           ([entry entries])
