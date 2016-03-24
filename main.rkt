@@ -90,7 +90,7 @@ Remaining big challenges I see in the analysis:
 
             ;; Debugging
             (set! program-transitions-checked (add1 program-transitions-checked))
-            (printf "Program state #: ~s\n" program-transitions-checked)
+            ;; (printf "Program state #: ~s\n" program-transitions-checked)
             ;; (printf "Queue size: ~s\n" (queue-length to-visit))
             ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs prog))
 
