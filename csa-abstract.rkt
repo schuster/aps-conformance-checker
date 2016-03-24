@@ -821,9 +821,13 @@
    (! (α-e e_1 (a ...) natural_depth) [l (α-e e_2 (a ...) natural_depth)])]
   ;; TODO: check for the depth=0 case on lists and vectors
   [(α-e (list e ...) (a ...) natural_depth)
-   (list (α-e e (a ...) ,(max 0 (sub1 (term natural_depth)))) ...)]
+   (list e#_unique ...)
+   (where (e# ...) ((α-e e (a ...) ,(max 0 (sub1 (term natural_depth)))) ...))
+   (where (e#_unique ...) ,(set->list (list->set (term (e# ...)) )))]
   [(α-e (vector e ...) (a ...) natural_depth)
-   (vector (α-e e (a ...) ,(max 0 (sub1 (term natural_depth)))) ...)]
+   (vector e#_unique ...)
+   (where (e# ...) ((α-e e (a ...) ,(max 0 (sub1 (term natural_depth)))) ...))
+   (where (e#_unique ...) ,(set->list (list->set (term (e# ...)) )))]
   [(α-e (hash) _ _) (hash)])
 
 ;; TODO: write tests for the variant/record case, because the crappy version I have here isn't good
@@ -835,7 +839,11 @@
   (check-not-false
    (redex-match? csa#
                  (variant Foo (init-addr 1) (* (Addr τ)))
-                 (term (α-e (variant Foo (addr 1) (addr 2)) ((addr 1)) 10)))))
+                 (term (α-e (variant Foo (addr 1) (addr 2)) ((addr 1)) 10))))
+  (check-equal? (term (α-e (list 1 2) () 10))
+                (term (list (* Nat))))
+    (check-equal? (term (α-e (vector 1 2) () 10))
+                (term (vector (* Nat)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
