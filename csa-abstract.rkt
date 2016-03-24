@@ -96,8 +96,7 @@
       (goto s v# ... E# e# ...)
       (send E# e#)
       (send v# E#)
-      ;; only evaluate under begin if at least 2 items in it, to prevent infinite for loops
-      (begin E# e# e# ...)
+      (begin E# e# ...)
       (let ([x v#] ... [x E#] [x e#] ...) e#)
       (case E# [(t x ...) e#] ...)
       (variant t v# ... E# e# ...)
@@ -410,13 +409,11 @@
     ;; TODO: goto into rcv (with/without timeout)
 
     ;; let, match, begin, send, goto
-
-    ;; only leave the "begin" if there are at least 2 expressions, to prevent infinite for-loops
-    (==> (begin v# e# e#_2 e#_rest ...)
-         (begin e# e#_2 e#_rest ...)
+    (==> (begin v# e# e#_rest ...)
+         (begin e# e#_rest ...)
          Begin1)
-    (==> (begin v# e#)
-         e#
+    (==> (begin v#)
+         v#
          Begin2)
 
     (==> (case (* (Union _ ... [t τ ..._n] _ ...))
