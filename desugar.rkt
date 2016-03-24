@@ -122,6 +122,7 @@
        (sort-numbers-descending e)
        (printf e1 e* ...)
        (print-len e)
+       (for/fold ([x1 e1]) ([x2 e2]) e3 e* ...)
        (let ([x e] ...) e2 e* ...)
        (let* ([x e] ...) e2 e* ...)
        (addr n) ; only for giving the initial output addresses
@@ -187,13 +188,15 @@
           (let* ([x e] ...) e2 e* ...)
           (cond [e1 e2 e2* ...] ... [else-keyword e3 e3* ...])
           (and e1 e2 ...)
-          (or e1 e2 ...))
+          (or e1 e2 ...)
+          (for/fold ([x1 e1]) ([x2 e2]) e3 e* ...))
        (+ (case e1 [(V x ...) e2] ...)
           (let ([x e] ...) e2)
           (let* ([x e] ...) e2)
           (cond [e1 e2] ... [else-keyword e3])
           (and e1 e2)
           (or e1 e2)
+          (for/fold ([x1 e1]) ([x2 e2]) e3)
           (begin e1 e* ...))))
 
 (define-parser parse-csa/single-exp-bodies csa/single-exp-bodies)
@@ -219,7 +222,9 @@
         `(and ,e1 ,(Exp (with-output-language (csa/wrapped-calls Exp) `(and ,e2 ,e3 ...))))]
        [(or ,[e1] ,[e2]) `(or ,e1 ,e2)]
        [(or ,[e1] ,e2 ,e3 ...)
-        `(or ,e1 ,(Exp (with-output-language (csa/wrapped-calls Exp) `(or ,e2 ,e3 ...))))])
+        `(or ,e1 ,(Exp (with-output-language (csa/wrapped-calls Exp) `(or ,e2 ,e3 ...))))]
+       [(for/fold ([,x1 ,[e1]]) ([,x2 ,[e2]]) ,[e3] ,[e*] ...)
+        (for/fold ([,x1 ,e1]) ([,x2 ,e2]) (begin ,e3 ,e* ...))])
   ;; Non-working version that only places begins where necessary
   ;;   (StateDef : StateDef (S) -> StateDef ()
   ;;           [(define-state (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e2] ,[e*] ...)

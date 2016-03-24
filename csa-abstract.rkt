@@ -72,6 +72,8 @@
       (list e# ...)
       (vector e# ...)
       (hash)
+      (for/fold ([x e#]) ([x e#]) e#)
+      (loop-context e#)
       x
       v#)
   (a# a#int a#ext) ; internal and external addresses
@@ -87,14 +89,15 @@
   ;; tracked elsewhere)
   (ρ# (SINGLE-ACTOR-ADDR))
   (χ# (a#ext ...))
-  ;; H# = handler config (exp + outputs so far)
-  (H# (e# ([a#ext v#] ...)))
+  ;; H# = handler config (exp + outputs + loop outputs so far)
+  (H# (e# ([a#ext v#] ...) ([a#ext v#] ...)))
   ;; (A# ((any_1 ... hole any_2 ...) () ρ χ)) ; TODO: update this
   (E# hole
       (goto s v# ... E# e# ...)
       (send E# e#)
       (send v# E#)
-      (begin E# e# ...)
+      ;; only evaluate under begin if at least 2 items in it, to prevent infinite for loops
+      (begin E# e# e# ...)
       (let ([x v#] ... [x E#] [x e#] ...) e#)
       (case E# [(t x ...) e#] ...)
       (variant t v# ... E# e# ...)
@@ -105,7 +108,10 @@
       (primop v# ... E# e# ...)
       (printf string v# ... E# e# ...)
       (list v# ... E# e# ...)
-      (vector v# ... E# e# ...)))
+      (vector v# ... E# e# ...)
+      (for/fold ([x E#]) ([x e#]) e#)
+      (for/fold ([x v#]) ([x E#]) e#)
+      (loop-context E#)))
 
   ;; (define-metafunction csa#
   ;;   abstract : K -> K#
@@ -331,7 +337,7 @@
 ;; Evaluation
 
 ;; Outputs is a list of abstract-addr/abstract-message 2-tuples
-(struct csa#-transition (message observed? outputs behavior-exp) #:transparent)
+(struct csa#-transition (message observed? outputs loop-outputs behavior-exp) #:transparent)
 
 (define csa#-output-address car)
 (define csa#-output-message cadr)
@@ -357,43 +363,43 @@
              ;; TODO: deal with the case where x_m shadows an x_s
              ;; (printf "Expression to be run: ~s\n" (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...)))
              (define initial-config (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...))))
-             (define results (apply-reduction-relation* handler-step# initial-config #:cache-all? #t))
-             (define non-abstraction-stuck-results
-               (filter (compose not stuck-abstraction-handler-config?) results))
+             (define final-configs (apply-reduction-relation* handler-step# initial-config #:cache-all? #t))
+             (define non-abstraction-stuck-final-configs
+               ;; Filter out those stuck because of over-abstraction
+               (filter (compose not stuck-abstraction-handler-config?) final-configs))
 
              ;; Debugging
              ;; (printf "The initial config: ~s\n" initial-config)
-             ;; (printf "Number of raw results: ~s\n" (length results))
-             ;; (printf "Number of non-stuck results: ~s\n" (length non-abstraction-stuck-results))
+             ;; (printf "Number of raw results: ~s\n" (length final-configs))
+             ;; (printf "Number of non-stuck results: ~s\n" (length non-abstraction-stuck-final-configs))
 
-             (unless (redex-match csa#
-                                  (((in-hole E# (goto s v#_param ...)) ([a#ext v#_out] ...)) ...)
-                                  non-abstraction-stuck-results)
+             (unless (andmap complete-handler-config? non-abstraction-stuck-final-configs)
                (error 'csa#-eval-transition
                       "Abstract evaluation did not complete\nInitial config: ~s\nFinal stuck configs:~s"
                       initial-config
-                      (filter (lambda (c)
-                                (not (redex-match csa# ((in-hole E# (goto s v#_param ...)) ([a#ext v#_out] ...)) c)))
-                              non-abstraction-stuck-results)))
-             non-abstraction-stuck-results))
+                      (filter (compose not complete-handler-config?) non-abstraction-stuck-final-configs)))
+             non-abstraction-stuck-final-configs))
 
 ;; Returns true if the config is one that is unable to step because of an over-approximation in the
 ;; abstraction
 (define (stuck-abstraction-handler-config? c)
   (or (redex-match csa#
-                   ((in-hole E# (list-ref (list) v#)) ([a#ext v#_out] ...))
+                   ((in-hole E# (list-ref (list) v#)) ([a#ext v#_out] ...) any_loop)
                    c)
       (redex-match csa#
-                   ((in-hole E# (vector-ref (vector) v#)) ([a#ext v#_out] ...))
+                   ((in-hole E# (vector-ref (vector) v#)) ([a#ext v#_out] ...) any_loop)
                    c)
       (redex-match csa#
-                   ((in-hole E# (hash-ref (hash) v# v#_2)) ([a#ext v#_out] ...))
+                   ((in-hole E# (hash-ref (hash) v# v#_2)) ([a#ext v#_out] ...) any_loop)
                    c)))
+
+(define (complete-handler-config? c)
+  (redex-match csa# ((in-hole E# (goto s v#_param ...)) any_output any_loop-output) c))
 
 (define (inject/H# exp)
   (redex-let csa#
              ([e# exp]
-              [H# (term (,exp ()))])
+              [H# (term (,exp () ()))])
              (term H#)))
 
 ;; TODO: make this relation work on a full abstract configuration (maybe?)
@@ -404,11 +410,13 @@
     ;; TODO: goto into rcv (with/without timeout)
 
     ;; let, match, begin, send, goto
-    (==> (begin v# e# e#_rest ...)
-         (begin e# e#_rest ...)
+
+    ;; only leave the "begin" if there are at least 2 expressions, to prevent infinite for-loops
+    (==> (begin v# e# e#_2 e#_rest ...)
+         (begin e# e#_2 e#_rest ...)
          Begin1)
-    (==> (begin v#)
-         v#
+    (==> (begin v# e#)
+         e#
          Begin2)
 
     (==> (case (* (Union _ ... [t τ ..._n] _ ...))
@@ -570,6 +578,26 @@
          (* Hash τ_1 τ_2)
          HashWildcardSet)
 
+    ;; Loops
+    (==> (for/fold ([x_fold v#_fold])
+                   ;; the "any" pattern lets us match both lists and vectors
+                   ([x_item (any_1 v#_1 ... v#_item v#_2 ...)])
+           e#_body)
+         (for/fold ([x_fold e#_unrolled-body])
+                   ([x_item (any_1 v#_1 ... v#_item v#_2 ...)])
+           e#_body)
+         (where e#_unrolled-body
+                (loop-context (csa#-subst-n e#_body [x_fold v#_fold] [x_item v#_item])))
+         ForLoop1)
+
+    (==> (for/fold ([x_fold v#_fold]) _ _)
+         v#_fold
+         ForLoop2)
+
+    (==> (loop-context v#)
+         v#
+         RemoveLoopContext)
+
     ;; TODO: make an actual implementation here (although this might be the real implementation once I
     ;; figure out the representation for lsits
     (==> (sort-numbers-descending v#)
@@ -578,13 +606,20 @@
 
     ;; Communication
 
-    (--> ((in-hole E# (send a# v#)) (any_outputs ...))
-         ((in-hole E# v#)           (any_outputs ... [a# v#]))
+    (--> ((in-hole E# (send a# v#)) (any_outputs ...) any_loop-outputs)
+         ((in-hole E# v#)           (any_outputs ... [a# v#]) any_loop-outputs)
+         ;; regular send only occurs outside of loop contexts
+         (side-condition (not (redex-match csa# (in-hole E# (loop-context E#_2)) (term E#))))
          Send)
+    (--> ((in-hole E# (loop-context (in-hole E#_2 (send a# v#)))) any_outputs any_loop-outputs)
+         ((in-hole E# (loop-context (in-hole E#_2 v#)))
+          any_outputs
+          (redex-set-add any_loop-outputs [a# v#]))
+         LoopSend)
 
     ;; Goto context removal
-    (--> ((in-hole E# (goto s v# ...)) (any_outputs ...))
-         ((goto s v# ...) (any_outputs ...))
+    (--> ((in-hole E# (goto s v# ...)) (any_outputs ...) any_loop-outputs)
+         ((goto s v# ...) (any_outputs ...) any_loop-outputs)
          (side-condition (not (redex-match csa# hole (term E#))))
          ;; (side-condition (printf "running goto rule: ~s\n" (term (in-hole E# (goto s v# ...)))))
          ;; (side-condition (printf "goto result: ~s\n" (term (goto s v# ...))))
@@ -615,8 +650,8 @@
          PrintLenVectorWildcard)
 
     with
-    [(--> ((in-hole E# old) ([a#ext v#] ...))
-          ((in-hole E# new) ([a#ext v#] ...)))
+    [(--> ((in-hole E# old) ([a#ext v#] ...) any_loop-outputs)
+          ((in-hole E# new) ([a#ext v#] ...) any_loop-outputs))
      (==> old new)]))
 
 (module+ test
@@ -719,6 +754,13 @@
   [(csa#-subst (list e# ...) x v#) (list (csa#-subst e# x v#) ...)]
   [(csa#-subst (vector e# ...) x v#) (vector (csa#-subst e# x v#) ...)]
   [(csa#-subst (hash v#_element ...) x v#) (hash (csa#-subst v#_element x v#) ...)]
+  [(csa#-subst (for/fold ([x_1 e#_1]) ([x_2 e#_2]) e#_3) x_1 v#)
+   (for/fold ([x_1 (csa#-subst e#_1 x_1 v#)]) ([x_2 (csa#-subst e#_2 x_1 v#)]) e#_3)]
+  [(csa#-subst (for/fold ([x_1 e#_1]) ([x_2 e#_2]) e#_3) x_2 v#)
+   (for/fold ([x_1 (csa#-subst e#_1 x_2 v#)]) ([x_2 (csa#-subst e#_2 x_2 v#)]) e#_3)]
+  [(csa#-subst (for/fold ([x_1 e#_1]) ([x_2 e#_2]) e#_3) x v#)
+   (for/fold ([x_1 (csa#-subst e#_1 x v#)]) ([x_2 (csa#-subst e#_2 x v#)]) (csa#-subst e#_3 x v#))]
+  [(csa#-subst (loop-context e#) x v#) (loop-context (csa#-subst e# x v#))]
   ;; [(csa#-subst (rcv (x) e) x v) (rcv (x) e)]
   ;; [(csa#-subst (rcv (x_h) e) x v) (rcv (x_h) (csa#-subst e x v))]
   ;; [(csa#-subst (rcv (x) e [(timeout n) e_timeout]) x v) (rcv (x) e [(timeout n) e_timeout])]
@@ -828,7 +870,11 @@
    (vector e#_unique ...)
    (where (e# ...) ((α-e e (a ...) ,(max 0 (sub1 (term natural_depth)))) ...))
    (where (e#_unique ...) ,(set->list (list->set (term (e# ...)) )))]
-  [(α-e (hash) _ _) (hash)])
+  [(α-e (hash) _ _) (hash)]
+  [(α-e (for/fold ([x_1 e_1]) ([x_2 e_2]) e) (a ...) natural)
+   (for/fold ([x_1 (α-e e_1 (a ...) natural)])
+             ([x_2 (α-e e_2 (a ...) natural)])
+     (α-e e (a ...) natural))])
 
 ;; TODO: write tests for the variant/record case, because the crappy version I have here isn't good
 ;; enough
@@ -923,3 +969,10 @@
   (redex-let csa# ([(((a#int (_ e#)) ...) μ# ρ# χ#) config])
              (term (((a#int e#) ...) μ# ρ# χ#))))
 
+;; ---------------------------------------------------------------------------------------------------
+;; Generic Redex helpers
+
+(define-metafunction csa#
+  redex-set-add : (any ...) any -> (any ...)
+  [(redex-set-add (any_1 ... any any_2 ...) any) (any_1 ... any any_2 ...)]
+  [(redex-set-add (any_1 ...) any_2) (any_1 ... any_2)])

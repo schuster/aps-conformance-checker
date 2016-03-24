@@ -41,7 +41,8 @@
      n
      (list e ...)
      (vector e ...)
-     (hash))
+     (hash)
+     (for/fold ([x e]) ([x e]) e))
   (S (define-state (s [x τ] ...) (x) e)
      (define-state (s [x τ] ...) (x) e [(timeout n) e]))
   (primop
@@ -122,7 +123,9 @@
      (! v [l E])
      (primop v ... E e ...)
      (list v ... E e ...)
-     (vector v ... E e ...)))
+     (vector v ... E e ...)
+     (for/fold ([x E]) ([x e]) e)
+     (for/fold ([x v]) ([x E]) e)))
 
 (define (make-single-agent-config agent)
   (term (make-single-agent-config/mf ,agent)))

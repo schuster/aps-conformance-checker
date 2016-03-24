@@ -135,8 +135,9 @@ Remaining big challenges I see in the analysis:
     (define eval-results (csa#-eval-transition prog-config (csa#-actor-address the-actor) message))
     (define new-transitions
       (for/list ([result eval-results])
-        (match-define (list behavior-exp outputs) result)
-        (csa#-transition message observed? outputs behavior-exp)))
+        ;; TODO: move this match into csa-abstract.rkt
+        (match-define (list behavior-exp outputs loop-outputs) result)
+        (csa#-transition message observed? outputs loop-outputs behavior-exp)))
     (append transitions-so-far new-transitions)))
 
 ;; NOTE: only supports spec configs with a single actor/spec
@@ -189,7 +190,8 @@ Remaining big challenges I see in the analysis:
         (aps#-eval (aps#-transition-expression spec-trans) some-subst))
       ;; (printf "Outputs: ~s\n" (csa#-transition-outputs prog-trans))
       ;; (printf "Commitments: ~s\n" commitments)
-      (if (and (outputs-match-commitments? (filter csa#-observable-output? (csa#-transition-outputs prog-trans)) commitments)
+      (if (and (null? (filter csa#-observable-output? (csa#-transition-loop-outputs prog-trans)))
+               (outputs-match-commitments? (filter csa#-observable-output? (csa#-transition-outputs prog-trans)) commitments)
                (equal? (hash-ref state-matches (csa#-transition-next-state prog-trans))
                        (aps#-goto-state spec-goto)))
           spec-goto
@@ -827,4 +829,88 @@ Remaining big challenges I see in the analysis:
    (analyze (make-single-agent-config equal-agent)
             static-response-spec
             (term Nat) (term (Union))
-            (hash 'A 'Always 'B 'Always))))
+            (hash 'A 'Always 'B 'Always)))
+
+  ;;;; For loops
+  (define loop-do-nothing-agent
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (A) (m)
+          (begin
+            (for/fold ([folded 0])
+                      ([i (list 1 2 3)])
+              i)
+            (goto A))))
+       (goto A)))))
+  (define loop-send-unobs-agent
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (A [r (Addr Nat)]) (m)
+          (begin
+            (for/fold ([folded 0])
+                      ([i (list 1 2 3)])
+              (send r i))
+            (goto A r))))
+       (goto A ,static-response-address)))))
+  (define send-before-loop-agent
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (A) (r)
+          (begin
+            (send r 0)
+            (for/fold ([folded 0])
+                      ([i (list 1 2 3)])
+              i)
+            (goto A))))
+       (goto A)))))
+  (define send-inside-loop-agent
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (A) (r)
+          (begin
+            (for/fold ([folded 0])
+                      ([r (list r)])
+              (send r 0))
+            (goto A))))
+       (goto A)))))
+  (define send-after-loop-agent
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (A) (r)
+          (begin
+            (for/fold ([folded 0])
+                      ([i (list 1 2 3)])
+              i)
+            (send r 0)
+            (goto A))))
+       (goto A)))))
+
+  (check-not-false (redex-match csa-eval αn loop-do-nothing-agent))
+  ;; TODO: figure out why this test works even when unobs stuff should be bad...
+  (check-not-false (redex-match csa-eval αn loop-send-unobs-agent))
+  (check-not-false (redex-match csa-eval αn send-before-loop-agent))
+  (check-not-false (redex-match csa-eval αn send-inside-loop-agent))
+  (check-not-false (redex-match csa-eval αn send-after-loop-agent))
+
+  (check-true (analyze (make-single-agent-config loop-do-nothing-agent)
+                       ignore-all-spec-instance
+                       (term Nat)
+                       (term (Union))
+                       (hash 'A 'Always)))
+  (check-true (analyze (make-single-agent-config loop-send-unobs-agent)
+                       ignore-all-spec-instance
+                       (term Nat)
+                       (term (Union))
+                       (hash 'A 'Always)))
+  (check-true (analyze (make-single-agent-config send-before-loop-agent)
+                       request-response-spec
+                       (term (Addr Nat)) (term (Union))
+                       (hash 'A 'Always)))
+  (check-false (analyze (make-single-agent-config send-inside-loop-agent)
+                       request-response-spec
+                       (term (Addr Nat)) (term (Union))
+                       (hash 'A 'Always)))
+  (check-true (analyze (make-single-agent-config send-after-loop-agent)
+                       request-response-spec
+                       (term (Addr Nat)) (term (Union))
+                       (hash 'A 'Always))))
