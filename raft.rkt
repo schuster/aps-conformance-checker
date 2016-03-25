@@ -643,15 +643,13 @@
                                   [next-index (Hash (Addr RaftMessage) Nat)]
                                   [replicated-log ReplicatedLog]
                                   [config ClusterConfiguration])
-    0 ;; TODO: add this for loop back in
-    ;; (for ([member (members-except-self config self)])
-    ;;   (send member (AppendEntries-apply (: m current-term)
-    ;;                                     replicated-log
-    ;;                                     (log-index-map-value-for next-index member)
-    ;;                                     (: replicated-log committed-index)
-    ;;                                     self
-    ;;                                     self)))
-    )
+    (for ([member (members-except-self config self)])
+      (send member (AppendEntries-apply (: m current-term)
+                                        replicated-log
+                                        (log-index-map-value-for next-index member)
+                                        (: replicated-log committed-index)
+                                        self
+                                        self))))
 
   (define-function (send-heartbeat [m LeaderMeta]
                                    [next-index (Hash (Addr RaftMessage) Nat)]
