@@ -59,7 +59,6 @@
   (e# (spawn τ e# S ...)
       (goto s e# ...)
       (send e# e#)
-      self
       (begin e# ... e#)
       (let ([x e#] ...) e#)
       (case e# [(t x ...) e#] ...)
