@@ -125,6 +125,7 @@
        (printf e1 e* ...)
        (print-len e)
        (for/fold ([x1 e1]) ([x2 e2]) e3 e* ...)
+       (for ([x1 e1]) e2 e* ...)
        (let ([x e] ...) e2 e* ...)
        (let* ([x e] ...) e2 e* ...)
        (addr n) ; only for giving the initial output addresses
@@ -191,7 +192,8 @@
           (cond [e1 e2 e2* ...] ... [else-keyword e3 e3* ...])
           (and e1 e2 ...)
           (or e1 e2 ...)
-          (for/fold ([x1 e1]) ([x2 e2]) e3 e* ...))
+          (for/fold ([x1 e1]) ([x2 e2]) e3 e* ...)
+          (for ([x1 e1]) e2 e* ...))
        (+ (case e1 [(V x ...) e2] ...)
           (let ([x e] ...) e2)
           (let* ([x e] ...) e2)
@@ -199,6 +201,7 @@
           (and e1 e2)
           (or e1 e2)
           (for/fold ([x1 e1]) ([x2 e2]) e3)
+          (for ([x1 e1]) e2)
           (begin e1 e* ...))))
 
 (define-parser parse-csa/single-exp-bodies csa/single-exp-bodies)
@@ -226,7 +229,9 @@
        [(or ,[e1] ,e2 ,e3 ...)
         `(or ,e1 ,(Exp (with-output-language (csa/wrapped-calls Exp) `(or ,e2 ,e3 ...))))]
        [(for/fold ([,x1 ,[e1]]) ([,x2 ,[e2]]) ,[e3] ,[e*] ...)
-        `(for/fold ([,x1 ,e1]) ([,x2 ,e2]) (begin ,e3 ,e* ...))])
+        `(for/fold ([,x1 ,e1]) ([,x2 ,e2]) (begin ,e3 ,e* ...))]
+       [(for ([,x1 ,[e1]]) ,[e2] ,[e*] ...)
+        `(for ([,x1 ,e1]) (begin ,e2 ,e* ...))])
   ;; Non-working version that only places begins where necessary
   ;;   (StateDef : StateDef (S) -> StateDef ()
   ;;           [(define-state (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e2] ,[e*] ...)
@@ -262,22 +267,53 @@
      (let* () (begin 5 6)))))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; for -> for/fold
+
+(define-language csa/desugared-for
+  (extends csa/single-exp-bodies)
+  (Exp (e)
+       (- (for ([x1 e1]) e2))))
+
+(define-parser parse-csa/desugared-for csa/desugared-for)
+
+(define-pass desugar-for : csa/single-exp-bodies (P) -> csa/desugared-for ()
+  (Exp : Exp (e) -> Exp ()
+       [(for ([,x1 ,[e1]]) ,[e2])
+        `(for/fold ([,(gensym 'for-var) 0]) ([,x1 ,e1])
+           (begin ,e2 0))]))
+
+(module+ test
+  (require (prefix-in redex: redex/reduction-semantics))
+  (redex:define-language L)
+
+  ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
+  (define desugared-code (unparse-csa/desugared-for
+                 (desugar-for
+                  (with-output-language (csa/single-exp-bodies Prog)
+                    `((for ([i (list 1 2 3)]) i))))))
+  (displayln desugared-code)
+  (check-not-false
+   (redex:redex-match L
+                      ((for/fold ([variable-not-otherwise-mentioned 0]) ([i (list 1 2 3)]) (begin i 0)))
+                      desugared-code)))
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Desugar cond
 
 (define-language csa/desugared-cond
-  (extends csa/single-exp-bodies)
+  (extends csa/desugared-for)
   (Exp (e)
        (- (cond [e1 e2] ... [else-keyword e3]))))
 
 (define-parser parse-csa/desugared-cond csa/desugared-cond)
 
-(define-pass desugar-cond : csa/single-exp-bodies (P) -> csa/desugared-cond ()
+(define-pass desugar-cond : csa/desugared-for (P) -> csa/desugared-cond ()
   (Exp : Exp (e) -> Exp ()
        [(cond [,else-keyword ,[e]]) e]
        [(cond [,[e1] ,[e2]] [,e3 ,e4] ... [,else-keyword ,e5])
         `(if ,e1
              ,e2
-             ,(Exp (with-output-language (csa/single-exp-bodies Exp)
+             ,(Exp (with-output-language (csa/desugared-for Exp)
                      `(cond [,e3 ,e4] ... [,else-keyword ,e5]))))]))
 
 (module+ test
@@ -285,7 +321,7 @@
   (check-equal?
    (unparse-csa/desugared-cond
     (desugar-cond
-     (with-output-language (csa/single-exp-bodies Prog)
+     (with-output-language (csa/desugared-for Prog)
        `((cond
            [(< a b) 0]
            [(< b c) 1]
@@ -811,6 +847,7 @@
      desugar-let*
      desugar-if
      desugar-cond
+     desugar-for
      wrap-multi-exp-bodies
      wrap-function-calls
      parse-actor-def-csa/surface))
