@@ -59,6 +59,7 @@
    not
    random
    ceiling
+   cons
    list-ref
    length
    vector-length
@@ -68,6 +69,7 @@
    vector-append
    hash-ref
    hash-set
+   hash-has-key?
    sort-numbers-descending
    ;; printf and abs-len for debugging only
    printf

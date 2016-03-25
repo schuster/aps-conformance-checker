@@ -506,6 +506,13 @@
     ;; Vectors, Lists, and Hashes
     ;; TODO: keep the elements in a canonical order, so that equivalent abstract values are equal?
 
+    (==> (cons (list v# ...) v#_new)
+         (list v#_all ...)
+         (where (v#_all ...) ,(set->list (set-add (list->set (term (v# ...))) (term v#_new))))
+         Cons)
+    (==> (cons (* (Listof τ)) v#)
+         (* (Listof τ))
+         WildcardCons)
     (==> (list-ref (list _ ... v# _ ...) (* Nat))
          v#
          ListRef)
@@ -552,13 +559,13 @@
     (==> (vector-append _ (* (Vectorof τ)))
          (* (Vectorof τ))
          VectorWildcardAppend2)
-    (==> (hash-ref (hash _ ... v# _ ...) v#_key)
+    (==> (hash-ref (hash v#_1 ... v# v#_2 ...) v#_key)
          (variant Just v#)
          HashRefSuccess)
     (==> (hash-ref (* Hash τ_1 τ_2) v#_key)
          (variant Just (* τ_2))
          HashWildcardRefSuccess)
-    (==> (hash-ref (hash _ ...) v#_key)
+    (==> (hash-ref (hash v#_other ...) v#_key)
          (variant Nothing)
          HashRefFailure)
     (==> (hash-ref (* Hash τ_1 τ_2) v#_key)
@@ -574,6 +581,18 @@
     (==> (hash-set (* Hash τ_1 τ_2) v#_key v#_value)
          (* Hash τ_1 τ_2)
          HashWildcardSet)
+    (==> (hash-has-key? (hash v# ...) v#_key)
+         (variant True)
+         HashHasKeyTrue)
+    (==> (hash-has-key? (hash v# ...) v#_key)
+         (variant False)
+         HashHasKeyFalse)
+    (==> (hash-has-key? (* (Hash τ_1 τ_2)) v#_key)
+         (variant True)
+         WildcardHashHasKeyTrue)
+    (==> (hash-has-key? (* (Hash τ_1 τ_2)) v#_key)
+         (variant False)
+         WildcardHashHasKeyFalse)
 
     ;; Loops
     (==> (for/fold ([x_fold v#_fold])
