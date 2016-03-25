@@ -216,7 +216,7 @@
   (replicated-log-append replicated-log (vector entry) (vector-length (: replicated-log entries))))
 
 (define-function (replicated-log-commit [replicated-log ReplicatedLog] [n Int])
-  (! replicated-log [commit-index n]))
+  (! replicated-log [committed-index n]))
 
 ;; Returns the log entries from from-index (exclusive) to to-index (inclusive) (these are *semantic*
 ;; indices)
@@ -255,21 +255,18 @@
     [else
      ;; Note: this code is uglier than it would be if we used more general list-traversal functions
      (let ([fold-result
-            (NoTerm) ; TODO: remove this line
-            ;; TODO:
-                 ;; (for/fold ([result (NoTerm)])
-                 ;;           ([entry (: replicated-log entries)])
-                 ;;   (case result
-                 ;;     [(NoTerm)
-                 ;;             (cond
-                 ;;               [(= (: entry index) index) (FoundTerm (: entry term))]
-                 ;;               [else (NoTerm)])]
-                 ;;     [(FoundTerm t) result]))
-                 ])
+            (for/fold ([result (NoTerm)])
+                      ([entry (: replicated-log entries)])
+              (case result
+                [(NoTerm)
+                 (cond
+                   [(= (: entry index) index) (FoundTerm (: entry term))]
+                   [else (NoTerm)])]
+                [(FoundTerm t) result]))])
        (case fold-result
          [(FoundTerm t) t]
          [(NoTerm)
-                 ;; If no term was found, just return 0, although this should really be a fatal error
+          ;; If no term was found, just return 0, although this should really be a fatal error
           0]))]))
 
 ;; Returns true if the leader's previous log is consistent with ours (i.e. the term of the previous
@@ -299,15 +296,12 @@
       [(> (vector-length to-send) 0)
        (let* ([head (vector-ref to-send 0)]
               [batch-term (: head term)])
-         ;; TODO:
          ;; this for/fold implements the takeWhile
-         ;; (for/fold ([result (vector)])
-         ;;           ([entry to-send])
-         ;;   (cond
-         ;;     [(= (: entry term) batch-term) (vector-append result (vector entry))]
-         ;;     [else result]))
-         (vector) ;; TODO: remove this line
-         )]
+         (for/fold ([result (vector)])
+                   ([entry to-send])
+           (cond
+             [(= (: entry term) batch-term) (vector-append result (vector entry))]
+             [else result])))]
       [else (vector)])))
 
 (define-function (entry-prev-index [entry Entry])
@@ -431,28 +425,18 @@
 ;; Config helpers
 
 (define-function (members-except-self [config ClusterConfiguration] [self (Addr RaftMessage)])
-  ;; (printf "Members list: ")
-  ;; (print-len (: config members))
-  ;; (printf "\n")
-
-  ;; TODO:
-  ;; (for/fold ([result (list)])
-  ;;           ([member (: config members)])
-  ;;   (if (not (= member self)) (cons member result) result))
-  (list) ;; TODO: remove this line
-  )
+  (for/fold ([result (list)])
+            ([member (: config members)])
+    (if (not (= member self)) (cons member result) result)))
 
 (define-function (inc-vote [m ElectionMeta] [follower (Addr RaftMessage)])
   (! m [votes-received (hash-set (: m votes-received) follower true)]))
 
 (define-function (has-majority [m ElectionMeta] [config ClusterConfiguration])
   (let ([total-votes-received
-         ;; TODO:
-         ;; (for/fold ([total 0])
-         ;;           ([member (: config members)])
-         ;;   (+ total (if (hash-has-key? (: m votes-received) member) 1 0)))
-         0 ;; TODO: remove this line
-         ])
+         (for/fold ([total 0])
+                   ([member (: config members)])
+           (+ total (if (hash-has-key? (: m votes-received) member) 1 0)))])
     (> total-votes-received (/ (length (: config members)) 2))))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -494,14 +478,11 @@
 (define-function (log-index-map-consensus-for-index [map (Hash (Addr RaftMessage) Nat)]
                                                     [config ClusterConfiguration])
   (let ([all-indices
-         (list) ;; TODO: remove this line
-                     ;; TODO:
-         ;; (for/fold ([indices-so-far (list)])
-         ;;           ([member (: config members)])
-         ;;   (case (hash-ref map member)
-         ;;     [(Nothing) indices-so-far] ; NOTE: this should never happen
-         ;;     [(Just index) (cons index indices-so-far)]))
-         ])
+         (for/fold ([indices-so-far (list)])
+                   ([member (: config members)])
+           (case (hash-ref map member)
+             [(Nothing) indices-so-far] ; NOTE: this should never happen
+             [(Just index) (cons index indices-so-far)]))])
     (list-ref (sort-numbers-descending all-indices)
               (- (ceiling (/ (length (: config members)) 2)) 1))))
 
@@ -606,18 +587,11 @@
     (let ([entries (replicated-log-between replicated-log
                                            (: replicated-log committed-index)
                                            last-index-to-commit)])
-      ;; (printf "entries length: ")
-      ;; (print-len entries)
-      ;; (printf "\n")
-
-      ;; TODO:
-      ;; (for/fold ([rep-log replicated-log])
-      ;;           ([entry entries])
-      ;;   (send application (: entry command))
-      ;;   (cond [notify-client? (send (: entry client) (: entry command))] [else void])
-      ;;   (replicated-log-commit rep-log (: entry index)))
-      replicated-log ; TODO: remove this line
-      ))
+      (for/fold ([rep-log replicated-log])
+                ([entry entries])
+        (send application (: entry command))
+        (cond [notify-client? (send (: entry client) (: entry command))] [else 0])
+        (replicated-log-commit rep-log (: entry index)))))
 
   ;; TODO: consider making AppendEntries into a record to remove these long param lists and better
   ;; match akka-raft
@@ -641,7 +615,7 @@
        ;;   [(not (is-heartbeat entries))
        ;;    (send leader (AppendRejected (: m current-term)
        ;;                                 (replicated-log-last-index replicated-log)))]
-       ;;   [else (void)])
+       ;;   [else 0])
        (goto Follower recently-contacted-by-leader m replicated-log config)]
       [(not (replicated-log-consistent-update replicated-log prev-log-term prev-log-index))
        (let ([meta-with-updated-term (! m [current-term term])])

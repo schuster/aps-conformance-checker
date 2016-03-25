@@ -235,6 +235,12 @@
   [(subst (list e ...) x v) (list (subst e x v) ...)]
   [(subst (vector e ...) x v) (vector (subst e x v) ...)]
   [(subst (hash) x v) (hash)]
+  [(subst (for/fold ([x_1 e_1]) ([x_2 e_2]) e_3) x_1 v)
+   (for/fold ([x_1 (subst e_1 x_1 v)]) ([x_2 (subst e_2 x_1 v)]) e_3)]
+  [(subst (for/fold ([x_1 e_1]) ([x_2 e_2]) e_3) x_2 v)
+   (for/fold ([x_1 (subst e_1 x_2 v)]) ([x_2 (subst e_2 x_2 v)]) e_3)]
+  [(subst (for/fold ([x_1 e_1]) ([x_2 e_2]) e_3) x v)
+   (for/fold ([x_1 (subst e_1 x v)]) ([x_2 (subst e_2 x v)]) (subst e_3 x v))]
   [(subst (rcv (x) e) x v) (rcv (x) e)]
   [(subst (rcv (x_h) e) x v) (rcv (x_h) (subst e x v))]
   [(subst (rcv (x) e [(timeout n) e_timeout]) x v) (rcv (x) e [(timeout n) e_timeout])]

@@ -226,7 +226,7 @@
        [(or ,[e1] ,e2 ,e3 ...)
         `(or ,e1 ,(Exp (with-output-language (csa/wrapped-calls Exp) `(or ,e2 ,e3 ...))))]
        [(for/fold ([,x1 ,[e1]]) ([,x2 ,[e2]]) ,[e3] ,[e*] ...)
-        (for/fold ([,x1 ,e1]) ([,x2 ,e2]) (begin ,e3 ,e* ...))])
+        `(for/fold ([,x1 ,e1]) ([,x2 ,e2]) (begin ,e3 ,e* ...))])
   ;; Non-working version that only places begins where necessary
   ;;   (StateDef : StateDef (S) -> StateDef ()
   ;;           [(define-state (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e2] ,[e*] ...)
