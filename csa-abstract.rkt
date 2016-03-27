@@ -601,7 +601,7 @@
          (for/fold ([x_fold e#_unrolled-body])
                    ([x_item (any_constructor v#_1 ... v#_item v#_2 ...)])
            e#_body)
-         (side-condition (member (term any_constructor (list 'list 'vector))))
+         (side-condition (member (term any_constructor) (list 'list 'vector)))
          (where e#_unrolled-body
                 (loop-context (csa#-subst-n e#_body [x_fold v#_fold] [x_item v#_item])))
          ForLoop1)
@@ -612,7 +612,7 @@
          (for/fold ([x_fold e#_unrolled-body])
                    ([x_item (* (any_type τ))])
            e#_body)
-         (side-condition (member (term any_type (list 'Listof 'Vectorof))))
+         (side-condition (member (term any_type) (list 'Listof 'Vectorof)))
          (where e#_unrolled-body
                 (loop-context (csa#-subst-n e#_body [x_fold v#_fold] [x_item (* τ)])))
          ForLoopWildcard1)
