@@ -537,9 +537,7 @@
                                 self
                                 (replicated-log-last-term replicated-log)
                                 (replicated-log-last-index replicated-log))])
-      (printf "config: ~s\n" config)
       (for ([member (members-except-self config self)])
-        (printf "member: ~s\n" member)
         (send member request))
       (let* ([m (reset-election-deadline/candidate timer-manager self m)]
              [including-this-vote (inc-vote m self)]) ; this is the self vote
@@ -642,16 +640,13 @@
                                   [next-index (Hash (Addr RaftMessage) Nat)]
                                   [replicated-log ReplicatedLog]
                                   [config ClusterConfiguration])
-    (let ([other-members (members-except-self config self)])
-      (printf "other-members in replicate-log: ~s\n" other-members)
-      (for ([member other-members])
-        (printf "member in replicate-log: ~s\n" member)
-       (send member (AppendEntries-apply (: m current-term)
-                                         replicated-log
-                                         (log-index-map-value-for next-index member)
-                                         (: replicated-log committed-index)
-                                         self
-                                         self)))))
+    (for ([member (members-except-self config self)])
+      (send member (AppendEntries-apply (: m current-term)
+                                        replicated-log
+                                        (log-index-map-value-for next-index member)
+                                        (: replicated-log committed-index)
+                                        self
+                                        self))))
 
   (define-function (send-heartbeat [m LeaderMeta]
                                    [next-index (Hash (Addr RaftMessage) Nat)]
