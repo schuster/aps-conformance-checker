@@ -505,11 +505,11 @@
     ;; Vectors, Lists, and Hashes
     ;; TODO: keep the elements in a canonical order, so that equivalent abstract values are equal?
 
-    (==> (cons (list v# ...) v#_new)
+    (==> (cons v#_new (list v# ...))
          (list v#_all ...)
          (where (v#_all ...) ,(set->list (set-add (list->set (term (v# ...))) (term v#_new))))
          Cons)
-    (==> (cons (* (Listof τ)) v#)
+    (==> (cons v# (* (Listof τ)))
          (* (Listof τ))
          WildcardCons)
     (==> (list-ref (list _ ... v# _ ...) (* Nat))
