@@ -604,7 +604,16 @@
          (where e#_unrolled-body
                 (loop-context (csa#-subst-n e#_body [x_fold v#_fold] [x_item v#_item])))
          ForLoop1)
-
+    (==> (for/fold ([x_fold v#_fold])
+                   ;; the "any" here lets us abstract over Listof/Vectorof
+                   ([x_item (* (any_type τ))])
+           e#_body)
+         (for/fold ([x_fold e#_unrolled-body])
+                   ([x_item (* (any_type τ))])
+           e#_body)
+         (where e#_unrolled-body
+                (loop-context (csa#-subst-n e#_body [x_fold v#_fold] [x_item (* τ)])))
+         ForLoopWildcard1)
     (==> (for/fold ([x_fold v#_fold]) _ _)
          v#_fold
          ForLoop2)
