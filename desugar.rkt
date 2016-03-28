@@ -200,38 +200,30 @@
        [(for/fold ([,x1 ,[e1]]) ([,x2 ,[e2]]) ,[e3] ,[e*] ...)
         `(for/fold ([,x1 ,e1]) ([,x2 ,e2]) (begin ,e3 ,e* ...))]
        [(for ([,x1 ,[e1]]) ,[e2] ,[e*] ...)
-        `(for ([,x1 ,e1]) (begin ,e2 ,e* ...))])
-  ;; Non-working version that only places begins where necessary
-  ;;   (StateDef : StateDef (S) -> StateDef ()
-  ;;           [(define-state (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e2] ,[e*] ...)
-  ;;            `(define-state (,s [,x ,τ] ...) (,x2) (begin ,e1 ,e2 ,e* ...))])
-  ;; (FuncDef : FuncDef (fd) -> FuncDef ()
-  ;;          [(define-function (,f [,x ,[τ]] ...) ,[e1] ,[e2] ,[e*] ...)
-  ;;           `(define-function (,f [,x ,τ] ...) (begin ,e1 ,e2 ,e* ...))])
-  ;; (Exp : Exp (e) -> Exp ()
-  ;;      [(case ,[e1] [(,V ,x ...) ,[e2] ,[e3] ,[e*] ...] ...)
-  ;;       `(case ,e1 [(,V ,x ...) (begin ,e2 ,e3 ,e* ...)] ...)]
-  ;;      [(let ([,x ,[e]] ...) ,[e2] ,[e3] ,[e*] ...)
-  ;;       `(let ([,x ,e] ...) (begin ,e2 ,e3 ,e* ...))]
-  ;;      [(let* ([,x ,[e]] ...) ,[e2] ,[e3] ,[e*] ...)
-  ;;       `(let* ([,x ,e] ...) (begin ,e2 ,e3 ,e* ...))])
-  )
+        `(for ([,x1 ,e1]) (begin ,e2 ,e* ...))]))
+
+(define-pass remove-extraneous-begins : csa/single-exp-bodies (P) -> csa/single-exp-bodies ()
+  (Exp : Exp (e) -> Exp ()
+       [(begin ,[e]) e]))
 
 (module+ test
   ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
   (check-equal?
    (unparse-csa/single-exp-bodies
-    (wrap-multi-exp-bodies
-     (with-output-language (csa/wrapped-calls Prog)
-       `((define-function (f)
-           (case x
-             [(A) 1 2])
-           (let () 3 4))
-         (let* () 5 6)))))
+    (remove-extraneous-begins
+     (wrap-multi-exp-bodies
+      (with-output-language (csa/wrapped-calls Prog)
+        `((define-function (f)
+            (case x
+              [(A) 1 2]
+              [(B) 7])
+            (let () 3 4))
+          (let* () 5 6))))))
    `((define-function (f)
        (begin
          (case x
-           [(A) (begin 1 2)])
+           [(A) (begin 1 2)]
+           [(B) 7])
          (let () (begin 3 4))))
      (let* () (begin 5 6)))))
 
@@ -260,7 +252,6 @@
                  (desugar-for
                   (with-output-language (csa/single-exp-bodies Prog)
                     `((for ([i (list 1 2 3)]) i))))))
-  (displayln desugared-code)
   (check-not-false
    (redex:redex-match L
                       ((for/fold ([variable-not-otherwise-mentioned 0]) ([i (list 1 2 3)]) (begin i 0)))
@@ -817,6 +808,7 @@
      desugar-if
      desugar-cond
      desugar-for
+     remove-extraneous-begins
      wrap-multi-exp-bodies
      wrap-function-calls
      parse-actor-def-csa/surface))
