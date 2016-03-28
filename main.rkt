@@ -76,46 +76,47 @@ Remaining big challenges I see in the analysis:
         [(queue-empty? to-visit) #t]
         [else
          (define current-tuple (dequeue! to-visit))
-         (cond
-           [(set-member? visited current-tuple)
-            (loop to-visit visited)]
-           [else
-            ;; TODO: rename this function. A better name will help me with the general terminology
-            ;; with which I describe my technique
-            (match-define (list prog spec obs-type unobs-type) current-tuple)
-            ;; TODO: rename this idea of transition: there's some other "thing" that this is, like a
-            ;; transmission result. Define this data definition in the code somewhere, because it
-            ;; should really be a type (it's a new kind of data in my domain that needs to be defined
-            ;; and named)
+         ;; TODO: rename this function. A better name will help me with the general terminology
+         ;; with which I describe my technique
+         (match-define (list prog spec obs-type unobs-type) current-tuple)
+         ;; TODO: rename this idea of transition: there's some other "thing" that this is, like a
+         ;; transmission result. Define this data definition in the code somewhere, because it
+         ;; should really be a type (it's a new kind of data in my domain that needs to be defined
+         ;; and named)
 
-            ;; Debugging
-            (set! program-transitions-checked (add1 program-transitions-checked))
-            (printf "Program state #: ~s\n" program-transitions-checked)
-            ;; (printf "Queue size: ~s\n" (queue-length to-visit))
-            ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs prog))
-            ;; (printf "The full prog config: ~s\n" prog)
+         ;; Debugging
+         (set! program-transitions-checked (add1 program-transitions-checked))
+         (printf "Program state #: ~s\n" program-transitions-checked)
+         (printf "Queue size: ~s\n" (queue-length to-visit))
+         ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs prog))
+         ;; (printf "The full prog config: ~s\n" prog)
 
-            (define possible-transitions
-              (append (transitions-from-message-of-type prog obs-type #t)
-                      (transitions-from-message-of-type prog unobs-type #f)))
-            (for ([possible-transition possible-transitions])
-              (match (find-matching-spec-transition possible-transition spec state-matches)
-                [(list)
-                 ;; (printf "couldn't find any match for ~s from state ~s, in spec state ~s\n"
-                 ;;         possible-transition
-                 ;;         (csa#-actor-current-state (csa#-config-only-actor prog))
-                 ;;         (aps#-instance-state spec))
-                 (return-early #f)]
-                [(list spec-goto-exp)
-                 (enqueue! to-visit
-                           (list (step-prog-final-behavior prog (csa#-transition-behavior-exp possible-transition))
-                                 (step-spec-with-goto spec spec-goto-exp)
-                                 ;; TODO: allow these types to change over time
-                                 obs-type
-                                 unobs-type))]
-                [_ (error "too many possible matches") ;; TODO: call a continuation instead
-                   ]))
-            (loop to-visit (set-add visited current-tuple))])]))))
+         (define possible-transitions
+           (append (transitions-from-message-of-type prog obs-type #t)
+                   (transitions-from-message-of-type prog unobs-type #f)))
+         (for ([possible-transition possible-transitions])
+           (match (find-matching-spec-transition possible-transition spec state-matches)
+             [(list)
+              ;; (printf "couldn't find any match for ~s from state ~s, in spec state ~s\n"
+              ;;         possible-transition
+              ;;         (csa#-actor-current-state (csa#-config-only-actor prog))
+              ;;         (aps#-instance-state spec))
+              (return-early #f)]
+             [(list spec-goto-exp)
+              (define next-tuple
+                (list (step-prog-final-behavior prog (csa#-transition-behavior-exp possible-transition))
+                      (step-spec-with-goto spec spec-goto-exp)
+                      ;; TODO: allow these types to change over time
+                      obs-type
+                      unobs-type))
+              (unless (or (set-member? visited next-tuple)
+                          (member next-tuple (queue->list to-visit))
+                          (equal? current-tuple next-tuple))
+                (printf "Adding state: ~s\n" (prog-config-goto (car next-tuple)))
+                (enqueue! to-visit next-tuple))]
+             [_ (error "too many possible matches") ;; TODO: call a continuation instead
+                ]))
+         (loop to-visit (set-add visited current-tuple))]))))
 
 ;; TODO: I probably need some canonical representation of program and spec configs so that otherwise
 ;; equivalent configs are not considered different by the worklist algorithm
