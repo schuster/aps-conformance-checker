@@ -19,6 +19,8 @@
 
  ;; Debug helpers
  prog-config-without-state-defs
+ prog-config-goto
+ ;; handler-step#
  )
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -994,6 +996,11 @@
 (define (prog-config-without-state-defs config)
   (redex-let csa# ([(((a#int (_ e#)) ...) μ# ρ# χ#) config])
              (term (((a#int e#) ...) μ# ρ# χ#))))
+
+(define (prog-config-goto config)
+  ;; NOTE: only suports single-actor progs for now
+  (redex-let csa# ([(((a#int (_ e#))) μ# ρ# χ#) config])
+             (term e#)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Generic Redex helpers

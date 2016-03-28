@@ -93,6 +93,7 @@ Remaining big challenges I see in the analysis:
             (printf "Program state #: ~s\n" program-transitions-checked)
             ;; (printf "Queue size: ~s\n" (queue-length to-visit))
             ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs prog))
+            ;; (printf "The full prog config: ~s\n" prog)
 
             (define possible-transitions
               (append (transitions-from-message-of-type prog obs-type #t)
@@ -127,6 +128,7 @@ Remaining big challenges I see in the analysis:
   (define the-actor (csa#-config-only-actor prog-config))
 
   ;; Debugging
+  ;; (printf "Message type: ~s\n" type)
   ;; (printf "Number of generated messages: ~s\n" (length (generate-abstract-messages type (csa#-actor-current-state the-actor) 10 observed?)))
 
   (for/fold ([transitions-so-far null])
