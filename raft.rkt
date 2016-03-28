@@ -159,7 +159,6 @@
   (Config [config ClusterConfiguration])
   (ClientMessage [client (Addr ClientResponse)] [cmd String])
   (PeerMessage [m RaftMessage])
-  (ElectedAsLeader)
   (SendHeartbeatTimeouts [id Nat]))
 
 (define-variant MaybePeer
@@ -441,11 +440,11 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; LogIndexMap
 
-;; (define-function (log-index-map-initialize [members (Listof (Addr RaftMessage))]
-;;                                            [initialize-with Nat])
-;;   (for/fold ([map (hash)])
-;;             ([member members])
-;;     (hash-set map member initialize-with)))
+(define-function (log-index-map-initialize [members (Listof (Addr RaftMessage))]
+                                           [initialize-with Nat])
+  (for/fold ([map (hash)])
+            ([member members])
+    (hash-set map member initialize-with)))
 
 (define-function (log-index-map-value-for [map (Hash (Addr RaftMessage) Nat)]
                                  [member (Addr RaftMessage)])
@@ -807,8 +806,6 @@
          ;; NOTE: we assume the config is non-empty
          (begin-election (for-new-election/follower metadata) replicated-log config)]
         [else (goto Follower recently-contacted-by-leader metadata replicated-log config)])]
-     ;;   [(elected-as-leader)
-     ;;                      (goto Follower recently-contacted-by-leader metadata replicated-log config)]
      [(SendHeartbeatTimeouts id)
       (goto Follower recently-contacted-by-leader metadata replicated-log config)]))
 
@@ -838,11 +835,24 @@
             (let ([including-this-vote (inc-vote m follower)])
               (cond
                 [(has-majority including-this-vote config)
-                 ;; TODO:
+                 ;; NOTE: instead of doing the below self-send and going to Leader, I instead inline
+                 ;; the ElectedAsLeader handling here
+                 ;;
                  ;; (send self (ElectedAsLeader))
+                 ;; (cancel-election-deadline timer-manager)
+                 ;; (next-state (Leader (for-leader m) (hash) (hash) replicated-log config))
                  (cancel-election-deadline timer-manager)
-                 ;; NOTE: have to just make up fake temporary values for the log index maps, for now
-                 (goto Leader (for-leader m) (hash) (hash) replicated-log config)]
+                 ;; NOTE: because we don't have mutation, I'm just inlining the code for
+                 ;; initializeLeaderState here
+                 (let ([members (: config members)])
+                   (let ([next-index
+                          ;; TODO: is the +1 here a correction for an akka-raft bug? (and same for the
+                          ;; lack of a -1 for match-index below)
+                          (log-index-map-initialize members
+                                                    (+ (replicated-log-last-index replicated-log) 1))]
+                         [match-index (log-index-map-initialize (: config members) 0)])
+                          (start-heartbeat m next-index replicated-log config)
+                          (goto Leader m next-index match-index replicated-log config)))]
                 [else
                  (goto Candidate including-this-vote replicated-log config)]))]
            [else (goto Candidate m replicated-log config)])]
@@ -898,7 +908,6 @@
          (let ([m (for-new-election/candidate m)])
            (begin-election m replicated-log config))]
         [else (goto Candidate m replicated-log config)])]
-     ;;   [(elected-as-leader) (goto Candidate m replicated-log config)]
      [(SendHeartbeatTimeouts id) (goto Candidate m replicated-log config)]))
 
  (define-state (Leader [m LeaderMeta]
@@ -996,12 +1005,6 @@
                                      config)])]
      [(Config c) (goto Leader m next-index match-index replicated-log config)]
      [(Timeout id) (goto Leader m next-index match-index replicated-log config)]
-     ;;   [(elected-as-leader)
-     ;;                      (let ([next-index (log-index-map-initialize (: config members)
-     ;;                                                                  (+ (replicated-log-last-index replicated-log) 1))]
-     ;;                            [match-index (log-index-map-initialize (: config members) 0)])
-     ;;                        (start-heartbeat m next-index replicated-log config)
-     ;;                        (goto Leader m next-index match-index replicated-log config))]
      [(SendHeartbeatTimeouts id)
       (send-heartbeat m next-index replicated-log config)
       (goto Leader m next-index match-index replicated-log config)])))
