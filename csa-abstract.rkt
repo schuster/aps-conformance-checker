@@ -5,8 +5,11 @@
 (provide
  csa#
  generate-abstract-messages
- csa#-eval-transition
+ csa#-handle-message
+ csa#-handle-any-timeouts
  (struct-out csa#-transition)
+ csa#-transition-observed?
+ csa#-transition-message
  csa#-output-address
  csa#-output-message
  csa#-observable-output?
@@ -39,9 +42,7 @@
   (α#n (a#int ((S# ...) e#)))
   (μ# ()) ; NOTE: for now, assuming no internal sends
   (S# (define-state (s [x τ] ...) (x) e#)
-      ;; TODO: not dealing with timeouts yet...
-      ;; (define-state (s x ...) (x) e# [(timeout Nat) e#])
-      )
+      (define-state (s [x τ] ...) (x) e# [(timeout v#) e#]))
   ;; TODO: these probably should be sets of values, right?
   (v# a# ; TODO: replace this one with a special pattern
       (variant t v# ...)
@@ -336,8 +337,22 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
 
-;; Outputs is a list of abstract-addr/abstract-message 2-tuples
-(struct csa#-transition (message observed? outputs loop-outputs behavior-exp) #:transparent)
+(struct csa#-transition
+  (trigger ; either: 'timeout or (list observed? message)
+   outputs ; list of abstract-addr/abstract-message 2-tuples
+   loop-outputs ; list of abstract-addr/abstract-message 2-tuples
+   behavior-exp) ; an e#
+  #:transparent)
+
+(define (csa#-transition-observed? t)
+  (match (csa#-transition-trigger t)
+    [(list #t _) #t]
+    [_ #f]))
+
+(define (csa#-transition-message t)
+  (match (csa#-transition-trigger t)
+    [(list _ m) m]
+    ['timeout (error 'csa#-transition-message "Timeout transition ~s has no message" t)]))
 
 (define csa#-output-address car)
 (define csa#-output-message cadr)
@@ -357,28 +372,51 @@
 
 ;; Evaluates the handler triggered by sending message to actor-address, return the list of possible
 ;; results (which are tuples of the final behavior expression and the list of outputs)
-(define (csa#-eval-transition prog-config actor-address message)
-  (redex-let csa# ([(_ ((_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e#) _ ...) (in-hole E# (goto s v# ..._n))))
+(define (csa#-handle-message prog-config actor-address message observed?)
+  (redex-let csa# ([(_ ((_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e# any_timeout-clause ...) _ ...) (in-hole E# (goto s v# ..._n))))
                     (config-actor-by-address prog-config actor-address)])
-             ;; TODO: deal with the case where x_m shadows an x_s
-             ;; (printf "Expression to be run: ~s\n" (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...)))
-             (define initial-config (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...))))
-             (define final-configs (apply-reduction-relation* handler-step# initial-config #:cache-all? #t))
-             (define non-abstraction-stuck-final-configs
-               ;; Filter out those stuck because of over-abstraction
-               (filter (compose not stuck-abstraction-handler-config?) final-configs))
+    ;; TODO: deal with the case where x_m shadows an x_s
+    (define initial-config (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...))))
+    (eval-handler initial-config (list observed? message))))
 
-             ;; Debugging
-             ;; (printf "The initial config: ~s\n" initial-config)
-             ;; (printf "Number of raw results: ~s\n" (length final-configs))
-             ;; (printf "Number of non-stuck results: ~s\n" (length non-abstraction-stuck-final-configs))
+;; Returns all transitions possible from this program configuration by taking a timeout
+(define (csa#-handle-any-timeouts prog-config)
+  (define matches
+    (redex-match csa#
+                 (_ ((_ ... (define-state (s [x_s τ_s] ..._n)  _    _  [(timeout _) e#]) _ ...) (in-hole E# (goto s v# ..._n))))
+                 ;; TODO: handle multiple actors here
+                 (config-actor-by-address prog-config (term SINGLE-ACTOR-ADDR))))
+  (cond
+    [matches
+     (for/fold ([eval-results null])
+               ([the-match matches])
+       (define (get-binding name) (bind-exp (findf (lambda (binding) (eq? (bind-name binding) name)) (match-bindings the-match))))
+       (redex-let csa# ([(x_s ...) (get-binding 'x_s)]
+                        [(v# ...) (get-binding 'v#)]
+                        [e# (get-binding 'e#)])
+                  (define initial-config (inject/H# (term (csa#-subst-n e# [x_s v#] ...))))
+                  (append eval-results (eval-handler initial-config 'timeout))))]
+    [else null]))
 
-             (unless (andmap complete-handler-config? non-abstraction-stuck-final-configs)
-               (error 'csa#-eval-transition
-                      "Abstract evaluation did not complete\nInitial config: ~s\nFinal stuck configs:~s"
-                      initial-config
-                      (filter (compose not complete-handler-config?) non-abstraction-stuck-final-configs)))
-             non-abstraction-stuck-final-configs))
+(define (eval-handler handler-config trigger)
+  (define final-configs (apply-reduction-relation* handler-step# handler-config #:cache-all? #t))
+  (define non-abstraction-stuck-final-configs
+    ;; Filter out those stuck because of over-abstraction
+    (filter (compose not stuck-abstraction-handler-config?) final-configs))
+
+  ;; Debugging
+  ;; (printf "The initial config: ~s\n" initial-config)
+  ;; (printf "Number of raw results: ~s\n" (length final-configs))
+  ;; (printf "Number of non-stuck results: ~s\n" (length non-abstraction-stuck-final-configs))
+
+  (unless (andmap complete-handler-config? non-abstraction-stuck-final-configs)
+    (error 'csa#-eval-transition
+           "Abstract evaluation did not complete\nInitial config: ~s\nFinal stuck configs:~s"
+           handler-config
+           (filter (compose not complete-handler-config?) non-abstraction-stuck-final-configs)))
+  (for/list ([config non-abstraction-stuck-final-configs])
+    (match-define (list behavior-exp outputs loop-outputs) config)
+    (csa#-transition trigger outputs loop-outputs behavior-exp)))
 
 ;; Returns true if the config is one that is unable to step because of an over-approximation in the
 ;; abstraction
@@ -406,8 +444,6 @@
 (define handler-step#
   (reduction-relation csa#
     #:domain H#
-
-    ;; TODO: goto into rcv (with/without timeout)
 
     ;; let, match, begin, send, goto
     (==> (begin v# e# e#_rest ...)
@@ -788,13 +824,7 @@
    (for/fold ([x_1 (csa#-subst e#_1 x_2 v#)]) ([x_2 (csa#-subst e#_2 x_2 v#)]) e#_3)]
   [(csa#-subst (for/fold ([x_1 e#_1]) ([x_2 e#_2]) e#_3) x v#)
    (for/fold ([x_1 (csa#-subst e#_1 x v#)]) ([x_2 (csa#-subst e#_2 x v#)]) (csa#-subst e#_3 x v#))]
-  [(csa#-subst (loop-context e#) x v#) (loop-context (csa#-subst e# x v#))]
-  ;; [(csa#-subst (rcv (x) e) x v) (rcv (x) e)]
-  ;; [(csa#-subst (rcv (x_h) e) x v) (rcv (x_h) (csa#-subst e x v))]
-  ;; [(csa#-subst (rcv (x) e [(timeout n) e_timeout]) x v) (rcv (x) e [(timeout n) e_timeout])]
-  ;; [(csa#-subst (rcv (x_h) e [(timeout n) e_timeout]) x v)
-  ;;  (rcv (x_h) (csa#-subst e x v) [(timeout n) (csa#-subst e_timeout x v)])]
-  )
+  [(csa#-subst (loop-context e#) x v#) (loop-context (csa#-subst e# x v#))])
 
 (define-metafunction csa#
   csa#-subst/case-clause : [(t x ...) e#] x v# -> [(t x ...) e#]
@@ -844,11 +874,14 @@
   [(α-actor ((addr 0) ((S ...) e)) (a ...) natural_depth)
    (SINGLE-ACTOR-ADDR (((α-S S (a ...) natural_depth) ...) (α-e e (a ...) natural_depth)))])
 
-;; NOTE: does not support timeouts yet
 (define-metafunction csa#
   α-S : S (a ...) natural_depth -> S#
   [(α-S (define-state (s [x τ] ...) (x_m) e) (a ...) natural_depth)
-   (define-state (s [x τ] ...) (x_m) (α-e e (a ...) natural_depth))])
+   (define-state (s [x τ] ...) (x_m) (α-e e (a ...) natural_depth))]
+  [(α-S (define-state (s [x τ] ...) (x_m) e [(timeout n) e_timeout]) (a ...) natural_depth)
+   (define-state (s [x τ] ...) (x_m)
+     (α-e e (a ...) natural_depth)
+     [(timeout (* Nat)) (α-e e_timeout (a ...) natural_depth)])])
 
 ;; NOTE: does not yet support abstraction for addresses or spawns
 ;;

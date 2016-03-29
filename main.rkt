@@ -91,9 +91,11 @@ Remaining big challenges I see in the analysis:
          ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs prog))
          ;; (printf "The full prog config: ~s\n" prog)
 
+         ;; TODO: handle multiple actors here
          (define possible-transitions
            (append (transitions-from-message-of-type prog obs-type #t)
-                   (transitions-from-message-of-type prog unobs-type #f)))
+                   (transitions-from-message-of-type prog unobs-type #f)
+                   (csa#-handle-any-timeouts prog)))
          (for ([possible-transition possible-transitions])
            (match (find-matching-spec-transition possible-transition spec state-matches)
              [(list)
@@ -123,8 +125,8 @@ Remaining big challenges I see in the analysis:
 
 ;; TODO: adjust this function to allow for multiple possible actors
 ;;
-;; Returns all possible transitions of the given program config caused by a received message to the of the
-;; given type
+;; Returns all possible transitions of the given program config caused by a received message to the of
+;; the given type
 (define (transitions-from-message-of-type prog-config type observed?)
   (define the-actor (csa#-config-only-actor prog-config))
 
@@ -135,12 +137,8 @@ Remaining big challenges I see in the analysis:
   (for/fold ([transitions-so-far null])
             ;; TODO: get the max depth from somewhere
             ([message (generate-abstract-messages type (csa#-actor-current-state the-actor) 10 observed?)])
-    (define eval-results (csa#-eval-transition prog-config (csa#-actor-address the-actor) message))
     (define new-transitions
-      (for/list ([result eval-results])
-        ;; TODO: move this match into csa-abstract.rkt
-        (match-define (list behavior-exp outputs loop-outputs) result)
-        (csa#-transition message observed? outputs loop-outputs behavior-exp)))
+      (csa#-handle-message prog-config (csa#-actor-address the-actor) message observed?))
     (append transitions-so-far new-transitions)))
 
 ;; NOTE: only supports spec configs with a single actor/spec
@@ -176,17 +174,22 @@ Remaining big challenges I see in the analysis:
      (cond
        [(and (csa#-transition-observed? prog-trans) (aps#-transition-observed? spec-trans))
         (aps#-match (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))]
-       [(and (not (csa#-transition-observed? prog-trans)) (not (aps#-transition-observed? spec-trans)))
+       [(and (not (csa#-transition-observed? prog-trans))
+             (not (aps#-transition-observed? spec-trans)))
         (list (list))]
        [else (return-early #f)]))
-     ;; (printf "Checking value ~s against pattern ~s\n" (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
+
+   ;; (printf "Checking value ~s against pattern ~s\n"
+   ;;         (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
    (match valid-substitutions
      [(list)
       ;; No matches, so the whole predicate fails
-      ;; (printf "Found no matches for received message ~s to pattern ~s\n" (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
+      ;; (printf "Found no matches for received message ~s to pattern ~s\n"
+      ;;         (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
       #f]
      [(list subst1 subst2 subst-rest ...)
-      ;; (printf "too many matches for value ~s and pattern ~s\n" (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
+      ;; (printf "too many matches for value ~s and pattern ~s\n"
+      ;;         (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
       #f]
      [(list some-subst)
       (match-define (list spec-goto commitments)
@@ -194,7 +197,9 @@ Remaining big challenges I see in the analysis:
       ;; (printf "Outputs: ~s\n" (csa#-transition-outputs prog-trans))
       ;; (printf "Commitments: ~s\n" commitments)
       (if (and (null? (filter csa#-observable-output? (csa#-transition-loop-outputs prog-trans)))
-               (outputs-match-commitments? (filter csa#-observable-output? (csa#-transition-outputs prog-trans)) commitments)
+               (outputs-match-commitments? (filter csa#-observable-output?
+                                                   (csa#-transition-outputs prog-trans))
+                                           commitments)
                (equal? (hash-ref state-matches (csa#-transition-next-state prog-trans))
                        (aps#-goto-state spec-goto)))
           spec-goto
@@ -916,4 +921,44 @@ Remaining big challenges I see in the analysis:
   (check-true (analyze (make-single-agent-config send-after-loop-agent)
                        request-response-spec
                        (term (Addr Nat)) (term (Union))
-                       (hash 'A 'Always))))
+                       (hash 'A 'Always)))
+
+  ;;;; Timeouts
+  (define timeout-spec
+    (term
+     (((define-state (A r)
+         [* -> (with-outputs ([r (variant GotMessage)]) (goto A r))]
+         [unobs -> (with-outputs ([r (variant GotTimeout)]) (goto A r))]))
+      (goto A ,static-response-address)
+      ,single-agent-concrete-addr)))
+  (define got-message-only-spec
+    (term
+     (((define-state (A r)
+         [* -> (with-outputs ([r (variant GotMessage)]) (goto A r))]))
+      (goto A ,static-response-address)
+      ,single-agent-concrete-addr)))
+  (define timeout-and-send-agent
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
+          (begin
+            (send r (variant GotMessage))
+            (goto A r))
+          [(timeout 5)
+           (begin
+             (send r (variant GotTimeout))
+             (goto A r))]))
+       (goto A ,static-response-address)))))
+
+  (check-not-false (redex-match aps-eval z timeout-spec))
+  (check-not-false (redex-match aps-eval z got-message-only-spec))
+  (check-not-false (redex-match csa-eval αn timeout-and-send-agent))
+
+  (check-true (analyze (make-single-agent-config timeout-and-send-agent)
+                       timeout-spec
+                       (term Nat) (term (Union))
+                       (hash 'A 'A)))
+  (check-false (analyze (make-single-agent-config timeout-and-send-agent)
+                       got-message-only-spec
+                       (term Nat) (term (Union))
+                       (hash 'A 'A))))
