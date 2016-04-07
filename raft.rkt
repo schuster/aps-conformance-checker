@@ -604,6 +604,7 @@
                                    [recently-contacted-by-leader MaybeLeader])
     (cond
       [(leader-is-lagging term m)
+       ;; MY FIX:
        (send leader (PeerMessage (AppendRejected (: m current-term)
                                                  (replicated-log-last-index replicated-log)
                                                  self)))
@@ -611,8 +612,9 @@
        ;; should
        ;; (cond
        ;;   [(not (is-heartbeat entries))
-       ;;    (send leader (AppendRejected (: m current-term)
-       ;;                                 (replicated-log-last-index replicated-log)))]
+       ;;    (send leader (PeerMessage (AppendRejected (: m current-term)
+       ;;                                              (replicated-log-last-index replicated-log)
+       ;;                                              self)))]
        ;;   [else 0])
        (goto Follower recently-contacted-by-leader m replicated-log config)]
       [(not (replicated-log-consistent-update replicated-log prev-log-term prev-log-index))
@@ -624,9 +626,10 @@
                            replicated-log
                            config
                            recently-contacted-by-leader))]
-      ;; akka-raft does not do the append/commit logic for heartbeats, even though it should
+      ;; APS PROTOCOL BUG: akka-raft does not do the append/commit logic for heartbeats, even though
+      ;; it should
       ;; [(is-heartbeat entries)
-      ;;  (accept-heartbeat m replicated-log config)]
+      ;;  (accept-heartbeat m replicated-log config recently-contacted-by-leader)]
       [else
        (let* ([meta-with-updated-term (! m [current-term term])]
               [append-result (append replicated-log prev-log-index entries meta-with-updated-term)])
@@ -890,7 +893,7 @@
                                 config
                                 recently-contacted-by-leader))]
              [else
-              ;; APS PROTOCOL BUG: original code left out the response
+              ;; APS PROTOCOL BUG: original code left out this response
               (send leader
                     (PeerMessage
                      (AppendRejected (: m current-term)
@@ -972,7 +975,7 @@
                                 config
                                 recently-contacted-by-leader)))]
            [else
-            ;; NOTE: this send is my own code, not the akka-raft code
+            ;; MY FIX:
             (send leader (PeerMessage (AppendRejected (: m current-term)
                                                       (replicated-log-last-index replicated-log)
                                                       self)))
