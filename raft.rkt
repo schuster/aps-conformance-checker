@@ -37,6 +37,7 @@
        ;; TODO: break these out into separate states so that the append retry can only happen when in
        ;; the leader state (and otherwise the leader must fall back to being a follower)
        [(variant PeerMessage (variant AppendRejected * * *)) -> (goto Running)]
+       ;; APS PROTOCOL BUG: I left this case out the first time around
        [(variant PeerMessage (variant AppendRejected * * member)) ->
         ;; TODO: should I require that the self address is in this response?
         (with-outputs ([member (variant PeerMessage (variant AppendEntries * * * * * * *))])
@@ -606,7 +607,8 @@
        (send leader (PeerMessage (AppendRejected (: m current-term)
                                                  (replicated-log-last-index replicated-log)
                                                  self)))
-       ;; BUG: akka-raft does not respond to heartbeats in this case, but I think it should
+       ;; APS PROTOCOL BUG: akka-raft does not respond to heartbeats in this case, but I think it
+       ;; should
        ;; (cond
        ;;   [(not (is-heartbeat entries))
        ;;    (send leader (AppendRejected (: m current-term)
@@ -888,7 +890,7 @@
                                 config
                                 recently-contacted-by-leader))]
              [else
-              ;; BUG: original code left out the response
+              ;; APS PROTOCOL BUG: original code left out the response
               (send leader
                     (PeerMessage
                      (AppendRejected (: m current-term)
@@ -974,8 +976,8 @@
             (send leader (PeerMessage (AppendRejected (: m current-term)
                                                       (replicated-log-last-index replicated-log)
                                                       self)))
-            ;; BUG: this is where akka-raft sends entries back instead
-            ;; of the rejection response
+            ;; APS PROTOCOL BUG: this is where akka-raft sends entries back instead of the rejection
+            ;; response
             ;;
             ;; (send-entries leader
             ;;               m
