@@ -19,40 +19,40 @@
 ;; match actor ID?). Maybe just use ints, with the understanding that someone without a session
 ;; provides the special session ID 0
 
-(define-variant GetSessionType
- (GetSession [id Nat] [reply-to (Addr GetSessionResult)]))
-
-(define-variant GetSessionResult
-  (ActiveSession [session-id Nat] [service (Addr SessionCommand)])
-  (NewSession [auth (Addr Authenticate)]))
+(define-variant SessionResponse
+  (Pong))
 
 (define-variant SessionCommand
   (Ping [reply-to (Addr SessionResponse)]))
 
-(define-variant SessionResponse
-  (Pong))
+(define-variant AuthenticateResult
+  (ActiveSession [session-id Nat] [service (Addr SessionCommand)])
+  (FailedSession))
 
 (define-record Authenticate
   [username String]
   [password String]
   [reply-to (Addr AuthenticateResult)])
 
-(define-variant AuthenticateResult
-  (ActiveSession [session-id Nat] [service (Addr SessionCommand)])
-  (FailedSession))
-
-(define-variant GetSessionInternalType
- (GetSessionInternal [id Nat] [reply-to (Addr GetSessionResultInternal)]))
-
 (define-variant GetSessionResultInternal
   (SuccessInternal)
   (FailureInternal))
 
-(define-variant CreateVariant
-  (CreateSession [username String] [reply-to (CreateSessionResult)]))
+(define-variant GetSessionInternalType
+  (GetSessionInternal [id Nat] [reply-to (Addr GetSessionResultInternal)]))
+
+(define-variant GetSessionResult
+  (ActiveSession [session-id Nat] [service (Addr SessionCommand)])
+  (NewSession [auth (Addr Authenticate)]))
+
+(define-variant GetSessionType
+ (GetSession [id Nat] [reply-to (Addr GetSessionResult)]))
 
 (define-variant CreateSessionResult
   (NewSessionInternal [session-id Nat]))
+
+(define-variant CreateVariant
+  (CreateSession [username String] [reply-to (CreateSessionResult)]))
 
 (define-type HandshakeWorkerInput
   (Union (SuccessInternal)
