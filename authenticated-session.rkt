@@ -67,23 +67,6 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 
-(define-actor
-  GetSessionType
-  (ServiceGuard [server (Addr (Union
-                               (Ping [reply-to (Addr SessionResponse)])
-                               (GetSessionInternal [id Nat]
-                                                   [reply-to (Addr GetSessionResultInternal)])
-                               SessionCommand))]
-                [password-table (Hash String String)])
-  ((Union
-    (GetSession [id Nat] [reply-to (Addr GetSessionResult)]))
-   (define-state (Ready) (m)
-     (case m
-       [(GetSession session-id reply-to)
-        (spawn HandshakeWorker session-id reply-to server password-table)
-        (goto Ready)]))
-   (goto Ready)))
-
 (define-actor HandshakeWorkerInput
   (HandshakeWorker [session-id Nat]
                    [client (Addr GetSessionResult)]
@@ -143,7 +126,17 @@
     (send server (GetSessionInternal session-id self))
     (goto WaitingForMaybeSession)))
 
-(define-actor ServerInput (Server)
+(define-actor GetSessionType
+  (ServiceGuard [server (Addr ServerInput)] [password-table (Hash String String)])
+  (define-state (Ready) (m)
+    (case m
+      [(GetSession session-id reply-to)
+       (spawn HandshakeWorker session-id reply-to server password-table)
+       (goto Ready)]))
+  (goto Ready))
+
+(define-actor ServerInput
+  (Server)
   (define-state (Running [sessions (Hash Nat Nat)] [next-session-id Nat]) (m)
     (case m
       [(GetSessionInternal id reply-to)
