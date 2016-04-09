@@ -154,3 +154,8 @@
        (send reply-to (Pong))
        (goto Running sessions next-session-id)]))
   (goto Running (hash) 0))
+
+(let* ([empty-pw-table (hash)]
+       [pw-table (hash-set (hash-set pw-table "joe" "abc") "sally" "xyz")]
+       [server (spawn Server)])
+  (spawn Guard server pw-table))
