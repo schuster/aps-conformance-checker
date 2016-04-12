@@ -424,6 +424,21 @@ Remaining big challenges I see in the analysis:
             ;; (goto HaveAddr (+ i 1) response-target)
             (goto HaveAddr i response-target))))
        (goto Init)))))
+  (define respond-to-first-addr-agent2
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (Always [original-addr (Union (NoAddr) (Original (Addr Nat)))]) (response-target)
+          (begin
+            (case original-addr
+              [(NoAddr)
+               (begin
+                 (send response-target 0)
+                 (goto Always (variant Original response-target)))]
+              [(Original o)
+               (begin
+                 (send o 0)
+                 (goto Always original-addr))]))))
+       (goto Always (variant NoAddr))))))
   (define delay-saving-address-agent
     (term
      (,single-agent-concrete-addr
@@ -453,6 +468,7 @@ Remaining big challenges I see in the analysis:
   (check-not-false (redex-match aps-eval z request-same-response-addr-spec))
   (check-not-false (redex-match csa-eval αn request-response-agent))
   (check-not-false (redex-match csa-eval αn respond-to-first-addr-agent))
+  (check-not-false (redex-match csa-eval αn respond-to-first-addr-agent2))
   (check-not-false (redex-match csa-eval αn double-response-agent))
   (check-not-false (redex-match csa-eval αn delay-saving-address-agent))
 
@@ -464,6 +480,10 @@ Remaining big challenges I see in the analysis:
                         request-response-spec
                         (term (Addr Nat)) (term (Union))
                         (hash 'Init 'Always 'HaveAddr 'Always)))
+  (check-false (analyze (make-single-agent-config respond-to-first-addr-agent2)
+                        request-response-spec
+                        (term (Addr Nat)) (term (Union))
+                        (hash 'Always 'Always)))
 
   (check-false (analyze (make-single-agent-config request-response-agent)
                         request-same-response-addr-spec
@@ -473,6 +493,12 @@ Remaining big challenges I see in the analysis:
                        request-same-response-addr-spec
                        (term (Addr Nat)) (term (Union))
                        (hash 'Init 'Init 'HaveAddr 'HaveAddr)))
+  ;; TODO: figure out some way to get this test to work (won't right now because agent's Always state
+  ;; corresponds to both states of the spec, depending on its parameter
+  ;; (check-true (analyze (make-single-agent-config respond-to-first-addr-agent2)
+  ;;                       request-same-response-addr-spec
+  ;;                       (term (Addr Nat)) (term (Union))
+  ;;                       (hash 'Always 'Always)))
 
   (check-false (analyze (make-single-agent-config double-response-agent)
                         request-response-spec
