@@ -136,9 +136,15 @@ Remaining big challenges I see in the analysis:
 
   (for/fold ([transitions-so-far null])
             ;; TODO: get the max depth from somewhere
-            ([message (generate-abstract-messages type (csa#-actor-current-state the-actor) 10 observed?)])
-    (define new-transitions
-      (csa#-handle-message prog-config (csa#-actor-address the-actor) message observed?))
+            ([message-pair (generate-abstract-messages type (csa#-actor-current-state the-actor) 10 observed?)])
+    (match-define (list message template) message-pair)
+    ;; TODO: have better abstraction here: shouldn't expose the message template idea outside of the
+    ;; CSA# module, but doing it here for performance reasons
+    (define the-address (csa#-actor-address the-actor))
+    (define new-transitions (csa#-handle-message (csa#-age-addresses prog-config the-address template)
+                                                 the-address
+                                                 message
+                                                 observed?))
     (append transitions-so-far new-transitions)))
 
 ;; NOTE: only supports spec configs with a single actor/spec

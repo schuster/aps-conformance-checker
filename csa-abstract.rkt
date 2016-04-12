@@ -16,6 +16,7 @@
  csa#-transition-next-state
  α-config
  step-prog-final-behavior
+ csa#-age-addresses
  csa#-actor-address
  csa#-actor-current-state
  csa#-config-only-actor
@@ -152,8 +153,8 @@
 (define (generate-abstract-messages type current-state-name max-depth observed?)
   (redex-let csa# ([(v#template ...) (term (generate-abstract-messages/mf ,type ,max-depth))])
              (if observed?
-                 (term ((fill-template v#template ,current-state-name) ...))
-                 (term ((fill-template/unobs v#template) ...)))))
+                 (term (((fill-template v#template ,current-state-name) v#template) ...))
+                 (term (((fill-template/unobs v#template) v#template ) ...)))))
 
 (define-metafunction csa#
   generate-abstract-messages/mf : τ natural -> (v#template ...)
@@ -951,6 +952,49 @@
                 (term (list (* Nat))))
     (check-equal? (term (α-e (vector 1 2) () 10))
                 (term (vector (* Nat)))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Address aging
+
+(define (csa#-age-addresses config actor-address template)
+  ;; TODO: use the actor-address (once we have multiple actors in the config)
+  (term (age-addresses-in-tree ,config
+                               ,(csa#-actor-current-state (csa#-config-only-actor config))
+                               ,template)))
+
+;; Does the tree traversal to swap MOST-RECENT for PREVIOUS for addresses corresponding to the given
+;; state and template
+(define-metafunction csa#
+  age-addresses-in-tree : any s v#template -> any
+  [(age-addresses-in-tree (received-addr s v#template natural _) s v#template)
+   (received-addr s v#template natural PREVIOUS)]
+  [(age-addresses-in-tree (any ...) s v#template)
+   ((age-addresses-in-tree any s v#template) ...)]
+  [(age-addresses-in-tree any _ _) any])
+
+(module+ test
+  (check-equal?
+   (term
+    (age-addresses-in-tree
+     (list
+      (received-addr A (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 1 MOST-RECENT)
+      (received-addr A (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 2 MOST-RECENT)
+      (received-addr A (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 1 PREVIOUS)
+      (received-addr B (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 1 MOST-RECENT)
+      (received-addr A (record [baz ADDR-HOLE]) 1 MOST-RECENT)
+      (init-addr 2)
+      (* Nat))
+     A
+     (record [foo ADDR-HOLE] [bar ADDR-HOLE])))
+   (term
+    (list
+      (received-addr A (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 1 PREVIOUS)
+      (received-addr A (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 2 PREVIOUS)
+      (received-addr A (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 1 PREVIOUS)
+      (received-addr B (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 1 MOST-RECENT)
+      (received-addr A (record [baz ADDR-HOLE]) 1 MOST-RECENT)
+      (init-addr 2)
+      (* Nat)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
