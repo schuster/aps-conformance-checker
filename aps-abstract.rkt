@@ -165,12 +165,6 @@
   [-------------------
    (aps#-match/j v# x ([x v#]))]
 
-  [----------------
-   (aps#-match/j t t ())]
-
-  [----------------
-   (aps#-match/j (* t) t ())]
-
   [(aps#-match/j v# p ([x v#_binding] ...)) ...
    --------------
    (aps#-match/j (variant t v# ..._n) (variant t p ..._n) ([x v#_binding] ... ...))]
