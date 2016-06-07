@@ -16,7 +16,6 @@
  csa#-transition-next-state
  α-config
  step-prog-final-behavior
- csa#-age-addresses
  csa#-actor-address
  csa#-actor-current-state
  csa#-config-only-actor
@@ -359,13 +358,11 @@
 (define csa#-output-message cadr)
 
 (define (csa#-observable-output? output)
-  (if (redex-match csa# [(* (Addr _)) _] output) #f #t))
+  (if (redex-match csa# (obs-ext natural) (csa#-output-address output)) #t #f))
 
 (module+ test
-  (check-false (csa#-observable-output? (term [(* (Addr Nat)) 1])))
-  (check-true (csa#-observable-output? (term [(init-addr 0) 1])))
-  (check-true (csa#-observable-output? (term [(received-addr S1 ADDR-HOLE 0 MOST-RECENT) 1])))
-  (check-true (csa#-observable-output? (term [(received-addr S1 ADDR-HOLE 0 PREVIOUS) 1]))))
+  (check-false (csa#-observable-output? (term [(* (Addr Nat)) (* Nat)])))
+  (check-true (csa#-observable-output? (term [(obs-ext 0) (* Nat)]))))
 
 (define (csa#-transition-next-state transition)
   (redex-let csa# ([(in-hole E# (goto s _ ...)) (csa#-transition-behavior-exp transition)])
@@ -895,7 +892,8 @@
   [(α-e x _ _) x]
   ;; TODO: is there any way this will ever be used for anything but the initial addresses?
   ;; TODO: deal with the self-address here
-  [(α-e (addr natural) (_ ... (addr natural) _ ...) _) (init-addr natural)]
+  ;; TODO: canonicalize this address
+  [(α-e (addr natural) (_ ... (addr natural) _ ...) _) (obs-ext natural)]
   [(α-e a _ _) (* (Addr Nat))] ; TODO: fill in the real type here
   [(α-e (goto s e ...) (a ...) natural_depth) (goto s (α-e e (a ...) natural_depth) ...)]
   [(α-e (begin e ...) (a ...) natural_depth) (begin (α-e e (a ...) natural_depth) ...)]
@@ -946,55 +944,60 @@
                 (term (record [f1 (* Nat)] [f2 (* Nat)])))
   (check-not-false
    (redex-match? csa#
-                 (variant Foo (init-addr 1) (* (Addr τ)))
+                 (variant Foo (obs-ext 1) (* (Addr τ)))
                  (term (α-e (variant Foo (addr 1) (addr 2)) ((addr 1)) 10))))
   (check-equal? (term (α-e (list 1 2) () 10))
                 (term (list (* Nat))))
-    (check-equal? (term (α-e (vector 1 2) () 10))
+  (check-equal? (term (α-e (vector 1 2) () 10))
                 (term (vector (* Nat)))))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Address aging
+;; Further Abstraction
 
-(define (csa#-age-addresses config actor-address template)
-  ;; TODO: use the actor-address (once we have multiple actors in the config)
-  (term (age-addresses-in-tree ,config
-                               ,(csa#-actor-current-state (csa#-config-only-actor config))
-                               ,template)))
+;; TODO: rename this function (need a better term than "blur"; "fuzz" is taken
+;;
+;; "Blurs" out any address not in the given "relevant" list into an unobserved address
+(define (blur-externals config relevant-external-addrs)
+  (redex-let csa# ([K# (term (blur-externals/mf ,config ,relevant-external-addrs))])
+             (term K#)))
 
-;; Does the tree traversal to swap MOST-RECENT for PREVIOUS for addresses corresponding to the given
-;; state and template
 (define-metafunction csa#
-  age-addresses-in-tree : any s v#template -> any
-  [(age-addresses-in-tree (received-addr s v#template natural _) s v#template)
-   (received-addr s v#template natural PREVIOUS)]
-  [(age-addresses-in-tree (any ...) s v#template)
-   ((age-addresses-in-tree any s v#template) ...)]
-  [(age-addresses-in-tree any _ _) any])
+  blur-externals/mf : any (a#ext ...) -> any
+  [(blur-externals/mf (obs-ext natural) (_ ... (obs-ext natural) _ ...))
+   (obs-ext natural)]
+  [(blur-externals/mf (obs-ext natural) _)
+   ;; TODO: put the correct type here
+   (* (Addr Nat))]
+  [(blur-externals/mf (any ...) (any_addr ...))
+   ((blur-externals/mf any (any_addr ...)) ...)]
+  [(blur-externals/mf any _) any])
 
 (module+ test
   (check-equal?
-   (term
-    (age-addresses-in-tree
-     (list
-      (received-addr A (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 1 MOST-RECENT)
-      (received-addr A (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 2 MOST-RECENT)
-      (received-addr A (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 1 PREVIOUS)
-      (received-addr B (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 1 MOST-RECENT)
-      (received-addr A (record [baz ADDR-HOLE]) 1 MOST-RECENT)
-      (init-addr 2)
-      (* Nat))
-     A
-     (record [foo ADDR-HOLE] [bar ADDR-HOLE])))
-   (term
-    (list
-      (received-addr A (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 1 PREVIOUS)
-      (received-addr A (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 2 PREVIOUS)
-      (received-addr A (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 1 PREVIOUS)
-      (received-addr B (record [foo ADDR-HOLE] [bar ADDR-HOLE]) 1 MOST-RECENT)
-      (received-addr A (record [baz ADDR-HOLE]) 1 MOST-RECENT)
-      (init-addr 2)
-      (* Nat)))))
+   (blur-externals
+      (redex-let* csa#
+                  ([α#n (term
+                         (SINGLE-ACTOR-ADDR
+                          (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
+                              (begin
+                                (send (obs-ext 1) (* Nat))
+                                (send (obs-ext 2) (* Nat))
+                                (goto A x y z))))
+                           (goto A (obs-ext 2) (obs-ext 3) (obs-ext 4)))))]
+                   [K# (term ((α#n) () (SINGLE-ACTOR-ADDR) ()))])
+             (term K#))
+      (term ((obs-ext 1) (obs-ext 3))))
+   (redex-let* csa#
+               ([α#n (term
+                      (SINGLE-ACTOR-ADDR
+                       (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
+                           (begin
+                             (send (obs-ext 1) (* Nat))
+                             (send (* (Addr Nat)) (* Nat))
+                             (goto A x y z))))
+                        (goto A (* (Addr Nat)) (obs-ext 3) (* (Addr Nat))))))]
+                [K# (term ((α#n) () (SINGLE-ACTOR-ADDR) ()))])
+               (term K#))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors

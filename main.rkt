@@ -151,6 +151,7 @@ Remaining big challenges I see in the analysis:
     ;; TODO: have better abstraction here: shouldn't expose the message template idea outside of the
     ;; CSA# module, but doing it here for performance reasons
     (define the-address (csa#-actor-address the-actor))
+    ;; TODO: remove the call to age-addresses here
     (define new-transitions (csa#-handle-message (csa#-age-addresses prog-config the-address template)
                                                  the-address
                                                  message
@@ -264,7 +265,6 @@ Remaining big challenges I see in the analysis:
 
   ;; TODO: blur out certain internal actors
 
-  (define relevant-spec-addrs (aps#-relevant-external-addrs s))
   (blur-externals p (aps#-relevant-external-addrs s)))
 
 ;; ---------------------------------------------------------------------------------------------------
