@@ -63,6 +63,7 @@ Remaining big challenges I see in the analysis:
     ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
     ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
     ;; message generation
+    ;; TODO: canonicalize the initial tuple
     (define initial-tuple
       ;; TODO: get the max depth from somewhere
       (list (α-config initial-prog-config (instance-observable-addresses initial-spec-instance) 10)
@@ -97,6 +98,9 @@ Remaining big challenges I see in the analysis:
                    (transitions-from-message-of-type prog unobs-type #f)
                    (csa#-handle-any-timeouts prog)))
          (for ([possible-transition possible-transitions])
+           ;; TODO: rewrite find-matching-spec-transition; probably remove or refactor the
+           ;; hints. Should also just return the full config, because output commitment won't be
+           ;; satisfied immediately
            (match (find-matching-spec-transition possible-transition spec state-matches)
              [(list)
               ;; (printf "couldn't find any match for ~s from state ~s, in spec state ~s\n"
@@ -104,18 +108,24 @@ Remaining big challenges I see in the analysis:
               ;;         (csa#-actor-current-state (csa#-config-only-actor prog))
               ;;         (aps#-instance-state spec))
               (return-early #f)]
-             [(list spec-goto-exp)
-              (define next-tuple
-                (list (step-prog-final-behavior prog (csa#-transition-behavior-exp possible-transition))
-                      (step-spec-with-goto spec spec-goto-exp)
-                      ;; TODO: allow these types to change over time
-                      obs-type
-                      unobs-type))
-              (unless (or (set-member? visited next-tuple)
-                          (member next-tuple (queue->list to-visit))
-                          (equal? current-tuple next-tuple))
-                (printf "Adding state: ~s\n" (prog-config-goto (car next-tuple)))
-                (enqueue! to-visit next-tuple))]
+             [(list next-spec-config)
+              (define full-next-prog-config (step-prog-final-behavior prog (csa#-transition-behavior-exp possible-transition)))
+              (for ([spec-config (split-spec next-spec-config)])
+
+                ;; TODO: make it an "error" for a non-precise address to match a spec state parameter
+
+                (define abstracted-config (abstract-prog-config-by-spec full-next-prog-config spec-config))
+                (define next-tuple
+                  (canonicalize-tuple ; i.e. rename the addresses
+                   (list next-prog-config next-spec-config
+                         ;; TODO: allow these types to change over time
+                         obs-type
+                         unobs-type)))
+                (unless (or (set-member? visited next-tuple)
+                            (member next-tuple (queue->list to-visit))
+                            (equal? current-tuple next-tuple))
+                  ;; (printf "Adding state: ~s\n" (prog-config-goto (car next-tuple)))
+                  (enqueue! to-visit next-tuple)))]
              [_ (error "too many possible matches") ;; TODO: call a continuation instead
                 ]))
          (loop to-visit (set-add visited current-tuple))]))))
@@ -243,6 +253,19 @@ Remaining big challenges I see in the analysis:
 ;; TODO: consider defining the spec semantics completely independently of concrete addresses, and
 ;; provide a mapping in the spec instead (the spec semantics would probably look something like HD
 ;; automata)
+
+;; Takes abstract prog config and abstract spec config; returns prog further abstracted according to
+;; spec
+(define (abstract-prog-config-by-spec p s)
+  ;; How do we decide whether to keep the old or new stuff? Is that a different part of the
+  ;; abstraction from blurring out the addresses irrelevant to the current spec config?
+
+  ;; Where do I change other addresses to dead-observable?
+
+  ;; TODO: blur out certain internal actors
+
+  (define relevant-spec-addrs (aps#-relevant-external-addrs s))
+  (blur-externals p (aps#-relevant-external-addrs s)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Top-level tests
@@ -993,4 +1016,23 @@ Remaining big challenges I see in the analysis:
   (check-false (analyze (make-single-agent-config timeout-and-send-agent)
                        got-message-only-spec
                        (term Nat) (term (Union))
-                       (hash 'A 'A))))
+                       (hash 'A 'A)))
+
+  ;; Multiple Actors
+  (define statically-delegating-responder-actor
+    (term
+     (,some-other-address ; TODO: this line
+      (((define-state (A [responder (Addr (Addr Nat))]) (m)
+          (begin
+            (send responder m)
+            (goto A responder))))
+       ;; TODO: put the real address here
+       (goto A ,yet-another-address)))))
+
+  (check-not-false (redex-match csa-eval αn statically-delegating-responder-actor))
+  (check-true (analyze (make-config not-sure-what-goes-here) ;; TODO: this line
+                       request-response-target
+                       (term (Addr Nat)) (term (Union))
+                       ;; TODO: hints?
+                       ))
+  )

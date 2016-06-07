@@ -35,10 +35,12 @@
 
 (define-extended-language aps#
   aps-eval-with-csa#
+  (Σ (((a#int z) ...) O))
   (z ((S-hat ...) e-hat σ))
   (σ a# null)
-  (u .... a#)
-  (v-hat a# a-hat))
+  (u .... a#) ; TODO: make this a#ext instead; allowing saves of spawned addresses is future work
+  (v-hat a# a-hat)
+  (O ((a#ext po ...) ...)))
 
 ;; TODO: change the language and conformance so that I don't have to do this little initial
 ;; abstraction
@@ -255,6 +257,14 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
 
+(define-metafunction aps#
+  config-instances/mf : Σ -> (z ...)
+  [(config-instances/mf (((_ z) ...) _)) (z ...)])
+
+(define-metafunction aps#
+  config-commitment-map/mf : Σ -> O
+  [(config-commitment-map/mf (_ O)) O])
+
 ;; TODO: test these
 
 (define (aps#-transition-pattern transition)
@@ -284,8 +294,11 @@
   (check-equal? (aps#-goto-state (term (goto B (SINGLE-ACTOR-ADDR SINGLE-ACTOR-ADDR)))) (term B)))
 
 (define (aps#-commitment-address commitment)
-  (redex-let aps# ([[a#ext _] commitment])
-    (term a#ext)))
+  (term (commitment-address/mf ,commitment)))
+
+(define-metafunction aps#
+  commitment-address/mf : [a#ext po] -> a#ext
+  [(commitment-address/mf [a#ext po]) a#ext])
 
 (define (aps#-commitment-pattern commitment)
   (redex-let aps# ([[_ po] commitment])
@@ -303,9 +316,48 @@
   instance-state/mf : z -> s
   [(instance-state/mf (_ (goto s _ ...) _)) s])
 
+(define (aps#-instance-arguments z)
+  (term (instance-arguments/mf ,z)))
+
+(define-metafunction aps#
+  instance-arguments/mf : z -> (a#ext ...)
+  [(instance-arguments/mf (_ (goto _ u ...) _)) (u ...)])
+
 (module+ test
   (check-equal?
    (aps#-instance-state (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
-                               (goto Always (* (Addr Nat)) (* (Addr Nat)))
+                               (goto Always (* (Addr Nat)) (obs-ext 1))
                                null)))
-   (term Always)))
+   (term Always))
+
+  (check-equal?
+   (aps#-instance-arguments (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
+                                   (goto Always (* (Addr Nat)) (obs-ext 1))
+                                   null)))
+   (term ((* (Addr Nat)) (obs-ext 1)))))
+
+(define (aps#-relevant-external-addrs Σ)
+  (term (relevant-external-addrs/mf ,Σ)))
+
+(define-metafunction aps#
+  relevant-external-addrs/mf : Σ -> (a#ext ...)
+  [(relevant-external-addrs/mf Σ)
+   ,(remove-duplicates (term (any_args ... ... any_commitment-addr ...)))
+   (where (any_z ...) (config-instances/mf Σ))
+   (where ((any_args ...) ...) ((instance-arguments/mf any_z) ...))
+   (where ((any_commitment-addr _ ...) ...) (config-commitment-map/mf Σ))])
+
+(module+ test
+  (check-equal?
+   (aps#-relevant-external-addrs
+    (redex-let* aps#
+                ([z_1 (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
+                             (goto Always (obs-ext 1) (obs-ext 2))
+                             null))]
+                 [z_2 (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
+                             (goto Always (obs-ext 1) (obs-ext 3))
+                             null))]
+                 [O (term (((obs-ext 1)) ((obs-ext 3)) ((obs-ext 4))))]
+                 [Σ (term (((SINGLE-ACTOR-ADDR z_1) (SINGLE-ACTOR-ADDR z_2)) O))])
+                (term Σ)))
+   (term ((obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))))

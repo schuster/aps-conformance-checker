@@ -85,8 +85,8 @@
    (* (Addr τ)) ; unobserved address
    ;; NOTE: only a finite number of addresses in the initial config, so we can use natural numbers
    ;; here
-   (init-addr natural)
-   (received-addr s v#template natural time-flag))
+   ;; TODO: do I need the dead observables?
+   (obs-ext natural))
   (time-flag MOST-RECENT PREVIOUS)
   ;; TODO: include types in the receptionists and externals (maybe? Might not need them if they're
   ;; tracked elsewhere)
