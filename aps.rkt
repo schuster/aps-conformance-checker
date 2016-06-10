@@ -7,7 +7,8 @@
          subst-n/aps
          subst/aps
          aps-valid-config?
-         instance-observable-addresses
+         aps-valid-instance?
+         aps-config-observable-addresses
          aps-config-from-instance)
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -94,25 +95,31 @@
 (define (aps-valid-config? c)
   (if (redex-match aps-eval Σ c) #t #f))
 
+(define (aps-valid-instance? i)
+  (if (redex-match aps-eval z i) #t #f))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Misc.
 
-(define (instance-observable-addresses spec-instance)
-  (term (instance-observable-addresses/mf ,spec-instance)))
+(define (aps-config-observable-addresses config)
+  (term (config-observable-addresses/mf ,config)))
 
 (define-metafunction aps-eval
-  instance-observable-addresses/mf : z -> (a ...)
-  [(instance-observable-addresses/mf (_ (goto s a ...) _))
-   (a ...)])
+  config-observable-addresses/mf : Σ -> (a ...)
+  [(config-observable-addresses/mf ((z ...) _))
+   (a ... ...)
+   (where ((_ (goto s a ...) _) ...) (z ...))])
 
 (module+ test
   (check-equal?
-   (instance-observable-addresses (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
-                                         (goto Always (addr 3) (addr 4))
-                                         (addr 1))))
+   (aps-config-observable-addresses
+    (aps-config-from-instance
+     (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
+            (goto Always (addr 3) (addr 4))
+            (addr 1)))))
    (term ((addr 3) (addr 4)))))
 
 (define (aps-config-from-instance instance)
   (redex-let* aps-eval ([z instance]
-                        [Σ (term (z ()))])
+                        [Σ (term ((z) ()))])
               (term Σ)))

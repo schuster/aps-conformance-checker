@@ -19,6 +19,7 @@
  csa#-actor-address
  csa#-actor-current-state
  csa#-config-only-actor
+ blur-externals
 
  ;; Debug helpers
  prog-config-without-state-defs
@@ -341,6 +342,7 @@
   (trigger ; either: 'timeout or (list observed? message)
    outputs ; list of abstract-addr/abstract-message 2-tuples
    loop-outputs ; list of abstract-addr/abstract-message 2-tuples
+   ;; TODO: add spawns
    behavior-exp) ; an e#
   #:transparent)
 

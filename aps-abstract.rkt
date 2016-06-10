@@ -53,16 +53,31 @@
 ;; abstraction
 (define (aps#-α-Σ spec-config)
   ;; Doing a redex-let here just to add a codomain contract
+  ;; TODO: figure out how to get redex-let to report its line number if this fails
   (redex-let aps# ([Σ (term (aps#-α-Σ/mf ,spec-config))])
              (term Σ)))
 
 (define-metafunction aps#
   aps#-α-Σ/mf : any -> any
+  ;; TODO: deal with multiple initial actors; remove this hack; figure out how to differentiate
+  ;; initially between internal and external addresses
+  [(aps#-α-Σ/mf (addr 0)) SINGLE-ACTOR-ADDR]
   [(aps#-α-Σ/mf (addr natural))
-   (init-addr natural)]
+   (obs-ext natural)]
   [(aps#-α-Σ/mf (any ...))
    ((aps#-α-Σ/mf any) ...)]
   [(aps#-α-Σ/mf any) any])
+
+(module+ test
+  (check-equal?
+   (aps#-α-Σ (term (((((define-state (A x) (* -> (goto A x))))
+                      (goto A (addr 1))
+                      (addr 0)))
+                    ())))
+   (term (((((define-state (A x) (* -> (goto A x))))
+            (goto A (obs-ext 1))
+            SINGLE-ACTOR-ADDR))
+          ()))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
@@ -108,16 +123,17 @@
 
 ;; TODO: deal with the case where the pattern variables shadow the state variables
 (define-metafunction aps#
-  aps#-current-transitions/mf : z -> ((ε -> e-hat) ...)
-  [(aps#-current-transitions/mf ((_ ... (define-state (s x ...) (ε -> e-hat) ...) _ ...) (goto s v-hat ...) _))
+  aps#-current-transitions/mf : ((z) O) -> ((ε -> e-hat) ...)
+  [(aps#-current-transitions/mf
+    ((((_ ... (define-state (s x ...) (ε -> e-hat) ...) _ ...) (goto s v-hat ...) _)) _))
    ((ε -> (subst-n/aps# e-hat (x v-hat) ...)) ...)])
 
 (define (aps#-null-transition instance)
   (term (aps#-null-transition/mf ,instance)))
 
 (define-metafunction aps#
-  aps#-null-transition/mf : z -> (unobs -> (goto s v-hat ...))
-  [(aps#-null-transition/mf ((_ ... (define-state (s x ...) _ ...) _ ...) (goto s v-hat ...) _))
+  aps#-null-transition/mf : ((z) O) -> (unobs -> (goto s v-hat ...))
+  [(aps#-null-transition/mf (((_ (goto s v-hat ...) _)) _))
    (unobs -> (goto s v-hat ...))])
 
 (define (aps#-transition-observed? trans)
@@ -152,9 +168,9 @@
 
 ;; TODO: test the eval function
 
-(define (step-spec-with-goto spec-instance goto-exp)
-  (redex-let aps# ([((S-hat ...) _ σ) spec-instance])
-             (term ((S-hat ...) ,goto-exp σ))))
+(define (step-spec-with-goto spec-config goto-exp)
+  (redex-let aps# ([((((S-hat ...) _ σ)) O) spec-config])
+             (term ((((S-hat ...) ,goto-exp σ)) O))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pattern matching
