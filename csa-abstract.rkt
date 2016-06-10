@@ -52,14 +52,6 @@
       (list v# ...)
       (vector v# ...)
       (hash v# ...))
-  (v#template
-   ADDR-HOLE
-   (variant t v#template ...)
-   (record [l v#template] ...)
-   (list v#template ...)
-   (vector v#template ...)
-   (hash v#template ...)
-   (* τ))
   (e# (spawn τ e# S ...)
       (goto s e# ...)
       (send e# e#)
@@ -149,24 +141,23 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Message generation
 
-;; TODO: define this
+;; TODO: (maybe) remove this parameter hack and thread the number through instead
+(define next-generated-address 0)
+
 (define (generate-abstract-messages type current-state-name max-depth observed?)
-  (redex-let csa# ([(v#template ...) (term (generate-abstract-messages/mf ,type ,max-depth))])
-             (if observed?
-                 (term (((fill-template v#template ,current-state-name) v#template) ...))
-                 (term (((fill-template/unobs v#template) v#template ) ...)))))
+  (term (generate-abstract-messages/mf ,type ,max-depth)))
 
 (define-metafunction csa#
-  generate-abstract-messages/mf : τ natural -> (v#template ...)
+  generate-abstract-messages/mf : τ natural -> (v# ...)
   [(generate-abstract-messages/mf Nat _) ((* Nat))]
   [(generate-abstract-messages/mf String _) ((* String))]
   [(generate-abstract-messages/mf (Union) _) ()]
   [(generate-abstract-messages/mf (Union [t τ ...] ...) 0) ((* (Union [t τ ...] ...)))]
   [(generate-abstract-messages/mf (Union [t_1 τ_1 ...] [t_rest τ_rest ...] ...) natural_max-depth)
-   (v#template_1 ... v#template_rest ...)
+   (v#_1 ... v#_rest ...)
    ;; (side-condition (displayln "generate-abs-var"))
-   (where (v#template_1 ...) (generate-variants natural_max-depth t_1 τ_1 ...))
-   (where (v#template_rest ...)
+   (where (v#_1 ...) (generate-variants natural_max-depth t_1 τ_1 ...))
+   (where (v#_rest ...)
           (generate-abstract-messages/mf (Union [t_rest τ_rest ...] ...) natural_max-depth))]
   [(generate-abstract-messages/mf (Union) _) ()]
   [(generate-abstract-messages/mf (minfixpt X τ) natural_max-depth)
@@ -180,19 +171,22 @@
       (append
        ;; TODO: do I need to do a (max 0) on natural_max-depth here?
        (for/list ([generated-v (term (generate-abstract-messages/mf τ_1 ,(sub1 (term natural_max-depth))))])
-         (redex-let csa# ([(record [l_other v#template_other] ...) sub-record]
-                          [v#template_1 generated-v])
-           (term (record [l_1 v#template_1] [l_other v#template_other] ...))))
+         (redex-let csa# ([(record [l_other v#_other] ...) sub-record]
+                          [v#_1 generated-v])
+           (term (record [l_1 v#_1] [l_other v#_other] ...))))
        records-so-far))]
   [(generate-abstract-messages/mf (Record) natural_max-depth)
    ((record))]
-  [(generate-abstract-messages/mf (Addr τ) _) (ADDR-HOLE)]
+  [(generate-abstract-messages/mf (Addr τ) _)
+   ,(begin
+      (set! next-generated-address (add1 (next-generated-address)))
+      (term ((obs-ext ,next-generated-address))))]
   [(generate-abstract-messages/mf (Listof τ) _) ((* (Listof τ)))]
   [(generate-abstract-messages/mf (Vectorof τ) _) ((* (Vectorof τ)))]
   [(generate-abstract-messages/mf (Hash τ_1 τ_2) _) ((* (Hash τ_1 τ_2)))])
 
 (define-metafunction csa#
-  generate-variants : natural t τ ... -> ((variant t v#template ...) ...)
+  generate-variants : natural t τ ... -> ((variant t v# ...) ...)
   [(generate-variants _ t) ((variant t))]
   [(generate-variants natural_max-depth t τ_1 τ_rest ...)
    ,(for/fold ([variants-so-far null])
@@ -200,9 +194,9 @@
       (append
        ;; TODO: do I need to do a (max 0) on natural_max-depth here?
        (for/list ([generated-v (term (generate-abstract-messages/mf τ_1 ,(sub1 (term natural_max-depth))))])
-         (redex-let csa# ([(variant t v#template_other ...) sub-variant]
-                          [v#template_1 generated-v])
-           (term (variant t v#template_1 v#template_other ...))))
+         (redex-let csa# ([(variant t v#_other ...) sub-variant]
+                          [v#_1 generated-v])
+           (term (variant t v#_1 v#_other ...))))
        variants-so-far))
    ;; (side-condition (printf "generate-variants: ~s\n" (term ( t τ_1 τ_rest ...))))
    ])
@@ -263,67 +257,14 @@
    (term ((variant A)
           (variant B (* String) (variant C))
           (variant B (* String) (variant D)))))
-  (check-same-items?
-   (term (generate-abstract-messages/mf
-          (Union (AppendRejected Nat Nat (Addr Nat))
-                 (AppendSuccessful Nat Nat (Addr Nat)))
-          5))
-   (term ((variant AppendRejected (* Nat) (* Nat) ADDR-HOLE)
-          (variant AppendSuccessful (* Nat) (* Nat) ADDR-HOLE)))))
-
-(define-metafunction csa#
-  fill-template : v#template s -> v#
-  [(fill-template v#template s)
-   v#
-   (where (v# _) (fill-template/acc v#template v#template 0 s))])
-
-;; Fills the abstract message template with address values, also returning the next index to be used
-;; for an address
-(define-metafunction csa#
-  fill-template/acc : v#template_current v#template_whole natural_current-index s -> (v# natural_next-index)
-  [(fill-template/acc ADDR-HOLE v#template natural_current s)
-   ((received-addr s v#template natural_current MOST-RECENT) ,(+ 1 (term natural_current)))]
-  [(fill-template/acc (variant t v#template_child1 v#template_child-rest ...) v#template natural_current s)
-   ((variant t v#_1 v#_rest ...) natural_next-rest)
-   (where (v#_1 natural_next1) (fill-template/acc v#template_child1 v#template natural_current s))
-   (where ((variant t v#_rest ...) natural_next-rest)
-          (fill-template/acc (variant t v#template_child-rest ...) v#template natural_next1 s))]
-  [(fill-template/acc (variant t) v#template natural_current s)
-   ((variant t) natural_current)]
-  [(fill-template/acc (record [l_1 v#template_child1] [l_rest v#template_rest] ...)
-                      v#template
-                      natural_current
-                      s)
-   ((record [l_1 v#_1] [l_rest v#_rest] ...) natural_next-rest)
-   (where (v#_1 natural_next1) (fill-template/acc v#template_child1 v#template natural_current s))
-   (where ((record [l_rest v#_rest] ...) natural_next-rest)
-          (fill-template/acc (record [l_rest v#template_rest] ...) v#template natural_next1 s))]
-  [(fill-template/acc (record) v#template natural s)
-   ((record) natural)]
-  [(fill-template/acc (* τ) _ natural _)
-   ((* τ) natural)])
-
-(module+ test
-  ;; TODO: write more tests here
-  (check-equal? (term (fill-template (* Nat) Always))
-                (term (* Nat)))
-  ;; TODO: rewrite this test using records and variants
-  ;; (define simple-pair-template (term (tuple ADDR-HOLE ADDR-HOLE)))
-  ;; (check-equal? (term (fill-template ,simple-pair-template Always))
-  ;;               (term (tuple (received-addr Always ,simple-pair-template 0 MOST-RECENT)
-  ;;                            (received-addr Always ,simple-pair-template 1 MOST-RECENT))))
+  ;; (check-same-items?
+  ;;  (term (generate-abstract-messages/mf
+  ;;         (Union (AppendRejected Nat Nat (Addr Nat))
+  ;;                (AppendSuccessful Nat Nat (Addr Nat)))
+  ;;         5))
+  ;;  (term ((variant AppendRejected (* Nat) (* Nat) ADDR-HOLE)
+  ;;         (variant AppendSuccessful (* Nat) (* Nat) ADDR-HOLE))))
   )
-
-;; Fills the given value template with unobservable addresses in each ADDR-HOLE
-(define-metafunction csa#
-  fill-template/unobs : v#template -> v#
-  [(fill-template/unobs ADDR-HOLE) (* (Addr Nat))] ;; TODO:  fill in the real address type here
-  [(fill-template/unobs t) t]
-  [(fill-template/unobs (variant t v#template_child ...))
-   (variant t (fill-template/unobs v#template_child) ...)]
-  [(fill-template/unobs (record [x v#template] ...))
-   (record [x (fill-template/unobs v#template)] ...)]
-  [(fill-template/unobs (* τ)) (* τ)])
 
 ;; ---------------------------------------------------------------------------------------------------
 
