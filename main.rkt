@@ -346,9 +346,6 @@ Remaining big challenges I see in the analysis:
   ;; TODO: check that none of the FSMs share an address
   )
 
-(define (canonicalize-tuple tuple)
-  tuple)
-
 ;; ---------------------------------------------------------------------------------------------------
 ;; Top-level tests
 

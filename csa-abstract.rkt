@@ -20,6 +20,7 @@
  csa#-actor-current-state
  csa#-config-only-actor
  blur-externals
+ make-single-actor-abstract-config
 
  ;; Debug helpers
  prog-config-without-state-defs
@@ -179,7 +180,7 @@
    ((record))]
   [(generate-abstract-messages/mf (Addr τ) _)
    ,(begin
-      (set! next-generated-address (add1 (next-generated-address)))
+      (set! next-generated-address (add1 next-generated-address))
       (term ((obs-ext ,next-generated-address))))]
   [(generate-abstract-messages/mf (Listof τ) _) ((* (Listof τ)))]
   [(generate-abstract-messages/mf (Vectorof τ) _) ((* (Vectorof τ)))]
@@ -941,6 +942,17 @@
                         (goto A (* (Addr Nat)) (obs-ext 3) (* (Addr Nat))))))]
                 [K# (term ((α#n) () (SINGLE-ACTOR-ADDR) ()))])
                (term K#))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Constructors
+
+(define (make-single-actor-abstract-config actor)
+  (term (make-single-actor-abstract-config/mf ,actor)))
+
+(define-metafunction csa#
+  make-single-actor-abstract-config/mf : α#n -> K#
+  [(make-single-actor-abstract-config/mf α#n)
+   ((α#n) () (SINGLE-ACTOR-ADDR) ())])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors

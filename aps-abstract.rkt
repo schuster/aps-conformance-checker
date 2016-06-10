@@ -25,7 +25,8 @@
  aps#-goto-state
  aps#-instance-state
  aps#-instance-arguments
- aps#-relevant-external-addrs)
+ aps#-relevant-external-addrs
+ canonicalize-tuple)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -414,3 +415,95 @@
                  [Σ (term ((z_1 z_2) O))])
                 (term Σ)))
    (term ((obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Canonicalization (i.e. renaming)
+
+(define (canonicalize-tuple tuple)
+  (term (canonicalize-tuple/mf ,tuple)))
+
+(define-metafunction aps#
+  canonicalize-tuple/mf : (K# Σ τ τ) -> (K# Σ τ τ)
+  [(canonicalize-tuple/mf (K# Σ τ_obs τ_unobs))
+   ((rename-addresses K# [natural_old natural_new] ...)
+    (rename-addresses Σ [natural_old natural_new] ...)
+    τ_obs
+    τ_unobs)
+   (where (z) (config-instances/mf Σ))
+   (where ((obs-ext natural_old) ...) (instance-arguments/mf z))
+   (where (natural_new ...) ,(build-list (length (term (natural_old ...))) values))])
+
+(module+ test
+  (check-equal?
+   (canonicalize-tuple
+    (term
+     (,(make-single-actor-abstract-config
+        (term (SINGLE-ACTOR-ADDR
+               (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
+                (goto A (obs-ext 25) (obs-ext 42) (obs-ext 10))))))
+      (((((define-state (A a b c) [* -> (goto A)]))
+         (goto A (obs-ext 25) (obs-ext 42) (obs-ext 10))
+         SINGLE-ACTOR-ADDR))
+       ())
+      (Union)
+      (Union))))
+   (term
+    (,(make-single-actor-abstract-config
+       (term (SINGLE-ACTOR-ADDR
+              (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
+               (goto A (obs-ext 0) (obs-ext 1) (obs-ext 2))))))
+     (((((define-state (A a b c) [* -> (goto A)]))
+        (goto A (obs-ext 0) (obs-ext 1) (obs-ext 2))
+        SINGLE-ACTOR-ADDR))
+      ())
+     (Union)
+     (Union))))
+
+  (check-equal?
+   (canonicalize-tuple
+    (term
+     (,(make-single-actor-abstract-config
+        (term (SINGLE-ACTOR-ADDR
+               (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
+                (goto A (obs-ext 10) (obs-ext 42) (obs-ext 25))))))
+      (((((define-state (A c b a) [* -> (goto A)]))
+         (goto A (obs-ext 25) (obs-ext 42) (obs-ext 10))
+         SINGLE-ACTOR-ADDR))
+       ())
+      (Union)
+      (Union))))
+   (term
+    (,(make-single-actor-abstract-config
+       (term (SINGLE-ACTOR-ADDR
+              (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
+               (goto A (obs-ext 2) (obs-ext 1) (obs-ext 0))))))
+     (((((define-state (A c b a) [* -> (goto A)]))
+        (goto A (obs-ext 0) (obs-ext 1) (obs-ext 2))
+        SINGLE-ACTOR-ADDR))
+      ())
+     (Union)
+     (Union))))
+
+  ;; TODO: write a test for the case where the spec is only output commitments
+
+  ;; TODO: write a test for a program config with recently spawned actors
+  )
+
+(define-metafunction aps#
+  rename-addresses : any [natural_old natural_new] ... -> any
+  [(rename-addresses (obs-ext natural_old) _ ... [natural_old natural_new] _ ...)
+   (obs-ext natural_new)]
+  [(rename-addresses (obs-ext natural_old) _ ...)
+   (obs-ext natural_old)]
+  [(rename-addresses (any ...) any_substs ...)
+   ((rename-addresses any any_substs ...) ...)]
+  [(rename-addresses any _ ...) any])
+
+(module+ test
+  (check-equal?
+   (term (rename-addresses (some-term (obs-ext 2) (another-term (obs-ext 5)) (obs-ext 13))
+                           [2 1] [13 2] [5 3]))
+   (term (some-term (obs-ext 1) (another-term (obs-ext 3)) (obs-ext 2))))
+
+  ;; TODO: rename spawned actors, too
+  )
