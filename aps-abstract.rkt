@@ -4,7 +4,7 @@
 
 (provide
  aps#
- aps#-α-z
+ aps#-α-Σ
  subst-n/aps#
  aps#-current-transitions
  aps#-null-transition
@@ -13,12 +13,19 @@
  aps#-match
  aps#-matches-po?
  step-spec-with-goto
+ aps#-spec-from-commitment-entry
+ aps#-spec-from-fsm-and-commitments
+ aps#-config-instances
+ aps#-config-commitment-map
  aps#-transition-pattern
  aps#-transition-expression
  aps#-commitment-address
  aps#-commitment-pattern
+ aps#-commitment-entry-address
  aps#-goto-state
- aps#-instance-state)
+ aps#-instance-state
+ aps#-instance-arguments
+ aps#-relevant-external-addrs)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -35,7 +42,7 @@
 
 (define-extended-language aps#
   aps-eval-with-csa#
-  (Σ (((a#int z) ...) O))
+  (Σ ((z ...) O))
   (z ((S-hat ...) e-hat σ))
   (σ a# null)
   (u .... a#) ; TODO: make this a#ext instead; allowing saves of spawned addresses is future work
@@ -44,18 +51,18 @@
 
 ;; TODO: change the language and conformance so that I don't have to do this little initial
 ;; abstraction
-(define (aps#-α-z spec-instance)
+(define (aps#-α-Σ spec-config)
   ;; Doing a redex-let here just to add a codomain contract
-  (redex-let aps# ([z (term (aps#-α-z/mf ,spec-instance))])
-             (term z)))
+  (redex-let aps# ([Σ (term (aps#-α-Σ/mf ,spec-config))])
+             (term Σ)))
 
 (define-metafunction aps#
-  aps#-α-z/mf : any -> any
-  [(aps#-α-z/mf (addr natural))
+  aps#-α-Σ/mf : any -> any
+  [(aps#-α-Σ/mf (addr natural))
    (init-addr natural)]
-  [(aps#-α-z/mf (any ...))
-   ((aps#-α-z/mf any) ...)]
-  [(aps#-α-z/mf any) any])
+  [(aps#-α-Σ/mf (any ...))
+   ((aps#-α-Σ/mf any) ...)]
+  [(aps#-α-Σ/mf any) any])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
@@ -255,11 +262,37 @@
 ;; TODO: add tests for the match predicate
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Constructors
+
+(define (aps#-spec-from-fsm-and-commitments instance commitments)
+  (redex-let* aps# ([z instance]
+                    [O commitments]
+                    [Σ (term ((z) O))])
+              (term Σ)))
+
+(module+ test)
+
+(define (aps#-spec-from-commitment-entry entry)
+  (redex-let aps# ([(a#ext po ...) entry])
+             (term (() ((a#ext po ...))))))
+
+(module+ test
+  (check-equal?
+   (aps#-spec-from-commitment-entry (term ((obs-ext 0) * (record [a *] [b *]))))
+   (term (() (((obs-ext 0) * (record [a *] [b *])))))))
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
+
+(define (aps#-config-instances config)
+  (term (config-instances/mf ,config)))
 
 (define-metafunction aps#
   config-instances/mf : Σ -> (z ...)
-  [(config-instances/mf (((_ z) ...) _)) (z ...)])
+  [(config-instances/mf ((z ...) _)) (z ...)])
+
+(define (aps#-config-commitment-map config)
+  (term (config-commitment-map/mf ,config)))
 
 (define-metafunction aps#
   config-commitment-map/mf : Σ -> O
@@ -308,6 +341,10 @@
   (define commitment (term [(* (Addr Nat)) (variant Null *)]))
   (check-equal? (aps#-commitment-address commitment) (term (* (Addr Nat))))
   (check-equal? (aps#-commitment-pattern commitment) (term (variant Null *))))
+
+(define (aps#-commitment-entry-address entry)
+  (redex-let aps# ([(a#ext _ ...)  entry])
+             (term a#ext)))
 
 (define (aps#-instance-state z)
   (term (instance-state/mf ,z)))
@@ -358,6 +395,6 @@
                              (goto Always (obs-ext 1) (obs-ext 3))
                              null))]
                  [O (term (((obs-ext 1)) ((obs-ext 3)) ((obs-ext 4))))]
-                 [Σ (term (((SINGLE-ACTOR-ADDR z_1) (SINGLE-ACTOR-ADDR z_2)) O))])
+                 [Σ (term ((z_1 z_2) O))])
                 (term Σ)))
    (term ((obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))))

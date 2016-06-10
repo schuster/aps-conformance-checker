@@ -6,8 +6,9 @@
          aps-eval
          subst-n/aps
          subst/aps
-         aps-valid-instance?
-         instance-observable-addresses)
+         aps-valid-config?
+         instance-observable-addresses
+         aps-config-from-instance)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; APS
@@ -43,6 +44,8 @@
 
 (define-extended-language aps-eval
   aps
+  (Σ ((z ...) O))
+  (O ((a po ...) ...))
   (z ((S-hat ...) e-hat σ))
   (σ a null)
   (u .... a)
@@ -88,8 +91,8 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Predicates
 
-(define (aps-valid-instance? i)
-  (if (redex-match aps-eval z i) #t #f))
+(define (aps-valid-config? c)
+  (if (redex-match aps-eval Σ c) #t #f))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Misc.
@@ -108,3 +111,8 @@
                                          (goto Always (addr 3) (addr 4))
                                          (addr 1))))
    (term ((addr 3) (addr 4)))))
+
+(define (aps-config-from-instance instance)
+  (redex-let* aps-eval ([z instance]
+                        [Σ (term (z ()))])
+              (term Σ)))
