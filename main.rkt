@@ -249,14 +249,26 @@ Remaining big challenges I see in the analysis:
      [(list some-subst)
       (match-define (list spec-goto commitments)
         (aps#-eval (aps#-transition-expression spec-trans) some-subst))
+
+      ;; TODO: actually get the full list of output addresses the spec is observing (from the output
+      ;; commitment map), rather than this hack of using both new and old goto expressions and the
+      ;; current new set of commitments
+      (define observed-addresses
+        (remove-duplicates (append (cdr spec-goto) (map aps#-commitment-address commitments))))
+
+      ;; (printf "the goto: ~s, comms: ~s\n" spec-goto commitments)
       ;; (printf "Outputs: ~s\n" (csa#-transition-outputs prog-trans))
       ;; (printf "Commitments: ~s\n" commitments)
-      (if (and (null? (filter csa#-observable-output? (csa#-transition-loop-outputs prog-trans)))
-               (outputs-match-commitments? (filter csa#-observable-output?
-                                                   (csa#-transition-outputs prog-trans))
-                                           commitments)
-               (equal? (hash-ref state-matches (csa#-transition-next-state prog-trans))
-                       (aps#-goto-state spec-goto)))
+      (if (and
+           ;; TODO: deal with loop output
+           ;; (null? (filter csa#-observable-output? (csa#-transition-loop-outputs prog-trans)))
+           (outputs-match-commitments?
+            (filter
+             (lambda (o) (member (csa#-output-address o) observed-addresses))
+             (csa#-transition-outputs prog-trans))
+            commitments)
+           (equal? (hash-ref state-matches (csa#-transition-next-state prog-trans))
+                   (aps#-goto-state spec-goto)))
           spec-goto
           #f)])))
 
@@ -279,6 +291,14 @@ Remaining big challenges I see in the analysis:
            (return-early #f)]
           [commitment (remove commitment remaining-commitments)])))
     (empty? unmatched-commitments)))
+
+(module+ test
+
+  ;; TODO: test outputs-match-commitments for (along with normal cases):
+  ;; * spec that observes an address but neither saves it nor has output commtiments for it
+  ;; * POV unobservables
+  ;; * wildcard unobservables
+  )
 
 ;; TODO: test this function
 (define (output-satisfies-commitment? output commitment)
@@ -406,7 +426,7 @@ Remaining big challenges I see in the analysis:
       ,single-agent-concrete-addr)))
   (define ignore-all-with-addr-spec-instance
     (term
-     (((define-state (Always response-dest) [* -> (goto Always)]))
+     (((define-state (Always response-dest) [* -> (goto Always response-dest)]))
       (goto Always ,static-response-address)
       ,single-agent-concrete-addr)))
 
@@ -683,6 +703,12 @@ Remaining big challenges I see in the analysis:
   (check-true (analyze (make-single-agent-config div-by-zero-agent) nat-to-nat-spec (term Nat) (term (Union)) (hash 'Always 'Always)))
 
   ;;;; Unobservable communication
+
+  ;; wildcard unobservables are ignored for the purpose of output commitments
+  (check-true (analyze (make-single-agent-config request-response-agent)
+                       ignore-all-spec-instance
+                       (term (Addr Nat)) (term (Union))
+                       (hash 'Always 'Always)))
 
   ;; 1. In dynamic req/resp, allowing unobserved perspective to send same messages does not affect conformance
   (check-true (analyze (make-single-agent-config request-response-agent)

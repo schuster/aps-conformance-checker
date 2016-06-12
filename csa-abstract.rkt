@@ -12,7 +12,6 @@
  csa#-transition-message
  csa#-output-address
  csa#-output-message
- csa#-observable-output?
  csa#-transition-next-state
  α-config
  step-prog-final-behavior
@@ -300,13 +299,6 @@
 
 (define csa#-output-address car)
 (define csa#-output-message cadr)
-
-(define (csa#-observable-output? output)
-  (if (redex-match csa# (obs-ext natural) (csa#-output-address output)) #t #f))
-
-(module+ test
-  (check-false (csa#-observable-output? (term [(* (Addr Nat)) (* Nat)])))
-  (check-true (csa#-observable-output? (term [(obs-ext 0) (* Nat)]))))
 
 (define (csa#-transition-next-state transition)
   (redex-let csa# ([(in-hole E# (goto s _ ...)) (csa#-transition-behavior-exp transition)])
