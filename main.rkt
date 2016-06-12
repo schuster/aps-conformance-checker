@@ -133,10 +133,10 @@ Remaining big challenges I see in the analysis:
            ;; satisfied immediately
            (match (matching-spec-transitions possible-transition spec state-matches)
              [(list)
-              ;; (printf "couldn't find any match for ~s from state ~s, in spec state ~s\n"
+              ;; (printf "couldn't find any match for ~s from program state ~s, in spec state ~s\n"
               ;;         possible-transition
-              ;;         (csa#-actor-current-state (csa#-config-only-actor prog))
-              ;;         (aps#-instance-state spec))
+              ;;         prog
+              ;;         spec)
               (return-early #f)]
              [(list spec-transition)
               ;; TODO: adjust this stepping stuff to acount for commit-only specs
@@ -199,6 +199,8 @@ Remaining big challenges I see in the analysis:
   ;; TODO: figure out if I should support instances where a single transition of the program uses
   ;; multiple transitions of the spec (I think this probably won't happen in practice)
 
+  ;; (printf "the program trans: ~s\n" prog-transition)
+
   (define match-results
     ;; TODO: rewrite this as a for/list
     (map
@@ -216,6 +218,8 @@ Remaining big challenges I see in the analysis:
   ;; Debugging only
   ;; (printf "prog trans: ~s\n" prog-trans)
   ;; (printf "spec trans: ~s\n" spec-trans)
+
+  ;; (printf "the spec trans: ~s\n" spec-trans)
 
   (let/cc return-early
    (define valid-substitutions
