@@ -140,16 +140,16 @@ Remaining big challenges I see in the analysis:
               (return-early #f)]
              [(list spec-transition)
               ;; TODO: adjust this stepping stuff to acount for commit-only specs
-              (define next-spec-config (step-spec-with-goto spec spec-transition))
-              (define full-next-prog-config (step-prog-final-behavior prog (csa#-transition-behavior-exp possible-transition)))
-              (for ([spec-config (split-spec next-spec-config)])
+              (define stepped-spec-config (step-spec-with-goto spec spec-transition))
+              (define stepped-prog-config (step-prog-final-behavior prog (csa#-transition-behavior-exp possible-transition)))
+              (for ([spec-config-component (split-spec stepped-spec-config)])
 
                 ;; TODO: make it an "error" for a non-precise address to match a spec state parameter
 
-                (define abstracted-config (abstract-prog-config-by-spec full-next-prog-config spec-config))
+                (define abstracted-prog-config (abstract-prog-config-by-spec stepped-prog-config spec-config-component))
                 (define next-tuple
                   (canonicalize-tuple ; i.e. rename the addresses
-                   (list abstracted-config next-spec-config
+                   (list abstracted-prog-config spec-config-component
                          ;; TODO: allow these types to change over time
                          obs-type
                          unobs-type)))
