@@ -138,9 +138,9 @@ Remaining big challenges I see in the analysis:
               ;;         prog
               ;;         spec)
               (return-early #f)]
-             [(list spec-transition)
+             [(list (list _ spec-goto))
               ;; TODO: adjust this stepping stuff to acount for commit-only specs
-              (define stepped-spec-config (step-spec-with-goto spec spec-transition))
+              (define stepped-spec-config (step-spec-with-goto spec spec-goto))
               (define stepped-prog-config (step-prog-final-behavior prog (csa#-transition-behavior-exp possible-transition)))
               (for ([spec-config-component (split-spec stepped-spec-config)])
 
@@ -158,8 +158,13 @@ Remaining big challenges I see in the analysis:
                             (equal? current-tuple next-tuple))
                   ;; (printf "Adding state: ~s\n" (prog-config-goto (car next-tuple)))
                   (enqueue! to-visit next-tuple)))]
-             [_ (error "too many possible matches") ;; TODO: call a continuation instead
-                ]))
+             [(list (list multiple-transitions _) ...)
+              (displayln "Too many possible matches")
+              (printf "Program transition: ~s\n" possible-transition)
+              (for ([s multiple-transitions])
+                (printf "A spec transition: ~s\n" s))
+              ;; TODO: call a continuation instead
+              (return-early #f)]))
          (loop to-visit (set-add visited current-tuple))]))))
 
 ;; TODO: I probably need some canonical representation of program and spec configs so that otherwise
@@ -269,7 +274,7 @@ Remaining big challenges I see in the analysis:
             commitments)
            (equal? (hash-ref state-matches (csa#-transition-next-state prog-trans))
                    (aps#-goto-state spec-goto)))
-          spec-goto
+          (list spec-trans spec-goto)
           #f)])))
 
 ;; Returns #t if the given commitments fully account for the observable transmissions in outputs; #f
