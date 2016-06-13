@@ -26,6 +26,7 @@
  aps#-instance-state
  aps#-instance-arguments
  aps#-relevant-external-addrs
+ aps#-external-addresses
  canonicalize-tuple)
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -415,6 +416,28 @@
                  [Σ (term ((z_1 z_2) O))])
                 (term Σ)))
    (term ((obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))))
+
+;; Returns all external addresses of the given term (with possible duplicates)
+(define (aps#-external-addresses t)
+  (term (external-addresses/mf ,t)))
+
+(define-metafunction aps#
+  external-addresses/mf : any -> (a#ext ...)
+  [(external-addresses/mf a#ext) (a#ext)]
+  [(external-addresses/mf (any ...))
+   (a#ext ... ...)
+   (where ((a#ext ...) ...) ((external-addresses/mf any) ...))]
+  [(external-addresses/mf any) ()])
+
+(module+ test
+  (check-equal? (aps#-external-addresses (term (goto A))) null)
+  (check-equal?
+   (aps#-external-addresses (term (goto B (obs-ext 4) (obs-ext 5))))
+   (term ((obs-ext 4) (obs-ext 5))))
+    (check-equal?
+     (aps#-external-addresses
+      (term [* -> (with-outputs ([(obs-ext 3) *]) (goto C (obs-ext 7) (* (Addr Nat))))]))
+   (term ((obs-ext 3) (obs-ext 7) (* (Addr Nat))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Canonicalization (i.e. renaming)

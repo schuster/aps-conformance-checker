@@ -268,12 +268,18 @@ Remaining big challenges I see in the analysis:
       ;; TODO: actually get the full list of output addresses the spec is observing (from the output
       ;; commitment map), rather than this hack of using both new and old goto expressions and the
       ;; current new set of commitments
+      ;;
+      ;; For now, the observed list is the observables in this transition plus those substituted in
+      ;; from the message
       (define observed-addresses
-        (remove-duplicates (append (cdr spec-goto) (map aps#-commitment-address commitments))))
+        (remove-duplicates
+         (append (aps#-external-addresses spec-trans) (aps#-external-addresses some-subst))))
 
       ;; (printf "the goto: ~s, comms: ~s\n" spec-goto commitments)
       ;; (printf "Outputs: ~s\n" (csa#-transition-outputs prog-trans))
       ;; (printf "Commitments: ~s\n" commitments)
+      ;; (printf "observed addresses: ~s\n" observed-addresses)
+
       (if (and
            ;; TODO: deal with loop output
            ;; (null? (filter csa#-observable-output? (csa#-transition-loop-outputs prog-trans)))
