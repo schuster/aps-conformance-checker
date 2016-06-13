@@ -74,7 +74,9 @@
    ;; printf and abs-len for debugging only
    printf
    print-len)
-  ((x s t l) variable-not-otherwise-mentioned)
+  (x self
+     variable-not-otherwise-mentioned )
+  ((s t l) variable-not-otherwise-mentioned)
   (n natural)
   (τ Nat ; TODO: change this to Int or something
      String
