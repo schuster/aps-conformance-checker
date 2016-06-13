@@ -122,12 +122,15 @@ Remaining big challenges I see in the analysis:
          ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs prog))
          ;; (printf "The full prog config: ~s\n" prog)
 
+         (display-step-line "Evaluating possible program transitions")
          ;; TODO: handle multiple actors here
          (define possible-transitions
            (append (transitions-from-message-of-type prog obs-type #t)
                    (transitions-from-message-of-type prog unobs-type #f)
                    (csa#-handle-any-timeouts prog)))
          (for ([possible-transition possible-transitions])
+           (display-step-line "Finding a matching spec transition")
+
            ;; TODO: rewrite find-matching-spec-transition; probably remove or refactor the
            ;; hints. Should also just return the full config, because output commitment won't be
            ;; satisfied immediately
@@ -139,14 +142,19 @@ Remaining big challenges I see in the analysis:
               ;;         spec)
               (return-early #f)]
              [(list (list _ spec-goto))
+              (display-step-line "Stepping the spec config")
               ;; TODO: adjust this stepping stuff to acount for commit-only specs
               (define stepped-spec-config (step-spec-with-goto spec spec-goto))
+              (display-step-line "Stepping the prog config")
               (define stepped-prog-config (step-prog-final-behavior prog (csa#-transition-behavior-exp possible-transition)))
+              (display-step-line "Splitting the spec config")
               (for ([spec-config-component (split-spec stepped-spec-config)])
 
                 ;; TODO: make it an "error" for a non-precise address to match a spec state parameter
 
+                (display-step-line "Abstracting a program")
                 (define abstracted-prog-config (abstract-prog-config-by-spec stepped-prog-config spec-config-component))
+                (display-step-line "Canonicalizing the tuple, adding to queue")
                 (define next-tuple
                   (canonicalize-tuple ; i.e. rename the addresses
                    (list abstracted-prog-config spec-config-component
@@ -181,11 +189,13 @@ Remaining big challenges I see in the analysis:
   ;; (printf "Message type: ~s\n" type)
   ;; (printf "Number of generated messages: ~s\n" (length (generate-abstract-messages type (csa#-actor-current-state the-actor) 10 observed?)))
 
+  (display-step-line "Enumerating abstract messages (typed)")
   (for/fold ([transitions-so-far null])
             ;; TODO: get the max depth from somewhere
             ([message (generate-abstract-messages type (csa#-actor-current-state the-actor) 10 observed?)])
     (define the-address (csa#-actor-address the-actor))
     ;; TODO: remove the call to age-addresses here
+    (display-step-line "Evaluating a handler")
     (define new-transitions (csa#-handle-message prog-config
                                                  the-address
                                                  message
@@ -374,6 +384,12 @@ Remaining big challenges I see in the analysis:
 
   ;; TODO: check that none of the FSMs share an address
   )
+
+;; ---------------------------------------------------------------------------------------------------
+;; Debugging
+
+(define (display-step-line msg)
+  (displayln msg))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Top-level tests
