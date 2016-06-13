@@ -388,8 +388,10 @@ Remaining big challenges I see in the analysis:
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debugging
 
+(define DISPLAY-STEPS #f)
+
 (define (display-step-line msg)
-  (displayln msg))
+  (when DISPLAY-STEPS (displayln msg)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Top-level tests
