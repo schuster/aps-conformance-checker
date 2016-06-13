@@ -659,6 +659,34 @@ Remaining big challenges I see in the analysis:
                         (term (Addr Nat)) (term (Union))
                         (hash 'Init 'Always 'HaveAddr 'Always)))
 
+  ;; When given two choices to/from same state, have to take the one where the outputs match the
+  ;; commitments
+  (define reply-once-actor
+    (term
+     (,single-agent-concrete-addr
+      (((define-state (A) (r)
+          (begin
+            (send r 0)
+            (goto B)))
+        (define-state (B) (r) (goto B)))
+       (goto A)))))
+  (define maybe-reply-spec
+    (term
+     (((define-state (A)
+         [r -> (with-outputs ([r *]) (goto B))]
+         [r -> (goto B)])
+       (define-state (B)
+         [* -> (goto B)]))
+      (goto A)
+      ,single-agent-concrete-addr)))
+
+  (check-not-false (redex-match csa-eval αn reply-once-actor))
+  (check-not-false (redex-match aps-eval z maybe-reply-spec))
+  (check-true (analyze (make-single-agent-config reply-once-actor)
+                       maybe-reply-spec
+                       (term (Addr Nat)) (term (Union))
+                       (hash 'A 'A 'B 'B)))
+
   ;;;; Non-deterministic branching in spec
 
   (define zero-nonzero-spec
