@@ -36,7 +36,7 @@
           (goto Running))]
        ;; TODO: break these out into separate states so that the append retry can only happen when in
        ;; the leader state (and otherwise the leader must fall back to being a follower)
-       [(variant PeerMessage (variant AppendRejected * * *)) -> (goto Running)]
+       [(variant PeerMessage (variant AppendRejected * * member)) -> (goto Running)]
        ;; APS PROTOCOL BUG: I left this case out the first time around
        [(variant PeerMessage (variant AppendRejected * * member)) ->
         ;; TODO: should I require that the self address is in this response?
