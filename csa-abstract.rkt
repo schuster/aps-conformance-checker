@@ -904,6 +904,10 @@
   [(blur-externals/mf (obs-ext natural) _)
    ;; TODO: put the correct type here
    (* (Addr Nat))]
+  [(blur-externals/mf (any_kw any ...) (any_addr ...))
+   (any_kw any_result ...)
+   (side-condition (member (term any_kw) (list 'vector 'list 'hash)))
+   (where (any_result ...) ,(remove-duplicates (term ((blur-externals/mf any (any_addr ...)) ...))))]
   [(blur-externals/mf (any ...) (any_addr ...))
    ((blur-externals/mf any (any_addr ...)) ...)]
   [(blur-externals/mf any _) any])
@@ -933,7 +937,32 @@
                              (goto A x y z))))
                         (goto A (* (Addr Nat)) (obs-ext 3) (* (Addr Nat))))))]
                 [K# (term ((α#n) () (SINGLE-ACTOR-ADDR) ()))])
-               (term K#))))
+               (term K#)))
+
+  ;; Make sure duplicates are removed from vectors, lists, and hashes
+  (check-equal?
+   (term (blur-externals/mf
+          ,(redex-let csa#
+                      ([e# (term (hash (obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))])
+                      (term e#))
+          ((obs-ext 1) (obs-ext 3))))
+   (term (hash (obs-ext 1) (* (Addr Nat)) (obs-ext 3))))
+
+  (check-equal?
+   (term (blur-externals/mf
+          ,(redex-let csa#
+                      ([e# (term (list (obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))])
+                      (term e#))
+          ()))
+   (term (list (* (Addr Nat)))))
+
+  (check-equal?
+   (term (blur-externals/mf
+          ,(redex-let csa#
+                      ([e# (term (vector (obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))])
+                      (term e#))
+          ((obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4))))
+   (term (vector (obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Constructors
