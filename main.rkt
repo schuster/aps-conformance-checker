@@ -89,17 +89,25 @@ Remaining big challenges I see in the analysis:
     (error 'check "Invalid initial specification configuration ~s" initial-spec-config))
   ;; TODO: do a check for the state mapping
 
+  ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
+  ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
+  ;; message generation
+  ;; TODO: canonicalize the initial tuple
+  (define initial-tuple
+    ;; TODO: get the max depth from somewhere
+    (list (α-config initial-prog-config (aps-config-observable-addresses initial-spec-config) 10)
+          (aps#-α-Σ initial-spec-config)
+          init-obs-type
+          init-unobs-type))
+  (match (find-conformance-simulation initial-tuple state-matches)
+    [#f #f]
+    [simulation
+     #t
+     ;; TODO: (all-commitments-satisfied? simulation)
+     ]))
+
+(define (find-conformance-simulation initial-tuple state-matches)
   (let/cc return-early
-    ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
-    ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
-    ;; message generation
-    ;; TODO: canonicalize the initial tuple
-    (define initial-tuple
-      ;; TODO: get the max depth from somewhere
-      (list (α-config initial-prog-config (aps-config-observable-addresses initial-spec-config) 10)
-            (aps#-α-Σ initial-spec-config)
-            init-obs-type
-            init-unobs-type))
     (define program-transitions-checked 0) ; for diagnostics only
     (let loop ([to-visit (queue initial-tuple)]
                [visited (set)])
