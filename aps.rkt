@@ -121,5 +121,6 @@
 
 (define (aps-config-from-instance instance)
   (redex-let* aps-eval ([z instance]
-                        [Σ (term ((z) ()))])
+                        [(_ (goto _ a ...) _) (term z)]
+                        [Σ (term ((z) ((a) ...)))])
               (term Σ)))

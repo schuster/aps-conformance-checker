@@ -22,7 +22,8 @@ Remaining big challenges I see in the analysis:
  "aps.rkt"
  "aps-abstract.rkt"
  "csa.rkt"
- "csa-abstract.rkt")
+ "csa-abstract.rkt"
+ "graph.rkt")
 
 (module+ test
   (require
@@ -38,6 +39,22 @@ Remaining big challenges I see in the analysis:
 (struct spec-config (instances commitments))
 
 ;; Program transition is defined in csa-abstract
+
+;; Vertices and edges for the simulation graph:
+;;
+;; For both of these, satisfied-commitments is a list of address/pattern pairs
+;;
+;; Trigger is as listed in csa-abstract
+(struct simulation-node
+  (prog-config spec-config obs-type unobs-type [satisfied-commitments #:mutable]))
+(struct simulation-step (trigger satisfied-commitments))
+
+(define (same-tuple? n1 n2)
+  (andmap (lambda (select) (equal? (select n1) (select n2)))
+          (list simulation-node-prog-config
+                simulation-node-spec-config
+                simulation-node-obs-type
+                simulation-node-unobs-type)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Main functions
@@ -94,11 +111,13 @@ Remaining big challenges I see in the analysis:
   ;; message generation
   ;; TODO: canonicalize the initial tuple
   (define initial-tuple
-    ;; TODO: get the max depth from somewhere
-    (list (α-config initial-prog-config (aps-config-observable-addresses initial-spec-config) 10)
-          (aps#-α-Σ initial-spec-config)
-          init-obs-type
-          init-unobs-type))
+    (simulation-node
+     ;; TODO: get the max depth from somewhere
+     (α-config initial-prog-config (aps-config-observable-addresses initial-spec-config) 10)
+     (aps#-α-Σ initial-spec-config)
+     init-obs-type
+     init-unobs-type
+     null))
   (match (find-conformance-simulation initial-tuple state-matches)
     [#f #f]
     [simulation
@@ -107,17 +126,21 @@ Remaining big challenges I see in the analysis:
      ]))
 
 (define (find-conformance-simulation initial-tuple state-matches)
+  (define simulation-graph (make-graph))
+  (define initial-vertex (graph-add-vertex! simulation-graph initial-tuple))
+
   (let/cc return-early
     (define program-transitions-checked 0) ; for diagnostics only
-    (let loop ([to-visit (queue initial-tuple)]
+    (let loop ([to-visit (queue initial-vertex)]
                [visited (set)])
       (cond
         [(queue-empty? to-visit) #t]
         [else
-         (define current-tuple (dequeue! to-visit))
+         (define source-vertex (dequeue! to-visit))
+         (define current-tuple (vertex-value source-vertex))
          ;; TODO: rename this function. A better name will help me with the general terminology
          ;; with which I describe my technique
-         (match-define (list prog spec obs-type unobs-type) current-tuple)
+         (match-define (simulation-node prog spec obs-type unobs-type _) current-tuple)
          ;; TODO: rename this idea of transition: there's some other "thing" that this is, like a
          ;; transmission result. Define this data definition in the code somewhere, because it
          ;; should really be a type (it's a new kind of data in my domain that needs to be defined
@@ -142,17 +165,14 @@ Remaining big challenges I see in the analysis:
            ;; TODO: rewrite find-matching-spec-transition; probably remove or refactor the
            ;; hints. Should also just return the full config, because output commitment won't be
            ;; satisfied immediately
-           (match (matching-spec-transitions possible-transition spec state-matches)
+           (match (match-prog-transition-to-spec possible-transition spec state-matches)
              [(list)
               ;; (printf "couldn't find any match for ~s from program state ~s, in spec state ~s\n"
               ;;         possible-transition
               ;;         prog
               ;;         spec)
               (return-early #f)]
-             [(list (list _ spec-goto))
-              (display-step-line "Stepping the spec config")
-              ;; TODO: adjust this stepping stuff to acount for commit-only specs
-              (define stepped-spec-config (step-spec-with-goto spec spec-goto))
+             [(list stepped-spec-config)
               (display-step-line "Stepping the prog config")
               (define stepped-prog-config (step-prog-final-behavior prog (csa#-transition-behavior-exp possible-transition)))
               (display-step-line "Splitting the spec config")
@@ -163,18 +183,25 @@ Remaining big challenges I see in the analysis:
                 (display-step-line "Abstracting a program")
                 (define abstracted-prog-config (abstract-prog-config-by-spec stepped-prog-config spec-config-component))
                 (display-step-line "Canonicalizing the tuple, adding to queue")
-                (define next-tuple
-                  (canonicalize-tuple ; i.e. rename the addresses
-                   (list abstracted-prog-config spec-config-component
-                         ;; TODO: allow these types to change over time
-                         obs-type
-                         unobs-type)))
-                (unless (or (set-member? visited next-tuple)
-                            (member next-tuple (queue->list to-visit))
-                            (equal? current-tuple next-tuple))
-                  ;; (printf "Adding state: ~s\n" (prog-config-goto (car next-tuple)))
-                  (enqueue! to-visit next-tuple)))]
-             [(list (list multiple-transitions _) ...)
+                (match-define (list canonicalized-prog canonicalized-spec)
+                  (canonicalize-tuple (list abstracted-prog-config spec-config-component))) ; i.e. rename the addresses
+                ;; TODO: allow these types to change over time
+                (define next-tuple (simulation-node canonicalized-prog canonicalized-spec obs-type unobs-type null))
+                (define destination-vertex
+                  ;; TODO: shorten this match into some kind of "or-else" form
+                  (match (graph-find-vertex simulation-graph next-tuple #:is-equal? same-tuple?)
+                    [#f
+                     ;; (printf "Adding state: ~s\n" (prog-config-goto (car next-tuple)))
+                     (define new-vertex (graph-add-vertex! simulation-graph next-tuple))
+                     (enqueue! to-visit new-vertex)
+                     new-vertex]
+                    [vertex vertex]))
+                ;; TODO: list satisfied commitments in the edge, and list the trigger
+                (graph-add-edge! simulation-graph
+                                 (simulation-step (csa#-transition-trigger possible-transition) null)
+                                 source-vertex
+                                 destination-vertex))]
+             [(list multiple-transitions ...)
               (displayln "Too many possible matches")
               (printf "Program transition: ~s\n" possible-transition)
               (for ([s multiple-transitions])
@@ -211,10 +238,8 @@ Remaining big challenges I see in the analysis:
     (append transitions-so-far new-transitions)))
 
 ;; Given a program transition, the current spec config, and the hash table mapping prog states to spec
-;; states, returns the list of spec transitions for all possible matching transitions
-(define (matching-spec-transitions prog-transition spec-config state-matches)
-  ;; TODO: write this for a spec *config*, not an instance
-  ;;
+;; states, returns the list of possible spec config moves that could match this transition
+(define (match-prog-transition-to-spec prog-transition spec-config state-matches)
   ;; Rough initial idea of algorithm for multi-FSM specs (to be implemented): transition the spec FSM
   ;; only when (a) an observed message is received, or (b) when no output commitment can satisfy a
   ;; current output
@@ -224,119 +249,20 @@ Remaining big challenges I see in the analysis:
 
   ;; (printf "the program trans: ~s\n" prog-transition)
 
-  (define match-results
-    ;; TODO: rewrite this as a for/list
-    (map
-     (lambda (spec-transition)
-       (match-spec-transition-against-prog-transition prog-transition spec-transition state-matches))
-     (cons (aps#-null-transition spec-config) (aps#-current-transitions spec-config))))
-  (filter values match-results))
+  ;; TODO: add satisfied commitments to the new graph edge
 
-;; Prog-trans is the above struct, spec-trans is the syntax of the expression
-;;
-;; Returns #f for no match, or the spec's remaining transition expression if there is a match
-;;
-;; TODO: test this function
-(define (match-spec-transition-against-prog-transition prog-trans spec-trans state-matches)
-  ;; Debugging only
-  ;; (printf "prog trans: ~s\n" prog-trans)
-  ;; (printf "spec trans: ~s\n" spec-trans)
-
-  ;; (printf "the spec trans: ~s\n" spec-trans)
-
-  (let/cc return-early
-   (define valid-substitutions
-     (cond
-       [(and (csa#-transition-observed? prog-trans) (aps#-transition-observed? spec-trans))
-        (aps#-match (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))]
-       [(and (not (csa#-transition-observed? prog-trans))
-             (not (aps#-transition-observed? spec-trans)))
-        (list (list))]
-       [else (return-early #f)]))
-
-   ;; (printf "Checking value ~s against pattern ~s\n"
-   ;;         (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
-   (match valid-substitutions
-     [(list)
-      ;; No matches, so the whole predicate fails
-      ;; (printf "Found no matches for received message ~s to pattern ~s\n"
-      ;;         (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
-      #f]
-     [(list subst1 subst2 subst-rest ...)
-      ;; TODO: test/enforce that aps#-match produces at most one way to match the pattern (will this
-      ;; still be true if we allow "or" patterns?)
-
-      ;; (printf "too many matches for value ~s and pattern ~s\n"
-      ;;         (csa#-transition-message prog-trans) (aps#-transition-pattern spec-trans))
-      #f]
-     [(list some-subst)
-      (match-define (list spec-goto commitments)
-        (aps#-eval (aps#-transition-expression spec-trans) some-subst))
-
-      ;; TODO: actually get the full list of output addresses the spec is observing (from the output
-      ;; commitment map), rather than this hack of using both new and old goto expressions and the
-      ;; current new set of commitments
-      ;;
-      ;; For now, the observed list is the observables in this transition plus those substituted in
-      ;; from the message
-      (define observed-addresses
-        (remove-duplicates
-         (append (aps#-external-addresses spec-trans) (aps#-external-addresses some-subst))))
-
-      ;; (printf "the goto: ~s, comms: ~s\n" spec-goto commitments)
-      ;; (printf "Outputs: ~s\n" (csa#-transition-outputs prog-trans))
-      ;; (printf "Commitments: ~s\n" commitments)
-      ;; (printf "observed addresses: ~s\n" observed-addresses)
-
-      (if (and
-           ;; TODO: deal with loop output
-           ;; (null? (filter csa#-observable-output? (csa#-transition-loop-outputs prog-trans)))
-           (outputs-match-commitments?
-            (filter
-             (lambda (o) (member (csa#-output-address o) observed-addresses))
-             (csa#-transition-outputs prog-trans))
-            commitments)
-           (equal? (hash-ref state-matches (csa#-transition-next-state prog-trans))
-                   (aps#-goto-state spec-goto)))
-          (list spec-trans spec-goto)
-          #f)])))
-
-;; Returns #t if the given commitments fully account for the observable transmissions in outputs; #f
-;; otherwise
-;;
-;; TODO: test this
-(define (outputs-match-commitments? outputs commitments)
-  (let/cc return-early
-    (define unmatched-commitments
-      (for/fold ([remaining-commitments commitments])
-                ([output outputs])
-        ;; TODO: check whether the output is observable according to the spec
-        (match (findf (curry output-satisfies-commitment? output) remaining-commitments)
-          ;; TODO: figure out how to deal with addresses that are precisely abstracted but not observed by the spec
-          [#f
-           ;; (printf "No match for output in the commitments.\nOutput: ~s\nCommitments: ~s\n"
-           ;;         output
-           ;;         remaining-commitments)
-           (return-early #f)]
-          [commitment (remove commitment remaining-commitments)])))
-    (empty? unmatched-commitments)))
-
-(module+ test
-
-  ;; TODO: test outputs-match-commitments for (along with normal cases):
-  ;; * spec that observes an address but neither saves it nor has output commtiments for it
-  ;; * POV unobservables
-  ;; * wildcard unobservables
-  )
-
-;; TODO: test this function
-(define (output-satisfies-commitment? output commitment)
-  ;; (printf "aps match attempt: ~s ~s\n" (csa#-output-message output) (aps#-commitment-pattern commitment))
-  ;; (printf "aps match result: ~s\n" (aps#-matches-po? (csa#-output-message output) (aps#-commitment-pattern commitment)))
-  (and (equal? (csa#-output-address output) (aps#-commitment-address commitment))
-       (aps#-matches-po? (csa#-output-message output) (aps#-commitment-pattern commitment))))
-
-;; TODO: tests for the above transition matching predicates/search functions
+  (filter values
+          (for/list ([stepped-spec-config (aps#-step-for-trigger spec-config (csa#-transition-trigger prog-transition))])
+            (match (aps#-resolve-outputs stepped-spec-config (csa#-transition-outputs prog-transition))
+              [#f #f]
+              [stepped-spec-config
+               ;; now just check if state name matches
+               (cond
+                 [(null? (aps#-config-instances stepped-spec-config)) stepped-spec-config]
+                 [(equal? (hash-ref state-matches (csa#-transition-next-state prog-transition))
+                          (aps#-config-only-instance-state stepped-spec-config))
+                  stepped-spec-config]
+                 [else #f])]))))
 
 ;; TODO: consider defining the spec semantics completely independently of concrete addresses, and
 ;; provide a mapping in the spec instead (the spec semantics would probably look something like HD
@@ -360,7 +286,7 @@ Remaining big challenges I see in the analysis:
   (define-values (fsm-specs remaining-commitment-map)
     (for/fold ([fsm-specs null]
                [remaining-commitment-map (aps#-config-commitment-map config)])
-             ([instance (aps#-config-instances config)])
+              ([instance (aps#-config-instances config)])
      (define (entry-relevant? entry)
        (member (aps#-commitment-entry-address entry)
                (aps#-instance-arguments instance)))
@@ -398,6 +324,75 @@ Remaining big challenges I see in the analysis:
 
   ;; TODO: check that none of the FSMs share an address
   )
+
+;; ---------------------------------------------------------------------------------------------------
+;; Commitment Satisfaction
+
+;; TODO: test all these functions individually before hooking into the big thing
+
+;; Returns true if all nodes in the given conformance simulation satisfy their output commitments;
+;; false otherwise
+(define (all-commitments-satisfied? simulation-graph)
+  (let/cc return-early
+    (for ([edge (graph-edges simulation-graph)])
+      (mark-commitments-satisfied-by edge))
+
+    ;; new data structure: spec is instances + commit maps, which map an address to a "multiset"
+    ;; (really a set, since we punt for now on conformance that requires multiple copies of the same
+    ;; output commitment) of pattern/"eventually satisfied flag" pairs
+
+    (for ([tuple (map vertex-value (graph-vertices simulation-graph))])
+      (for ([commitment (aps#-commitment-map-commitments tuple)])
+        (unless (member commitment (simulation-node-satisfied-commitments tuple))
+          (return-early #f))))
+    #t))
+
+;; Graph of the simulation should have objects for both nodes and edges, with edges having trigger,
+;; source, destination, and set of commitments satisfied (yes, a set not a list, because the
+;; commitment satisfaction step does not need to distinguish between commitments with the same pattern
+;; and address in the same state - plus I'm currently punting on that case anyway); and nodes having
+;; lists of incoming and outgoing edges
+
+;; TODO: when walking the edges, take care of edges that do an address rename (because the commitment
+;; will also need to be renamed)
+
+
+;; Marks as "will-be-satisfied" every commitment (transitively) guaranteed to eventually be satisfied
+;; if this edge satisfies that commitment.
+(define (mark-commitments-satisfied-by edge)
+  (for ([commitment (simulation-step-satisfied-commitments (edge-value edge))])
+    (mark-result-of-edge-commitment-satisfaction edge commitment)))
+
+;; Does the necessary backwards walk of the graph to mark the commitments that are now satisfied
+;; because following the given edge guarantees that the given commitment will be satisfied (either
+;; because the edge satisfies it directly, or because the node it leads to is marked as guaranteeting
+;; satisfaction of that commitment).
+;;
+;; Note that this edge may have an external trigger, in which case it does not mark any commitments.
+(define (mark-result-of-edge-commitment-satisfaction edge commitment)
+  (define trigger (simulation-step-trigger (edge-value edge)))
+  (define source (edge-source edge))
+  (define source-node (vertex-value source))
+  (define outgoing-edges-with-same-trigger
+    (filter (lambda (outgoing-edge)
+              (equal? (simulation-step-trigger (edge-value outgoing-edge)) trigger))
+            (vertex-outgoing source)))
+  (define (following-edge-satisfies-commitment? edge)
+    (member commitment
+            (append (simulation-step-satisfied-commitments (edge-value edge))
+                    (simulation-node-satisfied-commitments (edge-destination edge)))))
+  (when (and (csa#-internal-trigger? trigger)
+             (aps#-config-has-commitment? (simulation-node-spec-config source-node) commitment)
+             (not (member commitment (simulation-node-satisfied-commitments source-node)))
+             (andmap following-edge-satisfies-commitment? outgoing-edges-with-same-trigger))
+    (simulation-node-add-satisfied-commitment! source-node commitment)
+    (for ([incoming (vertex-incoming source)])
+      (mark-result-of-edge-commitment-satisfaction edge commitment))))
+
+(define (simulation-node-add-satisfied-commitment! node commitment)
+  (set-simulation-node-satisfied-commitments!
+   node
+   (cons commitment (simulation-node-satisfied-commitments node))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debugging
@@ -1204,4 +1199,11 @@ Remaining big challenges I see in the analysis:
   ;;                      (term (Addr Nat)) (term (Union))
   ;;                      ;; TODO: hints?
   ;;                      ))
+
+  ;; TODO: tests for:
+  ;; * commitment satisfied immediately
+  ;; * satisfied in a later internal send
+  ;; * satisfied only if another receive comes in
+  ;; * never satisfied
+  ;; * satisfied only if no other receive comes in
   )

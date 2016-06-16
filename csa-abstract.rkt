@@ -8,8 +8,7 @@
  csa#-handle-message
  csa#-handle-any-timeouts
  (struct-out csa#-transition)
- csa#-transition-observed?
- csa#-transition-message
+ csa#-internal-trigger?
  csa#-output-address
  csa#-output-message
  csa#-transition-next-state
@@ -105,7 +104,11 @@
       (vector v# ... E# e# ...)
       (for/fold ([x E#]) ([x e#]) e#)
       (for/fold ([x v#]) ([x E#]) e#)
-      (loop-context E#)))
+      (loop-context E#))
+  (trigger# timeout
+            [internal-message v#]
+            [external-observable-message v#]
+            [external-unobservable-message v#]))
 
   ;; (define-metafunction csa#
   ;;   abstract : K -> K#
@@ -280,22 +283,18 @@
 ;; Evaluation
 
 (struct csa#-transition
-  (trigger ; either: 'timeout or (list observed? message)
+  (trigger ; follows trigger# above
    outputs ; list of abstract-addr/abstract-message 2-tuples
    loop-outputs ; list of abstract-addr/abstract-message 2-tuples
    ;; TODO: add spawns
    behavior-exp) ; an e#
   #:transparent)
 
-(define (csa#-transition-observed? t)
-  (match (csa#-transition-trigger t)
-    [(list #t _) #t]
+(define (csa#-internal-trigger? trigger)
+  (match trigger
+    ['timeout #t]
+    [`(internal-message ,_) #t]
     [_ #f]))
-
-(define (csa#-transition-message t)
-  (match (csa#-transition-trigger t)
-    [(list _ m) m]
-    ['timeout (error 'csa#-transition-message "Timeout transition ~s has no message" t)]))
 
 (define csa#-output-address car)
 (define csa#-output-message cadr)
@@ -311,7 +310,10 @@
                     (config-actor-by-address prog-config actor-address)])
     ;; TODO: deal with the case where x_m shadows an x_s
     (define initial-config (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...))))
-    (eval-handler initial-config (list observed? message))))
+    (eval-handler initial-config
+                  (if observed?
+                      (term (external-observable-message ,message))
+                      (term (external-unobservable-message ,message))))))
 
 ;; Returns all transitions possible from this program configuration by taking a timeout
 (define (csa#-handle-any-timeouts prog-config)
