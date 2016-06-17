@@ -17,7 +17,7 @@
  aps#-config-instances
  aps#-config-only-instance-state
  aps#-config-commitment-map
- aps#-commitment-map-commitments
+ aps#-config-commitments
  ;; aps#-transition-pattern
  ;; aps#-transition-expression
  aps#-commitment-address
@@ -29,7 +29,9 @@
  aps#-relevant-external-addrs
  aps#-external-addresses
  canonicalize-tuple
- aps#-config-has-commitment?)
+ aps#-config-has-commitment?
+ no-duplicate-commitments?
+ unique-minimal-config)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -134,7 +136,9 @@
   aps#-instance-transitions/mf : z -> ((ε -> e-hat) ...)
   [(aps#-instance-transitions/mf
     ((_ ... (define-state (s x ...) (ε -> e-hat) ...) _ ...) (goto s v-hat ...) _))
-   ((ε -> (subst-n/aps# e-hat (x v-hat) ...)) ...)])
+   ((ε -> (subst-n/aps# e-hat (x v-hat) ...)) ...
+    ;; Note that we include the "null"/no-step transition
+    (unobs -> (goto s v-hat ...)))])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
@@ -170,8 +174,7 @@
              (update-config-with-effects
               (observe-addresses-from-subst spec-config bindings)
               (aps#-eval exp-subst))]))))
-     ;; Note that we include the "null"/no-step transition
-     (remove-duplicates (cons spec-config stepped-configs))]))
+     (remove-duplicates stepped-configs)]))
 
 (define (aps#-eval exp)
   (term (aps#-eval/mf ,exp)))
@@ -477,6 +480,9 @@
   (redex-let aps# ([(a#ext _ ...)  entry])
              (term a#ext)))
 
+(define (aps#-config-commitments config)
+  (aps#-commitment-map-commitments (aps#-config-commitment-map config)))
+
 (define (aps#-commitment-map-commitments commitment-map)
   (term (commitment-map-commitments/mf ,commitment-map)))
 
@@ -695,3 +701,31 @@
   (check-false (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 2) *])))
   (check-false (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 1) (record)])))
   (check-false (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 3) *]))))
+
+(define (no-duplicate-commitments? config)
+  (define commitment-lists
+    (redex-let aps# ([(_ ((_ po ...) ...)) config])
+               (term ((po ...) ...))))
+  (andmap (lambda (l) (equal? l (remove-duplicates l))) commitment-lists))
+
+;; TODO: remove this function; part of a hack
+;;
+;; Returns the unique config with the minimal number of output commitments, or false if no such config
+;; exists
+(define (unique-minimal-config spec-configs)
+  (define count-map (make-hash))
+  (for ([config spec-configs])
+    (define commitment-count
+      (redex-let aps# ([(_ ((_ po ...) ...)) config])
+                 (length (append* (term ((po ...) ...))))))
+    (hash-set! count-map commitment-count
+     (cond
+       [(hash-has-key? count-map commitment-count)
+        (cons config (hash-ref count-map commitment-count))]
+       [else (list config)])))
+  (match (hash-keys count-map)
+    [(list) #f]
+    [keys
+     (match (hash-ref count-map (apply min keys))
+       [(list config) config]
+       [_ #f])]))
