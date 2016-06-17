@@ -151,6 +151,7 @@ Remaining big challenges I see in the analysis:
          ;; (printf "Queue size: ~s\n" (queue-length to-visit))
          ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs prog))
          ;; (printf "The full prog config: ~s\n" prog)
+         ;; (printf "The spec config: ~s\n" spec)
 
          (display-step-line "Evaluating possible program transitions")
          ;; TODO: handle multiple actors here
@@ -348,6 +349,7 @@ Remaining big challenges I see in the analysis:
     ;; new data structure: spec is instances + commit maps, which map an address to a "multiset"
     ;; (really a set, since we punt for now on conformance that requires multiple copies of the same
     ;; output commitment) of pattern/"eventually satisfied flag" pairs
+    ;; (printf "the graph: ~s\n" simulation-graph)
 
     (for ([tuple (map vertex-value (graph-vertices simulation-graph))])
       (for ([commitment (aps#-config-commitments (simulation-node-spec-config tuple))])
