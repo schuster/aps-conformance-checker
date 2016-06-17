@@ -145,7 +145,10 @@
 ;; Message generation
 
 ;; TODO: (maybe) remove this parameter hack and thread the number through instead
-(define next-generated-address 0)
+;;
+;; TODO: figure out if we need to first find the max number currently in the spec/prog pair, so we
+;; don't reuse other addresses
+(define next-generated-address 100)
 
 (define (generate-abstract-messages type current-state-name max-depth observed?)
   (term (generate-abstract-messages/mf ,type ,max-depth)))
