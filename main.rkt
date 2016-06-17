@@ -11,6 +11,7 @@ Remaining big challenges I see in the analysis:
 
 #lang racket
 
+;; TODO: fail when more than one commitment on same address with same pattern
 
 ;; TODO: probably shouldn't call this file "main" if it's exporting something to something else in the
 ;; "package"
@@ -110,7 +111,9 @@ Remaining big challenges I see in the analysis:
   ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
   ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
   ;; message generation
-  ;; TODO: canonicalize the initial tuple
+  ;;
+  ;; TODO: canonicalize the initial tuple (reuse much of the code below for canonicalizing and
+  ;; inserting into graph, too)
   (define initial-tuple
     (simulation-node
      ;; TODO: get the max depth from somewhere

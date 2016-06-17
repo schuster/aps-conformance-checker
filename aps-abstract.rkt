@@ -638,6 +638,10 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Canonicalization (i.e. renaming)
 
+;; Given a program config/spec config pair, rename the precise internal and external addresses in them
+;; such that the first one in each set starts at 0, then the next is 1, then 2, etc.
+;;
+;; TODO: do the internal address part
 (define (canonicalize-tuple tuple)
   (term (canonicalize-tuple/mf ,tuple)))
 
