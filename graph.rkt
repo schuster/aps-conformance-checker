@@ -23,11 +23,11 @@
 (module+ test
   (require rackunit))
 
-(struct graph ([vertices #:mutable] [edges #:mutable]))
+(struct graph ([vertices #:mutable] [edges #:mutable]) #:transparent)
 
-(struct vertex (value [incoming #:mutable] [outgoing #:mutable]))
+(struct vertex (value [incoming #:mutable] [outgoing #:mutable]) #:transparent)
 
-(struct edge (value source destination))
+(struct edge (value source destination) #:transparent)
 
 ;; ---------------------------------------------------------------------------------------------------
 

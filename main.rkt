@@ -46,8 +46,9 @@ Remaining big challenges I see in the analysis:
 ;;
 ;; Trigger is as listed in csa-abstract
 (struct simulation-node
-  (prog-config spec-config obs-type unobs-type [satisfied-commitments #:mutable]))
-(struct simulation-step (trigger satisfied-commitments))
+  (prog-config spec-config obs-type unobs-type [satisfied-commitments #:mutable])
+  #:transparent)
+(struct simulation-step (trigger satisfied-commitments) #:transparent)
 
 (define (same-tuple? n1 n2)
   (andmap (lambda (select) (equal? (select n1) (select n2)))
