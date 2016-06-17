@@ -361,7 +361,7 @@
   (let loop ([commitment-map (aps#-config-commitment-map spec-config)]
              [remaining-outputs outputs])
     (match remaining-outputs
-      [(list) spec-config]
+      [(list) (term (,(aps#-config-instances spec-config) ,commitment-map))]
       [(list output remaining-outputs ...)
        (define address (csa#-output-address output))
        (match (commitment-patterns-for-address commitment-map address)
@@ -374,6 +374,20 @@
                        remaining-outputs)])])])))
 
 (module+ test
+  (check-false
+   (aps#-resolve-outputs
+    (term (() (((obs-ext 1)))))
+    (term (((obs-ext 1) (* Nat))))))
+  (check-equal?
+   (aps#-resolve-outputs
+    (term (() (((obs-ext 1) *))))
+    (term (((obs-ext 1) (* Nat)))))
+   (term (() (((obs-ext 1))))))
+  (check-equal?
+   (aps#-resolve-outputs
+    (term (() (((obs-ext 1) * (record)))))
+    (term (((obs-ext 1) (* Nat)))))
+   (term (() (((obs-ext 1) (record))))))
 
   ;; TODO: test aps#-resolve-outputs for (along with normal cases):
   ;; * spec that observes an address but neither saves it nor has output commtiments for it
@@ -389,6 +403,20 @@
   [(remove-commitment-pattern/mf (any_1 ... (a#ext po_all ...) any_2 ...) a#ext po)
    (any_1 ... (a#ext po_rest ...) any_2 ...)
    (where (po_rest ...) ,(remove (term po) (term (po_all ...))))])
+
+(module+ test
+  (check-equal?
+   (aps#-remove-commitment-pattern
+    (term (((obs-ext 1) *))) (term (obs-ext 1)) (term *))
+   (term (((obs-ext 1)))))
+  (check-equal?
+   (aps#-remove-commitment-pattern
+    (term (((obs-ext 1) * *))) (term (obs-ext 1)) (term *))
+   (term (((obs-ext 1) *))))
+  (check-equal?
+   (aps#-remove-commitment-pattern
+    (term (((obs-ext 1) * (record) *) ((obs-ext 2) *))) (term (obs-ext 1)) (term *))
+   (term (((obs-ext 1) (record) *) ((obs-ext 2) *)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Constructors
@@ -493,6 +521,13 @@
    ((a#ext po) ... any_results ...)
    (where (any_results ...) (commitment-map-commitments/mf (any_rest ...)))])
 
+(module+ test
+  (check-equal?
+   (aps#-commitment-map-commitments (term (((obs-ext 1) *) ((obs-ext 2) (record) (variant A)))))
+   (term (((obs-ext 1) *)
+          ((obs-ext 2) (record))
+          ((obs-ext 2) (variant A))))))
+
 (define (commitment-patterns-for-address commitment-map address)
   (term (commitment-patterns-for-address/mf ,commitment-map ,address)))
 
@@ -503,10 +538,19 @@
 
 (module+ test
   (check-equal?
-   (aps#-commitment-map-commitments (term (((obs-ext 1) *) ((obs-ext 2) (record) (variant A)))))
-   (term (((obs-ext 1) *)
-          ((obs-ext 2) (record))
-          ((obs-ext 2) (variant A))))))
+   (commitment-patterns-for-address
+    (term (((obs-ext 1) * (record)) ((obs-ext 2) (variant True) (variant False))))
+    (term (obs-ext 1)))
+   (term (* (record))))
+  (check-equal?
+   (commitment-patterns-for-address
+    (term (((obs-ext 1) * (record)) ((obs-ext 2) (variant True) (variant False))))
+    (term (obs-ext 2)))
+   (term ((variant True) (variant False))))
+  (check-false
+   (commitment-patterns-for-address
+    (term (((obs-ext 1) * (record)) ((obs-ext 2) (variant True) (variant False))))
+    (term (obs-ext 3)))))
 
 (define (aps#-instance-state z)
   (term (instance-state/mf ,z)))
