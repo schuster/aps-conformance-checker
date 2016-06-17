@@ -650,8 +650,10 @@
   [(canonicalize-tuple/mf (K# Σ))
    ((rename-addresses K# [natural_old natural_new] ...)
     (rename-addresses Σ [natural_old natural_new] ...))
-   (where (z ...) (config-instances/mf Σ))
-   (where ((obs-ext natural_old) ...) ,(append* (term ((instance-arguments/mf z) ...))))
+   (where ((z ...) ((a#ext_com _ ...) ...)) Σ)
+   (where ((obs-ext natural_old) ...)
+          ,(remove-duplicates (append* (term (a#ext_com ...))
+                                       (term ((instance-arguments/mf z) ...)))))
    (where (natural_new ...) ,(build-list (length (term (natural_old ...))) values))])
 
 (module+ test
@@ -697,7 +699,22 @@
         SINGLE-ACTOR-ADDR))
       ()))))
 
-  ;; TODO: write a test for the case where the spec is only output commitments
+  (check-equal?
+   (canonicalize-tuple
+    (term
+     (,(make-single-actor-abstract-config
+        (term (SINGLE-ACTOR-ADDR
+               (((define-state (A) (m) (goto A)))
+                (goto A)))))
+      (() (((obs-ext 101) *))))))
+   (term
+    (,(make-single-actor-abstract-config
+       (term (SINGLE-ACTOR-ADDR
+              (((define-state (A) (m) (goto A)))
+               (goto A)))))
+     (() (((obs-ext 0) *))))))
+
+  ;; TODO: test for an address that appears more than once in the spec (e.g. twice as a spec param)
 
   ;; TODO: write a test for a program config with recently spawned actors
   )
