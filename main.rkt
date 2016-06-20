@@ -419,13 +419,11 @@ Remaining big challenges I see in the analysis:
 ;; Top-level tests
 
 (module+ test
-  (define single-agent-concrete-addr (term (addr 0)))
-
   ;;;; Ignore everything
 
   (define ignore-all-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Always) (m) (goto Always)))
        (goto Always)))))
   (define ignore-all-config (make-single-agent-config ignore-all-agent))
@@ -433,7 +431,7 @@ Remaining big challenges I see in the analysis:
     (term
      (((define-state (Always) [* -> (goto Always)]))
       (goto Always)
-      ,single-agent-concrete-addr)))
+      (addr 0))))
 
   (check-not-false (redex-match csa-eval αn ignore-all-agent))
   (check-not-false (redex-match csa-eval K ignore-all-config))
@@ -448,7 +446,7 @@ Remaining big challenges I see in the analysis:
   (define static-response-address (term (addr 2)))
   (define static-response-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
           (begin
             (send response-dest (variant Ack 0))
@@ -456,7 +454,7 @@ Remaining big challenges I see in the analysis:
        (goto Always ,static-response-address)))))
   (define static-double-response-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
           (begin
             (send response-dest (variant Ack 0))
@@ -468,12 +466,12 @@ Remaining big challenges I see in the analysis:
      (((define-state (Always response-dest)
          [* -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
       (goto Always ,static-response-address)
-      ,single-agent-concrete-addr)))
+      (addr 0))))
   (define ignore-all-with-addr-spec-instance
     (term
      (((define-state (Always response-dest) [* -> (goto Always response-dest)]))
       (goto Always ,static-response-address)
-      ,single-agent-concrete-addr)))
+      (addr 0))))
 
   (check-not-false (redex-match csa-eval αn static-response-agent))
   (check-not-false (redex-match csa-eval αn static-double-response-agent))
@@ -505,11 +503,11 @@ Remaining big challenges I see in the analysis:
          [(variant A *) -> (with-outputs ([r (variant A *)]) (goto Matching r))]
          [(variant B *) -> (with-outputs ([r (variant B *)]) (goto Matching r))]))
       (goto Matching ,static-response-address)
-      ,single-agent-concrete-addr)))
+      (addr 0))))
 
   (define pattern-matching-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
           (case m
             [(A x) (begin (send r (variant A x)) (goto Always r))]
@@ -518,7 +516,7 @@ Remaining big challenges I see in the analysis:
 
   (define reverse-pattern-matching-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
           (case m
             [(A x) (begin (send r (variant B 0)) (goto Always r))]
@@ -527,7 +525,7 @@ Remaining big challenges I see in the analysis:
 
   (define partial-pattern-matching-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
           (case m
             [(A x) (begin (send r (variant A 0)) (goto Always r))]
@@ -561,7 +559,7 @@ Remaining big challenges I see in the analysis:
      (((define-state (Always)
          [response-target -> (with-outputs ([response-target *]) (goto Always))]))
       (goto Always)
-      ,single-agent-concrete-addr)))
+      (addr 0))))
 
   (define request-same-response-addr-spec
     (term
@@ -570,10 +568,10 @@ Remaining big challenges I see in the analysis:
        (define-state (HaveAddr response-target)
          [new-response-target -> (with-outputs ([response-target *]) (goto HaveAddr response-target))]))
       (goto Init)
-      ,single-agent-concrete-addr)))
+      (addr 0))))
   (define request-response-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Always [i Nat]) (response-target)
           (begin
             (send response-target i)
@@ -583,7 +581,7 @@ Remaining big challenges I see in the analysis:
        (goto Always 0)))))
   (define respond-to-first-addr-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Init) (response-target)
           (begin
             (send response-target 0)
@@ -598,7 +596,7 @@ Remaining big challenges I see in the analysis:
        (goto Init)))))
   (define respond-to-first-addr-agent2
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Always [original-addr (Union (NoAddr) (Original (Addr Nat)))]) (response-target)
           (begin
             (case original-addr
@@ -613,7 +611,7 @@ Remaining big challenges I see in the analysis:
        (goto Always (variant NoAddr))))))
   (define delay-saving-address-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Init) (response-target)
           (begin
             (send response-target 0)
@@ -626,7 +624,7 @@ Remaining big challenges I see in the analysis:
             (goto HaveAddr i new-response-target))))
        (goto Init)))))
   (define double-response-agent
-    `(,single-agent-concrete-addr
+    `((addr 0)
       (((define-state (Always [i Nat]) (response-dest)
           (begin
             (send response-dest i)
@@ -685,7 +683,7 @@ Remaining big challenges I see in the analysis:
   ;; commitments
   (define reply-once-actor
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (A) (r)
           (begin
             (send r 0)
@@ -700,7 +698,7 @@ Remaining big challenges I see in the analysis:
        (define-state (B)
          [* -> (goto B)]))
       (goto A)
-      ,single-agent-concrete-addr)))
+      (addr 0))))
 
   (check-not-false (redex-match csa-eval αn reply-once-actor))
   (check-not-false (redex-match aps-eval z maybe-reply-spec))
@@ -717,16 +715,16 @@ Remaining big challenges I see in the analysis:
          [* -> (with-outputs ([r (variant Zero)])    (goto S1 r))]
          [* -> (with-outputs ([r (variant NonZero)]) (goto S1 r))]))
       (goto S1 ,static-response-address)
-      ,single-agent-concrete-addr)))
+      (addr 0))))
   (define zero-spec
     (term
      (((define-state (S1 r)
          [* -> (with-outputs ([r (variant Zero)])    (goto S1 r))]))
       (goto S1 ,static-response-address)
-      ,single-agent-concrete-addr)))
+      (addr 0))))
   (define primitive-branch-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (S1 [dest (Addr (Union [NonZero] [Zero]))]) (i)
           (begin
             (case (< 0 i)
@@ -750,10 +748,10 @@ Remaining big challenges I see in the analysis:
      (((define-state (Always response-dest)
          [* -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
       (goto Always ,static-response-address)
-      ,single-agent-concrete-addr)))
+      (addr 0))))
   (define div-by-one-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Always [response-dest (Addr Nat)]) (n)
           (begin
             (send response-dest (/ n 1))
@@ -761,7 +759,7 @@ Remaining big challenges I see in the analysis:
        (goto Always ,static-response-address)))))
   (define div-by-zero-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Always [response-dest (Addr Nat)]) (n)
           (begin
             (send response-dest (/ n 0))
@@ -804,7 +802,7 @@ Remaining big challenges I see in the analysis:
          [*     -> (with-outputs ([response-dest *]) (goto Always response-dest))]
          [unobs -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
       (goto Always ,static-response-address)
-      ,single-agent-concrete-addr)))
+      (addr 0))))
   (check-not-false (redex-match aps-eval z static-response-spec-with-unobs))
 
   (check-true (analyze (make-single-agent-config static-response-agent)
@@ -821,10 +819,10 @@ Remaining big challenges I see in the analysis:
               [* -> (goto On r)]
               [unobs -> (with-outputs ([r (variant TurningOff)]) (goto Off r))]))
            (goto Off ,static-response-address)
-           ,single-agent-concrete-addr)))
+           (addr 0))))
   (define unobs-toggle-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver)
@@ -842,7 +840,7 @@ Remaining big challenges I see in the analysis:
        (goto Off ,static-response-address)))))
   (define unobs-toggle-agent-wrong1
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver)
@@ -861,7 +859,7 @@ Remaining big challenges I see in the analysis:
        (goto Off ,static-response-address)))))
   (define unobs-toggle-agent-wrong2
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver)
@@ -879,7 +877,7 @@ Remaining big challenges I see in the analysis:
        (goto Off ,static-response-address)))))
   (define unobs-toggle-agent-wrong3
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver)
@@ -897,7 +895,7 @@ Remaining big challenges I see in the analysis:
        (goto Off ,static-response-address)))))
   (define unobs-toggle-agent-wrong4
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver) (goto Off r)]
@@ -945,10 +943,10 @@ Remaining big challenges I see in the analysis:
          [(record [dest dest] [msg (variant A)]) -> (with-outputs ([dest (variant A)]) (goto Always))]
          [(record [dest dest] [msg (variant B)]) -> (with-outputs ([dest (variant B)]) (goto Always))]))
       (goto Always)
-      ,single-agent-concrete-addr)))
+      (addr 0))))
   (define record-req-resp-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Always) (m)
           (begin
             (send (: m dest) (: m msg))
@@ -956,7 +954,7 @@ Remaining big challenges I see in the analysis:
        (goto Always)))))
   (define record-req-wrong-resp-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Always) (m)
           (begin
             (send (: m dest) (variant A))
@@ -983,7 +981,7 @@ Remaining big challenges I see in the analysis:
   ;;;; Let
   (define static-response-let-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
           (let ([new-r response-dest])
             (begin
@@ -992,7 +990,7 @@ Remaining big challenges I see in the analysis:
        (goto Always ,static-response-address)))))
   (define static-double-response-let-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
           (let ([new-r response-dest])
             (begin
@@ -1016,7 +1014,7 @@ Remaining big challenges I see in the analysis:
   ;; Check that = gives both results
   (define equal-agent-wrong1
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (A [dest (Addr Nat)]) (m)
           (begin
             (send dest 0)
@@ -1027,7 +1025,7 @@ Remaining big challenges I see in the analysis:
        (goto A ,static-response-address)))))
   (define equal-agent-wrong2
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (A [dest (Addr Nat)]) (m)
           (begin
             (send dest 0)
@@ -1038,7 +1036,7 @@ Remaining big challenges I see in the analysis:
        (goto A ,static-response-address)))))
     (define equal-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (A [dest (Addr Nat)]) (m)
           (begin
             (send dest 0)
@@ -1074,7 +1072,7 @@ Remaining big challenges I see in the analysis:
   ;;;; For loops
   (define loop-do-nothing-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (A) (m)
           (begin
             (for/fold ([folded 0])
@@ -1084,7 +1082,7 @@ Remaining big challenges I see in the analysis:
        (goto A)))))
   (define loop-send-unobs-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (A [r (Addr Nat)]) (m)
           (begin
             (for/fold ([folded 0])
@@ -1094,7 +1092,7 @@ Remaining big challenges I see in the analysis:
        (goto A ,static-response-address)))))
   (define send-before-loop-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (A) (r)
           (begin
             (send r 0)
@@ -1105,7 +1103,7 @@ Remaining big challenges I see in the analysis:
        (goto A)))))
   (define send-inside-loop-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (A) (r)
           (begin
             (for/fold ([folded 0])
@@ -1115,7 +1113,7 @@ Remaining big challenges I see in the analysis:
        (goto A)))))
   (define send-after-loop-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (A) (r)
           (begin
             (for/fold ([folded 0])
@@ -1162,16 +1160,16 @@ Remaining big challenges I see in the analysis:
          [* -> (with-outputs ([r (variant GotMessage)]) (goto A r))]
          [unobs -> (with-outputs ([r (variant GotTimeout)]) (goto A r))]))
       (goto A ,static-response-address)
-      ,single-agent-concrete-addr)))
+      (addr 0))))
   (define got-message-only-spec
     (term
      (((define-state (A r)
          [* -> (with-outputs ([r (variant GotMessage)]) (goto A r))]))
       (goto A ,static-response-address)
-      ,single-agent-concrete-addr)))
+      (addr 0))))
   (define timeout-and-send-agent
     (term
-     (,single-agent-concrete-addr
+     ((addr 0)
       (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
           (begin
             (send r (variant GotMessage))
