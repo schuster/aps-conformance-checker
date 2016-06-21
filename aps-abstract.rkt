@@ -4,7 +4,7 @@
 
 (provide
  aps#
- aps#-α-Σ
+ α-tuple
  ;; subst-n/aps#
  ;; aps#-current-transitions
  ;; aps#-null-transition
@@ -38,6 +38,7 @@
 (require
  redex/reduction-semantics
  "aps.rkt"
+ "csa.rkt"
  "csa-abstract.rkt")
 
 (module+ test
@@ -57,34 +58,49 @@
   ;; (O ((a#ext (po boolean) ...) ...))
   (O ((a#ext po ...) ...)))
 
+;; ---------------------------------------------------------------------------------------------------
+;; Abstraction
+
+(define (α-tuple initial-prog-config
+                 initial-spec-config
+                 init-obs-receptionists
+                 init-unobs-receptionists
+                 max-depth)
+  ;;    (where (a_internal ...) ((actor-address αn) ...))
+  (define internal-addresses (csa-config-internal-addresses initial-prog-config))
+  (list
+   (α-config initial-prog-config internal-addresses max-depth)
+   (aps#-α-Σ initial-spec-config internal-addresses)
+   (α-typed-receptionist-list init-obs-receptionists)
+   (α-typed-receptionist-list init-unobs-receptionists)))
+
 ;; TODO: change the language and conformance so that I don't have to do this little initial
 ;; abstraction
-(define (aps#-α-Σ spec-config)
+(define (aps#-α-Σ spec-config internal-addresses)
   ;; Doing a redex-let here just to add a codomain contract
   ;; TODO: figure out how to get redex-let to report its line number if this fails
-  (redex-let aps# ([Σ (term (aps#-α-Σ/mf ,spec-config))])
+  (redex-let aps# ([Σ (term (aps#-α-Σ/mf ,spec-config ,internal-addresses))])
              (term Σ)))
 
+;; TODO: rewrite this and put a better contract on here once we put #'s on all the APS# non-terminals
 (define-metafunction aps#
-  aps#-α-Σ/mf : any -> any
-  ;; TODO: deal with multiple initial actors; remove this hack; figure out how to differentiate
-  ;; initially between internal and external addresses
-  [(aps#-α-Σ/mf (addr 0)) SINGLE-ACTOR-ADDR]
-  [(aps#-α-Σ/mf (addr natural))
-   (obs-ext natural)]
-  [(aps#-α-Σ/mf (any ...))
-   ((aps#-α-Σ/mf any) ...)]
-  [(aps#-α-Σ/mf any) any])
+  aps#-α-Σ/mf : any (a ...) -> any
+  [(aps#-α-Σ/mf a (a_internal ...))
+   (α-e a (a_internal ...) 0)]
+  [(aps#-α-Σ/mf (any ...) (a ...))
+   ((aps#-α-Σ/mf any (a ...)) ...)]
+  [(aps#-α-Σ/mf any _) any])
 
 (module+ test
   (check-equal?
    (aps#-α-Σ (term (((((define-state (A x) (* -> (goto A x))))
                       (goto A (addr 1))
                       (addr 0)))
-                    ())))
+                    ()))
+             (term ((addr 0))))
    (term (((((define-state (A x) (* -> (goto A x))))
             (goto A (obs-ext 1))
-            SINGLE-ACTOR-ADDR))
+            (init-addr 0)))
           ()))))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -486,7 +502,7 @@
 
 (module+ test
   (check-equal? (aps#-goto-state (term (goto A))) (term A))
-  (check-equal? (aps#-goto-state (term (goto B (SINGLE-ACTOR-ADDR SINGLE-ACTOR-ADDR)))) (term B)))
+  (check-equal? (aps#-goto-state (term (goto B (obs-ext 2) (obs-ext 1)))) (term B)))
 
 (define (aps#-commitment-address commitment)
   (term (commitment-address/mf ,commitment)))
@@ -663,48 +679,48 @@
    (canonicalize-tuple
     (term
      (,(make-single-actor-abstract-config
-        (term (SINGLE-ACTOR-ADDR
+        (term ((init-addr 0)
                (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
                 (goto A (obs-ext 25) (obs-ext 42) (obs-ext 10))))))
       (((((define-state (A a b c) [* -> (goto A)]))
          (goto A (obs-ext 25) (obs-ext 42) (obs-ext 10))
-         SINGLE-ACTOR-ADDR))
+         (init-addr 0)))
        ())
-      ((SINGLE-ACTOR-ADDR Nat))
+      ((init-addr 0 Nat))
       ())))
    (term
     (,(make-single-actor-abstract-config
-       (term (SINGLE-ACTOR-ADDR
+       (term ((init-addr 0)
               (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
                (goto A (obs-ext 0) (obs-ext 1) (obs-ext 2))))))
      (((((define-state (A a b c) [* -> (goto A)]))
         (goto A (obs-ext 0) (obs-ext 1) (obs-ext 2))
-        SINGLE-ACTOR-ADDR))
+        (init-addr 0)))
       ())
-     ((SINGLE-ACTOR-ADDR Nat))
+     ((init-addr 0 Nat))
      ())))
 
   (check-equal?
    (canonicalize-tuple
     (term
      (,(make-single-actor-abstract-config
-        (term (SINGLE-ACTOR-ADDR
+        (term ((init-addr 0)
                (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
                 (goto A (obs-ext 10) (obs-ext 42) (obs-ext 25))))))
       (((((define-state (A c b a) [* -> (goto A)]))
          (goto A (obs-ext 25) (obs-ext 42) (obs-ext 10))
-         SINGLE-ACTOR-ADDR))
+         (init-addr 0)))
        ())
       ()
       ())))
    (term
     (,(make-single-actor-abstract-config
-       (term (SINGLE-ACTOR-ADDR
+       (term ((init-addr 0)
               (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
                (goto A (obs-ext 2) (obs-ext 1) (obs-ext 0))))))
      (((((define-state (A c b a) [* -> (goto A)]))
         (goto A (obs-ext 0) (obs-ext 1) (obs-ext 2))
-        SINGLE-ACTOR-ADDR))
+        (init-addr 0)))
       ())
      ()
      ())))
@@ -713,7 +729,7 @@
    (canonicalize-tuple
     (term
      (,(make-single-actor-abstract-config
-        (term (SINGLE-ACTOR-ADDR
+        (term ((init-addr 0)
                (((define-state (A) (m) (goto A)))
                 (goto A)))))
       (() (((obs-ext 101) *)))
@@ -721,7 +737,7 @@
       ())))
    (term
     (,(make-single-actor-abstract-config
-       (term (SINGLE-ACTOR-ADDR
+       (term ((init-addr 0)
               (((define-state (A) (m) (goto A)))
                (goto A)))))
      (() (((obs-ext 0) *)))

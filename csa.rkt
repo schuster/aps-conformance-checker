@@ -6,11 +6,13 @@
          csa-eval
          inject-message
          make-single-agent-config
+         make-empty-queues-config
          single-agent-prog->config
          handler-step
          type-subst
          csa-valid-config?
-         csa-valid-receptionist-list?)
+         csa-valid-receptionist-list?
+         csa-config-internal-addresses)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -98,7 +100,6 @@
   (αn (a ((S ...) e)))
   (μ (m ...))
   (m (a <= v))
-  ;; TODO: include types in the receptionists and externals
   ((ρ χ) (a ...))
   (e ....
      a
@@ -148,6 +149,18 @@
   [(make-single-agent-config/mf αn)
    ((αn) () (a) ())
    (where (a _) αn)])
+
+(define (make-empty-queues-config receptionists internal-actors)
+  (term (make-empty-queues-config/mf ,receptionists ,internal-actors)))
+
+(define-metafunction csa-eval
+  make-empty-queues-config/mf : (αn ...) (αn ...) -> K
+  [(make-empty-queues-config/mf (αn_receptionist ...) (αn_internal ...))
+   ((αn_receptionist ... αn_internal ...)
+    ()
+    (a_receptionist ...)
+    ())
+   (where ((a_receptionist _) ...) (αn_receptionist ...))])
 
 (define handler-step
   (reduction-relation csa-eval
@@ -353,3 +366,10 @@
 
 (define (csa-valid-receptionist-list? l)
   (redex-match csa-eval (typed-a ...) l))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Selectors
+
+(define (csa-config-internal-addresses config)
+  (redex-let* csa-eval ([(((a _) ...) _ _ _) config])
+              (term (a ...))))

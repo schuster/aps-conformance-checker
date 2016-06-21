@@ -13,8 +13,8 @@
  csa#-output-message
  csa#-transition-next-state
  α-config
+ α-e
  α-typed-receptionist-list
- step-prog-final-behavior
  blur-externals
  make-single-actor-abstract-config
  csa#-typed-address-type
@@ -33,18 +33,18 @@
  "csa.rkt")
 
 ;; Abstract interpretation version of CSA
-;; NOTE: this handles only single-actor configurations right now
-;; TODO: make the language inheritance hierarchy correct
+;;
+;; TODO: make the language inheritance hierarchy correct (or consider merging them all into a single
+;; mega-language)
 (define-extended-language csa# csa-eval
-  (K# (α# μ# ρ# χ#)) ; TODO: update this
+  (K# (α# μ# ρ# χ#)) ;; TODO: update this (incl. remove χ#, since we already label addresses as external)
   ;; NOTE: for now, assuming only the one special actor
   (α# (α#n)) ; NOTE: for now, does not handle configs with more than one actor
   (α#n (a#int ((S# ...) e#)))
   (μ# ()) ; NOTE: for now, assuming no internal sends
   (S# (define-state (s [x τ] ...) (x) e#)
       (define-state (s [x τ] ...) (x) e# [(timeout v#) e#]))
-  ;; TODO: these probably should be sets of values, right?
-  (v# a# ; TODO: replace this one with a special pattern
+  (v# a#
       (variant t v# ...)
       (record [l v#] ...)
       (* τ)
@@ -72,17 +72,15 @@
       v#)
   (a# a#int a#ext) ; internal and external addresses
   ;; TODO: replace the untyped address with the typed one
-  (a#int SINGLE-ACTOR-ADDR)
-  (typed-a#int (SINGLE-ACTOR-ADDR τ))
+  (a#int (init-addr natural))
+  (typed-a#int (init-addr natural τ))
   (a#ext
    (* (Addr τ)) ; unobserved address
    ;; NOTE: only a finite number of addresses in the initial config, so we can use natural numbers
    ;; here
    ;; TODO: do I need the dead observables?
    (obs-ext natural))
-  ;; TODO: include types in the receptionists and externals (maybe? Might not need them if they're
-  ;; tracked elsewhere)
-  (ρ# (SINGLE-ACTOR-ADDR))
+  (ρ# (a#int ...))
   (χ# (a#ext ...))
   ;; H# = handler config (exp + outputs + loop outputs so far)
   (H# (e# ([a#ext v#] ...) ([a#ext v#] ...)))
@@ -280,8 +278,8 @@
   (trigger ; follows trigger# above
    outputs ; list of abstract-addr/abstract-message 2-tuples
    loop-outputs ; list of abstract-addr/abstract-message 2-tuples
-   ;; TODO: add spawns
-   behavior-exp) ; an e#
+   final-config ; an abstract program configuration
+   next-state) ; a state name
   #:transparent)
 
 (define (csa#-internal-trigger? trigger)
@@ -293,45 +291,88 @@
 (define csa#-output-address car)
 (define csa#-output-message cadr)
 
-(define (csa#-transition-next-state transition)
-  (redex-let csa# ([(in-hole E# (goto s _ ...)) (csa#-transition-behavior-exp transition)])
-    (term s)))
-
 ;; Evaluates the handler triggered by sending message to actor-address, return the list of possible
 ;; results (which are tuples of the final behavior expression and the list of outputs)
 (define (csa#-handle-message prog-config actor-address message observed?)
-  (redex-let csa# ([(_ ((_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e# any_timeout-clause ...) _ ...) (in-hole E# (goto s v# ..._n))))
-                    (config-actor-by-address prog-config actor-address)])
+  (redex-let csa# ([(any_actors-before
+                     (a# ((name state-defs (_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e# any_timeout-clause ...) _ ...)) (in-hole E# (goto s v# ..._n))))
+                     any_actors-after)
+                    (config-actor-and-rest-by-address prog-config actor-address)]
+                   [(_ any_messages any_receptionists any_externals) prog-config])
     ;; TODO: deal with the case where x_m shadows an x_s
     (define initial-config (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...))))
     (eval-handler initial-config
                   (if observed?
                       (term (external-observable-message ,message))
-                      (term (external-unobservable-message ,message))))))
+                      (term (external-unobservable-message ,message)))
+                  (term any_actors-before)
+                  actor-address
+                  (term state-defs)
+                  (term any_actors-after)
+                  (term any_messages)
+                  (term any_receptionists)
+                  (term any_externals))))
 
 ;; Returns all transitions possible from this program configuration by taking a timeout
 (define (csa#-handle-all-timeouts prog-config)
-  (for/fold ([transitions null])
-            ([actor (csa#-config-actors prog-config)])
-    (define matches
-      (redex-match csa#
-                   (_ ((_ ... (define-state (s [x_s τ_s] ..._n)  _    _  [(timeout _) e#]) _ ...) (in-hole E# (goto s v# ..._n))))
-                   actor))
-    (define new-transitions
-      (cond
-       [matches
-        (append*
-         (for/list ([the-match matches])
-           (define (get-binding name) (bind-exp (findf (lambda (binding) (eq? (bind-name binding) name)) (match-bindings the-match))))
-           (redex-let csa# ([(x_s ...) (get-binding 'x_s)]
-                            [(v# ...) (get-binding 'v#)]
-                            [e# (get-binding 'e#)])
-                      (eval-handler (inject/H# (term (csa#-subst-n e# [x_s v#] ...)))
-                                    'timeout))))]
-       [else null]))
-    (append transitions new-transitions)))
+  (redex-let csa# ([(any_actors any_messages any_receptionists any_externals) prog-config])
+    (let loop ([transitions-so-far null]
+               [actors-before null]
+               [actors-after (term any_actors)])
+      (match actors-after
+        [(list) transitions-so-far]
+        [(list actor actors-after ...)
+         (define new-transitions
+           (csa#-handle-actor-maybe-timeout actors-before
+                                            actor
+                                            actors-after
+                                            (term any_messages)
+                                            (term any_receptionists)
+                                            (term any_externals)))
+         (loop (append transitions-so-far new-transitions)
+               (append actors-before (list actor))
+               actors-after)]))))
 
-(define (eval-handler handler-config trigger)
+;; Returns the transitions that happen by executing this actor's timeout if it has one, or null if not
+(define (csa#-handle-actor-maybe-timeout actors-before
+                                         actor
+                                         actors-after
+                                         messages
+                                         receptionists
+                                         externals)
+  (define matches
+    (redex-match csa#
+                 (any_address ((name state-defs (_ ... (define-state (s [x_s τ_s] ..._n)  _    _  [(timeout _) e#]) _ ...)) (in-hole E# (goto s v# ..._n))))
+                 actor))
+  (match matches
+    [#f null]
+    [(list the-match)
+     (define (get-binding name) (bind-exp (findf (lambda (binding) (eq? (bind-name binding) name)) (match-bindings the-match))))
+     (redex-let csa# ([(x_s ...) (get-binding 'x_s)]
+                      [(v# ...) (get-binding 'v#)]
+                      [e# (get-binding 'e#)]
+                      [any_address (get-binding 'any_address)]
+                      [(name state-defs _) (get-binding 'state-defs)])
+       (eval-handler (inject/H# (term (csa#-subst-n e# [x_s v#] ...)))
+                     'timeout
+                     actors-before
+                     (term any_address)
+                     (term state-defs)
+                     actors-after
+                     messages
+                     receptionists
+                     externals))]
+    [_ (error 'csa#-handle-actor-maybe-timeout "Got multiple matches for actor: ~s\n" actor)]))
+
+(define (eval-handler handler-config
+                      trigger
+                      actors-before
+                      address
+                      state-defs
+                      actors-after
+                      messages
+                      receptionists
+                      externals)
   (define final-configs (apply-reduction-relation* handler-step# handler-config #:cache-all? #t))
   (define non-abstraction-stuck-final-configs
     ;; Filter out those stuck because of over-abstraction
@@ -349,7 +390,13 @@
            (filter (compose not complete-handler-config?) non-abstraction-stuck-final-configs)))
   (for/list ([config non-abstraction-stuck-final-configs])
     (match-define (list behavior-exp outputs loop-outputs) config)
-    (csa#-transition trigger outputs loop-outputs behavior-exp)))
+    (define new-prog-config
+      (term (,(append actors-before (list (term (,address (,state-defs ,behavior-exp)))) actors-after)
+             ,messages
+             ,receptionists
+             ,externals)))
+    (define next-state (redex-let csa# ([(in-hole E# (goto s _ ...)) behavior-exp]) (term s)))
+    (csa#-transition trigger outputs loop-outputs new-prog-config next-state)))
 
 ;; Returns true if the config is one that is unable to step because of an over-approximation in the
 ;; abstraction
@@ -653,12 +700,12 @@
 
 (module+ test
   (define (csa#-make-simple-test-config exp)
-    (redex-let* csa# ([α#n (term [SINGLE-ACTOR-ADDR
+    (redex-let* csa# ([α#n (term [(init-addr 0)
                                   (((define-state (Always) (long-unused-name) (begin ,exp (goto Always))))
                                    (begin ,exp (goto Always)))])]
                       [α# (term (α#n))]
                       [μ# (term ())]
-                      [ρ# (term (SINGLE-ACTOR-ADDR))]
+                      [ρ# (term ((init-addr 0)))]
                       [χ# (term ())])
                 (term (α# μ# ρ# χ#))))
 
@@ -692,21 +739,6 @@
   ;;                             [(tuple) (goto S2 (* Nat))]))
   ;;                     (term (match (* Nat))))
   )
-
-;; TODO: make this function less susceptible to breaking because of changes in the config's structure
-(define (step-prog-final-behavior prog-config beahvior-exp)
-  (redex-let csa# ([(((SINGLE-ACTOR-ADDR ((S# ...) _)))
-                     ()
-                     (SINGLE-ACTOR-ADDR)
-                     ;; TODO: update χ# or just get rid of it
-                     ())
-                    prog-config])
-             (term
-              (((SINGLE-ACTOR-ADDR ((S# ...) ,beahvior-exp)))
-               ()
-               (SINGLE-ACTOR-ADDR)
-               ;; TODO: update χ# or just get rid of it
-               ()))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
@@ -785,30 +817,33 @@
 
 ;; TODO: test these functions
 
-(define (α-config concrete-config spec-initial-observables max-depth)
-  (term (α-config/mf ,concrete-config ,spec-initial-observables ,max-depth)))
+;; Abstracts the given CSA program configuration, with a maximum recursion depth for values
+;;
+;; NOTE: currently supports only no-messages, no-externals configs
+(define (α-config concrete-config internal-addresses max-depth)
+  (term (α-config/mf ,concrete-config ,internal-addresses ,max-depth)))
 
-;; NOTE: currently only supports single-actor, no-externals configs
 (define-metafunction csa#
-  α-config/mf : K (a ...) natural -> K#
-  [(α-config/mf ((αn) ; actors
+  α-config/mf : K (a_internal ...) natural_recursion-depth -> K#
+  [(α-config/mf ((αn ...) ; actors
                  () ; messages-in-transit
-                 ((addr 0)) ; receptionists
+                 (a_rec ...) ; receptionists
                  () ; externals
                  )
-                (a ...)
+                (a_internal ...)
                 natural_depth)
-   ((α#n) () (SINGLE-ACTOR-ADDR) ())
-   (where α#n (α-actor αn (a ...) natural_depth))])
-
-;; NOTE: currently assumes address 0
-(define-metafunction csa#
-  α-actor : αn (a ...) natural_depth -> α#n
-  [(α-actor ((addr 0) ((S ...) e)) (a ...) natural_depth)
-   (SINGLE-ACTOR-ADDR (((α-S S (a ...) natural_depth) ...) (α-e e (a ...) natural_depth)))])
+   ((α#n ...) () ((α-e a_rec (a_internal ...) natural_depth) ...) ())
+   (where (α#n ...) ((α-actor αn (a_internal ...) natural_depth) ...))])
 
 (define-metafunction csa#
-  α-S : S (a ...) natural_depth -> S#
+  α-actor : αn (a_internals ...) natural_depth -> α#n
+  [(α-actor (a_this ((S ...) e)) (a ...) natural_depth)
+   ((α-e a_this (a ...) natural_depth)
+    (((α-S S (a ...) natural_depth) ...)
+     (α-e e (a ...) natural_depth)))])
+
+(define-metafunction csa#
+  α-S : S (a_internals ...) natural_depth -> S#
   [(α-S (define-state (s [x τ] ...) (x_m) e) (a ...) natural_depth)
    (define-state (s [x τ] ...) (x_m) (α-e e (a ...) natural_depth))]
   [(α-S (define-state (s [x τ] ...) (x_m) e [(timeout n) e_timeout]) (a ...) natural_depth)
@@ -816,20 +851,18 @@
      (α-e e (a ...) natural_depth)
      [(timeout (* Nat)) (α-e e_timeout (a ...) natural_depth)])])
 
-;; NOTE: does not yet support abstraction for addresses or spawns
+;; TODO: support spawns
 ;;
-;; Abstracts the given expression to
-;; the given depth, using the given list of addresses as the addresses to leave observable
+;; Abstracts the given expression to the given depth, with the given address list indicating the set
+;; of internal addresses
 (define-metafunction csa#
   α-e : e (a ...) natural_depth -> e#
   [(α-e natural _ _) (* Nat)]
   [(α-e string _ _) (* String)]
   [(α-e x _ _) x]
-  ;; TODO: is there any way this will ever be used for anything but the initial addresses?
-  ;; TODO: deal with the self-address here
   ;; TODO: canonicalize this address
-  [(α-e (addr 0) _ _) SINGLE-ACTOR-ADDR]
-  [(α-e (addr natural) (_ ... (addr natural) _ ...) _) (obs-ext natural)]
+  [(α-e (addr natural) (_ ... (addr natural) _ ...) _) (init-addr natural)]
+  [(α-e (addr natural) _ _) (obs-ext natural)]
   [(α-e a _ _) (* (Addr Nat))] ; TODO: fill in the real type here
   [(α-e (goto s e ...) (a ...) natural_depth) (goto s (α-e e (a ...) natural_depth) ...)]
   [(α-e (begin e ...) (a ...) natural_depth) (begin (α-e e (a ...) natural_depth) ...)]
@@ -842,10 +875,6 @@
   [(α-e (printf string e ...) (a ...) natural_depth)
    (printf string (α-e e (a ...) natural_depth) ...)]
   [(α-e (primop e ...) (a ...) natural_depth) (primop (α-e e (a ...) natural_depth) ...)]
-  ;; TODO: do something much better here - figure out how to limit the depth
-  ;; [(α-e (tuple e ...) 0)
-  ;;  ;; TODO: give the actual type here
-  ;;  (* (Tuple))]
   ;; TODO: check for the depth=0 case on variants
   [(α-e (variant t e ...) (a ...) natural_depth)
    ;; TODO: take out the "max" issue here
@@ -880,7 +909,7 @@
                 (term (record [f1 (* Nat)] [f2 (* Nat)])))
   (check-not-false
    (redex-match? csa#
-                 (variant Foo (obs-ext 1) (* (Addr τ)))
+                 (variant Foo (init-addr 1) (obs-ext 2))
                  (term (α-e (variant Foo (addr 1) (addr 2)) ((addr 1)) 10))))
   (check-equal? (term (α-e (list 1 2) () 10))
                 (term (list (* Nat))))
@@ -893,11 +922,11 @@
 
 (define-metafunction csa#
   α-typed-a : typed-a -> typed-a#int
-  [(α-typed-a (addr 0 τ)) (SINGLE-ACTOR-ADDR τ)])
+  [(α-typed-a (addr natural τ)) (init-addr natural τ)])
 
 (module+ test
   (check-equal? (α-typed-receptionist-list (term ((addr 0 Nat))))
-                (term ((SINGLE-ACTOR-ADDR Nat)))))
+                (term ((init-addr 0 Nat)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Further Abstraction
@@ -929,26 +958,26 @@
    (blur-externals
       (redex-let* csa#
                   ([α#n (term
-                         (SINGLE-ACTOR-ADDR
+                         ((init-addr 0)
                           (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
                               (begin
                                 (send (obs-ext 1) (* Nat))
                                 (send (obs-ext 2) (* Nat))
                                 (goto A x y z))))
                            (goto A (obs-ext 2) (obs-ext 3) (obs-ext 4)))))]
-                   [K# (term ((α#n) () (SINGLE-ACTOR-ADDR) ()))])
+                   [K# (term ((α#n) () ((init-addr 0)) ()))])
              (term K#))
       (term ((obs-ext 1) (obs-ext 3))))
    (redex-let* csa#
                ([α#n (term
-                      (SINGLE-ACTOR-ADDR
+                      ((init-addr 0)
                        (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
                            (begin
                              (send (obs-ext 1) (* Nat))
                              (send (* (Addr Nat)) (* Nat))
                              (goto A x y z))))
                         (goto A (* (Addr Nat)) (obs-ext 3) (* (Addr Nat))))))]
-                [K# (term ((α#n) () (SINGLE-ACTOR-ADDR) ()))])
+                [K# (term ((α#n) () ((init-addr 0)) ()))])
                (term K#)))
 
   ;; Make sure duplicates are removed from vectors, lists, and hashes
@@ -985,7 +1014,7 @@
 (define-metafunction csa#
   make-single-actor-abstract-config/mf : α#n -> K#
   [(make-single-actor-abstract-config/mf α#n)
-   ((α#n) () (SINGLE-ACTOR-ADDR) ())])
+   ((α#n) () (,(csa#-actor-address (term α#n))) ())])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
@@ -995,17 +1024,23 @@
   (redex-let csa# ([(α# _ ...) config])
              (term α#)))
 
-(define (config-actor-by-address config addr)
-  (term (config-actor-by-address/mf ,config ,addr)))
+(define (config-actor-and-rest-by-address config addr)
+  (term (config-actor-and-rest-by-address/mf ,config ,addr)))
 
 (define-metafunction csa#
-  config-actor-by-address/mf : K# a#int -> α#n
-  [(config-actor-by-address/mf ((_ ... (name the-agent (a#int _)) _ ...) _ _ _) a#int)
-   the-agent])
+  config-actor-and-rest-by-address/mf : K# a#int -> ((α#n ...) α#n (α#n ...))
+  [(config-actor-and-rest-by-address/mf ((any_1 ... (name the-actor (a#int _)) any_2 ...) _ _ _)
+                                        a#int)
+   ((any_1 ...) the-actor (any_2 ...))])
+
+(define (csa#-actor-address a)
+  (redex-let* csa# ([α#n a]
+                    [(a#int _) (term α#n)])
+              (term a#int)))
 
 (define (csa#-typed-address-type typed-address)
   (redex-let* csa# ([typed-a#int typed-address]
-                    [(SINGLE-ACTOR-ADDR τ) (term typed-a#int)])
+                    [(init-addr natural τ) (term typed-a#int)])
              (term τ)))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -1083,4 +1118,5 @@
 ;; Misc.
 
 (define (csa#-typed-address->untyped the-addr)
-  (term SINGLE-ACTOR-ADDR))
+  (redex-let csa# ([(init-addr natural _) the-addr])
+             (term (init-addr natural))))

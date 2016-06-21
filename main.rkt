@@ -119,19 +119,20 @@ Remaining big challenges I see in the analysis:
   ;;
   ;; TODO: canonicalize the initial tuple (reuse much of the code below for canonicalizing and
   ;; inserting into graph, too)
-  (define initial-tuple
-    (simulation-node
-     ;; TODO: get the max depth from somewhere
-     (α-config initial-prog-config (aps-config-observable-addresses initial-spec-config) 10)
-     (aps#-α-Σ initial-spec-config)
-     (α-typed-receptionist-list init-obs-receptionists)
-     (α-typed-receptionist-list init-unobs-receptionists)
-     null))
+  (match-define (list prog# spec# obs-r# unobs-r#)
+    ;; TODO: get the max depth from somewhere
+    (α-tuple initial-prog-config
+             initial-spec-config
+             init-obs-receptionists
+             init-unobs-receptionists
+             10))
+  (define initial-tuple (simulation-node  prog# spec# obs-r# unobs-r# null))
   (match (find-conformance-simulation initial-tuple state-matches)
     [#f #f]
     [simulation
      (all-commitments-satisfied? simulation)]))
 
+;; TODO: make this function MUCH shorter
 (define (find-conformance-simulation initial-tuple state-matches)
   (define simulation-graph (make-graph))
   (define initial-vertex (graph-add-vertex! simulation-graph initial-tuple))
@@ -172,7 +173,7 @@ Remaining big challenges I see in the analysis:
 
            (define (process-next-step stepped-spec-config)
              (display-step-line "Stepping the prog config")
-             (define stepped-prog-config (step-prog-final-behavior prog (csa#-transition-behavior-exp possible-transition)))
+             (define stepped-prog-config (csa#-transition-final-config possible-transition))
              (display-step-line "Splitting the spec config")
              (for ([spec-config-component (split-spec stepped-spec-config)])
 
@@ -319,7 +320,7 @@ Remaining big challenges I see in the analysis:
      (((define-state (A x)
          [* -> (goto A x)]))
       (goto A (obs-ext 0))
-      SINGLE-ACTOR-ADDR)))
+      (obs-ext 0))))
 
   (check-not-false (redex-match aps# z simple-instance-for-split-test))
 
