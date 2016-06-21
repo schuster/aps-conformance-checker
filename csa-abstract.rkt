@@ -38,8 +38,7 @@
 ;; mega-language)
 (define-extended-language csa# csa-eval
   (K# (α# μ# ρ# χ#)) ;; TODO: update this (incl. remove χ#, since we already label addresses as external)
-  ;; NOTE: for now, assuming only the one special actor
-  (α# (α#n)) ; NOTE: for now, does not handle configs with more than one actor
+  (α# (α#n ...))
   (α#n (a#int ((S# ...) e#)))
   (μ# ()) ; NOTE: for now, assuming no internal sends
   (S# (define-state (s [x τ] ...) (x) e#)

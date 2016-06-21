@@ -277,7 +277,9 @@ Remaining big challenges I see in the analysis:
                ;; now just check if state name matches
                (cond
                  [(null? (aps#-config-instances stepped-spec-config)) stepped-spec-config]
-                 [(equal? (hash-ref state-matches (csa#-transition-next-state prog-transition))
+                 [(equal? (hash-ref state-matches
+                                    (csa#-transition-next-state prog-transition)
+                                    (aps#-config-only-instance-state spec-config))
                           (aps#-config-only-instance-state stepped-spec-config))
                   stepped-spec-config]
                  [else #f])]))))
@@ -1211,23 +1213,94 @@ Remaining big challenges I see in the analysis:
                        (term ((addr 0 Nat))) null
                        (hash 'A 'A)))
 
+  ;; Multiple Disjoint Actors
+  (define static-response-agent2
+    (term
+     ((addr 1)
+      (((define-state (Always2 [response-dest (Addr (Union [Ack Nat]))]) (m)
+             (begin
+               (send response-dest (variant Ack 0))
+               (goto Always2 response-dest))))
+       (goto Always2 ,static-response-address)))))
+  (define other-static-response-agent
+    (term
+     ((addr 1)
+      (((define-state (Always2 [response-dest (Addr (Union [Ack Nat]))]) (m)
+             (begin
+               (send response-dest (variant Ack 0))
+               (goto Always2 response-dest))))
+       (goto Always2 (addr 3))))))
+  (define static-response-with-extra-spec
+    (term
+     (((define-state (Always response-dest)
+         [* -> (with-outputs ([response-dest *]) (goto Always response-dest))]
+         [unobs -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
+      (goto Always ,static-response-address)
+      (addr 0))))
+
+  (check-not-false (redex-match csa-eval αn static-response-agent2))
+  (check-not-false (redex-match csa-eval αn other-static-response-agent))
+  (check-not-false (redex-match aps-eval z static-response-with-extra-spec))
+
+  (check-false (analyze
+                (make-empty-queues-config (list static-response-agent static-response-agent2) null)
+                static-response-spec
+                (term ((addr 0 Nat))) (term ((addr 1 Nat)))
+                (hash 'Always 'Always)))
+  (check-true (analyze
+               (make-empty-queues-config (list static-response-agent static-response-agent2) null)
+               static-response-with-extra-spec
+               (term ((addr 0 Nat))) (term ((addr 1 Nat)))
+               (hash 'Always 'Always)))
+  (check-true (analyze
+               (make-empty-queues-config (list static-response-agent other-static-response-agent) null)
+               static-response-spec
+               (term ((addr 0 Nat))) (term ((addr 1 Nat)))
+               (hash 'Always 'Always)))
+
+  ;; (define request-response-spec2
+  ;;   (term
+  ;;    (((define-state (Always2)
+  ;;        [response-target -> (with-outputs ([response-target *]) (goto Always))]))
+  ;;     (goto Always2)
+  ;;     (addr 1))))
+
+  ;; (define request-response-agent2
+  ;;   (term
+  ;;    ((addr 1)
+  ;;     (((define-state (Always2) (response-target)
+  ;;         (begin
+  ;;           (send response-target 0)
+  ;;           (goto Always2 i))))
+  ;;      (goto Always)))))
+
+  ;; (check-not-false (redex-match aps-eval z request-response-spec2))
+  ;; (check-not-false (redex-match csa-eval αn request-response-agent2))
+  ;; (check-true (analyze
+  ;;              (make-empty-queues-config (list request-response-agent request-response-agent2) null)
+  ;;              request-response-spec
+  ;;              (term (Addr Nat)) (term (Union))
+  ;;              (hash 'Always 'Always)))
+
   ;; Multiple Actors
   ;; (define statically-delegating-responder-actor
   ;;   (term
-  ;;    (,some-other-address ; TODO: this line
+  ;;    ((addr 1)
   ;;     (((define-state (A [responder (Addr (Addr Nat))]) (m)
   ;;         (begin
   ;;           (send responder m)
   ;;           (goto A responder))))
-  ;;      ;; TODO: put the real address here
-  ;;      (goto A ,yet-another-address)))))
+  ;;      (goto A (addr 0))))))
 
   ;; (check-not-false (redex-match csa-eval αn statically-delegating-responder-actor))
-  ;; (check-true (analyze (make-config not-sure-what-goes-here) ;; TODO: this line
-  ;;                      request-response-target
-  ;;                      (term ((addr 0))) null
-  ;;                      ;; TODO: hints?
-  ;;                      ))
+
+  ;; (check-true (analyze
+  ;;              (make-empty-queues-config (list statically-delegating-responder-actor)
+  ;;                                        (list request-response-agent))
+  ;;              request-response-spec
+  ;;              (term ((addr 0 (Addr Nat)))) null
+  ;;              (hash 'Always 'Always)))
+
 
   ;; TODO: tests for:
   ;; * commitment satisfied immediately
