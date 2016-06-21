@@ -80,7 +80,6 @@
    ;; here
    ;; TODO: do I need the dead observables?
    (obs-ext natural))
-  (time-flag MOST-RECENT PREVIOUS)
   ;; TODO: include types in the receptionists and externals (maybe? Might not need them if they're
   ;; tracked elsewhere)
   (ρ# (SINGLE-ACTOR-ADDR))
