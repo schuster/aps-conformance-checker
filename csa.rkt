@@ -9,7 +9,8 @@
          single-agent-prog->config
          handler-step
          type-subst
-         csa-valid-config?)
+         csa-valid-config?
+         csa-valid-receptionist-list?)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -111,7 +112,9 @@
      (list v ...)
      (vector v ...)
      (hash [v v] ...))
+  ;; TODO: remove this untyped address in favor of the typed one
   (a (addr natural))
+  (typed-a (addr natural τ)) ; only used for the initial receptionist lists for now
   (A ((any_1 ... hole any_2 ...) μ ρ χ))
   (E hole
      (goto s v ... E e ...)
@@ -347,3 +350,6 @@
 
 (define (csa-valid-config? c)
   (if (redex-match csa-eval K c) #t #f))
+
+(define (csa-valid-receptionist-list? l)
+  (redex-match csa-eval (typed-a ...) l))

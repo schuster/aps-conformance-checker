@@ -47,7 +47,7 @@ Remaining big challenges I see in the analysis:
 ;;
 ;; Trigger is as listed in csa-abstract
 (struct simulation-node
-  (prog-config spec-config obs-type unobs-type [satisfied-commitments #:mutable])
+  (prog-config spec-config obs-receptionists unobs-receptionists [satisfied-commitments #:mutable])
   #:transparent)
 (struct simulation-step (trigger satisfied-commitments) #:transparent)
 
@@ -55,8 +55,8 @@ Remaining big challenges I see in the analysis:
   (andmap (lambda (select) (equal? (select n1) (select n2)))
           (list simulation-node-prog-config
                 simulation-node-spec-config
-                simulation-node-obs-type
-                simulation-node-unobs-type)))
+                simulation-node-obs-receptionists
+                simulation-node-unobs-receptionists)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Main functions
@@ -78,15 +78,15 @@ Remaining big challenges I see in the analysis:
 ;; TODO: remove this function, or at least rename it
 (define (analyze initial-prog-config
                  initial-spec-instance
-                 init-obs-type
-                 init-unobs-type
+                 init-obs-receptionists
+                 init-unobs-receptionists
                  state-matches)
   (unless (aps-valid-instance? initial-spec-instance)
     (error 'analyze "Invalid initial specification instance ~s" initial-spec-instance))
   (check initial-prog-config
          (aps-config-from-instance initial-spec-instance)
-         init-obs-type
-         init-unobs-type
+         init-obs-receptionists
+         init-unobs-receptionists
          state-matches))
 
 ;; TODO: rename "config" to "state"
@@ -99,13 +99,18 @@ Remaining big challenges I see in the analysis:
 ;; actors. Also assumes that the spec starts in a state in which it has no state parameters.
 (define (check initial-prog-config
                initial-spec-config
-               init-obs-type
-               init-unobs-type
+               init-obs-receptionists
+               init-unobs-receptionists
                state-matches)
   (unless (csa-valid-config? initial-prog-config)
     (error 'check "Invalid initial program configuration ~s" initial-prog-config))
   (unless (aps-valid-config? initial-spec-config)
     (error 'check "Invalid initial specification configuration ~s" initial-spec-config))
+  (unless (csa-valid-receptionist-list? init-obs-receptionists)
+    (error 'check "Invalid observable receptionist lists: ~s" init-obs-receptionists))
+  (unless (csa-valid-receptionist-list? init-unobs-receptionists)
+    (error 'check "Invalid unobservable receptionist lists: ~s" init-unobs-receptionists))
+
   ;; TODO: do a check for the state mapping
 
   ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
@@ -119,8 +124,8 @@ Remaining big challenges I see in the analysis:
      ;; TODO: get the max depth from somewhere
      (α-config initial-prog-config (aps-config-observable-addresses initial-spec-config) 10)
      (aps#-α-Σ initial-spec-config)
-     init-obs-type
-     init-unobs-type
+     (α-typed-receptionist-list init-obs-receptionists)
+     (α-typed-receptionist-list init-unobs-receptionists)
      null))
   (match (find-conformance-simulation initial-tuple state-matches)
     [#f #f]
@@ -142,7 +147,7 @@ Remaining big challenges I see in the analysis:
          (define current-tuple (vertex-value source-vertex))
          ;; TODO: rename this function. A better name will help me with the general terminology
          ;; with which I describe my technique
-         (match-define (simulation-node prog spec obs-type unobs-type _) current-tuple)
+         (match-define (simulation-node prog spec obs-receptionists unobs-receptionists _) current-tuple)
          ;; TODO: rename this idea of transition: there's some other "thing" that this is, like a
          ;; transmission result. Define this data definition in the code somewhere, because it
          ;; should really be a type (it's a new kind of data in my domain that needs to be defined
@@ -159,9 +164,9 @@ Remaining big challenges I see in the analysis:
          (display-step-line "Evaluating possible program transitions")
          ;; TODO: handle multiple actors here
          (define possible-transitions
-           (append (transitions-from-message-of-type prog obs-type #t)
-                   (transitions-from-message-of-type prog unobs-type #f)
-                   (csa#-handle-any-timeouts prog)))
+           (append (external-message-transitions prog obs-receptionists #t)
+                   (external-message-transitions prog unobs-receptionists #f)
+                   (csa#-handle-all-timeouts prog)))
          (for ([possible-transition possible-transitions])
            (display-step-line "Finding a matching spec transition")
 
@@ -176,10 +181,20 @@ Remaining big challenges I see in the analysis:
                (display-step-line "Abstracting a program")
                (define abstracted-prog-config (abstract-prog-config-by-spec stepped-prog-config spec-config-component))
                (display-step-line "Canonicalizing the tuple, adding to queue")
-               (match-define (list canonicalized-prog canonicalized-spec)
-                 (canonicalize-tuple (list abstracted-prog-config spec-config-component))) ; i.e. rename the addresses
-               ;; TODO: allow these types to change over time
-               (define next-tuple (simulation-node canonicalized-prog canonicalized-spec obs-type unobs-type null))
+               (match-define (list canonicalized-prog
+                                   canonicalized-spec
+                                   canonicalized-obs-recs
+                                   canonicalized-unobs-recs)
+                 (canonicalize-tuple (list abstracted-prog-config
+                                           spec-config-component
+                                           obs-receptionists
+                                           unobs-receptionists))) ; i.e. rename the addresses
+               ;; TODO: allow the receptionist sets to change over time
+               (define next-tuple (simulation-node canonicalized-prog
+                                                   canonicalized-spec
+                                                   canonicalized-obs-recs
+                                                   canonicalized-unobs-recs
+                                                   null))
                (define destination-vertex
                  ;; TODO: shorten this match into some kind of "or-else" form
                  (match (graph-find-vertex simulation-graph next-tuple #:is-equal? same-tuple?)
@@ -222,32 +237,22 @@ Remaining big challenges I see in the analysis:
                 [the-config (process-next-step the-config)])]))
          (loop to-visit (set-add visited current-tuple))]))))
 
-;; TODO: I probably need some canonical representation of program and spec configs so that otherwise
-;; equivalent configs are not considered different by the worklist algorithm
-
-;; TODO: adjust this function to allow for multiple possible actors
-;;
-;; Returns all possible transitions of the given program config caused by a received message to the of
-;; the given type
-(define (transitions-from-message-of-type prog-config type observed?)
-  (define the-actor (csa#-config-only-actor prog-config))
-
-  ;; Debugging
-  ;; (printf "Message type: ~s\n" type)
-  ;; (printf "Number of generated messages: ~s\n" (length (generate-abstract-messages type (csa#-actor-current-state the-actor) 10 observed?)))
-
-  (display-step-line "Enumerating abstract messages (typed)")
-  (for/fold ([transitions-so-far null])
-            ;; TODO: get the max depth from somewhere
-            ([message (generate-abstract-messages type (csa#-actor-current-state the-actor) 10 observed?)])
-    (define the-address (csa#-actor-address the-actor))
-    ;; TODO: remove the call to age-addresses here
-    (display-step-line "Evaluating a handler")
-    (define new-transitions (csa#-handle-message prog-config
-                                                 the-address
-                                                 message
-                                                 observed?))
-    (append transitions-so-far new-transitions)))
+;; Returns all possible transitions of the given program config caused by a received message to any of
+;; the given receptionist addresses
+(define (external-message-transitions prog-config receptionists observed?)
+  (append*
+   (for/list ([receptionist receptionists])
+     (display-step-line "Enumerating abstract messages (typed)")
+     (for/fold ([transitions-so-far null])
+               ;; TODO: get the max depth from somewhere
+               ([message (generate-abstract-messages (csa#-typed-address-type receptionist) 10)])
+       (display-step-line "Evaluating a handler")
+       ;; TODO: consider not returning a special "transition" object here, but rather a new config:
+       ;; keep the config components inside the CSA# module
+       (append transitions-so-far
+               (csa#-handle-message prog-config
+                                    (csa#-typed-address->untyped receptionist)
+                                    message observed?))))))
 
 ;; Given a program transition, the current spec config, and the hash table mapping prog states to spec
 ;; states, returns the list of possible spec config moves that could match this transition
@@ -426,19 +431,21 @@ Remaining big challenges I see in the analysis:
      ((addr 0)
       (((define-state (Always) (m) (goto Always)))
        (goto Always)))))
+  (check-not-false (redex-match csa-eval αn ignore-all-agent))
   (define ignore-all-config (make-single-agent-config ignore-all-agent))
   (define ignore-all-spec-instance
     (term
      (((define-state (Always) [* -> (goto Always)]))
       (goto Always)
       (addr 0))))
-
-  (check-not-false (redex-match csa-eval αn ignore-all-agent))
   (check-not-false (redex-match csa-eval K ignore-all-config))
   (check-not-false (redex-match aps-eval z ignore-all-spec-instance))
 
   ;; TODO: supply concrete specs and programs to the checker, not abstract ones
-  (check-true (analyze ignore-all-config ignore-all-spec-instance (term Nat) (term (Union)) (hash 'Always 'Always)))
+  (check-true (analyze ignore-all-config
+                       ignore-all-spec-instance
+                       (term ((addr 0 (Addr Nat)))) null
+                       (hash 'Always 'Always)))
 
   ;;;; Send one message to a statically-known address per request
 
@@ -480,19 +487,19 @@ Remaining big challenges I see in the analysis:
 
   (check-true (analyze (make-single-agent-config static-response-agent)
                        static-response-spec
-                       (term Nat) (term (Union))
+                       (term ((addr 0 (Union [Ack Nat])))) null
                        (hash 'Always 'Always)))
   (check-false (analyze (make-single-agent-config static-response-agent)
                         ignore-all-with-addr-spec-instance
-                        (term Nat) (term (Union))
+                        (term ((addr 0 (Union [Ack Nat])))) null
                         (hash 'Always 'Always)))
   (check-false (analyze (make-single-agent-config static-double-response-agent)
                         static-response-spec
-                        (term Nat) (term (Union))
+                        (term ((addr 0 (Union [Ack Nat])))) null
                         (hash 'Always 'Always)))
   (check-false (analyze ignore-all-config
                         static-response-spec
-                        (term Nat) (term (Union))
+                        (term ((addr 0 (Union [Ack Nat])))) null
                         (hash 'Always 'Always)))
 
   ;;;; Pattern matching tests, without dynamic channels
@@ -541,15 +548,15 @@ Remaining big challenges I see in the analysis:
 
   (check-true (analyze (make-single-agent-config pattern-matching-agent)
                        pattern-match-spec
-                       (term (Union [A Nat] [B Nat])) (term (Union))
+                       (term ((addr 0 (Union [A Nat] [B Nat])))) null
                        pattern-matching-map))
   (check-false (analyze (make-single-agent-config partial-pattern-matching-agent)
                         pattern-match-spec
-                        (term (Union [A Nat] [B Nat])) (term (Union))
+                        (term ((addr 0 (Union [A Nat] [B Nat])))) null
                         pattern-matching-map))
   (check-false (analyze (make-single-agent-config reverse-pattern-matching-agent)
                         pattern-match-spec
-                        (term (Union [A Nat] [B Nat])) (term (Union))
+                        (term ((addr 0 (Union [A Nat] [B Nat])))) null
                         pattern-matching-map))
 
   ;;;; Dynamic request/response
@@ -644,39 +651,39 @@ Remaining big challenges I see in the analysis:
 
   (check-true (analyze (make-single-agent-config request-response-agent)
                        request-response-spec
-                       (term (Addr Nat)) (term (Union))
+                       (term ((addr 0 (Addr Nat)))) null
                        (hash 'Always 'Always)))
   (check-false (analyze (make-single-agent-config respond-to-first-addr-agent)
                         request-response-spec
-                        (term (Addr Nat)) (term (Union))
+                        (term ((addr 0 (Addr Nat)))) null
                         (hash 'Init 'Always 'HaveAddr 'Always)))
   (check-false (analyze (make-single-agent-config respond-to-first-addr-agent2)
                         request-response-spec
-                        (term (Addr Nat)) (term (Union))
+                        (term ((addr 0 (Addr Nat)))) null
                         (hash 'Always 'Always)))
 
   (check-false (analyze (make-single-agent-config request-response-agent)
                         request-same-response-addr-spec
-                        (term (Addr Nat)) (term (Union))
+                        (term ((addr 0 (Addr Nat)))) null
                         (hash 'Always 'Init)))
   (check-true (analyze (make-single-agent-config respond-to-first-addr-agent)
                        request-same-response-addr-spec
-                       (term (Addr Nat)) (term (Union))
+                       (term ((addr 0 (Addr Nat)))) null
                        (hash 'Init 'Init 'HaveAddr 'HaveAddr)))
   ;; TODO: figure out some way to get this test to work (won't right now because agent's Always state
   ;; corresponds to both states of the spec, depending on its parameter
   ;; (check-true (analyze (make-single-agent-config respond-to-first-addr-agent2)
   ;;                       request-same-response-addr-spec
-  ;;                       (term (Addr Nat)) (term (Union))
+  ;;                       (term ((addr 0))) null
   ;;                       (hash 'Always 'Always)))
 
   (check-false (analyze (make-single-agent-config double-response-agent)
                         request-response-spec
-                        (term (Addr Nat)) (term (Union))
+                        (term ((addr 0 (Addr Nat)))) null
                         (hash 'Always 'Always)))
   (check-false (analyze (make-single-agent-config delay-saving-address-agent)
                         request-response-spec
-                        (term (Addr Nat)) (term (Union))
+                        (term ((addr 0 (Addr Nat)))) null
                         (hash 'Init 'Always 'HaveAddr 'Always)))
 
   ;; When given two choices to/from same state, have to take the one where the outputs match the
@@ -704,7 +711,7 @@ Remaining big challenges I see in the analysis:
   (check-not-false (redex-match aps-eval z maybe-reply-spec))
   (check-true (analyze (make-single-agent-config reply-once-actor)
                        maybe-reply-spec
-                       (term (Addr Nat)) (term (Union))
+                       (term ((addr 0 (Addr Nat)))) null
                        (hash 'A 'A 'B 'B)))
 
   ;;;; Non-deterministic branching in spec
@@ -738,8 +745,13 @@ Remaining big challenges I see in the analysis:
   (check-not-false (redex-match aps-eval z zero-spec))
   (check-not-false (redex-match csa-eval αn primitive-branch-agent))
 
-  (check-true (analyze (make-single-agent-config primitive-branch-agent) zero-nonzero-spec (term Nat) (term (Union)) (hash 'S1 'S1)))
-  (check-false (analyze (make-single-agent-config primitive-branch-agent) zero-spec (term Nat) (term (Union)) (hash 'S1 'S1)))
+  (check-true (analyze (make-single-agent-config primitive-branch-agent)
+                       zero-nonzero-spec
+                       (term ((addr 0 Nat))) null
+                       (hash 'S1 'S1)))
+  (check-false (analyze (make-single-agent-config primitive-branch-agent)
+                        zero-spec (term ((addr 0 Nat))) null
+                        (hash 'S1 'S1)))
 
   ;;;; Stuck states in concrete evaluation
 
@@ -770,29 +782,35 @@ Remaining big challenges I see in the analysis:
   (check-not-false (redex-match csa-eval αn div-by-zero-agent))
   (check-not-false (redex-match csa-eval αn div-by-one-agent))
 
-  (check-true (analyze (make-single-agent-config div-by-one-agent) nat-to-nat-spec (term Nat) (term (Union)) (hash 'Always 'Always)))
-  (check-true (analyze (make-single-agent-config div-by-zero-agent) nat-to-nat-spec (term Nat) (term (Union)) (hash 'Always 'Always)))
+  (check-true (analyze (make-single-agent-config div-by-one-agent)
+                       nat-to-nat-spec
+                       (term ((addr 0 Nat))) null
+                       (hash 'Always 'Always)))
+  (check-true (analyze (make-single-agent-config div-by-zero-agent)
+                       nat-to-nat-spec
+                       (term ((addr 0 Nat))) null
+                       (hash 'Always 'Always)))
 
   ;;;; Unobservable communication
 
   ;; wildcard unobservables are ignored for the purpose of output commitments
   (check-true (analyze (make-single-agent-config request-response-agent)
                        ignore-all-spec-instance
-                       (term (Addr Nat)) (term (Union))
+                       (term ((addr 0 (Addr Nat)))) null
                        (hash 'Always 'Always)))
 
   ;; 1. In dynamic req/resp, allowing unobserved perspective to send same messages does not affect conformance
   (check-true (analyze (make-single-agent-config request-response-agent)
                        request-response-spec
-                       (term (Addr Nat))
-                       (term (Addr Nat))
+                       (term ((addr 0 (Addr Nat))))
+                       (term ((addr 0 (Addr Nat))))
                        (hash 'Always 'Always)))
 
   ;; 2. Allowing same messages from unobs perspective violates conformance for static req/resp.
   (check-false (analyze (make-single-agent-config static-response-agent)
                         static-response-spec
-                        (term Nat)
-                        (term Nat)
+                        (term ((addr 0 (Addr Nat))))
+                        (term ((addr 0 (Addr Nat))))
                         (hash 'Always 'Always)))
 
   ;; 3. Conformance regained for static req/resp when add an unobs transition
@@ -807,8 +825,8 @@ Remaining big challenges I see in the analysis:
 
   (check-true (analyze (make-single-agent-config static-response-agent)
                        static-response-spec-with-unobs
-                       (term Nat)
-                       (term Nat)
+                       (term ((addr 0 (Union [Ack Nat]))))
+                       (term ((addr 0 (Union [Ack Nat]))))
                        (hash 'Always 'Always)))
 
   ;; 4. unobs causes a particular behavior (like connected/error in TCP)
@@ -921,8 +939,8 @@ Remaining big challenges I see in the analysis:
 
   (check-true (analyze (make-single-agent-config unobs-toggle-agent)
                        unobs-toggle-spec
-                       (term (Union [FromObserver]))
-                       (term (Union [FromUnobservedEnvironment]))
+                       (term ((addr 0 (Union [FromObserver]))))
+                       (term ((addr 0 (Union [FromUnobservedEnvironment]))))
                        (hash 'On 'On 'Off 'Off)))
 
   (for ([agent (list unobs-toggle-agent-wrong1
@@ -931,8 +949,8 @@ Remaining big challenges I see in the analysis:
                      unobs-toggle-agent-wrong4)])
     (check-false (analyze (make-single-agent-config agent)
                           unobs-toggle-spec
-                          (term (Union [FromObserver]))
-                          (term (Union [FromUnobservedEnvironment]))
+                          (term ((addr 0 (Union [FromObserver]))))
+                          (term ((addr 0 (Union [FromUnobservedEnvironment]))))
                           (hash 'On 'On 'Off 'Off))))
 
   ;;;; Records
@@ -969,13 +987,13 @@ Remaining big challenges I see in the analysis:
   ;; 0
   (check-true (analyze (make-single-agent-config record-req-resp-agent)
                        record-req-resp-spec
-                       (term (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]))
-                       (term (Union))
+                       (term ((addr 0 (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]))))
+                       null
                        (hash 'Always 'Always)))
   (check-false (analyze (make-single-agent-config record-req-wrong-resp-agent)
                         record-req-resp-spec
-                        (term (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]))
-                        (term (Union))
+                        (term ((addr 0 (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]))))
+                        null
                         (hash 'Always 'Always)))
 
   ;;;; Let
@@ -1004,11 +1022,11 @@ Remaining big challenges I see in the analysis:
 
   (check-true (analyze (make-single-agent-config static-response-let-agent)
                        static-response-spec
-                       (term Nat) (term (Union))
+                       (term ((addr 0 Nat))) null
                        (hash 'Always 'Always)))
   (check-false (analyze (make-single-agent-config static-double-response-let-agent)
                         static-response-spec
-                        (term Nat) (term (Union))
+                        (term ((addr 0 Nat))) null
                         (hash 'Always 'Always)))
 
   ;; Check that = gives both results
@@ -1056,17 +1074,17 @@ Remaining big challenges I see in the analysis:
   (check-false
    (analyze (make-single-agent-config equal-agent-wrong1)
             static-response-spec
-            (term Nat) (term (Union))
+            (term ((addr 0 Nat))) null
             (hash 'A 'Always 'B 'Always)))
   (check-false
    (analyze (make-single-agent-config equal-agent-wrong2)
             static-response-spec
-            (term Nat) (term (Union))
+            (term ((addr 0 Nat))) null
             (hash 'A 'Always 'B 'Always)))
   (check-true
    (analyze (make-single-agent-config equal-agent)
             static-response-spec
-            (term Nat) (term (Union))
+            (term ((addr 0 Nat))) null
             (hash 'A 'Always 'B 'Always)))
 
   ;;;; For loops
@@ -1132,25 +1150,25 @@ Remaining big challenges I see in the analysis:
 
   (check-true (analyze (make-single-agent-config loop-do-nothing-agent)
                        ignore-all-spec-instance
-                       (term Nat)
-                       (term (Union))
+                       (term ((addr 0 (Addr Nat))))
+                       null
                        (hash 'A 'Always)))
   (check-true (analyze (make-single-agent-config loop-send-unobs-agent)
                        ignore-all-spec-instance
-                       (term Nat)
-                       (term (Union))
+                       (term ((addr 0 (Addr Nat))))
+                       null
                        (hash 'A 'Always)))
   (check-true (analyze (make-single-agent-config send-before-loop-agent)
                        request-response-spec
-                       (term (Addr Nat)) (term (Union))
+                       (term ((addr 0 (Addr Nat)))) null
                        (hash 'A 'Always)))
   (check-false (analyze (make-single-agent-config send-inside-loop-agent)
                        request-response-spec
-                       (term (Addr Nat)) (term (Union))
+                       (term ((addr 0 (Addr Nat)))) null
                        (hash 'A 'Always)))
   (check-true (analyze (make-single-agent-config send-after-loop-agent)
                        request-response-spec
-                       (term (Addr Nat)) (term (Union))
+                       (term ((addr 0 (Addr Nat)))) null
                        (hash 'A 'Always)))
 
   ;;;; Timeouts
@@ -1183,14 +1201,13 @@ Remaining big challenges I see in the analysis:
   (check-not-false (redex-match aps-eval z timeout-spec))
   (check-not-false (redex-match aps-eval z got-message-only-spec))
   (check-not-false (redex-match csa-eval αn timeout-and-send-agent))
-
   (check-true (analyze (make-single-agent-config timeout-and-send-agent)
                        timeout-spec
-                       (term Nat) (term (Union))
+                       (term ((addr 0 Nat))) null
                        (hash 'A 'A)))
   (check-false (analyze (make-single-agent-config timeout-and-send-agent)
                        got-message-only-spec
-                       (term Nat) (term (Union))
+                       (term ((addr 0 Nat))) null
                        (hash 'A 'A)))
 
   ;; Multiple Actors
@@ -1207,7 +1224,7 @@ Remaining big challenges I see in the analysis:
   ;; (check-not-false (redex-match csa-eval αn statically-delegating-responder-actor))
   ;; (check-true (analyze (make-config not-sure-what-goes-here) ;; TODO: this line
   ;;                      request-response-target
-  ;;                      (term (Addr Nat)) (term (Union))
+  ;;                      (term ((addr 0))) null
   ;;                      ;; TODO: hints?
   ;;                      ))
 

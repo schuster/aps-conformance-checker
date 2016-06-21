@@ -6,19 +6,19 @@
  csa#
  generate-abstract-messages
  csa#-handle-message
- csa#-handle-any-timeouts
+ csa#-handle-all-timeouts
  (struct-out csa#-transition)
  csa#-internal-trigger?
  csa#-output-address
  csa#-output-message
  csa#-transition-next-state
  α-config
+ α-typed-receptionist-list
  step-prog-final-behavior
- csa#-actor-address
- csa#-actor-current-state
- csa#-config-only-actor
  blur-externals
  make-single-actor-abstract-config
+ csa#-typed-address-type
+ csa#-typed-address->untyped
 
  ;; Debug helpers
  prog-config-without-state-defs
@@ -71,7 +71,9 @@
       x
       v#)
   (a# a#int a#ext) ; internal and external addresses
+  ;; TODO: replace the untyped address with the typed one
   (a#int SINGLE-ACTOR-ADDR)
+  (typed-a#int (SINGLE-ACTOR-ADDR τ))
   (a#ext
    (* (Addr τ)) ; unobserved address
    ;; NOTE: only a finite number of addresses in the initial config, so we can use natural numbers
@@ -150,7 +152,7 @@
 ;; don't reuse other addresses
 (define next-generated-address 100)
 
-(define (generate-abstract-messages type current-state-name max-depth observed?)
+(define (generate-abstract-messages type max-depth)
   (term (generate-abstract-messages/mf ,type ,max-depth)))
 
 (define-metafunction csa#
@@ -273,16 +275,6 @@
   )
 
 ;; ---------------------------------------------------------------------------------------------------
-
-(define (config-actor-by-address config addr)
-  (term (config-actor-by-address/mf ,config ,addr)))
-
-(define-metafunction csa#
-  config-actor-by-address/mf : K# a#int -> α#n
-  [(config-actor-by-address/mf ((_ ... (name the-agent (a#int _)) _ ...) _ _ _) a#int)
-   the-agent])
-
-;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
 
 (struct csa#-transition
@@ -319,23 +311,26 @@
                       (term (external-unobservable-message ,message))))))
 
 ;; Returns all transitions possible from this program configuration by taking a timeout
-(define (csa#-handle-any-timeouts prog-config)
-  (define matches
-    (redex-match csa#
-                 (_ ((_ ... (define-state (s [x_s τ_s] ..._n)  _    _  [(timeout _) e#]) _ ...) (in-hole E# (goto s v# ..._n))))
-                 ;; TODO: handle multiple actors here
-                 (config-actor-by-address prog-config (term SINGLE-ACTOR-ADDR))))
-  (cond
-    [matches
-     (for/fold ([eval-results null])
-               ([the-match matches])
-       (define (get-binding name) (bind-exp (findf (lambda (binding) (eq? (bind-name binding) name)) (match-bindings the-match))))
-       (redex-let csa# ([(x_s ...) (get-binding 'x_s)]
-                        [(v# ...) (get-binding 'v#)]
-                        [e# (get-binding 'e#)])
-                  (define initial-config (inject/H# (term (csa#-subst-n e# [x_s v#] ...))))
-                  (append eval-results (eval-handler initial-config 'timeout))))]
-    [else null]))
+(define (csa#-handle-all-timeouts prog-config)
+  (for/fold ([transitions null])
+            ([actor (csa#-config-actors prog-config)])
+    (define matches
+      (redex-match csa#
+                   (_ ((_ ... (define-state (s [x_s τ_s] ..._n)  _    _  [(timeout _) e#]) _ ...) (in-hole E# (goto s v# ..._n))))
+                   actor))
+    (define new-transitions
+      (cond
+       [matches
+        (append*
+         (for/list ([the-match matches])
+           (define (get-binding name) (bind-exp (findf (lambda (binding) (eq? (bind-name binding) name)) (match-bindings the-match))))
+           (redex-let csa# ([(x_s ...) (get-binding 'x_s)]
+                            [(v# ...) (get-binding 'v#)]
+                            [e# (get-binding 'e#)])
+                      (eval-handler (inject/H# (term (csa#-subst-n e# [x_s v#] ...)))
+                                    'timeout))))]
+       [else null]))
+    (append transitions new-transitions)))
 
 (define (eval-handler handler-config trigger)
   (define final-configs (apply-reduction-relation* handler-step# handler-config #:cache-all? #t))
@@ -834,6 +829,7 @@
   ;; TODO: is there any way this will ever be used for anything but the initial addresses?
   ;; TODO: deal with the self-address here
   ;; TODO: canonicalize this address
+  [(α-e (addr 0) _ _) SINGLE-ACTOR-ADDR]
   [(α-e (addr natural) (_ ... (addr natural) _ ...) _) (obs-ext natural)]
   [(α-e a _ _) (* (Addr Nat))] ; TODO: fill in the real type here
   [(α-e (goto s e ...) (a ...) natural_depth) (goto s (α-e e (a ...) natural_depth) ...)]
@@ -891,6 +887,18 @@
                 (term (list (* Nat))))
   (check-equal? (term (α-e (vector 1 2) () 10))
                 (term (vector (* Nat)))))
+
+(define (α-typed-receptionist-list addresses)
+  (redex-let csa# ([(typed-a ...) addresses])
+             (term ((α-typed-a typed-a) ...))))
+
+(define-metafunction csa#
+  α-typed-a : typed-a -> typed-a#int
+  [(α-typed-a (addr 0 τ)) (SINGLE-ACTOR-ADDR τ)])
+
+(module+ test
+  (check-equal? (α-typed-receptionist-list (term ((addr 0 Nat))))
+                (term ((SINGLE-ACTOR-ADDR Nat)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Further Abstraction
@@ -983,22 +991,23 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
 
-(define (csa#-actor-address the-actor)
-  (redex-let csa# ([(a# _) the-actor])
-             (term a#)))
+;; Returns a list of actors (α#n's)
+(define (csa#-config-actors config)
+  (redex-let csa# ([(α# _ ...) config])
+             (term α#)))
 
-(define (csa#-actor-current-state the-actor)
-  (redex-let csa# ([(_ (_ (in-hole E# (goto s _ ...)))) the-actor])
-             (term s)))
-
-(define (csa#-config-only-actor prog-config)
-  (term (config-only-actor/mf ,prog-config)))
+(define (config-actor-by-address config addr)
+  (term (config-actor-by-address/mf ,config ,addr)))
 
 (define-metafunction csa#
-  config-only-actor/mf : K# -> α#n
-  [(config-only-actor/mf (α# _ _ _))
-   α#n
-   (where (α#n) α#)])
+  config-actor-by-address/mf : K# a#int -> α#n
+  [(config-actor-by-address/mf ((_ ... (name the-agent (a#int _)) _ ...) _ _ _) a#int)
+   the-agent])
+
+(define (csa#-typed-address-type typed-address)
+  (redex-let* csa# ([typed-a#int typed-address]
+                    [(SINGLE-ACTOR-ADDR τ) (term typed-a#int)])
+             (term τ)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Boolean Logic
@@ -1070,3 +1079,9 @@
   redex-set-add : (any ...) any -> (any ...)
   [(redex-set-add (any_1 ... any any_2 ...) any) (any_1 ... any any_2 ...)]
   [(redex-set-add (any_1 ...) any_2) (any_1 ... any_2)])
+
+;; ---------------------------------------------------------------------------------------------------
+;; Misc.
+
+(define (csa#-typed-address->untyped the-addr)
+  (term SINGLE-ACTOR-ADDR))

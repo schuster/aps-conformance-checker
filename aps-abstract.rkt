@@ -646,10 +646,12 @@
   (term (canonicalize-tuple/mf ,tuple)))
 
 (define-metafunction aps#
-  canonicalize-tuple/mf : (K# Σ) -> (K# Σ)
-  [(canonicalize-tuple/mf (K# Σ))
+  canonicalize-tuple/mf : (K# Σ (typed-a#int ...) (typed-a#int ...)) -> (K# Σ (typed-a#int ...) (typed-a#int ...))
+  [(canonicalize-tuple/mf (K# Σ (typed-a#int_obs ...) (typed-a#int_unobs ...)))
    ((rename-addresses K# [natural_old natural_new] ...)
-    (rename-addresses Σ [natural_old natural_new] ...))
+    (rename-addresses Σ [natural_old natural_new] ...)
+    (rename-addresses (typed-a#int_obs ...) [natural_old natural_new] ...)
+    (rename-addresses (typed-a#int_unobs ...) [natural_old natural_new] ...))
    (where ((z ...) ((a#ext_com _ ...) ...)) Σ)
    (where ((obs-ext natural_old) ...)
           ,(remove-duplicates (append* (term (a#ext_com ...))
@@ -667,7 +669,9 @@
       (((((define-state (A a b c) [* -> (goto A)]))
          (goto A (obs-ext 25) (obs-ext 42) (obs-ext 10))
          SINGLE-ACTOR-ADDR))
-       ()))))
+       ())
+      ((SINGLE-ACTOR-ADDR Nat))
+      ())))
    (term
     (,(make-single-actor-abstract-config
        (term (SINGLE-ACTOR-ADDR
@@ -676,7 +680,9 @@
      (((((define-state (A a b c) [* -> (goto A)]))
         (goto A (obs-ext 0) (obs-ext 1) (obs-ext 2))
         SINGLE-ACTOR-ADDR))
-      ()))))
+      ())
+     ((SINGLE-ACTOR-ADDR Nat))
+     ())))
 
   (check-equal?
    (canonicalize-tuple
@@ -688,7 +694,9 @@
       (((((define-state (A c b a) [* -> (goto A)]))
          (goto A (obs-ext 25) (obs-ext 42) (obs-ext 10))
          SINGLE-ACTOR-ADDR))
-       ()))))
+       ())
+      ()
+      ())))
    (term
     (,(make-single-actor-abstract-config
        (term (SINGLE-ACTOR-ADDR
@@ -697,7 +705,9 @@
      (((((define-state (A c b a) [* -> (goto A)]))
         (goto A (obs-ext 0) (obs-ext 1) (obs-ext 2))
         SINGLE-ACTOR-ADDR))
-      ()))))
+      ())
+     ()
+     ())))
 
   (check-equal?
    (canonicalize-tuple
@@ -706,13 +716,17 @@
         (term (SINGLE-ACTOR-ADDR
                (((define-state (A) (m) (goto A)))
                 (goto A)))))
-      (() (((obs-ext 101) *))))))
+      (() (((obs-ext 101) *)))
+      ()
+      ())))
    (term
     (,(make-single-actor-abstract-config
        (term (SINGLE-ACTOR-ADDR
               (((define-state (A) (m) (goto A)))
                (goto A)))))
-     (() (((obs-ext 0) *))))))
+     (() (((obs-ext 0) *)))
+     ()
+     ())))
 
   ;; TODO: test for an address that appears more than once in the spec (e.g. twice as a spec param)
 
