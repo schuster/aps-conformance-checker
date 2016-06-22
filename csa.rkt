@@ -362,7 +362,8 @@
 ;; Predicates
 
 (define (csa-valid-config? c)
-  (if (redex-match csa-eval K c) #t #f))
+  (and (redex-match csa-eval K c)
+       (not (check-duplicates (csa-config-internal-addresses c)))))
 
 (define (csa-valid-receptionist-list? l)
   (redex-match csa-eval (typed-a ...) l))
