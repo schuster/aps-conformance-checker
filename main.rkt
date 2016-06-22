@@ -83,11 +83,11 @@ Remaining big challenges I see in the analysis:
                  state-matches)
   (unless (aps-valid-instance? initial-spec-instance)
     (error 'analyze "Invalid initial specification instance ~s" initial-spec-instance))
-  (check initial-prog-config
-         (aps-config-from-instance initial-spec-instance)
-         init-obs-receptionists
-         init-unobs-receptionists
-         state-matches))
+  (model-check initial-prog-config
+               (aps-config-from-instances (list initial-spec-instance))
+               init-obs-receptionists
+               init-unobs-receptionists
+               state-matches))
 
 ;; TODO: rename "config" to "state"
 
@@ -97,11 +97,11 @@ Remaining big challenges I see in the analysis:
 ;;
 ;; NOTE: this currently handles only programs consisting of a single actor that does not spawn other
 ;; actors. Also assumes that the spec starts in a state in which it has no state parameters.
-(define (check initial-prog-config
-               initial-spec-config
-               init-obs-receptionists
-               init-unobs-receptionists
-               state-matches)
+(define (model-check initial-prog-config
+                     initial-spec-config
+                     init-obs-receptionists
+                     init-unobs-receptionists
+                     state-matches)
   (unless (csa-valid-config? initial-prog-config)
     (error 'check "Invalid initial program configuration ~s" initial-prog-config))
   (unless (aps-valid-config? initial-spec-config)
@@ -116,9 +116,6 @@ Remaining big challenges I see in the analysis:
   ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
   ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
   ;; message generation
-  ;;
-  ;; TODO: canonicalize the initial tuple (reuse much of the code below for canonicalizing and
-  ;; inserting into graph, too)
   (match-define (list prog# spec# obs-r# unobs-r#)
     ;; TODO: get the max depth from somewhere
     (α-tuple initial-prog-config
@@ -126,20 +123,20 @@ Remaining big challenges I see in the analysis:
              init-obs-receptionists
              init-unobs-receptionists
              10))
-  (define initial-tuple (simulation-node  prog# spec# obs-r# unobs-r# null))
-  (match (find-conformance-simulation initial-tuple state-matches)
+  (match (find-conformance-simulation  prog# spec# obs-r# unobs-r# state-matches)
     [#f #f]
     [simulation
      (all-commitments-satisfied? simulation)]))
 
 ;; TODO: make this function MUCH shorter
-(define (find-conformance-simulation initial-tuple state-matches)
+(define (find-conformance-simulation initial-prog initial-spec initial-obs-r initial-unobs-r state-matches)
   (define simulation-graph (make-graph))
-  (define initial-vertex (graph-add-vertex! simulation-graph initial-tuple))
+  (define to-visit (queue))
+  (define initial-vertex (record-next-step initial-prog initial-spec initial-obs-r initial-unobs-r to-visit simulation-graph))
 
   (let/cc return-early
     (define program-transitions-checked 0) ; for diagnostics only
-    (let loop ([to-visit (queue initial-vertex)]
+    (let loop ([to-visit to-visit]
                [visited (set)])
       (cond
         [(queue-empty? to-visit) simulation-graph]
@@ -169,47 +166,8 @@ Remaining big challenges I see in the analysis:
                    (external-message-transitions prog unobs-receptionists #f)
                    (csa#-handle-all-timeouts prog)))
          (for ([possible-transition possible-transitions])
+           (define stepped-prog-config (csa#-transition-final-config possible-transition))
            (display-step-line "Finding a matching spec transition")
-
-           (define (process-next-step stepped-spec-config)
-             (display-step-line "Stepping the prog config")
-             (define stepped-prog-config (csa#-transition-final-config possible-transition))
-             (display-step-line "Splitting the spec config")
-             (for ([spec-config-component (split-spec stepped-spec-config)])
-
-               ;; TODO: make it an "error" for a non-precise address to match a spec state parameter
-
-               (display-step-line "Abstracting a program")
-               (define abstracted-prog-config (abstract-prog-config-by-spec stepped-prog-config spec-config-component))
-               (display-step-line "Canonicalizing the tuple, adding to queue")
-               (match-define (list canonicalized-prog
-                                   canonicalized-spec
-                                   canonicalized-obs-recs
-                                   canonicalized-unobs-recs)
-                 (canonicalize-tuple (list abstracted-prog-config
-                                           spec-config-component
-                                           obs-receptionists
-                                           unobs-receptionists))) ; i.e. rename the addresses
-               ;; TODO: allow the receptionist sets to change over time
-               (define next-tuple (simulation-node canonicalized-prog
-                                                   canonicalized-spec
-                                                   canonicalized-obs-recs
-                                                   canonicalized-unobs-recs
-                                                   null))
-               (define destination-vertex
-                 ;; TODO: shorten this match into some kind of "or-else" form
-                 (match (graph-find-vertex simulation-graph next-tuple #:is-equal? same-tuple?)
-                   [#f
-                    ;; (printf "Adding state: ~s\n" (prog-config-goto (car next-tuple)))
-                    (define new-vertex (graph-add-vertex! simulation-graph next-tuple))
-                    (enqueue! to-visit new-vertex)
-                    new-vertex]
-                   [vertex vertex]))
-               ;; TODO: list satisfied commitments in the edge, and list the trigger
-               (graph-add-edge! simulation-graph
-                                (simulation-step (csa#-transition-trigger possible-transition) null)
-                                source-vertex
-                                destination-vertex)))
 
            ;; TODO: rewrite find-matching-spec-transition; probably remove or refactor the
            ;; hints. Should also just return the full config, because output commitment won't be
@@ -222,7 +180,14 @@ Remaining big challenges I see in the analysis:
               ;;         spec)
               (return-early #f)]
              [(list stepped-spec-config)
-              (process-next-step stepped-spec-config)]
+              (define destination-vertices
+                (record-next-step stepped-prog-config stepped-spec-config obs-receptionists unobs-receptionists to-visit simulation-graph))
+              ;; TODO: this for loop is repeated below; refactor out this redundancy
+              (for ([destination-vertex destination-vertices])
+                (graph-add-edge! simulation-graph
+                                 (simulation-step (csa#-transition-trigger possible-transition) null)
+                                 source-vertex
+                                 destination-vertex))]
              [(list multiple-transitions ...)
               ;; TODO: remove this hack
               ;;
@@ -235,7 +200,15 @@ Remaining big challenges I see in the analysis:
                    (printf "A spec transition: ~s\n" s))
                  ;; TODO: call a continuation instead
                  (return-early #f)]
-                [the-config (process-next-step the-config)])]))
+                [the-config
+                 (define destination-vertices
+                   (record-next-step stepped-prog-config the-config obs-receptionists unobs-receptionists to-visit simulation-graph))
+                 ;; TODO: list satisfied commitments in the edge, and list the trigger
+                 (for ([destination-vertex destination-vertices])
+                   (graph-add-edge! simulation-graph
+                                    (simulation-step (csa#-transition-trigger possible-transition) null)
+                                    source-vertex
+                                    destination-vertex))])]))
          (loop to-visit (set-add visited current-tuple))]))))
 
 ;; Returns all possible transitions of the given program config caused by a received message to any of
@@ -287,6 +260,42 @@ Remaining big challenges I see in the analysis:
 ;; TODO: consider defining the spec semantics completely independently of concrete addresses, and
 ;; provide a mapping in the spec instead (the spec semantics would probably look something like HD
 ;; automata)
+
+;; Records the next tuple as a next state in our work list and in our simulation graph (just the
+;; vertex, not the edge), doing the necessary splitting, abstraction, and canonicalization of the
+;; tuple. Returns the set of new simulation graph vertices.
+;;
+;; TODO: refactor this function to take less arguments and generally be more coherent
+(define (record-next-step stepped-prog-config stepped-spec-config obs-receptionists unobs-receptionists to-visit simulation-graph)
+  (display-step-line "Splitting the spec config")
+  (for/list ([spec-config-component (split-spec stepped-spec-config)])
+
+    ;; TODO: make it an "error" for a non-precise address to match a spec state parameter
+    (display-step-line "Abstracting a program")
+    (define abstracted-prog-config (abstract-prog-config-by-spec stepped-prog-config spec-config-component))
+    (display-step-line "Canonicalizing the tuple, adding to queue")
+    (match-define (list canonicalized-prog
+                        canonicalized-spec
+                        canonicalized-obs-recs
+                        canonicalized-unobs-recs)
+      (canonicalize-tuple (list abstracted-prog-config
+                                spec-config-component
+                                obs-receptionists
+                                unobs-receptionists))) ; i.e. rename the addresses
+    ;; TODO: allow the receptionist sets to change over time
+    (define next-tuple (simulation-node canonicalized-prog
+                                        canonicalized-spec
+                                        canonicalized-obs-recs
+                                        canonicalized-unobs-recs
+                                        null))
+    ;; TODO: shorten this match into some kind of "or-else" form
+    (match (graph-find-vertex simulation-graph next-tuple #:is-equal? same-tuple?)
+      [#f
+       ;; (printf "Adding state: ~s\n" (prog-config-goto (car next-tuple)))
+       (define new-vertex (graph-add-vertex! simulation-graph next-tuple))
+       (enqueue! to-visit new-vertex)
+       new-vertex]
+      [vertex vertex])))
 
 ;; Takes abstract prog config and abstract spec config; returns prog further abstracted according to
 ;; spec

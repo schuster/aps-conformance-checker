@@ -9,7 +9,7 @@
          aps-valid-config?
          aps-valid-instance?
          aps-config-observable-addresses
-         aps-config-from-instance)
+         aps-config-from-instances)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; APS
@@ -113,14 +113,15 @@
 (module+ test
   (check-equal?
    (aps-config-observable-addresses
-    (aps-config-from-instance
-     (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
-            (goto Always (addr 3) (addr 4))
-            (addr 1)))))
+    (aps-config-from-instances
+     (term ((((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
+             (goto Always (addr 3) (addr 4))
+             (addr 1))))))
    (term ((addr 3) (addr 4)))))
 
-(define (aps-config-from-instance instance)
-  (redex-let* aps-eval ([z instance]
-                        [(_ (goto _ a ...) _) (term z)]
-                        [Σ (term ((z) ((a) ...)))])
+(define (aps-config-from-instances instances)
+  (redex-let* aps-eval ([(z ...) instances]
+                        [((_ (goto _ a ...) _) ...) (term (z ...))]
+                        ;; TODO: remove duplicates from a...
+                        [Σ (term ((z ...) ((a) ... ...)))])
               (term Σ)))
