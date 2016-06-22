@@ -105,8 +105,10 @@
       (loop-context E#))
   (trigger# timeout
             [internal-message v#]
-            [external-observable-message v#]
-            [external-unobservable-message v#]))
+            ;; TODO: rethink whether these triggers are really the right thing. Observability here
+            ;; seems weird
+            [external-observable-message a#int v#]
+            [external-unobservable-message a#int v#]))
 
   ;; (define-metafunction csa#
   ;;   abstract : K -> K#
@@ -275,6 +277,7 @@
 
 (struct csa#-transition
   (trigger ; follows trigger# above
+   actor ; address of the stepped actor
    outputs ; list of abstract-addr/abstract-message 2-tuples
    loop-outputs ; list of abstract-addr/abstract-message 2-tuples
    final-config ; an abstract program configuration
@@ -302,8 +305,8 @@
     (define initial-config (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...))))
     (eval-handler initial-config
                   (if observed?
-                      (term (external-observable-message ,message))
-                      (term (external-unobservable-message ,message)))
+                      (term (external-observable-message ,actor-address ,message))
+                      (term (external-unobservable-message ,actor-address ,message)))
                   (term any_actors-before)
                   actor-address
                   (term state-defs)
@@ -395,7 +398,7 @@
              ,receptionists
              ,externals)))
     (define next-state (redex-let csa# ([(in-hole E# (goto s _ ...)) behavior-exp]) (term s)))
-    (csa#-transition trigger outputs loop-outputs new-prog-config next-state)))
+    (csa#-transition trigger address outputs loop-outputs new-prog-config next-state)))
 
 ;; Returns true if the config is one that is unable to step because of an over-approximation in the
 ;; abstraction

@@ -243,17 +243,24 @@ Remaining big challenges I see in the analysis:
   ;; TODO: add satisfied commitments to the new graph edge
 
   (filter (lambda (config) (and config (no-duplicate-commitments? config)))
-          (for/list ([stepped-spec-config (aps#-step-for-trigger spec-config (csa#-transition-trigger prog-transition))])
+          (for/list ([stepped-spec-config (aps#-steps-for-trigger spec-config (csa#-transition-trigger prog-transition))])
             (match (aps#-resolve-outputs stepped-spec-config (csa#-transition-outputs prog-transition))
               [#f #f]
               [stepped-spec-config
-               ;; now just check if state name matches
+               ;; now just check if state name matches. The rule for now: We expect a match if the
+               ;; transitioned actor is the one corresponding to this spec and the state name matches,
+               ;; or the actor does not correspond to the specified actor and the spec state name stayed the
+               ;; same, or if there are no current spec instances.
                (cond
-                 [(null? (aps#-config-instances stepped-spec-config)) stepped-spec-config]
-                 [(equal? (hash-ref state-matches
-                                    (csa#-transition-next-state prog-transition)
-                                    (aps#-config-only-instance-state spec-config))
-                          (aps#-config-only-instance-state stepped-spec-config))
+                 [(null? (aps#-config-instances stepped-spec-config))
+                  stepped-spec-config]
+                 [(let ([spec-state (aps#-config-only-instance-state stepped-spec-config)]
+                        [speced-actor? (equal? (csa#-transition-actor prog-transition) (aps#-config-only-instance-address spec-config))])
+                    (or
+                     (and speced-actor?
+                          (equal? (hash-ref state-matches (csa#-transition-next-state prog-transition) #f)
+                                  spec-state))
+                     (and (not speced-actor?) (equal? (aps#-config-only-instance-state spec-config) spec-state))))
                   stepped-spec-config]
                  [else #f])]))))
 
@@ -1266,6 +1273,22 @@ Remaining big challenges I see in the analysis:
                static-response-spec
                (term ((addr 0 Nat))) (term ((addr 1 Nat)))
                (hash 'Always 'Always)))
+
+  ;; Multiple specifications
+  (define other-static-response-spec
+    (term
+     (((define-state (Always2 response-dest)
+         [* -> (with-outputs ([response-dest *]) (goto Always2 response-dest))]))
+      (goto Always2 (addr 3))
+      (addr 1))))
+
+  (check-not-false (redex-match aps-eval z other-static-response-spec))
+
+  (check-true (model-check
+               (make-empty-queues-config (list static-response-agent other-static-response-agent) null)
+               (aps-config-from-instances (list static-response-spec other-static-response-spec))
+               (term ((addr 0 Nat) (addr 1 Nat))) null
+               (hash 'Always 'Always 'Always2 'Always2)))
 
   ;; (define request-response-spec2
   ;;   (term

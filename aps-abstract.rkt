@@ -8,13 +8,14 @@
  ;; subst-n/aps#
  ;; aps#-current-transitions
  ;; aps#-null-transition
- aps#-step-for-trigger
+ aps#-steps-for-trigger
  aps#-matches-po?
  step-spec-with-goto
  aps#-spec-from-commitment-entry
  aps#-spec-from-fsm-and-commitments
  aps#-resolve-outputs
  aps#-config-instances
+ aps#-config-only-instance-address
  aps#-config-only-instance-state
  aps#-config-commitment-map
  aps#-config-commitments
@@ -173,9 +174,9 @@
 ;;   (check-true (aps#-transition-observed? (term [* -> (goto S x y)]))))
 
 ;; Non-deterministically evaluates the given specification configuration with either a single trigger
-;; step, or no stop, when given the specified trigger from the program, returning a list of the
-;; possible stepped specification configuration
-(define (aps#-step-for-trigger spec-config trigger)
+;; step, or no step, when given the specified trigger from the program on the actor with the given
+;; address, returning a list of the possible stepped specification configuration
+(define (aps#-steps-for-trigger spec-config trigger)
   (match (aps#-config-instances spec-config)
     [(list) (list spec-config)]
     [(list instance)
@@ -183,7 +184,8 @@
      (define stepped-configs
        (filter values
         (for/list ([transition (aps#-instance-transitions instance)])
-          (match (match-program-trigger-to-event-trigger trigger (aps#-transition-trigger transition))
+                 ;; TODO: refactor this; need better definition of triggers, patterns, etc.
+          (match (match-program-trigger-to-spec-trigger trigger (aps#-instance-address instance) (aps#-transition-trigger transition))
             [#f #f]
             [(list bindings ...)
              (define exp-subst (term (subst-n/aps# ,(aps#-transition-body transition) ,@bindings)))
@@ -237,33 +239,37 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pattern matching
 
-(define (match-program-trigger-to-event-trigger trigger trigger-pattern)
+(define (match-program-trigger-to-spec-trigger trigger instance-address trigger-pattern)
   (match
       (judgment-holds
-       (trigger-matches-trigger-pattern ,trigger ,trigger-pattern any_bindings)
+       (trigger-matches-trigger-pattern ,trigger ,instance-address ,trigger-pattern any_bindings)
        any_bindings)
     [(list) #f]
     [(list binding-list) binding-list]
     [(list _ _ _ ...)
-     (error 'match-program-trigger-to-event-trigger
+     (error 'match-program-trigger-to-spec-trigger
             "Match resulted in multiple possible substitutions")]))
 
 (define-judgment-form aps#
-  #:mode (trigger-matches-trigger-pattern I I O)
-  #:contract (trigger-matches-trigger-pattern trigger# ε ([x v#] ...))
+  #:mode (trigger-matches-trigger-pattern I I I O)
+  #:contract (trigger-matches-trigger-pattern trigger# σ ε ([x v#] ...))
 
   [---------------------------------------------------
-   (trigger-matches-trigger-pattern timeout unobs ())]
+   (trigger-matches-trigger-pattern timeout _ unobs ())]
 
   [---------------------------------------------------------------
-   (trigger-matches-trigger-pattern (internal-message _) unobs ())]
+   (trigger-matches-trigger-pattern (internal-message _) _ unobs ())]
 
   [----------------------------------------------------------------------------
-   (trigger-matches-trigger-pattern (external-unobservable-message _) unobs ())]
+   (trigger-matches-trigger-pattern (external-unobservable-message _ _) _ unobs ())]
+
+  [(side-condition ,(not (equal? (term a#_1) (term a#_2))))
+   ----------------------------------------------------------------------------
+   (trigger-matches-trigger-pattern (external-observable-message a#_1 _) a#_2 unobs ())]
 
   [(aps#-match/j v# p any_bindings)
    ----------------------------------------------------------------------------------
-   (trigger-matches-trigger-pattern (external-observable-message v#) p any_bindings)])
+   (trigger-matches-trigger-pattern (external-observable-message a# v#) a# p any_bindings)])
 
 (define-judgment-form aps#
   #:mode (aps#-match/j I I O)
@@ -472,6 +478,11 @@
     [(list instance) (aps#-instance-state instance)]
     [_ (error 'aps#-config-only-instance-state "More than one instance in config ~s" config)]))
 
+(define (aps#-config-only-instance-address config)
+  (match (aps#-config-instances config)
+    [(list instance) (aps#-instance-address instance)]
+    [_ (error 'aps#-config-only-instance-address "More than one instance in config ~s" config)]))
+
 (define-metafunction aps#
   config-commitment-map/mf : Σ -> O
   [(config-commitment-map/mf (_ O)) O])
@@ -567,6 +578,10 @@
    (commitment-patterns-for-address
     (term (((obs-ext 1) * (record)) ((obs-ext 2) (variant True) (variant False))))
     (term (obs-ext 3)))))
+
+(define (aps#-instance-address z)
+  (redex-let aps# ([(_ _ σ) z])
+    (term σ)))
 
 (define (aps#-instance-state z)
   (term (instance-state/mf ,z)))
