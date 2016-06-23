@@ -194,7 +194,7 @@ Remaining big challenges I see in the analysis:
               ;;
               ;; Temporary hack: if there is a unique config with the minimal number of commitments, use it
               (match (unique-min multiple-transition-com-sat-pairs
-                                 (lambda (p) (aps#-config-commitment-count (cadr p))) )
+                                 (lambda (p) (aps#-config-commitment-count (car p))) )
                 [#f
                  (displayln "Too many possible matches")
                  (printf "Program transition: ~s\n" possible-transition)
@@ -815,6 +815,21 @@ Remaining big challenges I see in the analysis:
   (check-false (analyze (make-single-agent-config primitive-branch-agent)
                         zero-spec (term ((addr 0 Nat))) null
                         (hash 'S1 'S1)))
+
+  ;;;; Optional Commitments
+  (define optional-commitment-spec
+    (term
+     (((define-state (Always r)
+         [* -> (with-outputs ([r *]) (goto Always r))]
+         [* -> (goto Always r)]))
+      (goto Always (addr 1))
+      (addr 0))))
+
+  (check-not-false (redex-match aps-eval z optional-commitment-spec))
+  (check-true (analyze (make-single-agent-config ignore-all-agent)
+                       optional-commitment-spec
+                       (term ((addr 0 (Addr Nat)))) null
+                       (hash 'Always 'Always)))
 
   ;;;; Stuck states in concrete evaluation
 
