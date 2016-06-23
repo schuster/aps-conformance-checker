@@ -305,17 +305,19 @@
                    [(_ any_messages any_receptionists any_externals) prog-config])
     ;; TODO: deal with the case where x_m shadows an x_s
     (define initial-config (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...))))
+    (define prog-config-context
+      (term (,(append (term any_actors-before)
+                      (list (term (a# (state-defs hole))))
+                      (term any_actors-after))
+             any_messages
+             any_receptionists
+             any_externals)))
     (eval-handler initial-config
                   (if observed?
                       (term (external-observable-message ,actor-address ,message))
                       (term (external-unobservable-message ,actor-address ,message)))
-                  (term any_actors-before)
                   actor-address
-                  (term state-defs)
-                  (term any_actors-after)
-                  (term any_messages)
-                  (term any_receptionists)
-                  (term any_externals))))
+                  prog-config-context)))
 
 ;; Returns all transitions possible from this program configuration by handling an internal message
 (define (csa#-handle-all-internal-messages prog-config)
@@ -334,18 +336,20 @@
           [(_ _ any_receptionists any_externals) prog-config])
          ;; TODO: deal with the case where x_m shadows an x_s
          (define initial-config (inject/H# (term (csa#-subst-n e# [x_m v#_msg] [x_s v#] ...))))
+         (define prog-config-context
+           (term (,(append (term any_actors-before)
+                           (list (term (a#int (state-defs hole))))
+                           (term any_actors-after))
+                  ,(append processed-messages
+                           (if (redex-match? csa# * (term multiplicity)) (list message) null)
+                           messages-to-process)
+                  any_receptionists
+                  any_externals)))
          (define new-transitions
            (eval-handler initial-config
                          (term (internal-message v#_msg))
-                         (term any_actors-before)
                          (term a#int)
-                         (term state-defs)
-                         (term any_actors-after)
-                         (append processed-messages
-                                 (if (redex-match? csa# * (term multiplicity)) (list message) null)
-                                 messages-to-process)
-                         (term any_receptionists)
-                         (term any_externals)))
+                         prog-config-context))
          (loop (append transitions-so-far new-transitions)
                (append processed-messages (list message))
                messages-to-process))])))
@@ -390,26 +394,18 @@
                       [e# (get-binding 'e#)]
                       [any_address (get-binding 'any_address)]
                       [(name state-defs _) (get-binding 'state-defs)])
+       (define prog-config-context
+         (term (,(append actors-before (term ((any_address (state-defs hole)))) actors-after)
+                ,messages
+                ,receptionists
+                ,externals)))
        (eval-handler (inject/H# (term (csa#-subst-n e# [x_s v#] ...)))
                      'timeout
-                     actors-before
                      (term any_address)
-                     (term state-defs)
-                     actors-after
-                     messages
-                     receptionists
-                     externals))]
+                     prog-config-context))]
     [_ (error 'csa#-handle-actor-maybe-timeout "Got multiple matches for actor: ~s\n" actor)]))
 
-(define (eval-handler handler-config
-                      trigger
-                      actors-before
-                      address
-                      state-defs
-                      actors-after
-                      messages
-                      receptionists
-                      externals)
+(define (eval-handler handler-config trigger address config-context)
   (define final-configs (apply-reduction-relation* handler-step# handler-config #:cache-all? #t))
   (define non-abstraction-stuck-final-configs
     ;; Filter out those stuck because of over-abstraction
@@ -431,10 +427,8 @@
     (match-define (list behavior-exp outputs loop-outputs) config)
     ;; TODO: do something with loop outputs
     (define new-prog-config
-      (term (,(append actors-before (list (term (,address (,state-defs ,behavior-exp)))) actors-after)
-             ,(merge-new-messages messages (filter internal-output? outputs))
-             ,receptionists
-             ,externals)))
+      (merge-new-messages (plug config-context behavior-exp)
+                          (filter internal-output? outputs)))
     (define next-state (redex-let csa# ([(in-hole E# (goto s _ ...)) behavior-exp]) (term s)))
     (csa#-transition trigger
                      address
@@ -848,33 +842,41 @@
           ((* (Addr Nat)) (* Nat) *)))))
 
 ;; Abstractly adds the set of new messages to the existing set
-(define (merge-new-messages message-set new-message-list)
-  (redex-let csa# ([((a# v#) ...) new-message-list])
-    (merge-duplicate-messages-from-list (append message-set (term ((a# v# 1) ...))))))
+(define (merge-new-messages config new-message-list)
+  (redex-let csa# ([(any_actors any_messages any_rec any_ext) config]
+                   [((a# v#) ...) new-message-list])
+    (term (any_actors
+           ,(merge-duplicate-messages-from-list (append (term any_messages) (term ((a# v# 1) ...))))
+           any_rec
+           any_ext))))
 
 (module+ test
   (check-equal?
-   (merge-new-messages null (list (term ((init-addr 0) (* Nat)))))
-   (list (term ((init-addr 0) (* Nat) 1))))
+   (merge-new-messages (term (() () () ())) (list (term ((init-addr 0) (* Nat)))))
+   (term (() (((init-addr 0) (* Nat) 1)) () ())))
 
   (check-equal?
-   (merge-new-messages (list (term ((init-addr 0) (* Nat) 1))) (list (term ((init-addr 0) (* Nat)))))
-   (list (term ((init-addr 0) (* Nat) *))))
+   (merge-new-messages (term (() (((init-addr 0) (* Nat) 1)) () ()))
+                       (list (term ((init-addr 0) (* Nat)))))
+   (term (() (((init-addr 0) (* Nat) *)) () ())))
 
   (check-equal?
-   (merge-new-messages (list (term ((init-addr 0) (* Nat) 1))) (list (term ((init-addr 1) (* Nat)))))
-   (list (term ((init-addr 0) (* Nat) 1)) (term ((init-addr 1) (* Nat) 1))))
+   (merge-new-messages (term (() (((init-addr 0) (* Nat) 1)) () ()))
+                       (list (term ((init-addr 1) (* Nat)))))
+   (term (() (((init-addr 0) (* Nat) 1) ((init-addr 1) (* Nat) 1)) () ())))
 
   (check-equal?
-   (merge-new-messages (term (((init-addr 1) (* (Addr Nat)) 1)
-                              ;; ((init-addr 1) (* (Addr Nat)) 1)
-                              ;; ((init-addr 1) (* (Addr Nat)) 1)
-                              ((init-addr 1) (obs-ext 0) 1)))
+   (merge-new-messages (term (()
+                              (((init-addr 1) (* (Addr Nat)) 1)
+                               ((init-addr 1) (obs-ext 0) 1))
+                              ()
+                              ()))
                        (term (((init-addr 1) (* (Addr Nat))))))
-   (term (((init-addr 1) (* (Addr Nat)) *)
-          ;; ((init-addr 1) (* (Addr Nat)) 1)
-          ;; ((init-addr 1) (* (Addr Nat)) 1)
-          ((init-addr 1) (obs-ext 0) 1)))))
+   (term (()
+          (((init-addr 1) (* (Addr Nat)) *)
+           ((init-addr 1) (obs-ext 0) 1))
+          ()
+          ()))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
