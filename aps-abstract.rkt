@@ -32,7 +32,7 @@
  canonicalize-tuple
  aps#-config-has-commitment?
  no-duplicate-commitments?
- unique-minimal-config)
+ aps#-config-commitment-count)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -381,19 +381,23 @@
   ;; TODO: deal with loop output
 
   (let loop ([commitment-map (aps#-config-commitment-map spec-config)]
+             [satisfied-commitments null]
              [remaining-outputs outputs])
     (match remaining-outputs
-      [(list) (term (,(aps#-config-instances spec-config) ,commitment-map))]
+      [(list)
+       (list (term (,(aps#-config-instances spec-config) ,commitment-map)) satisfied-commitments)]
       [(list output remaining-outputs ...)
        (define address (csa#-output-address output))
        (match (commitment-patterns-for-address commitment-map address)
          ;; we can ignore outputs on unobserved addresses
-         [#f (loop commitment-map remaining-outputs)]
+         [#f (loop commitment-map satisfied-commitments remaining-outputs)]
          [patterns
           (match (findf (curry aps#-matches-po? (csa#-output-message output)) patterns)
             [#f #f]
-            [pat (loop (aps#-remove-commitment-pattern commitment-map address pat)
-                       remaining-outputs)])])])))
+            [pat
+             (loop (aps#-remove-commitment-pattern commitment-map address pat)
+                   (append satisfied-commitments (list (term (,address ,pat))))
+                   remaining-outputs)])])])))
 
 (module+ test
   (check-false
@@ -404,12 +408,14 @@
    (aps#-resolve-outputs
     (term (() (((obs-ext 1) *))))
     (term (((obs-ext 1) (* Nat)))))
-   (term (() (((obs-ext 1))))))
+   (term ((() (((obs-ext 1))))
+          (((obs-ext 1) *)))))
   (check-equal?
    (aps#-resolve-outputs
     (term (() (((obs-ext 1) * (record)))))
     (term (((obs-ext 1) (* Nat)))))
-   (term (() (((obs-ext 1) (record))))))
+   (term ((() (((obs-ext 1) (record))))
+          (((obs-ext 1) *)))))
 
   ;; TODO: test aps#-resolve-outputs for (along with normal cases):
   ;; * spec that observes an address but neither saves it nor has output commtiments for it
@@ -818,24 +824,6 @@
                (term ((po ...) ...))))
   (andmap (lambda (l) (equal? l (remove-duplicates l))) commitment-lists))
 
-;; TODO: remove this function; part of a hack
-;;
-;; Returns the unique config with the minimal number of output commitments, or false if no such config
-;; exists
-(define (unique-minimal-config spec-configs)
-  (define count-map (make-hash))
-  (for ([config spec-configs])
-    (define commitment-count
-      (redex-let aps# ([(_ ((_ po ...) ...)) config])
-                 (length (append* (term ((po ...) ...))))))
-    (hash-set! count-map commitment-count
-     (cond
-       [(hash-has-key? count-map commitment-count)
-        (cons config (hash-ref count-map commitment-count))]
-       [else (list config)])))
-  (match (hash-keys count-map)
-    [(list) #f]
-    [keys
-     (match (hash-ref count-map (apply min keys))
-       [(list config) config]
-       [_ #f])]))
+(define (aps#-config-commitment-count c)
+  (redex-let aps# ([(_ ((_ po ...) ...)) c])
+    (length (append* (term ((po ...) ...))))))

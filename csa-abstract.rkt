@@ -6,6 +6,7 @@
  csa#
  generate-abstract-messages
  csa#-handle-message
+ csa#-handle-all-internal-messages
  csa#-handle-all-timeouts
  (struct-out csa#-transition)
  csa#-internal-trigger?
@@ -16,6 +17,7 @@
  α-e
  α-typed-receptionist-list
  blur-externals
+ csa#-merge-duplicate-messages
  make-single-actor-abstract-config
  csa#-typed-address-type
  csa#-typed-address->untyped
@@ -40,7 +42,8 @@
   (K# (α# μ# ρ# χ#)) ;; TODO: update this (incl. remove χ#, since we already label addresses as external)
   (α# (α#n ...))
   (α#n (a#int ((S# ...) e#)))
-  (μ# ()) ; NOTE: for now, assuming no internal sends
+  (μ# ((a#int v# multiplicity) ...))
+  (multiplicity 1 *)
   (S# (define-state (s [x τ] ...) (x) e#)
       (define-state (s [x τ] ...) (x) e# [(timeout v#) e#]))
   (v# a#
@@ -82,8 +85,7 @@
   (ρ# (a#int ...))
   (χ# (a#ext ...))
   ;; H# = handler config (exp + outputs + loop outputs so far)
-  (H# (e# ([a#ext v#] ...) ([a#ext v#] ...)))
-  ;; (A# ((any_1 ... hole any_2 ...) () ρ χ)) ; TODO: update this
+  (H# (e# ([a# v#] ...) ([a# v#] ...)))
   (E# hole
       (goto s v# ... E# e# ...)
       (send E# e#)
@@ -315,6 +317,39 @@
                   (term any_receptionists)
                   (term any_externals))))
 
+;; Returns all transitions possible from this program configuration by handling an internal message
+(define (csa#-handle-all-internal-messages prog-config)
+  (let loop ([transitions-so-far null]
+             [processed-messages null]
+             [messages-to-process (csa#-config-messages prog-config)])
+    (match messages-to-process
+      [(list) transitions-so-far]
+      [(list message messages-to-process ...)
+       (redex-let* csa#
+         ([(a#int v#_msg multiplicity) message]
+          [(any_actors-before
+            (_ ((name state-defs (_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e# any_timeout-clause ...) _ ...)) (in-hole E# (goto s v# ..._n))))
+            any_actors-after)
+           (config-actor-and-rest-by-address prog-config (term a#int))]
+          [(_ _ any_receptionists any_externals) prog-config])
+         ;; TODO: deal with the case where x_m shadows an x_s
+         (define initial-config (inject/H# (term (csa#-subst-n e# [x_m v#_msg] [x_s v#] ...))))
+         (define new-transitions
+           (eval-handler initial-config
+                         (term (internal-message v#_msg))
+                         (term any_actors-before)
+                         (term a#int)
+                         (term state-defs)
+                         (term any_actors-after)
+                         (append processed-messages
+                                 (if (redex-match? csa# * (term multiplicity)) (list message) null)
+                                 messages-to-process)
+                         (term any_receptionists)
+                         (term any_externals)))
+         (loop (append transitions-so-far new-transitions)
+               (append processed-messages (list message))
+               messages-to-process))])))
+
 ;; Returns all transitions possible from this program configuration by taking a timeout
 (define (csa#-handle-all-timeouts prog-config)
   (redex-let csa# ([(any_actors any_messages any_receptionists any_externals) prog-config])
@@ -391,14 +426,22 @@
            handler-config
            (filter (compose not complete-handler-config?) non-abstraction-stuck-final-configs)))
   (for/list ([config non-abstraction-stuck-final-configs])
+    ;; TODO: rename outputs to something like "transmissions", because some of them stay internal to
+    ;; the program
     (match-define (list behavior-exp outputs loop-outputs) config)
+    ;; TODO: do something with loop outputs
     (define new-prog-config
       (term (,(append actors-before (list (term (,address (,state-defs ,behavior-exp)))) actors-after)
-             ,messages
+             ,(merge-new-messages messages (filter internal-output? outputs))
              ,receptionists
              ,externals)))
     (define next-state (redex-let csa# ([(in-hole E# (goto s _ ...)) behavior-exp]) (term s)))
-    (csa#-transition trigger address outputs loop-outputs new-prog-config next-state)))
+    (csa#-transition trigger
+                     address
+                     (filter (negate internal-output?) outputs)
+                     loop-outputs
+                     new-prog-config
+                     next-state)))
 
 ;; Returns true if the config is one that is unable to step because of an over-approximation in the
 ;; abstraction
@@ -696,8 +739,8 @@
          PrintLenVectorWildcard)
 
     with
-    [(--> ((in-hole E# old) ([a#ext v#] ...) any_loop-outputs)
-          ((in-hole E# new) ([a#ext v#] ...) any_loop-outputs))
+    [(--> ((in-hole E# old) any_outputs any_loop-outputs)
+          ((in-hole E# new) any_outputs any_loop-outputs))
      (==> old new)]))
 
 (module+ test
@@ -740,7 +783,98 @@
   ;; (csa#-exp-steps-to? (term (match (* Nat)
   ;;                             [(tuple) (goto S2 (* Nat))]))
   ;;                     (term (match (* Nat))))
-  )
+
+  ;; Check that internal addresses in the transmissions do not change the evaluation (had a problem
+  ;; with this before)
+  (check-equal?
+   (apply-reduction-relation* handler-step#
+                              (term ((begin (send (init-addr 1) (* Nat)) (goto A)) () ())))
+   (list (term ((goto A) (((init-addr 1) (* Nat))) ())))))
+
+(define (csa#-merge-duplicate-messages prog-config)
+  (redex-let csa# ([(any_actors any_messages any_rec any_ext) prog-config])
+    (term (any_actors
+           ,(merge-duplicate-messages-from-list (term any_messages))
+           any_rec
+           any_ext))))
+
+(define (merge-duplicate-messages-from-list message-list)
+  (let loop ([processed-messages null]
+             [remaining-messages message-list])
+    (match remaining-messages
+      [(list) processed-messages]
+      [(list message remaining-messages ...)
+       (define remaining-without-duplicates (remove* (list message) remaining-messages same-message?))
+       (define new-message
+         ;; message stays same if nothing was duplicated, else have to change multiplicity
+         (if (equal? remaining-without-duplicates remaining-messages)
+             message
+             (redex-let csa# ([(any_addr any_value _) message]) (term (any_addr any_value *)))))
+       (loop (append processed-messages (list new-message))
+             remaining-without-duplicates)])))
+
+;; For two "messages" (the things inside the message queue in a program config), returns true if they
+;; have the same address and value
+(define (same-message? m1 m2)
+  (redex-let csa# ([(a#_1 v#_1 _) m1]
+                   [(a#_2 v#_2 _) m2])
+    (equal? (term (a#_1 v#_1)) (term (a#_2 v#_2)))))
+
+(module+ test
+  (check-equal?
+   (merge-duplicate-messages-from-list
+    (term (((obs-ext 1) (* Nat) 1)
+           ((obs-ext 1) (* Nat) 1))))
+   (term (((obs-ext 1) (* Nat) *))))
+
+    (check-equal?
+   (merge-duplicate-messages-from-list
+    (term (((obs-ext 1) (* Nat) 1)
+           ((obs-ext 1) (* Nat) 1)
+           ((obs-ext 1) (* Nat) 1))))
+   (term (((obs-ext 1) (* Nat) *))))
+
+  (check-equal?
+   (merge-duplicate-messages-from-list
+    (term (((obs-ext 1) (* Nat) 1)
+           ((obs-ext 2) (* Nat) 1)
+           ((obs-ext 3) (* Nat) *)
+           ((* (Addr Nat)) (* Nat) *)
+           ((obs-ext 1) (* Nat) 1)
+           ((* (Addr Nat)) (* Nat) 1))))
+   (term (((obs-ext 1) (* Nat) *)
+          ((obs-ext 2) (* Nat) 1)
+          ((obs-ext 3) (* Nat) *)
+          ((* (Addr Nat)) (* Nat) *)))))
+
+;; Abstractly adds the set of new messages to the existing set
+(define (merge-new-messages message-set new-message-list)
+  (redex-let csa# ([((a# v#) ...) new-message-list])
+    (merge-duplicate-messages-from-list (append message-set (term ((a# v# 1) ...))))))
+
+(module+ test
+  (check-equal?
+   (merge-new-messages null (list (term ((init-addr 0) (* Nat)))))
+   (list (term ((init-addr 0) (* Nat) 1))))
+
+  (check-equal?
+   (merge-new-messages (list (term ((init-addr 0) (* Nat) 1))) (list (term ((init-addr 0) (* Nat)))))
+   (list (term ((init-addr 0) (* Nat) *))))
+
+  (check-equal?
+   (merge-new-messages (list (term ((init-addr 0) (* Nat) 1))) (list (term ((init-addr 1) (* Nat)))))
+   (list (term ((init-addr 0) (* Nat) 1)) (term ((init-addr 1) (* Nat) 1))))
+
+  (check-equal?
+   (merge-new-messages (term (((init-addr 1) (* (Addr Nat)) 1)
+                              ;; ((init-addr 1) (* (Addr Nat)) 1)
+                              ;; ((init-addr 1) (* (Addr Nat)) 1)
+                              ((init-addr 1) (obs-ext 0) 1)))
+                       (term (((init-addr 1) (* (Addr Nat))))))
+   (term (((init-addr 1) (* (Addr Nat)) *)
+          ;; ((init-addr 1) (* (Addr Nat)) 1)
+          ;; ((init-addr 1) (* (Addr Nat)) 1)
+          ((init-addr 1) (obs-ext 0) 1)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
@@ -1026,6 +1160,10 @@
   (redex-let csa# ([(α# _ ...) config])
              (term α#)))
 
+(define (csa#-config-messages config)
+  (redex-let csa# ([(_ μ# _ ...) config])
+             (term μ#)))
+
 (define (config-actor-and-rest-by-address config addr)
   (term (config-actor-and-rest-by-address/mf ,config ,addr)))
 
@@ -1095,6 +1233,17 @@
   (check-equal? (term (csa#-not (variant True))) (term (variant False)))
   (check-equal? (term (csa#-not (canonicalize-boolean (* (Union (False) (True))))))
                 (term (* (Union (True) (False))))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Predicates
+
+;; Returns true if the output is to an internal address, false otherwise
+(define (internal-output? output)
+  (redex-match? csa# (a#int _) output))
+
+(module+ test
+  (check-true (internal-output? (term ((init-addr 1) (* Nat)))))
+  (check-false (internal-output? (term ((obs-ext 2) (* Nat))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debug helpers

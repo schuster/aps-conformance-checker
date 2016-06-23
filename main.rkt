@@ -164,6 +164,7 @@ Remaining big challenges I see in the analysis:
          (define possible-transitions
            (append (external-message-transitions prog obs-receptionists #t)
                    (external-message-transitions prog unobs-receptionists #f)
+                   (csa#-handle-all-internal-messages prog)
                    (csa#-handle-all-timeouts prog)))
          (for ([possible-transition possible-transitions])
            (define stepped-prog-config (csa#-transition-final-config possible-transition))
@@ -179,34 +180,35 @@ Remaining big challenges I see in the analysis:
               ;;         prog
               ;;         spec)
               (return-early #f)]
-             [(list stepped-spec-config)
+             [(list (list stepped-spec-config satisfied-commitments))
               (define destination-vertices
                 (record-next-step stepped-prog-config stepped-spec-config obs-receptionists unobs-receptionists to-visit simulation-graph))
               ;; TODO: this for loop is repeated below; refactor out this redundancy
               (for ([destination-vertex destination-vertices])
                 (graph-add-edge! simulation-graph
-                                 (simulation-step (csa#-transition-trigger possible-transition) null)
+                                 (simulation-step (csa#-transition-trigger possible-transition) satisfied-commitments)
                                  source-vertex
                                  destination-vertex))]
-             [(list multiple-transitions ...)
+             [(list multiple-transition-com-sat-pairs ...)
               ;; TODO: remove this hack
               ;;
               ;; Temporary hack: if there is a unique config with the minimal number of commitments, use it
-              (match (unique-minimal-config multiple-transitions)
+              (match (unique-min multiple-transition-com-sat-pairs
+                                 (lambda (p) (aps#-config-commitment-count (cadr p))) )
                 [#f
                  (displayln "Too many possible matches")
                  (printf "Program transition: ~s\n" possible-transition)
-                 (for ([s multiple-transitions])
+                 (for ([s (map car multiple-transition-com-sat-pairs)])
                    (printf "A spec transition: ~s\n" s))
                  ;; TODO: call a continuation instead
                  (return-early #f)]
-                [the-config
+                [(list the-config satisfied-commitments)
                  (define destination-vertices
                    (record-next-step stepped-prog-config the-config obs-receptionists unobs-receptionists to-visit simulation-graph))
                  ;; TODO: list satisfied commitments in the edge, and list the trigger
                  (for ([destination-vertex destination-vertices])
                    (graph-add-edge! simulation-graph
-                                    (simulation-step (csa#-transition-trigger possible-transition) null)
+                                    (simulation-step (csa#-transition-trigger possible-transition) satisfied-commitments)
                                     source-vertex
                                     destination-vertex))])]))
          (loop to-visit (set-add visited current-tuple))]))))
@@ -229,7 +231,8 @@ Remaining big challenges I see in the analysis:
                                     message observed?))))))
 
 ;; Given a program transition, the current spec config, and the hash table mapping prog states to spec
-;; states, returns the list of possible spec config moves that could match this transition
+;; states, returns the list of pairs of possible spec config moves and commitment satisfaction lists
+;; that could match this transition
 (define (match-prog-transition-to-spec prog-transition spec-config state-matches)
   ;; Rough initial idea of algorithm for multi-FSM specs (to be implemented): transition the spec FSM
   ;; only when (a) an observed message is received, or (b) when no output commitment can satisfy a
@@ -242,18 +245,18 @@ Remaining big challenges I see in the analysis:
 
   ;; TODO: add satisfied commitments to the new graph edge
 
-  (filter (lambda (config) (and config (no-duplicate-commitments? config)))
+  (filter (lambda (config-pair) (and config-pair (no-duplicate-commitments? (car config-pair))))
           (for/list ([stepped-spec-config (aps#-steps-for-trigger spec-config (csa#-transition-trigger prog-transition))])
             (match (aps#-resolve-outputs stepped-spec-config (csa#-transition-outputs prog-transition))
               [#f #f]
-              [stepped-spec-config
+              [(list stepped-spec-config satisfied-commitments)
                ;; now just check if state name matches. The rule for now: We expect a match if the
                ;; transitioned actor is the one corresponding to this spec and the state name matches,
                ;; or the actor does not correspond to the specified actor and the spec state name stayed the
                ;; same, or if there are no current spec instances.
                (cond
                  [(null? (aps#-config-instances stepped-spec-config))
-                  stepped-spec-config]
+                  (list stepped-spec-config satisfied-commitments)]
                  [(let ([spec-state (aps#-config-only-instance-state stepped-spec-config)]
                         [speced-actor? (equal? (csa#-transition-actor prog-transition) (aps#-config-only-instance-address spec-config))])
                     (or
@@ -261,7 +264,7 @@ Remaining big challenges I see in the analysis:
                           (equal? (hash-ref state-matches (csa#-transition-next-state prog-transition) #f)
                                   spec-state))
                      (and (not speced-actor?) (equal? (aps#-config-only-instance-state spec-config) spec-state))))
-                  stepped-spec-config]
+                  (list stepped-spec-config satisfied-commitments)]
                  [else #f])]))))
 
 ;; TODO: consider defining the spec semantics completely independently of concrete addresses, and
@@ -314,7 +317,24 @@ Remaining big challenges I see in the analysis:
 
   ;; TODO: blur out certain internal actors
 
-  (blur-externals p (aps#-relevant-external-addrs s)))
+  (csa#-merge-duplicate-messages
+   (blur-externals p (aps#-relevant-external-addrs s))))
+
+(module+ test
+  ;; check that messages with blurred addresses get merged together
+  (check-equal?
+   (abstract-prog-config-by-spec (term (()
+                                        (((init-addr 2) (obs-ext 1) 1)
+                                         ((init-addr 2) (obs-ext 2) 1)
+                                         ((init-addr 2) (obs-ext 3) 1))
+                                        ()
+                                        ()))
+                                 (term (() (((obs-ext 3))))))
+   (term (()
+          (((init-addr 2) (* (Addr Nat)) *)
+           ((init-addr 2) (obs-ext 3) 1))
+          ()
+          ()))))
 
 ;; Returns the list of split spec-configs from the given one, failing if any of the FSMs share an
 ;; address
@@ -417,7 +437,7 @@ Remaining big challenges I see in the analysis:
   (define (following-edge-satisfies-commitment? edge)
     (member commitment
             (append (simulation-step-satisfied-commitments (edge-value edge))
-                    (simulation-node-satisfied-commitments (edge-destination edge)))))
+                    (simulation-node-satisfied-commitments (vertex-value (edge-destination edge))))))
   (when (and (csa#-internal-trigger? trigger)
              (aps#-config-has-commitment? (simulation-node-spec-config source-node) commitment)
              (not (member commitment (simulation-node-satisfied-commitments source-node)))
@@ -430,6 +450,30 @@ Remaining big challenges I see in the analysis:
   (set-simulation-node-satisfied-commitments!
    node
    (cons commitment (simulation-node-satisfied-commitments node))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Misc. Helpers
+
+;; Returns the unique minimal element from the list according to the rank function, if there is such
+;; an element, or #f otherwise
+(define (unique-min elements rank)
+  (cond
+    [(null? elements) #f]
+    [else
+       (define rank-list (map (lambda (e) (cons (rank e) e)) elements))
+       (define min-rank (apply min (map car rank-list)))
+       (match (filter (lambda (re) (equal? (car re) min-rank)) rank-list)
+         [(list re) (cdr re)]
+         [_ #f])]))
+
+(module+ test
+  (check-false (unique-min null values))
+  (check-equal? (unique-min (list 1 2 3) values) 1)
+  (check-equal? (unique-min (list 3 2 1) values) 1)
+  (check-false (unique-min (list 3 1 2 1) values))
+
+  (check-false (unique-min (list "a" "aa" "b" "aaa") string-length))
+  (check-equal? (unique-min (list "a" "aa" "aaa") string-length) "a"))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debugging
@@ -1290,49 +1334,33 @@ Remaining big challenges I see in the analysis:
                (term ((addr 0 Nat) (addr 1 Nat))) null
                (hash 'Always 'Always 'Always2 'Always2)))
 
-  ;; (define request-response-spec2
-  ;;   (term
-  ;;    (((define-state (Always2)
-  ;;        [response-target -> (with-outputs ([response-target *]) (goto Always))]))
-  ;;     (goto Always2)
-  ;;     (addr 1))))
+  ;; Actors working together
+  (define statically-delegating-responder-actor
+    (term
+     ((addr 0)
+      (((define-state (A [responder (Addr (Addr Nat))]) (m)
+          (begin
+            (send responder m)
+            (goto A responder))))
+       (goto A (addr 1))))))
 
-  ;; (define request-response-agent2
-  ;;   (term
-  ;;    ((addr 1)
-  ;;     (((define-state (Always2) (response-target)
-  ;;         (begin
-  ;;           (send response-target 0)
-  ;;           (goto Always2 i))))
-  ;;      (goto Always)))))
+  (define request-response-agent2
+    (term
+     ((addr 1)
+      (((define-state (Always) (response-target)
+          (begin
+            (send response-target 0)
+            (goto Always))))
+       (goto Always)))))
 
-  ;; (check-not-false (redex-match aps-eval z request-response-spec2))
-  ;; (check-not-false (redex-match csa-eval αn request-response-agent2))
-  ;; (check-true (analyze
-  ;;              (make-empty-queues-config (list request-response-agent request-response-agent2) null)
-  ;;              request-response-spec
-  ;;              (term (Addr Nat)) (term (Union))
-  ;;              (hash 'Always 'Always)))
+  (check-not-false (redex-match csa-eval αn statically-delegating-responder-actor))
+  (check-not-false (redex-match csa-eval αn request-response-agent2))
 
-  ;; Multiple Actors
-  ;; (define statically-delegating-responder-actor
-  ;;   (term
-  ;;    ((addr 1)
-  ;;     (((define-state (A [responder (Addr (Addr Nat))]) (m)
-  ;;         (begin
-  ;;           (send responder m)
-  ;;           (goto A responder))))
-  ;;      (goto A (addr 0))))))
-
-  ;; (check-not-false (redex-match csa-eval αn statically-delegating-responder-actor))
-
-  ;; (check-true (analyze
-  ;;              (make-empty-queues-config (list statically-delegating-responder-actor)
-  ;;                                        (list request-response-agent))
-  ;;              request-response-spec
-  ;;              (term ((addr 0 (Addr Nat)))) null
-  ;;              (hash 'Always 'Always)))
-
+  (check-true (analyze
+               (make-empty-queues-config (list request-response-agent2 statically-delegating-responder-actor) null)
+               request-response-spec
+               (term ((addr 0 (Addr Nat)))) null
+               (hash 'A 'Always)))
 
   ;; TODO: tests for:
   ;; * commitment satisfied immediately
