@@ -14,6 +14,7 @@
 
 ;; TODO: put this in a common place so it isn't repeated across files
 (define single-agent-concrete-addr (term (addr 0)))
+(define (single-agent-typed-concrete-addr type) (term (addr 0 ,type)))
 
 ;; TODO: write a check that alerts for any underscores in the spec (b/c those are invalid)
 (define raft-spec
@@ -1065,12 +1066,13 @@
 ;; 4. Run the verifier
 (check-true (analyze raft-config
                      raft-spec
-                     (term (Union (PeerMessage ,desugared-raft-message-type)))
-                     (term (Union ,cluster-config-variant
-                                  (ClientMessage (Addr Nat) ; TODO: add the real type here
-                                                 String)
-                                  (Timeout Nat)
-                                  (SendHeartbeatTimeouts Nat)))
+                     (list (single-agent-typed-concrete-addr (term (Union (PeerMessage ,desugared-raft-message-type)))) )
+                     (list (single-agent-typed-concrete-addr
+                            (term (Union ,cluster-config-variant
+                                         (ClientMessage (Addr Nat) ; TODO: add the real type here
+                                                        String)
+                                         (Timeout Nat)
+                                         (SendHeartbeatTimeouts Nat)))))
                      (hash 'Init 'Init
                            'Follower 'Running
                            'Candidate 'Running
