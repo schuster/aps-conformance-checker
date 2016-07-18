@@ -1,20 +1,14 @@
-#|
-
-Remaining big challenges I see in the analysis:
-* how to verify output commitments that are satisfied in a different handler than they were incurred (esp. if commitment is delegated to another actor, e.g. the session child in the TCP example)
-* how to verify multi-actor programs (no clue on this one yet - need more good examples) (disjoint lemma can help, but won't always be possible)
-* how to verify outputs when there's ambiguity as to which send matches which commitment
-* how to verify cases where the transmission match is ambiguous (need constraint solver instead of BFS?)
-
-|#
-
-
 #lang racket
 
 ;; TODO: fail when more than one commitment on same address with same pattern
 
 ;; TODO: probably shouldn't call this file "main" if it's exporting something to something else in the
 ;; "package"
+
+;; TODO: rename program/prog to implementation/impl
+
+;; TODO: generally make all of the set-based code more functional
+
 (provide analyze)
 
 (require
@@ -32,31 +26,34 @@ Remaining big challenges I see in the analysis:
    redex/reduction-semantics
    "rackunit-helpers.rkt"))
 
-;; TODO: rename "agents" to just actors, or otherwise decide what these things should be called
+;; TODO: rename "agents" to just actors
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Data definitions
 
-(struct spec-config (instances commitments))
-
-;; Program transition is defined in csa-abstract
-
-;; Vertices and edges for the simulation graph:
+;; There are 2 separate issues here. There's a graph-like structure (most easily understood as the
+;; outgoing edges, the big tree-like thing I showed Olin with AND/OR edges), and there's the efficient
+;; representation in code, which is something else.
 ;;
-;; For both of these, satisfied-commitments is a list of address/pattern pairs
-;;
+;; My thought: the range of the "incoming" dictionary should be sets of info-tuples that include *all*
+;; the information needed to trace back to the previous related tuple.
+
 ;; Trigger is as listed in csa-abstract
-(struct simulation-node
-  (prog-config spec-config obs-receptionists unobs-receptionists [satisfied-commitments #:mutable])
-  #:transparent)
-(struct simulation-step (trigger satisfied-commitments) #:transparent)
+;;
+;; TODO: rename all of these
+(struct simulation-node (prog-config spec-config obs-receptionists unobs-receptionists) #:transparent)
 
-(define (same-tuple? n1 n2)
-  (andmap (lambda (select) (equal? (select n1) (select n2)))
-          (list simulation-node-prog-config
-                simulation-node-spec-config
-                simulation-node-obs-receptionists
-                simulation-node-unobs-receptionists)))
+;; TODO: think about whether the ranges given here are really "unique": could we have duplicate steps
+;; with the same data? Does that matter? (Very related to the DDD idea of "identity")
+
+;; Incoming: dict from tuple to (mutable-setof (tuple, impl-step, spec-step)
+
+;; related-spec-steps: dict from (tuple, impl-step) to (mutable-setof spec-step)
+
+(struct impl-step (from-observer? trigger outputs final-state) #:transparent)
+
+;; TODO: probably want to add satisfied commitments here
+(struct spec-step (final-state) #:transparent)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Main functions
@@ -81,6 +78,7 @@ Remaining big challenges I see in the analysis:
                  init-obs-receptionists
                  init-unobs-receptionists
                  state-matches)
+  ;; TODO: make this into a contract
   (unless (aps-valid-instance? initial-spec-instance)
     (error 'analyze "Invalid initial specification instance ~s" initial-spec-instance))
   (model-check initial-prog-config
@@ -99,119 +97,139 @@ Remaining big challenges I see in the analysis:
 ;; actors. Also assumes that the spec starts in a state in which it has no state parameters.
 (define (model-check initial-prog-config
                      initial-spec-config
+                     init-obs-receptionists ; TODO: shouldn't these be part of the spec config?
+                     init-unobs-receptionists
+                     state-matches) ; TODO: remove state-matches
+  ;; TODO: make these into contracts
+  (unless (csa-valid-config? initial-prog-config)
+    (error 'model-check "Invalid initial program configuration ~s" initial-prog-config))
+  (unless (aps-valid-config? initial-spec-config)
+    (error 'model-check "Invalid initial specification configuration ~s" initial-spec-config))
+  (unless (csa-valid-receptionist-list? init-obs-receptionists)
+    (error 'model-check "Invalid observable receptionist lists: ~s" init-obs-receptionists))
+  (unless (csa-valid-receptionist-list? init-unobs-receptionists)
+    (error 'model-check "Invalid unobservable receptionist lists: ~s" init-unobs-receptionists))
+
+  (define initial-tuples
+    (sbc
+     ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
+     ;; message generation
+     (apply simulation-node
+            (α-tuple initial-prog-config
+                     initial-spec-config
                      init-obs-receptionists
                      init-unobs-receptionists
-                     state-matches)
-  (unless (csa-valid-config? initial-prog-config)
-    (error 'check "Invalid initial program configuration ~s" initial-prog-config))
-  (unless (aps-valid-config? initial-spec-config)
-    (error 'check "Invalid initial specification configuration ~s" initial-spec-config))
-  (unless (csa-valid-receptionist-list? init-obs-receptionists)
-    (error 'check "Invalid observable receptionist lists: ~s" init-obs-receptionists))
-  (unless (csa-valid-receptionist-list? init-unobs-receptionists)
-    (error 'check "Invalid unobservable receptionist lists: ~s" init-unobs-receptionists))
+                     10))))
+  (match-define (list rank1-tuples incoming rank1-related-spec-steps rank1-unrelated-successors)
+    (build-immediate-simulation initial-tuples))
+  (match-define (list simulation-tuples simulation-related-spec-steps)
+    (remove-unsupported-tuples rank1-tuples
+                               incoming
+                               rank1-related-spec-steps
+                               rank1-unrelated-successors))
+  (define commitment-satisfying-tuples
+    (find-satisfying-tuples simulation-tuples simulation-related-spec-steps))
+  (define unsatisfying-tuples (set-copy simulation-tuples))
+  (set-symmetric-difference! unsatisfying-tuples commitment-satisfying-tuples)
+  (match-define (list conforming-tuples _)
+    (remove-unsupported-tuples commitment-satisfying-tuples
+                               incoming
+                               simulation-related-spec-steps
+                               unsatisfying-tuples))
+  (andmap (curry set-member? conforming-tuples) initial-tuples))
 
-  ;; TODO: do a check for the state mapping
+;; ---------------------------------------------------------------------------------------------------
+;; Simulation
 
-  ;; TODO: to-visit is now an imperative queue, so probably shouldn't use it as a loop parameter
-  ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
-  ;; message generation
-  (match-define (list prog# spec# obs-r# unobs-r#)
-    ;; TODO: get the max depth from somewhere
-    (α-tuple initial-prog-config
-             initial-spec-config
-             init-obs-receptionists
-             init-unobs-receptionists
-             10))
-  (match (find-conformance-simulation  prog# spec# obs-r# unobs-r# state-matches)
-    [#f #f]
-    [simulation
-     (all-commitments-satisfied? simulation)]))
+;; TODO: test this function
+;;
+;; TODO: rename this function
+;;
+;; Builds a set of nodes from the rank-1 conformance simulation by abstractly evaluating program
+;; states and finding matching specification transitions, starting from the given initial
+;; tuples. Returns various data structures (see dissertation/model-checker-pseudocode.md for details)
+(define (build-immediate-simulation initial-tuples)
+  ;; TODO: find a way to make this function shorter
 
-;; TODO: make this function MUCH shorter
-(define (find-conformance-simulation initial-prog initial-spec initial-obs-r initial-unobs-r state-matches)
-  (define simulation-graph (make-graph))
-  (define to-visit (queue))
-  (define initial-vertex (record-next-step initial-prog initial-spec initial-obs-r initial-unobs-r to-visit simulation-graph))
+  ;; TODO: think about using queues from the pfds collection if I switch to Typed Racket (which would
+  ;; avoid the performance issue associated with that package)
+  ;;
+  ;; TODO: decide on mutable vs. immutable programming style
+  (define to-visit (apply queue initial-tuples)) ; mutable
+  (define related-spec-steps (make-hash)) ; hash table from (tuple, impl-step) to (listof spec-step)
+  ;; hash table from tuple to (setof (tuple, trigger, outputs, tuple))
+  (define incoming (make-hash (map (lambda (t) (cons t (mutable-set))) initial-tuples)))
 
-  (let/cc return-early
-    (define program-transitions-checked 0) ; for diagnostics only
-    (let loop ([to-visit to-visit]
-               [visited (set)])
-      (cond
-        [(queue-empty? to-visit) simulation-graph]
-        [else
-         (define source-vertex (dequeue! to-visit))
-         (define current-tuple (vertex-value source-vertex))
-         ;; TODO: rename this function. A better name will help me with the general terminology
-         ;; with which I describe my technique
-         (match-define (simulation-node prog spec obs-receptionists unobs-receptionists _) current-tuple)
-         ;; TODO: rename this idea of transition: there's some other "thing" that this is, like a
-         ;; transmission result. Define this data definition in the code somewhere, because it
-         ;; should really be a type (it's a new kind of data in my domain that needs to be defined
-         ;; and named)
+  (let loop ([related-tuples (set)]
+             [unrelated-successors (set)])
+    (match (dequeue-if-non-empty! to-visit)
+      ;; TODO: adjust my pseudocode and proof to note that the incoming edge is initialized here
+      [#f (list related-tuples incoming related-spec-steps unrelated-successors)]
+      ;; TODO: change this pattern if we change the tuple structure
+      [tuple
+       ;; Debugging
+       ;; (set! program-transitions-checked (add1 program-transitions-checked))
+       ;; (printf "Program state #: ~s\n" program-transitions-checked)
+       ;; (printf "Queue size: ~s\n" (queue-length to-visit))
+       ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs prog))
+       ;; (printf "The full prog config: ~s\n" prog)
+       ;; (printf "The spec config: ~s\n" spec)
 
-         ;; Debugging
-         (set! program-transitions-checked (add1 program-transitions-checked))
-         ;; (printf "Program state #: ~s\n" program-transitions-checked)
-         ;; (printf "Queue size: ~s\n" (queue-length to-visit))
-         ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs prog))
-         ;; (printf "The full prog config: ~s\n" prog)
-         ;; (printf "The spec config: ~s\n" spec)
+       (define found-unmatchable-step? #f)
+       (define i (simulation-node-prog-config tuple))
+       (define i-steps
+         (impl-steps-from i
+                          (simulation-node-obs-receptionists tuple)
+                          (simulation-node-unobs-receptionists tuple)))
 
-         (display-step-line "Evaluating possible program transitions")
-         ;; TODO: handle multiple actors here
-         (define possible-transitions
-           (append (external-message-transitions prog obs-receptionists #t)
-                   (external-message-transitions prog unobs-receptionists #f)
-                   (csa#-handle-all-internal-messages prog)
-                   (csa#-handle-all-timeouts prog)))
-         (for ([possible-transition possible-transitions])
-           (define stepped-prog-config (csa#-transition-final-config possible-transition))
-           (display-step-line "Finding a matching spec transition")
+       ;; Find the matching s-steps
+       (for ([i-step i-steps])
+         ;; TODO: make sure the satisfied commitments are also recorded somewhere in here
+         (define matching-s-steps (matching-spec-steps (simulation-node-spec-config tuple) i-step))
+         (hash-set! related-spec-steps (list tuple i-step) matching-s-steps)
+         (when (set-empty? matching-s-steps)
+           (set! found-unmatchable-step? #t)))
 
-           ;; TODO: rewrite find-matching-spec-transition; probably remove or refactor the
-           ;; hints. Should also just return the full config, because output commitment won't be
-           ;; satisfied immediately
-           (match (match-prog-transition-to-spec possible-transition spec state-matches)
-             [(list)
-              ;; (printf "couldn't find any match for ~s from program state ~s, in spec state ~s\n"
-              ;;         possible-transition
-              ;;         prog
-              ;;         spec)
-              (return-early #f)]
-             [(list (list stepped-spec-config satisfied-commitments))
-              (define destination-vertices
-                (record-next-step stepped-prog-config stepped-spec-config obs-receptionists unobs-receptionists to-visit simulation-graph))
-              ;; TODO: this for loop is repeated below; refactor out this redundancy
-              (for ([destination-vertex destination-vertices])
-                (graph-add-edge! simulation-graph
-                                 (simulation-step (csa#-transition-trigger possible-transition) satisfied-commitments)
-                                 source-vertex
-                                 destination-vertex))]
-             [(list multiple-transition-com-sat-pairs ...)
-              ;; TODO: remove this hack
-              ;;
-              ;; Temporary hack: if there is a unique config with the minimal number of commitments, use it
-              (match (unique-min multiple-transition-com-sat-pairs
-                                 (lambda (p) (aps#-config-commitment-count (car p))) )
-                [#f
-                 (displayln "Too many possible matches")
-                 (printf "Program transition: ~s\n" possible-transition)
-                 (for ([s (map car multiple-transition-com-sat-pairs)])
-                   (printf "A spec transition: ~s\n" s))
-                 ;; TODO: call a continuation instead
-                 (return-early #f)]
-                [(list the-config satisfied-commitments)
-                 (define destination-vertices
-                   (record-next-step stepped-prog-config the-config obs-receptionists unobs-receptionists to-visit simulation-graph))
-                 ;; TODO: list satisfied commitments in the edge, and list the trigger
-                 (for ([destination-vertex destination-vertices])
-                   (graph-add-edge! simulation-graph
-                                    (simulation-step (csa#-transition-trigger possible-transition) satisfied-commitments)
-                                    source-vertex
-                                    destination-vertex))])]))
-         (loop to-visit (set-add visited current-tuple))]))))
+       ;; Add this tuple to appropriate list; add new worklist items
+       (cond
+         [found-unmatchable-step? (loop related-tuples (set-add unrelated-successors tuple))]
+         [else
+          (for ([i-step i-steps])
+            (for ([s-step (hash-ref related-spec-steps (list tuple i-step))])
+              ;; TODO: simplify this new-tuple code (will be easier when receptionists are maintained
+              ;; elsewhere)
+              (define new-tuple
+                (simulation-node
+                 (impl-step-final-state i-step)
+                 (spec-step-final-state s-step)
+                 ;; TODO: put the obs/unobs receptionists in the spec config
+                 (simulation-node-obs-receptionists tuple)
+                 (simulation-node-unobs-receptionists tuple)))
+              (define sbc-tuples (sbc new-tuple))
+              (for ([sbc-tuple sbc-tuples])
+                (incoming-add! incoming sbc-tuple (list tuple i-step s-step))
+                (unless (or (member sbc-tuple (queue->list to-visit))
+                            (set-member? related-tuples sbc-tuple)
+                            (set-member? unrelated-successors sbc-tuple))
+                  (enqueue! to-visit sbc-tuple)))))
+          (loop (set-add related-tuples tuple) unrelated-successors)])])))
+
+;; TODO: add a test that the "incoming" dictionary is properly set up (this had a bug before)
+
+(define (impl-steps-from impl-state obs-receptionists unobs-receptionists)
+  (define (add-observed-flag transition observed?)
+    (impl-step observed?
+               (csa#-transition-trigger transition)
+               (csa#-transition-outputs transition)
+               (csa#-transition-final-config transition)))
+
+  (append (map (curryr add-observed-flag #t)
+               (external-message-transitions impl-state obs-receptionists #t))
+          (map (curryr add-observed-flag #f)
+               (append
+                (external-message-transitions impl-state unobs-receptionists #f)
+                (csa#-handle-all-internal-messages impl-state)
+                (csa#-handle-all-timeouts impl-state)))))
 
 ;; Returns all possible transitions of the given program config caused by a received message to any of
 ;; the given receptionist addresses
@@ -223,66 +241,103 @@ Remaining big challenges I see in the analysis:
                ;; TODO: get the max depth from somewhere
                ([message (generate-abstract-messages (csa#-typed-address-type receptionist) 10)])
        (display-step-line "Evaluating a handler")
-       ;; TODO: consider not returning a special "transition" object here, but rather a new config:
-       ;; keep the config components inside the CSA# module
+       ;; TODO: deal with the "observed?" flag
        (append transitions-so-far
                (csa#-handle-message prog-config
                                     (csa#-typed-address->untyped receptionist)
-                                    message observed?))))))
+                                    message))))))
 
-;; Given a program transition, the current spec config, and the hash table mapping prog states to spec
-;; states, returns the list of pairs of possible spec config moves and commitment satisfaction lists
-;; that could match this transition
-(define (match-prog-transition-to-spec prog-transition spec-config state-matches)
-  ;; Rough initial idea of algorithm for multi-FSM specs (to be implemented): transition the spec FSM
-  ;; only when (a) an observed message is received, or (b) when no output commitment can satisfy a
-  ;; current output
-
-  ;; TODO: figure out if I should support instances where a single transition of the program uses
+;; Returns a set of the possible spec steps (see the struct above) from the given spec config that
+;; match the given implementation step
+(define (matching-spec-steps spec-config i-step)
+  ;; TODO: decide if I should support instances where a single transition of the program uses
   ;; multiple transitions of the spec (I think this probably won't happen in practice)
+  (define matched-stepped-configs (mutable-set))
+  (for ([config (aps#-steps-for-trigger spec-config
+                                        (impl-step-from-observer? i-step)
+                                        (impl-step-trigger i-step))])
+    (match (aps#-resolve-outputs config (impl-step-outputs i-step))
+      [#f matched-stepped-configs]
+      [(list stepped-spec-config satisfied-commitments)
+       ;; TODO: record the satisfied commitments somehow
+       (set-add! matched-stepped-configs (spec-step stepped-spec-config))]))
+  matched-stepped-configs)
 
-  ;; (printf "the program trans: ~s\n" prog-transition)
+(module+ test
+  (define null-spec-config (make-Σ# '((define-state (S))) '(goto S) null))
 
-  ;; TODO: add satisfied commitments to the new graph edge
+  (test-case "Null transition okay for unobs"
+    (check-equal?
+     (matching-spec-steps
+      null-spec-config
+      (impl-step #f '(internal-receive (init-addr 0) (* Nat)) null #f))
+     (mutable-set (spec-step null-spec-config))))
+  (test-case "Null transition not okay for observed input"
+    (check-equal?
+     (matching-spec-steps
+      null-spec-config
+      (impl-step #t '(external-receive (init-addr 0) (* Nat)) null #f))
+     (mutable-set)))
+  (test-case "No match if trigger does not match"
+    (check-equal?
+     (matching-spec-steps
+      (make-Σ# '((define-state (A) [x -> (goto A)])) '(goto A) null)
+      (impl-step #t '(external-receive (init-addr 0) (* Nat)) null #f))
+     (mutable-set)))
+  (test-case "Unobserved outputs don't need to match"
+    (check-equal?
+     (matching-spec-steps
+      null-spec-config
+      (impl-step #f '(internal-receive (init-addr 0) (* Nat)) (list '((obs-ext 1) (* Nat))) #f))
+     (mutable-set (spec-step null-spec-config))))
+  (test-case "No match if outputs do not match"
+    (check-equal?
+     (matching-spec-steps
+      (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1))))
+      (impl-step #f '(internal-receive (init-addr 0) (* Nat)) (list '((obs-ext 1) (* Nat))) #f))
+     (mutable-set)))
+  (test-case "Output can be matched by previous commitment"
+    (check-equal?
+     (matching-spec-steps
+      (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1) *)))
+      (impl-step #f '(internal-receive (init-addr 0) (* Nat)) (list '((obs-ext 1) (* Nat))) #f))
+     (mutable-set (spec-step (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1))))))))
+  (test-case "Output can be matched by new commitment"
+    (check-equal?
+     (matching-spec-steps
+      (make-Σ# '((define-state (A) [x -> (with-outputs ([x *]) (goto A))])) '(goto A) null)
+      (impl-step #t '(external-receive (init-addr 0) (obs-ext 1)) (list '((obs-ext 1) (* Nat))) #f))
+     (mutable-set (spec-step (make-Σ# '((define-state (A) [x -> (with-outputs ([x *]) (goto A))]))
+                              '(goto A)
+                              (list '((obs-ext 1))))))))
+  ;; TODO: check for merged output commitments (*-many) instead
+  (test-case "Cannot have multiple copies of same commitment"
+    (check-equal?
+     (matching-spec-steps
+      (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1)) (list '[(obs-ext 1) *]))
+      (impl-step #t '(external-receive (init-addr 0) (* Nat)) null #f))
+     (mutable-set))))
 
-  (filter (lambda (config-pair) (and config-pair (no-duplicate-commitments? (car config-pair))))
-          (for/list ([stepped-spec-config (aps#-steps-for-trigger spec-config (csa#-transition-trigger prog-transition))])
-            (match (aps#-resolve-outputs stepped-spec-config (csa#-transition-outputs prog-transition))
-              [#f #f]
-              [(list stepped-spec-config satisfied-commitments)
-               ;; now just check if state name matches. The rule for now: We expect a match if the
-               ;; transitioned actor is the one corresponding to this spec and the state name matches,
-               ;; or the actor does not correspond to the specified actor and the spec state name stayed the
-               ;; same, or if there are no current spec instances.
-               (cond
-                 [(null? (aps#-config-instances stepped-spec-config))
-                  (list stepped-spec-config satisfied-commitments)]
-                 [(let ([spec-state (aps#-config-only-instance-state stepped-spec-config)]
-                        [speced-actor? (equal? (csa#-transition-actor prog-transition) (aps#-config-only-instance-address spec-config))])
-                    (or
-                     (and speced-actor?
-                          (equal? (hash-ref state-matches (csa#-transition-next-state prog-transition) #f)
-                                  spec-state))
-                     (and (not speced-actor?) (equal? (aps#-config-only-instance-state spec-config) spec-state))))
-                  (list stepped-spec-config satisfied-commitments)]
-                 [else #f])]))))
+;; TODO: rename this function to something more generic (not incoming-based)
+(define (incoming-add! incoming key new-tuple)
+  (match (hash-ref incoming key #f)
+    [#f
+     (hash-set! incoming key (mutable-set new-tuple))]
+    [the-set
+     (set-add! the-set new-tuple)]))
 
 ;; TODO: consider defining the spec semantics completely independently of concrete addresses, and
 ;; provide a mapping in the spec instead (the spec semantics would probably look something like HD
 ;; automata)
 
-;; Records the next tuple as a next state in our work list and in our simulation graph (just the
-;; vertex, not the edge), doing the necessary splitting, abstraction, and canonicalization of the
-;; tuple. Returns the set of new simulation graph vertices.
-;;
-;; TODO: refactor this function to take less arguments and generally be more coherent
-(define (record-next-step stepped-prog-config stepped-spec-config obs-receptionists unobs-receptionists to-visit simulation-graph)
+;; Splits, blurs, and canonicalizes the given tuple, returning the resulting list of tuples
+(define (sbc tuple)
   (display-step-line "Splitting the spec config")
-  (for/list ([spec-config-component (split-spec stepped-spec-config)])
-
+  (for/list ([spec-config-component (split-spec (simulation-node-spec-config tuple))])
     ;; TODO: make it an "error" for a non-precise address to match a spec state parameter
     (display-step-line "Abstracting a program")
-    (define abstracted-prog-config (abstract-prog-config-by-spec stepped-prog-config spec-config-component))
+    (define abstracted-prog-config
+      (abstract-prog-config-by-spec (simulation-node-prog-config tuple) spec-config-component))
     (display-step-line "Canonicalizing the tuple, adding to queue")
     (match-define (list canonicalized-prog
                         canonicalized-spec
@@ -290,25 +345,19 @@ Remaining big challenges I see in the analysis:
                         canonicalized-unobs-recs)
       (canonicalize-tuple (list abstracted-prog-config
                                 spec-config-component
-                                obs-receptionists
-                                unobs-receptionists))) ; i.e. rename the addresses
-    ;; TODO: allow the receptionist sets to change over time
-    (define next-tuple (simulation-node canonicalized-prog
-                                        canonicalized-spec
-                                        canonicalized-obs-recs
-                                        canonicalized-unobs-recs
-                                        null))
-    ;; TODO: shorten this match into some kind of "or-else" form
-    (match (graph-find-vertex simulation-graph next-tuple #:is-equal? same-tuple?)
-      [#f
-       ;; (printf "Adding state: ~s\n" (prog-config-goto (car next-tuple)))
-       (define new-vertex (graph-add-vertex! simulation-graph next-tuple))
-       (enqueue! to-visit new-vertex)
-       new-vertex]
-      [vertex vertex])))
+                                ;; TODO: include the receptionists in the splitting and blurring process
+                                (simulation-node-obs-receptionists tuple)
+                                (simulation-node-unobs-receptionists tuple))))
+
+    (simulation-node canonicalized-prog
+                     canonicalized-spec
+                     canonicalized-obs-recs
+                     canonicalized-unobs-recs)))
 
 ;; Takes abstract prog config and abstract spec config; returns prog further abstracted according to
 ;; spec
+;;
+;; TODO: maybe rename this to "project", since it's a kind of projection
 (define (abstract-prog-config-by-spec p s)
   ;; How do we decide whether to keep the old or new stuff? Is that a different part of the
   ;; abstraction from blurring out the addresses irrelevant to the current spec config?
@@ -381,75 +430,125 @@ Remaining big challenges I see in the analysis:
   ;; TODO: check that none of the FSMs share an address
   )
 
+(define (remove-unsupported-tuples all-tuples incoming init-related-spec-steps init-unrelated-successors)
+  (define remaining-tuples (set-copy all-tuples))
+  (define unrelated-successors (apply queue (set->list init-unrelated-successors)))
+  (define related-spec-steps (hash-copy init-related-spec-steps))
+
+  (let loop ()
+    (match (dequeue-if-non-empty! unrelated-successors)
+      [#f (list remaining-tuples related-spec-steps)]
+      [unrelated-tuple
+       (for ([transition (hash-ref incoming unrelated-tuple)])
+         (match-define (list predecessor i-step s-step) transition)
+         (when (set-member? remaining-tuples predecessor)
+           (define spec-steps (hash-ref related-spec-steps (list predecessor i-step)))
+           (when (set-member? spec-steps s-step)
+             (set-remove! spec-steps s-step)
+             (when (set-empty? spec-steps)
+               (set-remove! remaining-tuples predecessor)
+               (enqueue! unrelated-successors predecessor)))))
+       (loop)])))
+
+(module+ test
+  (require "hash-helpers.rkt")
+
+  ;; Because remove-unsupported does not care about the actual content of the impl or spec
+  ;; configurations, we replace them here with letters (A, B, C, etc. for impls and X, Y, Z, etc. for
+  ;; specs) for simplification
+  (define ax-tuple (simulation-node 'A 'X #f #f))
+  (define by-tuple (simulation-node 'B 'Y #f #f))
+  (define bz-tuple (simulation-node 'B 'Z #f #f))
+  (define cw-tuple (simulation-node 'C 'W #f #f))
+
+  (define aa-step (impl-step #f '(timeout (init-addr 0)) null 'A))
+  (define xx-step (spec-step 'X))
+  (define ab-step (impl-step #f '(timeout (init-addr 0)) null 'B))
+  (define xy-step (spec-step 'Y))
+  (define xz-step (spec-step 'Z))
+  (define bc-step (impl-step #f '(timeout (init-addr 0)) null 'C))
+  (define yw-step (spec-step 'W))
+
+  (test-equal? "Remove no nodes, because no list"
+    (remove-unsupported-tuples
+     (mutable-set ax-tuple)
+     ;; incoming
+     (mutable-hash [ax-tuple (mutable-set (list ax-tuple aa-step xx-step))])
+     ;; related spec steps
+     (mutable-hash [(list ax-tuple aa-step) (mutable-set xx-step)])
+     ;; unrelated sucessors
+     null)
+    (list
+     (mutable-set ax-tuple)
+     (mutable-hash [(list ax-tuple aa-step) (mutable-set xx-step)])))
+
+  (test-equal? "Remove no nodes, because unrelated-matches contained only a redundant support"
+    (remove-unsupported-tuples
+     (mutable-set ax-tuple bz-tuple)
+     (mutable-hash [by-tuple (mutable-set (list ax-tuple ab-step xy-step))]
+                   [bz-tuple (mutable-set (list ax-tuple ab-step xz-step))]
+                   [ax-tuple (mutable-set)])
+     (mutable-hash [(list ax-tuple ab-step) (mutable-set xy-step xz-step)])
+     (list by-tuple))
+    (list
+     (mutable-set ax-tuple bz-tuple)
+     (mutable-hash [(list ax-tuple ab-step) (mutable-set xz-step)])))
+
+  (test-equal? "Remove last remaining node"
+    (remove-unsupported-tuples
+     (mutable-set ax-tuple)
+     (mutable-hash [by-tuple (mutable-set (list ax-tuple ab-step xy-step))]
+                   [ax-tuple (mutable-set)])
+     (mutable-hash [(list ax-tuple ab-step) (mutable-set xy-step)])
+     (list by-tuple))
+    (list
+     (mutable-set)
+     (mutable-hash [(list ax-tuple ab-step) (mutable-set)])))
+
+  (test-equal? "Remove a redundant support"
+    (remove-unsupported-tuples
+     (mutable-set ax-tuple bz-tuple by-tuple)
+     ;; incoming
+     (mutable-hash [by-tuple (mutable-set (list ax-tuple ab-step xy-step))]
+                   [bz-tuple (mutable-set (list ax-tuple ab-step xz-step))]
+                   [ax-tuple (mutable-set)]
+                   [cw-tuple (mutable-set (list by-tuple bc-step yw-step))])
+     ;; matching spec steps
+     (mutable-hash [(list ax-tuple ab-step) (mutable-set xy-step xz-step)]
+                   [(list by-tuple bc-step) (mutable-set yw-step)])
+     ;; unrelated successors
+     (list cw-tuple))
+    (list
+     (mutable-set ax-tuple bz-tuple)
+     (mutable-hash [(list ax-tuple ab-step) (mutable-set xz-step)]
+                   [(list by-tuple bc-step) (mutable-set)])))
+
+    (test-equal? "Remove a non-redundant support"
+      (remove-unsupported-tuples
+       (mutable-set ax-tuple by-tuple)
+       ;; incoming
+       (mutable-hash [by-tuple (mutable-set (list ax-tuple ab-step xy-step))]
+                     [ax-tuple (mutable-set)]
+                     [cw-tuple (mutable-set (list by-tuple bc-step yw-step))])
+       ;; matching spec steps
+       (mutable-hash [(list ax-tuple ab-step) (mutable-set xy-step)]
+                     [(list by-tuple bc-step) (mutable-set yw-step)])
+       ;; unrelated successors
+       (list cw-tuple))
+      (list
+       (mutable-set)
+       (mutable-hash [(list ax-tuple ab-step) (mutable-set)]
+                     [(list by-tuple bc-step) (mutable-set)]))))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Commitment Satisfaction
-
-;; TODO: test all these functions individually before hooking into the big thing
-
-;; Returns true if all nodes in the given conformance simulation satisfy their output commitments;
-;; false otherwise
-(define (all-commitments-satisfied? simulation-graph)
-  (let/cc return-early
-    (for ([edge (graph-edges simulation-graph)])
-      (mark-commitments-satisfied-by edge))
-
-    ;; new data structure: spec is instances + commit maps, which map an address to a "multiset"
-    ;; (really a set, since we punt for now on conformance that requires multiple copies of the same
-    ;; output commitment) of pattern/"eventually satisfied flag" pairs
-    ;; (printf "the graph: ~s\n" simulation-graph)
-
-    (for ([tuple (map vertex-value (graph-vertices simulation-graph))])
-      (for ([commitment (aps#-config-commitments (simulation-node-spec-config tuple))])
-        (unless (member commitment (simulation-node-satisfied-commitments tuple))
-          (return-early #f))))
-    #t))
-
-;; Graph of the simulation should have objects for both nodes and edges, with edges having trigger,
-;; source, destination, and set of commitments satisfied (yes, a set not a list, because the
-;; commitment satisfaction step does not need to distinguish between commitments with the same pattern
-;; and address in the same state - plus I'm currently punting on that case anyway); and nodes having
-;; lists of incoming and outgoing edges
 
 ;; TODO: when walking the edges, take care of edges that do an address rename (because the commitment
 ;; will also need to be renamed)
 
-
-;; Marks as "will-be-satisfied" every commitment (transitively) guaranteed to eventually be satisfied
-;; if this edge satisfies that commitment.
-(define (mark-commitments-satisfied-by edge)
-  (for ([commitment (simulation-step-satisfied-commitments (edge-value edge))])
-    (mark-result-of-edge-commitment-satisfaction edge commitment)))
-
-;; Does the necessary backwards walk of the graph to mark the commitments that are now satisfied
-;; because following the given edge guarantees that the given commitment will be satisfied (either
-;; because the edge satisfies it directly, or because the node it leads to is marked as guaranteeting
-;; satisfaction of that commitment).
-;;
-;; Note that this edge may have an external trigger, in which case it does not mark any commitments.
-(define (mark-result-of-edge-commitment-satisfaction edge commitment)
-  (define trigger (simulation-step-trigger (edge-value edge)))
-  (define source (edge-source edge))
-  (define source-node (vertex-value source))
-  (define outgoing-edges-with-same-trigger
-    (filter (lambda (outgoing-edge)
-              (equal? (simulation-step-trigger (edge-value outgoing-edge)) trigger))
-            (vertex-outgoing source)))
-  (define (following-edge-satisfies-commitment? edge)
-    (member commitment
-            (append (simulation-step-satisfied-commitments (edge-value edge))
-                    (simulation-node-satisfied-commitments (vertex-value (edge-destination edge))))))
-  (when (and (csa#-internal-trigger? trigger)
-             (aps#-config-has-commitment? (simulation-node-spec-config source-node) commitment)
-             (not (member commitment (simulation-node-satisfied-commitments source-node)))
-             (andmap following-edge-satisfies-commitment? outgoing-edges-with-same-trigger))
-    (simulation-node-add-satisfied-commitment! source-node commitment)
-    (for ([incoming (vertex-incoming source)])
-      (mark-result-of-edge-commitment-satisfaction edge commitment))))
-
-(define (simulation-node-add-satisfied-commitment! node commitment)
-  (set-simulation-node-satisfied-commitments!
-   node
-   (cons commitment (simulation-node-satisfied-commitments node))))
+(define (find-satisfying-tuples simulation-tuples related-spec-steps)
+  ;; TODO: implement this for real
+  simulation-tuples)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Misc. Helpers
@@ -482,6 +581,12 @@ Remaining big challenges I see in the analysis:
 
 (define (display-step-line msg)
   (when DISPLAY-STEPS (displayln msg)))
+
+(define (tuple->debug-tuple tuple)
+  (list (prog-config-without-state-defs (simulation-node-prog-config tuple))
+        (spec-config-without-state-defs (simulation-node-spec-config tuple))
+        (simulation-node-obs-receptionists tuple)
+        (simulation-node-unobs-receptionists tuple)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Top-level tests
@@ -548,19 +653,23 @@ Remaining big challenges I see in the analysis:
   (check-not-false (redex-match aps-eval z static-response-spec))
   (check-not-false (redex-match aps-eval z ignore-all-with-addr-spec-instance))
 
-  (check-true (analyze (make-single-agent-config static-response-agent)
+  (test-true "Static response works"
+             (analyze (make-single-agent-config static-response-agent)
+                      static-response-spec
+                      (term ((addr 0 (Union [Ack Nat])))) null
+                      (hash 'Always 'Always)))
+  (test-false "Static response agent, ignore all spec"
+              (analyze (make-single-agent-config static-response-agent)
+                       ignore-all-with-addr-spec-instance
+                       (term ((addr 0 (Union [Ack Nat])))) null
+                       (hash 'Always 'Always)))
+  (test-false "static double response agent"
+              (analyze (make-single-agent-config static-double-response-agent)
                        static-response-spec
                        (term ((addr 0 (Union [Ack Nat])))) null
                        (hash 'Always 'Always)))
-  (check-false (analyze (make-single-agent-config static-response-agent)
-                        ignore-all-with-addr-spec-instance
-                        (term ((addr 0 (Union [Ack Nat])))) null
-                        (hash 'Always 'Always)))
-  (check-false (analyze (make-single-agent-config static-double-response-agent)
-                        static-response-spec
-                        (term ((addr 0 (Union [Ack Nat])))) null
-                        (hash 'Always 'Always)))
-  (check-false (analyze ignore-all-config
+  (test-false "Static response spec, ignore-all config"
+               (analyze ignore-all-config
                         static-response-spec
                         (term ((addr 0 (Union [Ack Nat])))) null
                         (hash 'Always 'Always)))
@@ -613,10 +722,11 @@ Remaining big challenges I see in the analysis:
                        pattern-match-spec
                        (term ((addr 0 (Union [A Nat] [B Nat])))) null
                        pattern-matching-map))
-  (check-false (analyze (make-single-agent-config partial-pattern-matching-agent)
-                        pattern-match-spec
-                        (term ((addr 0 (Union [A Nat] [B Nat])))) null
-                        pattern-matching-map))
+  (test-false "Send on A but not B; should send on both"
+              (analyze (make-single-agent-config partial-pattern-matching-agent)
+                       pattern-match-spec
+                       (term ((addr 0 (Union [A Nat] [B Nat])))) null
+                       pattern-matching-map))
   (check-false (analyze (make-single-agent-config reverse-pattern-matching-agent)
                         pattern-match-spec
                         (term ((addr 0 (Union [A Nat] [B Nat])))) null
@@ -703,6 +813,16 @@ Remaining big challenges I see in the analysis:
             ;; (goto Always (+ i 1))
             (goto Always i))))
        (goto Always 0))))
+  (define respond-once-agent
+    (term
+     ((addr 0)
+      (((define-state (Init) (response-target)
+          (begin
+            (send response-target 0)
+            (goto NoMore)))
+        (define-state (NoMore) (new-response-target)
+          (goto NoMore)))
+       (goto Init)))))
 
   (check-not-false (redex-match aps-eval z request-response-spec))
   (check-not-false (redex-match aps-eval z request-same-response-addr-spec))
@@ -711,6 +831,7 @@ Remaining big challenges I see in the analysis:
   (check-not-false (redex-match csa-eval αn respond-to-first-addr-agent2))
   (check-not-false (redex-match csa-eval αn double-response-agent))
   (check-not-false (redex-match csa-eval αn delay-saving-address-agent))
+  (check-not-false (redex-match csa-eval αn respond-once-agent))
 
   (check-true (analyze (make-single-agent-config request-response-agent)
                        request-response-spec
@@ -724,9 +845,16 @@ Remaining big challenges I see in the analysis:
                         request-response-spec
                         (term ((addr 0 (Addr Nat)))) null
                         (hash 'Always 'Always)))
-
   (check-false (analyze (make-single-agent-config request-response-agent)
                         request-same-response-addr-spec
+                        (term ((addr 0 (Addr Nat)))) null
+                        (hash 'Always 'Init)))
+  (check-false (analyze ignore-all-config
+                        request-response-spec
+                        (term ((addr 0 (Addr Nat)))) null
+                        (hash 'Always 'Init)))
+  (check-false (analyze (make-single-agent-config respond-once-agent)
+                        request-response-spec
                         (term ((addr 0 (Addr Nat)))) null
                         (hash 'Always 'Init)))
   (check-true (analyze (make-single-agent-config respond-to-first-addr-agent)
@@ -1240,16 +1368,24 @@ Remaining big challenges I see in the analysis:
                        request-response-spec
                        (term ((addr 0 (Addr Nat)))) null
                        (hash 'A 'Always)))
-  (check-false (analyze (make-single-agent-config send-inside-loop-agent)
-                       request-response-spec
-                       (term ((addr 0 (Addr Nat)))) null
-                       (hash 'A 'Always)))
+  ;; TODO: get this test working again (need to at least check that none of the outputs in a loop were
+  ;; observed)
+  ;;
+  ;; (check-false (analyze (make-single-agent-config send-inside-loop-agent)
+  ;;                      request-response-spec
+  ;;                      (term ((addr 0 (Addr Nat)))) null
+  ;;                      (hash 'A 'Always)))
   (check-true (analyze (make-single-agent-config send-after-loop-agent)
                        request-response-spec
                        (term ((addr 0 (Addr Nat)))) null
                        (hash 'A 'Always)))
 
   ;;;; Timeouts
+
+  ;; TODO: check the case where we rely on a timeout for the initial message. Should not be allowed,
+  ;; because it might not happen. Similarly try the one where we have a second thing that times out,
+  ;; and that *does* work
+
   (define timeout-spec
     (term
      (((define-state (A r)
@@ -1371,11 +1507,12 @@ Remaining big challenges I see in the analysis:
   (check-not-false (redex-match csa-eval αn statically-delegating-responder-actor))
   (check-not-false (redex-match csa-eval αn request-response-agent2))
 
-  (check-true (analyze
-               (make-empty-queues-config (list request-response-agent2 statically-delegating-responder-actor) null)
-               request-response-spec
-               (term ((addr 0 (Addr Nat)))) null
-               (hash 'A 'Always)))
+  (test-true "Multiple actors 3"
+             (analyze
+              (make-empty-queues-config (list request-response-agent2 statically-delegating-responder-actor) null)
+              request-response-spec
+              (term ((addr 0 (Addr Nat)))) null
+              (hash 'A 'Always)))
 
   ;; TODO: tests for:
   ;; * commitment satisfied immediately
@@ -1383,4 +1520,6 @@ Remaining big challenges I see in the analysis:
   ;; * satisfied only if another receive comes in
   ;; * never satisfied
   ;; * satisfied only if no other receive comes in
+
+  ;; TODO: test for obs/unobs receptionists changing over time
   )

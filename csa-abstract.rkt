@@ -12,7 +12,6 @@
  csa#-internal-trigger?
  csa#-output-address
  csa#-output-message
- csa#-transition-next-state
  α-config
  α-e
  α-typed-receptionist-list
@@ -105,12 +104,11 @@
       (for/fold ([x E#]) ([x e#]) e#)
       (for/fold ([x v#]) ([x E#]) e#)
       (loop-context E#))
-  (trigger# timeout
-            [internal-message v#]
-            ;; TODO: rethink whether these triggers are really the right thing. Observability here
-            ;; seems weird
-            [external-observable-message a#int v#]
-            [external-unobservable-message a#int v#]))
+  ;; TODO: make these more like labels, or something
+  (trigger# (timeout a#int)
+            ;; TODO: maybe distinguish timeout when messages are there or not
+            (internal-receive a#int v#)
+            (external-receive a#int v#)))
 
   ;; (define-metafunction csa#
   ;;   abstract : K -> K#
@@ -279,11 +277,8 @@
 
 (struct csa#-transition
   (trigger ; follows trigger# above
-   actor ; address of the stepped actor
    outputs ; list of abstract-addr/abstract-message 2-tuples
-   loop-outputs ; list of abstract-addr/abstract-message 2-tuples
-   final-config ; an abstract program configuration
-   next-state) ; a state name
+   final-config) ; an abstract program configuration
   #:transparent)
 
 (define (csa#-internal-trigger? trigger)
@@ -297,7 +292,7 @@
 
 ;; Evaluates the handler triggered by sending message to actor-address, return the list of possible
 ;; results (which are tuples of the final behavior expression and the list of outputs)
-(define (csa#-handle-message prog-config actor-address message observed?)
+(define (csa#-handle-message prog-config actor-address message)
   (redex-let csa# ([(any_actors-before
                      (a# ((name state-defs (_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e# any_timeout-clause ...) _ ...)) (in-hole E# (goto s v# ..._n))))
                      any_actors-after)
@@ -313,9 +308,7 @@
              any_receptionists
              any_externals)))
     (eval-handler initial-config
-                  (if observed?
-                      (term (external-observable-message ,actor-address ,message))
-                      (term (external-unobservable-message ,actor-address ,message)))
+                  (term (external-receive ,actor-address ,message))
                   actor-address
                   prog-config-context)))
 
@@ -347,7 +340,7 @@
                   any_externals)))
          (define new-transitions
            (eval-handler initial-config
-                         (term (internal-message v#_msg))
+                         (term (internal-receive a#int v#_msg))
                          (term a#int)
                          prog-config-context))
          (loop (append transitions-so-far new-transitions)
@@ -400,7 +393,7 @@
                 ,receptionists
                 ,externals)))
        (eval-handler (inject/H# (term (csa#-subst-n e# [x_s v#] ...)))
-                     'timeout
+                     (term (timeout any_address))
                      (term any_address)
                      prog-config-context))]
     [_ (error 'csa#-handle-actor-maybe-timeout "Got multiple matches for actor: ~s\n" actor)]))
@@ -425,17 +418,12 @@
     ;; TODO: rename outputs to something like "transmissions", because some of them stay internal to
     ;; the program
     (match-define (list behavior-exp outputs loop-outputs) config)
-    ;; TODO: do something with loop outputs
+    ;; TODO: check that there are no loop outputs, or refactor that code entirely
     (define new-prog-config
       (merge-new-messages (plug config-context behavior-exp)
                           (filter internal-output? outputs)))
     (define next-state (redex-let csa# ([(in-hole E# (goto s _ ...)) behavior-exp]) (term s)))
-    (csa#-transition trigger
-                     address
-                     (filter (negate internal-output?) outputs)
-                     loop-outputs
-                     new-prog-config
-                     next-state)))
+    (csa#-transition trigger (filter (negate internal-output?) outputs) new-prog-config)))
 
 ;; Returns true if the config is one that is unable to step because of an over-approximation in the
 ;; abstraction

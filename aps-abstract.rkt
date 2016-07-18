@@ -32,7 +32,14 @@
  canonicalize-tuple
  aps#-config-has-commitment?
  no-duplicate-commitments?
- aps#-config-commitment-count)
+ aps#-config-commitment-count
+
+ ;; Testing helpers
+ make-Σ#
+ single-instance-address
+
+ ;; Debugging helpers
+ spec-config-without-state-defs)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -176,7 +183,7 @@
 ;; Non-deterministically evaluates the given specification configuration with either a single trigger
 ;; step, or no step, when given the specified trigger from the program on the actor with the given
 ;; address, returning a list of the possible stepped specification configuration
-(define (aps#-steps-for-trigger spec-config trigger)
+(define (aps#-steps-for-trigger spec-config from-observer? trigger)
   (match (aps#-config-instances spec-config)
     [(list) (list spec-config)]
     [(list instance)
@@ -185,7 +192,7 @@
        (filter values
         (for/list ([transition (aps#-instance-transitions instance)])
                  ;; TODO: refactor this; need better definition of triggers, patterns, etc.
-          (match (match-program-trigger-to-spec-trigger trigger (aps#-instance-address instance) (aps#-transition-trigger transition))
+          (match (match-program-trigger-to-spec-trigger from-observer? trigger (aps#-instance-address instance) (aps#-transition-trigger transition))
             [#f #f]
             [(list bindings ...)
              (define exp-subst (term (subst-n/aps# ,(aps#-transition-body transition) ,@bindings)))
@@ -193,6 +200,17 @@
               (observe-addresses-from-subst spec-config bindings)
               (aps#-eval exp-subst))]))))
      (remove-duplicates stepped-configs)]))
+
+(module+ test
+  ;; TODO: allow for abstract spec configs to have many-of output commitments
+  (test-equal? "Spec cannot step to state with multiple copies of same commitment"
+               (aps#-steps-for-trigger
+                (make-Σ# (term ((define-state (A r) [* -> (with-outputs ([r *]) (goto A r))])))
+                         (term (goto A (obs-ext 0)))
+                         (term (((obs-ext 0) *))))
+                #t
+                (term (external-receive ,single-instance-address (* Nat))))
+               null))
 
 (define (aps#-eval exp)
   (term (aps#-eval/mf ,exp)))
@@ -217,13 +235,16 @@
                    [([_ a#ext] ...) the-subst])
              (term (any_instances (any_map-entries ... (a#ext) ...)))))
 
+;; NOTE: this may return #f if we have to add copies of existing commitments
 (define (update-config-with-effects spec-config eval-result)
   (redex-let* aps#
               ([((z) O)  spec-config]
                [((goto s a#ext_arg ...) ([a#ext_com po] ...) (z_new ...))  eval-result]
                [((S-hat ...) _ σ) (term z)]
                [z_updated (term ((S-hat ...) (goto s a#ext_arg ...) σ))])
-              (term ((z_updated z_new ...) (add-commitments O [a#ext_com po] ...)))))
+              (match (term (add-commitments O [a#ext_com po] ...))
+                [#f #f]
+                [new-O (term ((z_updated z_new ...) ,new-O))])))
 
 (define (step-spec-with-goto spec-config goto-exp)
   (redex-let aps# ([((((S-hat ...) _ σ)) O) spec-config])
@@ -231,18 +252,25 @@
 
 ;; NOTE: assumes an entry has been added already (e.g. with observe-addresses-from-subst)
 (define-metafunction aps#
-  add-commitments : O [a#ext po] ... -> O
+  add-commitments : O [a#ext po] ... -> O or #f
   [(add-commitments O) O]
+  ;; TODO: remove this clause when we support multiple copies of commitments
+  [(add-commitments (_ ... (a#ext _ ... po _ ...) _ ...) [a#ext po] _ ...)
+   #f]
   [(add-commitments (any_1 ... (a#ext po_rest ...) any_2 ...) [a#ext po] any_rest ...)
    (add-commitments (any_1 ... (a#ext po_rest ... po) any_2 ...) any_rest ...)])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pattern matching
 
-(define (match-program-trigger-to-spec-trigger trigger instance-address trigger-pattern)
+(define (match-program-trigger-to-spec-trigger from-observer? trigger instance-address pattern)
   (match
       (judgment-holds
-       (trigger-matches-trigger-pattern ,trigger ,instance-address ,trigger-pattern any_bindings)
+       (trigger-matches-trigger-pattern ,from-observer?
+                                        ,trigger
+                                        ,instance-address
+                                        ,pattern
+                                        any_bindings)
        any_bindings)
     [(list) #f]
     [(list binding-list) binding-list]
@@ -251,25 +279,51 @@
             "Match resulted in multiple possible substitutions")]))
 
 (define-judgment-form aps#
-  #:mode (trigger-matches-trigger-pattern I I I O)
-  #:contract (trigger-matches-trigger-pattern trigger# σ ε ([x v#] ...))
+  #:mode (trigger-matches-trigger-pattern I I I I O)
+  #:contract (trigger-matches-trigger-pattern boolean trigger# σ ε ([x v#] ...))
 
-  [---------------------------------------------------
-   (trigger-matches-trigger-pattern timeout _ unobs ())]
+  [-----------------------------------------------------------
+   (trigger-matches-trigger-pattern _ (timeout _) _ unobs ())]
 
-  [---------------------------------------------------------------
-   (trigger-matches-trigger-pattern (internal-message _) _ unobs ())]
+  [----------------------------------------------------------------------
+   (trigger-matches-trigger-pattern _ (internal-receive _ _) _ unobs ())]
 
-  [----------------------------------------------------------------------------
-   (trigger-matches-trigger-pattern (external-unobservable-message _ _) _ unobs ())]
+  [-----------------------------------------------------------------------
+   (trigger-matches-trigger-pattern #f (external-receive _ _) _ unobs ())]
 
   [(side-condition ,(not (equal? (term a#_1) (term a#_2))))
-   ----------------------------------------------------------------------------
-   (trigger-matches-trigger-pattern (external-observable-message a#_1 _) a#_2 unobs ())]
+   -----------------------------------------------------------------------------
+   (trigger-matches-trigger-pattern #t (external-receive a#_1 _) a#_2 unobs ())]
 
   [(aps#-match/j v# p any_bindings)
-   ----------------------------------------------------------------------------------
-   (trigger-matches-trigger-pattern (external-observable-message a# v#) a# p any_bindings)])
+   --------------------------------------------------------------------------------
+   (trigger-matches-trigger-pattern #t (external-receive a# v#) a# p any_bindings)])
+
+(module+ test
+  (check-equal?
+   (match-program-trigger-to-spec-trigger #f '(timeout (init-addr 0)) '(init-addr 0) 'unobs)
+   null)
+
+  (check-equal?
+   (match-program-trigger-to-spec-trigger #f '(external-receive (init-addr 0) (* Nat)) '(init-addr 0) 'unobs)
+   null)
+
+  (check-false
+   (match-program-trigger-to-spec-trigger #t '(external-receive (init-addr 0) (* Nat)) '(init-addr 0) 'unobs))
+
+  (check-equal?
+   (match-program-trigger-to-spec-trigger #t '(external-receive (init-addr 0) (obs-ext 1)) '(init-addr 0) 'x)
+   (list '(x (obs-ext 1))))
+
+  (check-false
+   (match-program-trigger-to-spec-trigger #f '(internal-receive (init-addr 0) (* Nat)) '(init-addr 0) 'x))
+
+  (check-false
+   (match-program-trigger-to-spec-trigger #t '(external-receive (init-addr 0) (* Nat)) '(init-addr 0) 'x))
+
+  (check-equal?
+   (match-program-trigger-to-spec-trigger #f '(internal-receive (init-addr 0) (* Nat)) '(init-addr 0) 'unobs)
+   null))
 
 (define-judgment-form aps#
   #:mode (aps#-match/j I I O)
@@ -278,9 +332,8 @@
   [-------------------
    (aps#-match/j _ * ())]
 
-  ;; TODO: make a version of this that only matches external addresses, for the APS matching
-  [-------------------
-   (aps#-match/j v# x ([x v#]))]
+  [-----------------------------------
+   (aps#-match/j a#ext x ([x a#ext]))]
 
   [(aps#-match/j v# p ([x v#_binding] ...)) ...
    --------------
@@ -298,26 +351,26 @@
    ---------------------------------------------
    (aps#-match/j (* (Record [l τ] ..._n)) (record [l p] ..._n) ([x v#_binding] ... ...))])
 
+(module+ test
 ;; TODO: rewrite these tests
-;; (module+ test
-;;   (check-equal? (aps#-match (term (* Nat)) (term *))
-;;                 (list (term ())))
-;;   (check-equal? (aps#-match (term (received-addr Always ADDR-HOLE 0 MOST-RECENT)) (term x))
-;;                 (list (term ([x (received-addr Always ADDR-HOLE 0 MOST-RECENT)]))))
-;;   (check-equal? (aps#-match (term (tuple 'a 'b)) (term (tuple 'a 'b)))
-;;                 (list (term ())))
-;;   ;; (displayln (redex-match csa# t (term 'a)))
-;;   ;; (displayln (redex-match csa# v# (term 'a)))
-;;   ;; (displayln (redex-match csa# x (term item)))
-;;   ;; (displayln (build-derivations (aps#-match/j 'a item ())))
-;;   (check-equal? (aps#-match (term 'a) (term item))
-;;                 (list (term ([item 'a]))))
-;;   (check-equal? (aps#-match (term (tuple 'a 'b)) (term (tuple 'a item)))
-;;                 (list (term ([item 'b]))))
-;;   (check-equal? (aps#-match (term (* (Tuple 'a 'b))) (term (tuple x 'b)))
-;;                 (list (term ([x (* 'a)])))))
-
-;; TODO: write tests for the above match
+  ;; (check-equal? (aps#-match (term (* Nat)) (term *))
+  ;;               (list (term ())))
+  ;; (check-equal? (aps#-match (term (received-addr Always ADDR-HOLE 0 MOST-RECENT)) (term x))
+  ;;               (list (term ([x (received-addr Always ADDR-HOLE 0 MOST-RECENT)]))))
+  ;; (check-equal? (aps#-match (term (tuple 'a 'b)) (term (tuple 'a 'b)))
+  ;;               (list (term ())))
+  ;; ;; (displayln (redex-match csa# t (term 'a)))
+  ;; ;; (displayln (redex-match csa# v# (term 'a)))
+  ;; ;; (displayln (redex-match csa# x (term item)))
+  ;; ;; (displayln (build-derivations (aps#-match/j 'a item ())))
+  ;; (check-equal? (aps#-match (term 'a) (term item))
+  ;;               (list (term ([item 'a]))))
+  ;; (check-equal? (aps#-match (term (tuple 'a 'b)) (term (tuple 'a item)))
+  ;;               (list (term ([item 'b]))))
+  ;; (check-equal? (aps#-match (term (* (Tuple 'a 'b))) (term (tuple x 'b)))
+  ;;               (list (term ([x (* 'a)]))))
+  (check-true (judgment-holds (aps#-match/j (* Nat) * any)))
+  (check-false (judgment-holds (aps#-match/j (* Nat) x any))))
 
 (define (aps#-matches-po? value pattern)
   (judgment-holds (aps#-matches-po?/j ,value ,pattern)))
@@ -367,16 +420,14 @@
   (check-true (aps#-matches-po? (term (variant B)) (term (or (variant A) (variant B)))))
   (check-false (aps#-matches-po? (term (variant C)) (term (or (variant A) (variant B))))))
 
-;; TODO: add tests for the match predicate
-
 ;; ---------------------------------------------------------------------------------------------------
 ;; Commitment Satisfaction
 
 ;; Returns the specification config after having resolved all of the given outputs (removing output
 ;; commitments as necessary), or #f if not possible
 ;;
-;; NOTE: for now, assuming there is at most one way to satisfy commitments with these outputs, which
-;; may not necessarily be true
+;; NOTE: for now, assuming there is at most one way to satisfy the given config's commitments with
+;; these outputs, which may not necessarily be true
 (define (aps#-resolve-outputs spec-config outputs)
   ;; TODO: deal with loop output
 
@@ -675,6 +726,8 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Canonicalization (i.e. renaming)
 
+;; TODO: move this up to main.rkt
+
 ;; Given a program config/spec config pair, rename the precise internal and external addresses in them
 ;; such that the first one in each set starts at 0, then the next is 1, then 2, etc.
 ;;
@@ -827,3 +880,18 @@
 (define (aps#-config-commitment-count c)
   (redex-let aps# ([(_ ((_ po ...) ...)) c])
     (length (append* (term ((po ...) ...))))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Testing Helpers
+
+(define (make-Σ# defs goto out-coms)
+  (term (((,defs ,goto (init-addr 0))) ,out-coms)))
+
+(define single-instance-address (term (init-addr 0)))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Debugging
+
+(define (spec-config-without-state-defs config)
+  (redex-let aps# ([((((S-hat ...) e-hat σ) ...) O) config])
+             (term (((e-hat σ) ...) O))))
