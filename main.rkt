@@ -159,23 +159,30 @@
   (define incoming (make-hash (map (lambda (t) (cons t (mutable-set))) initial-tuples)))
 
   ;; Debugging
-  ;; (define nodes-visited 0)
+  (define nodes-visited 0)
+  (define log-file (if LOG-TUPLES (open-output-file "tuple_log.dat" #:exists 'replace) #f))
 
   (let loop ([related-tuples (set)]
              [unrelated-successors (set)])
     (match (dequeue-if-non-empty! to-visit)
       ;; TODO: adjust my pseudocode and proof to note that the incoming edge is initialized here
-      [#f (list related-tuples incoming related-spec-steps unrelated-successors)]
+      [#f
+       (when LOG-TUPLES (close-output-port log-file))
+       (list related-tuples incoming related-spec-steps unrelated-successors)]
       ;; TODO: change this pattern if we change the tuple structure
       [tuple
 
        ;; Debugging
-       ;; (set! nodes-visited (add1 nodes-visited))
+       (set! nodes-visited (add1 nodes-visited))
        ;; (printf "Program state #: ~s\n" nodes-visited)
        ;; (printf "Queue size: ~s\n" (queue-length to-visit))
        ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs prog))
        ;; (printf "The full prog config: ~s\n" prog)
        ;; (printf "The spec config: ~s\n" spec)
+
+       (when LOG-TUPLES
+         (fprintf log-file "TUPLE ~s. ~s\n" nodes-visited (tuple->debug-tuple tuple))
+         (flush-output log-file))
 
        (define found-unmatchable-step? #f)
        (define i (simulation-node-prog-config tuple))
@@ -582,6 +589,8 @@
 ;; Debugging
 
 (define DISPLAY-STEPS #f)
+
+(define LOG-TUPLES #f)
 
 (define (display-step-line msg)
   (when DISPLAY-STEPS (displayln msg)))
