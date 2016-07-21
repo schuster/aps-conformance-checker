@@ -1,7 +1,5 @@
 #lang racket
 
-;; TODO: fail when more than one commitment on same address with same pattern
-
 ;; TODO: probably shouldn't call this file "main" if it's exporting something to something else in the
 ;; "package"
 
@@ -160,6 +158,9 @@
   ;; hash table from tuple to (setof (tuple, trigger, outputs, tuple))
   (define incoming (make-hash (map (lambda (t) (cons t (mutable-set))) initial-tuples)))
 
+  ;; Debugging
+  ;; (define nodes-visited 0)
+
   (let loop ([related-tuples (set)]
              [unrelated-successors (set)])
     (match (dequeue-if-non-empty! to-visit)
@@ -167,9 +168,10 @@
       [#f (list related-tuples incoming related-spec-steps unrelated-successors)]
       ;; TODO: change this pattern if we change the tuple structure
       [tuple
+
        ;; Debugging
-       ;; (set! program-transitions-checked (add1 program-transitions-checked))
-       ;; (printf "Program state #: ~s\n" program-transitions-checked)
+       ;; (set! nodes-visited (add1 nodes-visited))
+       ;; (printf "Program state #: ~s\n" nodes-visited)
        ;; (printf "Queue size: ~s\n" (queue-length to-visit))
        ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs prog))
        ;; (printf "The full prog config: ~s\n" prog)
