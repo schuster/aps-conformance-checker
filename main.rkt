@@ -299,7 +299,7 @@
   (test-case "Output can be matched by previous commitment"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1) *)))
+      (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1) (single *))))
       (impl-step #f '(internal-receive (init-addr 0) (* Nat)) (list '((obs-ext 1) (* Nat))) #f))
      (mutable-set (spec-step (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1))))))))
   (test-case "Output can be matched by new commitment"
@@ -310,13 +310,13 @@
      (mutable-set (spec-step (make-Σ# '((define-state (A) [x -> (with-outputs ([x *]) (goto A))]))
                               '(goto A)
                               (list '((obs-ext 1))))))))
-  ;; TODO: check for merged output commitments (*-many) instead
-  (test-case "Cannot have multiple copies of same commitment"
+  (test-case "Multiple copies of same commitment get merged"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1)) (list '[(obs-ext 1) *]))
+      (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1)) (list '[(obs-ext 1) (single *)]))
       (impl-step #t '(external-receive (init-addr 0) (* Nat)) null #f))
-     (mutable-set))))
+     (mutable-set
+      (spec-step (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1)) (list '[(obs-ext 1) (many *)])))))))
 
 ;; TODO: rename this function to something more generic (not incoming-based)
 (define (incoming-add! incoming key new-tuple)
@@ -387,6 +387,8 @@
 
 ;; Returns the list of split spec-configs from the given one, failing if any of the FSMs share an
 ;; address
+;;
+;; TODO: move this to the APS# module, since it has to deal so much with the internal representation
 (define (split-spec config)
   (define-values (fsm-specs remaining-commitment-map)
     (for/fold ([fsm-specs null]
@@ -418,14 +420,14 @@
 
   ;; split with one related commit
   (check-equal?
-   (split-spec (term ((,simple-instance-for-split-test) (((obs-ext 0) *)))))
-   (list (term ((,simple-instance-for-split-test) (((obs-ext 0) *))))))
+   (split-spec (term ((,simple-instance-for-split-test) (((obs-ext 0) (single *))))))
+   (list (term ((,simple-instance-for-split-test) (((obs-ext 0) (single *)))))))
 
   ;; split with unrelated commit
   (check-same-items?
-   (split-spec (term ((,simple-instance-for-split-test) (((obs-ext 1) *)))))
+   (split-spec (term ((,simple-instance-for-split-test) (((obs-ext 1) (single *))))))
    (list (term ((,simple-instance-for-split-test) ()))
-         (term (() (((obs-ext 1) *))))))
+         (term (() (((obs-ext 1) (single *)))))))
 
   ;; TODO: check that none of the FSMs share an address
   )

@@ -9,7 +9,6 @@
  ;; aps#-current-transitions
  ;; aps#-null-transition
  aps#-steps-for-trigger
- aps#-matches-po?
  step-spec-with-goto
  aps#-spec-from-commitment-entry
  aps#-spec-from-fsm-and-commitments
@@ -18,11 +17,8 @@
  aps#-config-only-instance-address
  aps#-config-only-instance-state
  aps#-config-commitment-map
- aps#-config-commitments
  ;; aps#-transition-pattern
  ;; aps#-transition-expression
- aps#-commitment-address
- aps#-commitment-pattern
  aps#-commitment-entry-address
  aps#-goto-state
  aps#-instance-state
@@ -31,8 +27,6 @@
  aps#-external-addresses
  canonicalize-tuple
  aps#-config-has-commitment?
- no-duplicate-commitments?
- aps#-config-commitment-count
 
  ;; Testing helpers
  make-Σ#
@@ -64,7 +58,9 @@
   (u .... a#) ; TODO: make this a#ext instead; allowing saves of spawned addresses is future work
   (v-hat a# a-hat)
   ;; (O ((a#ext (po boolean) ...) ...))
-  (O ((a#ext po ...) ...)))
+  (O ((a#ext (m po) ...) ...))
+  (m single many) ; m for "multiplicity"
+  )
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
@@ -202,15 +198,17 @@
      (remove-duplicates stepped-configs)]))
 
 (module+ test
-  ;; TODO: allow for abstract spec configs to have many-of output commitments
-  (test-equal? "Spec cannot step to state with multiple copies of same commitment"
+  (test-equal? "Multiple copies of output commitments are merged"
                (aps#-steps-for-trigger
                 (make-Σ# (term ((define-state (A r) [* -> (with-outputs ([r *]) (goto A r))])))
                          (term (goto A (obs-ext 0)))
-                         (term (((obs-ext 0) *))))
+                         (term (((obs-ext 0) (single *)))))
                 #t
                 (term (external-receive ,single-instance-address (* Nat))))
-               null))
+               (list
+                (make-Σ# (term ((define-state (A r) [* -> (with-outputs ([r *]) (goto A r))])))
+                         (term (goto A (obs-ext 0)))
+                         (term (((obs-ext 0) (many *))))))))
 
 (define (aps#-eval exp)
   (term (aps#-eval/mf ,exp)))
@@ -230,6 +228,11 @@
 
 ;; TODO: test the eval function
 
+;; Adds all addresses matched in the substitution (i.e. the set of bindings) as keys in the output
+;; commitment map
+;;
+;; TODO: figure out whether some of these outputs will have been there already (I think I will have a
+;; theorem that says they will not be)
 (define (observe-addresses-from-subst spec-config the-subst)
   (redex-let aps# ([(any_instances (any_map-entries ...)) spec-config]
                    [([_ a#ext] ...) the-subst])
@@ -255,10 +258,12 @@
   add-commitments : O [a#ext po] ... -> O or #f
   [(add-commitments O) O]
   ;; TODO: remove this clause when we support multiple copies of commitments
-  [(add-commitments (_ ... (a#ext _ ... po _ ...) _ ...) [a#ext po] _ ...)
-   #f]
-  [(add-commitments (any_1 ... (a#ext po_rest ...) any_2 ...) [a#ext po] any_rest ...)
-   (add-commitments (any_1 ... (a#ext po_rest ... po) any_2 ...) any_rest ...)])
+  [(add-commitments (any_1 ... (a#ext any_2 ... (_ po)    any_3 ...) any_4 ...)
+                    [a#ext po] any_rest ...)
+   (add-commitments (any_1 ... (a#ext any_2 ... (many po) any_3 ...) any_4 ...)
+                    any_rest ...)]
+  [(add-commitments (any_1 ... (a#ext any_coms ...)             any_2 ...) [a#ext po] any_rest ...)
+   (add-commitments (any_1 ... (a#ext any_coms ... (single po)) any_2 ...) any_rest ...)])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pattern matching
@@ -423,8 +428,9 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Commitment Satisfaction
 
-;; Returns the specification config after having resolved all of the given outputs (removing output
-;; commitments as necessary), or #f if not possible
+;; Returns a pair of the specification config after having resolved all of the given outputs (removing
+;; output commitments as necessary) and a list of the satisfied commitments, or #f if a resolution of
+;; these outputs is not possible
 ;;
 ;; NOTE: for now, assuming there is at most one way to satisfy the given config's commitments with
 ;; these outputs, which may not necessarily be true
@@ -439,14 +445,17 @@
        (list (term (,(aps#-config-instances spec-config) ,commitment-map)) satisfied-commitments)]
       [(list output remaining-outputs ...)
        (define address (csa#-output-address output))
-       (match (commitment-patterns-for-address commitment-map address)
+       (match (commitments-for-address commitment-map address)
          ;; we can ignore outputs on unobserved addresses
          [#f (loop commitment-map satisfied-commitments remaining-outputs)]
-         [patterns
+         [commitments
+          (define patterns (map commitment-pattern commitments))
           (match (findf (curry aps#-matches-po? (csa#-output-message output)) patterns)
             [#f #f]
             [pat
              (loop (aps#-remove-commitment-pattern commitment-map address pat)
+                   ;; TODO: decide what "satisfied commitments" really means in the presence of
+                   ;; many-of commitments
                    (append satisfied-commitments (list (term (,address ,pat))))
                    remaining-outputs)])])])))
 
@@ -457,15 +466,21 @@
     (term (((obs-ext 1) (* Nat))))))
   (check-equal?
    (aps#-resolve-outputs
-    (term (() (((obs-ext 1) *))))
+    (term (() (((obs-ext 1) (single *)))))
     (term (((obs-ext 1) (* Nat)))))
    (term ((() (((obs-ext 1))))
           (((obs-ext 1) *)))))
   (check-equal?
    (aps#-resolve-outputs
-    (term (() (((obs-ext 1) * (record)))))
+    (term (() (((obs-ext 1) (single *) (single (record))))))
     (term (((obs-ext 1) (* Nat)))))
-   (term ((() (((obs-ext 1) (record))))
+   (term ((() (((obs-ext 1) (single (record)))))
+          (((obs-ext 1) *)))))
+  (check-equal?
+   (aps#-resolve-outputs
+    (term (() (((obs-ext 1) (many *) (single (record))))))
+    (term (((obs-ext 1) (* Nat)))))
+   (term ((() (((obs-ext 1) (many *) (single (record)))))
           (((obs-ext 1) *)))))
 
   ;; TODO: test aps#-resolve-outputs for (along with normal cases):
@@ -479,23 +494,34 @@
 
 (define-metafunction aps#
   remove-commitment-pattern/mf : O a#ext po -> O
-  [(remove-commitment-pattern/mf (any_1 ... (a#ext po_all ...) any_2 ...) a#ext po)
-   (any_1 ... (a#ext po_rest ...) any_2 ...)
-   (where (po_rest ...) ,(remove (term po) (term (po_all ...))))])
+  [(remove-commitment-pattern/mf (any_1 ... (a#ext any_2 ... (single po) any_3 ...) any_4 ...)
+                                 a#ext
+                                 po)
+   (any_1 ... (a#ext any_2 ... any_3 ...) any_4 ...)]
+  [(remove-commitment-pattern/mf (any_1 ... (a#ext any_2 ... (many po) any_3 ...) any_4 ...)
+                                 a#ext
+                                 po)
+   (any_1 ... (a#ext any_2 ... (many po) any_3 ...) any_4 ...)])
 
 (module+ test
   (check-equal?
    (aps#-remove-commitment-pattern
-    (term (((obs-ext 1) *))) (term (obs-ext 1)) (term *))
+    (term (((obs-ext 1) (single *)))) (term (obs-ext 1)) (term *))
    (term (((obs-ext 1)))))
   (check-equal?
    (aps#-remove-commitment-pattern
-    (term (((obs-ext 1) * *))) (term (obs-ext 1)) (term *))
-   (term (((obs-ext 1) *))))
+    (term (((obs-ext 1) (many *)))) (term (obs-ext 1)) (term *))
+    (term (((obs-ext 1) (many *)))))
   (check-equal?
    (aps#-remove-commitment-pattern
-    (term (((obs-ext 1) * (record) *) ((obs-ext 2) *))) (term (obs-ext 1)) (term *))
-   (term (((obs-ext 1) (record) *) ((obs-ext 2) *)))))
+    (term (((obs-ext 1) (single *) (single (record))))) (term (obs-ext 1)) (term *))
+   (term (((obs-ext 1) (single (record))))))
+  (check-equal?
+   (aps#-remove-commitment-pattern
+    (term (((obs-ext 1) (single *) (single (record)) (many (record [a *]))) ((obs-ext 2) (single *))))
+    (term (obs-ext 1))
+    (term *))
+   (term (((obs-ext 1) (single (record)) (many (record [a *]))) ((obs-ext 2) (single *))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Constructors
@@ -509,13 +535,13 @@
 (module+ test)
 
 (define (aps#-spec-from-commitment-entry entry)
-  (redex-let aps# ([(a#ext po ...) entry])
-             (term (() ((a#ext po ...))))))
+  (redex-let aps# ([(a#ext any_1 ...) entry])
+             (term (() ((a#ext any_1 ...))))))
 
 (module+ test
   (check-equal?
-   (aps#-spec-from-commitment-entry (term ((obs-ext 0) * (record [a *] [b *]))))
-   (term (() (((obs-ext 0) * (record [a *] [b *])))))))
+   (aps#-spec-from-commitment-entry (term ((obs-ext 0) (single *) (single (record [a *] [b *])))))
+   (term (() (((obs-ext 0) (single *) (single (record [a *] [b *]))))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
@@ -572,69 +598,39 @@
   (check-equal? (aps#-goto-state (term (goto A))) (term A))
   (check-equal? (aps#-goto-state (term (goto B (obs-ext 2) (obs-ext 1)))) (term B)))
 
-(define (aps#-commitment-address commitment)
-  (term (commitment-address/mf ,commitment)))
-
-(define-metafunction aps#
-  commitment-address/mf : [a#ext po] -> a#ext
-  [(commitment-address/mf [a#ext po]) a#ext])
-
-(define (aps#-commitment-pattern commitment)
-  (redex-let aps# ([[_ po] commitment])
-    (term po)))
-
-(module+ test
-  (define commitment (term [(* (Addr Nat)) (variant Null *)]))
-  (check-equal? (aps#-commitment-address commitment) (term (* (Addr Nat))))
-  (check-equal? (aps#-commitment-pattern commitment) (term (variant Null *))))
-
 (define (aps#-commitment-entry-address entry)
   (redex-let aps# ([(a#ext _ ...)  entry])
              (term a#ext)))
 
-(define (aps#-config-commitments config)
-  (aps#-commitment-map-commitments (aps#-config-commitment-map config)))
-
-(define (aps#-commitment-map-commitments commitment-map)
-  (term (commitment-map-commitments/mf ,commitment-map)))
+(define (commitments-for-address commitment-map address)
+  (term (commitments-for-address/mf ,commitment-map ,address)))
 
 (define-metafunction aps#
-  commitment-map-commitments/mf : O -> ([a#ext po] ...)
-  [(commitment-map-commitments/mf ()) ()]
-  [(commitment-map-commitments/mf ((a#ext po ...) any_rest ...))
-   ((a#ext po) ... any_results ...)
-   (where (any_results ...) (commitment-map-commitments/mf (any_rest ...)))])
+  commitments-for-address/mf : O a#ext -> ((m po) ...) or #f
+  [(commitments-for-address/mf (_ ... (a#ext (m po) ...) _ ...) a#ext) ((m po) ...)]
+  [(commitments-for-address/mf _ _) #f])
 
 (module+ test
+  (define test-O
+    (term (((obs-ext 1) (single *) (many (record)))
+           ((obs-ext 2) (single (variant True)) (single (variant False))))))
   (check-equal?
-   (aps#-commitment-map-commitments (term (((obs-ext 1) *) ((obs-ext 2) (record) (variant A)))))
-   (term (((obs-ext 1) *)
-          ((obs-ext 2) (record))
-          ((obs-ext 2) (variant A))))))
-
-(define (commitment-patterns-for-address commitment-map address)
-  (term (commitment-patterns-for-address/mf ,commitment-map ,address)))
-
-(define-metafunction aps#
-  commitment-patterns-for-address/mf : O a#ext -> (po ...) or #f
-  [(commitment-patterns-for-address/mf (_ ... (a#ext po ...) _ ...) a#ext) (po ...)]
-  [(commitment-patterns-for-address/mf _ _) #f])
-
-(module+ test
-  (check-equal?
-   (commitment-patterns-for-address
-    (term (((obs-ext 1) * (record)) ((obs-ext 2) (variant True) (variant False))))
+   (commitments-for-address
+    test-O
     (term (obs-ext 1)))
-   (term (* (record))))
+   (term ((single *) (many (record)))))
   (check-equal?
-   (commitment-patterns-for-address
-    (term (((obs-ext 1) * (record)) ((obs-ext 2) (variant True) (variant False))))
+   (commitments-for-address
+    test-O
     (term (obs-ext 2)))
-   (term ((variant True) (variant False))))
+   (term ((single (variant True)) (single (variant False)))))
   (check-false
-   (commitment-patterns-for-address
-    (term (((obs-ext 1) * (record)) ((obs-ext 2) (variant True) (variant False))))
+   (commitments-for-address
+    test-O
     (term (obs-ext 3)))))
+
+(define (commitment-pattern commitment)
+  (redex-let aps# ([(m po) commitment]) (term po)))
 
 (define (aps#-instance-address z)
   (redex-let aps# ([(_ _ σ) z])
@@ -806,7 +802,7 @@
         (term ((init-addr 0)
                (((define-state (A) (m) (goto A)))
                 (goto A)))))
-      (() (((obs-ext 101) *)))
+      (() (((obs-ext 101) (single *))))
       ()
       ())))
    (term
@@ -814,7 +810,7 @@
        (term ((init-addr 0)
               (((define-state (A) (m) (goto A)))
                (goto A)))))
-     (() (((obs-ext 0) *)))
+     (() (((obs-ext 0) (single *))))
      ()
      ())))
 
@@ -851,16 +847,16 @@
 (define-judgment-form aps#
   #:mode (config-has-commitment?/j I I)
   #:contract (config-has-commitment?/j Σ [a#ext po])
-  [(where (_ ... (a#ext _ ... po _ ...) _ ... ) O)
-   -------------------------------------------------
+  [(where (_ ... (a#ext _ ... (_ po) _ ...) _ ... ) O)
+   ---------------------------------------------------
    (config-has-commitment?/j (_ O) [a#ext po])])
 
 (module+ test
   (define commitment-map-test-config
     (term (()
-           (((obs-ext 1) *)
+           (((obs-ext 1) (single *))
             ((obs-ext 2))
-            ((obs-ext 3) (record) (variant True))))))
+            ((obs-ext 3) (single (record)) (single (variant True)))))))
   (check-not-false (redex-match aps# Σ commitment-map-test-config))
 
   (check-true (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 1) *])))
@@ -870,16 +866,6 @@
   (check-false (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 2) *])))
   (check-false (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 1) (record)])))
   (check-false (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 3) *]))))
-
-(define (no-duplicate-commitments? config)
-  (define commitment-lists
-    (redex-let aps# ([(_ ((_ po ...) ...)) config])
-               (term ((po ...) ...))))
-  (andmap (lambda (l) (equal? l (remove-duplicates l))) commitment-lists))
-
-(define (aps#-config-commitment-count c)
-  (redex-let aps# ([(_ ((_ po ...) ...)) c])
-    (length (append* (term ((po ...) ...))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing Helpers
