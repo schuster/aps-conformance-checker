@@ -14,12 +14,17 @@
  csa#-output-message
  α-config
  α-e
- α-typed-receptionist-list
+ α-receptionists
+ blur-irrelevant-actors
+ csa#-blur-and-age-receptionists
+ csa#-age-internal-addrs
  blur-externals
  csa#-merge-duplicate-messages
  make-single-actor-abstract-config
- csa#-typed-address-type
- csa#-typed-address->untyped
+ csa#-receptionist-type
+ csa#-new-spawn-address?
+ csa#-sort-escapes
+ same-internal-address-without-type?
 
  ;; Debug helpers
  prog-config-without-state-defs
@@ -38,7 +43,7 @@
 ;; TODO: make the language inheritance hierarchy correct (or consider merging them all into a single
 ;; mega-language)
 (define-extended-language csa# csa-eval
-  (K# (α# μ# ρ# χ#)) ;; TODO: update this (incl. remove χ#, since we already label addresses as external)
+  (K# (α# μ# ρ# (a#ext_escaped-observables ...)))
   (α# (α#n ...))
   (α#n (a#int ((S# ...) e#)))
   (μ# ((a#int v# multiplicity) ...))
@@ -52,7 +57,8 @@
       (list v# ...)
       (vector v# ...)
       (hash v# ...))
-  (e# (spawn τ e# S ...)
+  (e# (spawn any_location τ e# S# ...)
+      (spawning a#int τ e# S# ...)
       (goto s e# ...)
       (send e# e#)
       (begin e# ... e#)
@@ -73,19 +79,24 @@
       v#)
   (a# a#int a#ext) ; internal and external addresses
   ;; TODO: replace the untyped address with the typed one
-  (a#int (init-addr natural))
-  (typed-a#int (init-addr natural τ))
+  ;; TODO: rename these to be just int-addr and ext-addr
+  (a#int (init-addr natural τ)
+         ;; OLD means it existed before the current handler was run, NEW means it was spawned in the
+         ;; current handler (should all be OLD between runs, after blur/canonicalize)
+         (spawn-addr any_location OLD τ)
+         (spawn-addr any_location NEW τ)
+         blurred-internal)
   (a#ext
    (* (Addr τ)) ; unobserved address
    ;; NOTE: only a finite number of addresses in the initial config, so we can use natural numbers
    ;; here
    ;; TODO: do I need the dead observables?
-   (obs-ext natural))
+   (obs-ext natural τ))
   (ρ# (a#int ...))
-  (χ# (a#ext ...))
   ;; H# = handler config (exp + outputs + loop outputs so far)
-  (H# (e# ([a# v#] ...) ([a# v#] ...)))
+  (H# (e# ([a# v#] ...) ([a# v#] ...) (α#n ...)))
   (E# hole
+      (spawning a#int τ E# S# ...)
       (goto s v# ... E# e# ...)
       (send E# e#)
       (send v# E#)
@@ -186,7 +197,7 @@
   [(generate-abstract-messages/mf (Addr τ) _)
    ,(begin
       (set! next-generated-address (add1 next-generated-address))
-      (term ((obs-ext ,next-generated-address))))]
+      (term ((obs-ext ,next-generated-address τ))))]
   [(generate-abstract-messages/mf (Listof τ) _) ((* (Listof τ)))]
   [(generate-abstract-messages/mf (Vectorof τ) _) ((* (Vectorof τ)))]
   [(generate-abstract-messages/mf (Hash τ_1 τ_2) _) ((* (Hash τ_1 τ_2)))])
@@ -410,18 +421,19 @@
   ;; (printf "Number of non-stuck results: ~s\n" (length non-abstraction-stuck-final-configs))
 
   (unless (andmap complete-handler-config? non-abstraction-stuck-final-configs)
-    (error 'csa#-eval-transition
+    (error 'eval-handler
            "Abstract evaluation did not complete\nInitial config: ~s\nFinal stuck configs:~s"
            handler-config
            (filter (compose not complete-handler-config?) non-abstraction-stuck-final-configs)))
   (for/list ([config non-abstraction-stuck-final-configs])
     ;; TODO: rename outputs to something like "transmissions", because some of them stay internal to
     ;; the program
-    (match-define (list behavior-exp outputs loop-outputs) config)
-    ;; TODO: check that there are no loop outputs, or refactor that code entirely
+    (match-define (list behavior-exp outputs loop-outputs spawns) config)
+    ;; TODO: check that there are no internal loop outputs, or refactor that code entirely
     (define new-prog-config
-      (merge-new-messages (plug config-context behavior-exp)
-                          (filter internal-output? outputs)))
+      (merge-new-messages
+       (merge-new-actors (plug config-context behavior-exp) spawns)
+       (filter internal-output? outputs)))
     (define next-state (redex-let csa# ([(in-hole E# (goto s _ ...)) behavior-exp]) (term s)))
     (csa#-transition trigger (filter (negate internal-output?) outputs) new-prog-config)))
 
@@ -439,12 +451,12 @@
                    c)))
 
 (define (complete-handler-config? c)
-  (redex-match csa# ((in-hole E# (goto s v#_param ...)) any_output any_loop-output) c))
+  (redex-match csa# ((in-hole E# (goto s v#_param ...)) any_output any_loop-output any_spawns) c))
 
 (define (inject/H# exp)
   (redex-let csa#
              ([e# exp]
-              [H# (term (,exp () ()))])
+              [H# (term (,exp () () ()))])
              (term H#)))
 
 ;; TODO: make this relation work on a full abstract configuration (maybe?)
@@ -677,21 +689,38 @@
 
     ;; Communication
 
-    (--> ((in-hole E# (send a# v#)) (any_outputs ...) any_loop-outputs)
-         ((in-hole E# v#)           (any_outputs ... [a# v#]) any_loop-outputs)
+    (--> ((in-hole E# (send a# v#)) (any_outputs ...) any_loop-outputs any_spawns)
+         ((in-hole E# v#)           (any_outputs ... [a# v#]) any_loop-outputs any_spawns)
          ;; regular send only occurs outside of loop contexts
          (side-condition (not (redex-match csa# (in-hole E# (loop-context E#_2)) (term E#))))
          Send)
-    (--> ((in-hole E# (loop-context (in-hole E#_2 (send a# v#)))) any_outputs any_loop-outputs)
+    (--> ((in-hole E# (loop-context (in-hole E#_2 (send a# v#)))) any_outputs any_loop-outputs any_spawns)
          ((in-hole E# (loop-context (in-hole E#_2 v#)))
           any_outputs
-          (redex-set-add any_loop-outputs [a# v#]))
+          (redex-set-add any_loop-outputs [a# v#])
+          any_spawns)
          LoopSend)
 
+    ;; Spawn
+    (==> (spawn any_location τ e# S# ...)
+         (spawning a#int τ (csa#-subst-n e# [self a#int]) (csa#-subst/S# S# self a#int) ...)
+         (where a#int (spawn-addr any_location NEW τ))
+         SpawnStart)
+    (--> ((in-hole E# (spawning a#int τ (in-hole E#_2 (goto s v# ...)) S# ...))
+          any_outputs
+          any_loop-outputs
+          (any_spawns ...))
+         ((in-hole E# a#int)
+          any_outputs
+          any_loop-outputs
+          (any_spawns ... (a#int ((S# ...) (goto s v# ...)))))
+         SpawnFinish)
+
     ;; Goto context removal
-    (--> ((in-hole E# (goto s v# ...)) (any_outputs ...) any_loop-outputs)
-         ((goto s v# ...) (any_outputs ...) any_loop-outputs)
+    (--> ((in-hole E# (goto s v# ...)) (any_outputs ...) any_loop-outputs any_spawns)
+         ((goto s v# ...) (any_outputs ...) any_loop-outputs any_spawns)
          (side-condition (not (redex-match csa# hole (term E#))))
+         (side-condition (not (redex-match csa# (in-hole E#_2 (spawning _ _ hole _ ...)) (term E#))))
          ;; (side-condition (printf "running goto rule: ~s\n" (term (in-hole E# (goto s v# ...)))))
          ;; (side-condition (printf "goto result: ~s\n" (term (goto s v# ...))))
          GotoRemoveContext)
@@ -721,20 +750,19 @@
          PrintLenVectorWildcard)
 
     with
-    [(--> ((in-hole E# old) any_outputs any_loop-outputs)
-          ((in-hole E# new) any_outputs any_loop-outputs))
+    [(--> ((in-hole E# old) any_outputs any_loop-outputs any_spawns)
+          ((in-hole E# new) any_outputs any_loop-outputs any_spawns))
      (==> old new)]))
 
 (module+ test
   (define (csa#-make-simple-test-config exp)
-    (redex-let* csa# ([α#n (term [(init-addr 0)
+    (redex-let* csa# ([α#n (term [(init-addr 0 Nat)
                                   (((define-state (Always) (long-unused-name) (begin ,exp (goto Always))))
                                    (begin ,exp (goto Always)))])]
                       [α# (term (α#n))]
                       [μ# (term ())]
-                      [ρ# (term ((init-addr 0)))]
-                      [χ# (term ())])
-                (term (α# μ# ρ# χ#))))
+                      [ρ# (term ((init-addr 0 Nat)))])
+                (term (α# μ# ρ# ()))))
 
   ;; TODO: remove this one
   (check-not-false (redex-match csa# K# (csa#-make-simple-test-config (term (* Nat)))))
@@ -769,9 +797,13 @@
   ;; Check that internal addresses in the transmissions do not change the evaluation (had a problem
   ;; with this before)
   (check-equal?
+   (apply-reduction-relation* handler-step# (inject/H# (term (begin (send (init-addr 1 Nat) (* Nat)) (goto A)))))
+   (list (term ((goto A) (((init-addr 1 Nat) (* Nat))) () ()))))
+
+  (check-equal?
    (apply-reduction-relation* handler-step#
-                              (term ((begin (send (init-addr 1) (* Nat)) (goto A)) () ())))
-   (list (term ((goto A) (((init-addr 1) (* Nat))) ())))))
+     (inject/H# (term (begin (spawn L Nat (goto A) (define-state (A) (x) (goto A))) (goto B)))))
+   (list (term ((goto B) () () ([(spawn-addr L NEW Nat) [((define-state (A) (x) (goto A))) (goto A)]]))))))
 
 (define (csa#-merge-duplicate-messages prog-config)
   (redex-let csa# ([(any_actors any_messages any_rec any_ext) prog-config])
@@ -805,28 +837,28 @@
 (module+ test
   (check-equal?
    (merge-duplicate-messages-from-list
-    (term (((obs-ext 1) (* Nat) 1)
-           ((obs-ext 1) (* Nat) 1))))
-   (term (((obs-ext 1) (* Nat) *))))
+    (term (((obs-ext 1 Nat) (* Nat) 1)
+           ((obs-ext 1 Nat) (* Nat) 1))))
+   (term (((obs-ext 1 Nat) (* Nat) *))))
 
     (check-equal?
    (merge-duplicate-messages-from-list
-    (term (((obs-ext 1) (* Nat) 1)
-           ((obs-ext 1) (* Nat) 1)
-           ((obs-ext 1) (* Nat) 1))))
-   (term (((obs-ext 1) (* Nat) *))))
+    (term (((obs-ext 1 Nat) (* Nat) 1)
+           ((obs-ext 1 Nat) (* Nat) 1)
+           ((obs-ext 1 Nat) (* Nat) 1))))
+   (term (((obs-ext 1 Nat) (* Nat) *))))
 
   (check-equal?
    (merge-duplicate-messages-from-list
-    (term (((obs-ext 1) (* Nat) 1)
-           ((obs-ext 2) (* Nat) 1)
-           ((obs-ext 3) (* Nat) *)
+    (term (((obs-ext 1 Nat) (* Nat) 1)
+           ((obs-ext 2 Nat) (* Nat) 1)
+           ((obs-ext 3 Nat) (* Nat) *)
            ((* (Addr Nat)) (* Nat) *)
-           ((obs-ext 1) (* Nat) 1)
+           ((obs-ext 1 Nat) (* Nat) 1)
            ((* (Addr Nat)) (* Nat) 1))))
-   (term (((obs-ext 1) (* Nat) *)
-          ((obs-ext 2) (* Nat) 1)
-          ((obs-ext 3) (* Nat) *)
+   (term (((obs-ext 1 Nat) (* Nat) *)
+          ((obs-ext 2 Nat) (* Nat) 1)
+          ((obs-ext 3 Nat) (* Nat) *)
           ((* (Addr Nat)) (* Nat) *)))))
 
 ;; Abstractly adds the set of new messages to the existing set
@@ -840,31 +872,49 @@
 
 (module+ test
   (check-equal?
-   (merge-new-messages (term (() () () ())) (list (term ((init-addr 0) (* Nat)))))
-   (term (() (((init-addr 0) (* Nat) 1)) () ())))
+   (merge-new-messages (term (() () () ())) (list (term ((init-addr 0 Nat) (* Nat)))))
+   (term (() (((init-addr 0 Nat) (* Nat) 1)) () ())))
 
   (check-equal?
-   (merge-new-messages (term (() (((init-addr 0) (* Nat) 1)) () ()))
-                       (list (term ((init-addr 0) (* Nat)))))
-   (term (() (((init-addr 0) (* Nat) *)) () ())))
+   (merge-new-messages (term (() (((init-addr 0 Nat) (* Nat) 1)) () ()))
+                       (list (term ((init-addr 0 Nat) (* Nat)))))
+   (term (() (((init-addr 0 Nat) (* Nat) *)) () ())))
 
   (check-equal?
-   (merge-new-messages (term (() (((init-addr 0) (* Nat) 1)) () ()))
-                       (list (term ((init-addr 1) (* Nat)))))
-   (term (() (((init-addr 0) (* Nat) 1) ((init-addr 1) (* Nat) 1)) () ())))
+   (merge-new-messages (term (() (((init-addr 0 Nat) (* Nat) 1)) () ()))
+                       (list (term ((init-addr 1 Nat) (* Nat)))))
+   (term (() (((init-addr 0 Nat) (* Nat) 1) ((init-addr 1 Nat) (* Nat) 1)) () ())))
 
   (check-equal?
    (merge-new-messages (term (()
-                              (((init-addr 1) (* (Addr Nat)) 1)
-                               ((init-addr 1) (obs-ext 0) 1))
+                              (((init-addr 1 Nat) (* (Addr Nat)) 1)
+                               ((init-addr 1 Nat) (obs-ext 0 Nat) 1))
                               ()
                               ()))
-                       (term (((init-addr 1) (* (Addr Nat))))))
+                       (term (((init-addr 1 Nat) (* (Addr Nat))))))
    (term (()
-          (((init-addr 1) (* (Addr Nat)) *)
-           ((init-addr 1) (obs-ext 0) 1))
+          (((init-addr 1 Nat) (* (Addr Nat)) *)
+           ((init-addr 1 Nat) (obs-ext 0 Nat) 1))
           ()
           ()))))
+
+(define (merge-new-actors config new-actors)
+  (redex-let csa# ([((any_actors ...) any_messages any_rec any_ext) config])
+             (term (,(append (term (any_actors ...)) new-actors)
+                    any_messages
+                    any_rec
+                    any_ext))))
+
+(module+ test
+  (define new-spawn1
+    (term ((spawn-addr foo NEW Nat) (((define-state (A) (x) (goto A))) (goto A)))))
+  (define init-actor1
+    (term ((init-addr 0 Nat) (((define-state (B) (x) (goto B))) (goto B)))))
+  (test-equal? "merge-new-actors test"
+               (merge-new-actors
+                (make-single-actor-abstract-config init-actor1)
+                (list new-spawn1))
+               (term ((,init-actor1 ,new-spawn1) () ((init-addr 0 Nat)) ()))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
@@ -884,10 +934,10 @@
   ;; [(csa#-subst n x v) n]
   [(csa#-subst (* τ) _ _) (* τ)]
   [(csa#-subst a# _ _) a#]
-  ;; [(csa#-subst a x v) a]
-  ;; [(csa#-subst (spawn e S ...) self v) (spawn e S ...)]
-  ;; [(csa#-subst (spawn e S ...) x v)
-  ;;   (spawn (csa#-subst e x v) (csa#-subst/S S x v) ...)]
+  [(csa#-subst a x v) a] ; TODO: remove this clause?
+  [(csa#-subst (spawn any_location τ e# S# ...) self v#) (spawn any_location τ e# S# ...)]
+  [(csa#-subst (spawn any_location τ e# S# ...) x v#)
+    (spawn any_location τ (csa#-subst e# x v#) (csa#-subst/S# S# x v#) ...)]
   [(csa#-subst (goto s e# ...) x v#) (goto s (csa#-subst e# x v#) ...)]
   [(csa#-subst (send e#_1 e#_2) x v#)
    (send (csa#-subst e#_1 x v#) (csa#-subst e#_2 x v#))]
@@ -924,6 +974,27 @@
   [(csa#-subst/case-clause [(t x_other ...) e#] x v#)
    [(t x_other ...) (csa#-subst e# x v#)]])
 
+(define-metafunction csa#
+  csa#-subst/S# : S# x v# -> S#
+  ;; Case 1: no timeout, var is shadowed
+  [(csa#-subst/S# (define-state (s [x_s τ] ...) (x_m) e#) x v#)
+   (define-state (s [x_s τ] ...) (x_m) e#)
+   (where (_ ... x _ ...) (x_s ... x_m))]
+  ;; Case 2: timeout, var shadowed by state param
+  [(csa#-subst/S# (define-state (s [x_s τ] ...) (x_m) e# [(timeout v#_t) e#_t]) x v#)
+   (define-state (s [x_s τ] ...) (x_m) e# [(timeout v#_t) e#_t])
+   (where (_ ... x _ ...) (x_s ...))]
+  ;; Case 3: timeout, var shadowed by message param
+  [(csa#-subst/S# (define-state (s [x_s τ] ...) (x_m) e# [(timeout v#_t) e#_t]) x_m v#)
+   (define-state (s [x_s τ] ...) (x_m) e# [(timeout v#_t) (csa#-subst e#_t x_m v#)])]
+  ;; Case 4: timeout, no shadowing
+  [(csa#-subst/S# (define-state (s [x_s τ] ...) (x_m) e# [(timeout v#_t) e#_t]) x v#)
+   (define-state (s [x_s τ] ...) (x_m)
+     (csa#-subst e# x v#)
+     [(timeout v#_t) (csa#-subst e#_t x v#)])]
+  ;; Case 5: no timeout, no shadowing
+  [(csa#-subst/S# (define-state (s [x_s τ] ...) (x_m) e#) x v#)
+   (define-state (s [x_s τ] ...) (x_m) (csa#-subst e# x v#))])
 
 (module+ test
   (check-equal? (term (csa#-subst/case-clause [(Cons p) (begin p x)] p (* Nat)))
@@ -933,7 +1004,39 @@
   (check-equal? (term (csa#-subst (list (* Nat) x) x (* Nat)))
                 (term (list (* Nat) (* Nat))))
   (check-equal? (term (csa#-subst (vector (* Nat) x) x (* Nat)))
-                (term (vector (* Nat) (* Nat)))))
+                (term (vector (* Nat) (* Nat))))
+  (test-equal? "spawn subst 1" (term (csa#-subst (spawn loc
+                                         Nat
+                                         (goto A self (* Nat))
+                                         (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
+                                  self
+                                  (init-addr 2 Nat)))
+                (term (spawn loc
+                             Nat
+                             (goto A self (* Nat))
+                             (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))))
+  (test-equal? "spawn subst 2"
+               (term (csa#-subst (spawn loc
+                                         Nat
+                                         (goto A self (* Nat))
+                                         (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
+                                  x
+                                  (init-addr 2 Nat)))
+                (term (spawn loc
+                             Nat
+                             (goto A self (* Nat))
+                             (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))))
+  (test-equal? "spawn subst 3"
+               (term (csa#-subst (spawn loc
+                                         Nat
+                                         (goto A self (* Nat))
+                                         (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
+                                  y
+                                  (init-addr 2 Nat)))
+                (term (spawn loc
+                             Nat
+                             (goto A self (* Nat))
+                             (define-state (A [s Nat] [a Nat]) (x) (goto A x (init-addr 2 Nat) self))))))
 
 (module+ test
   (check-equal? (term (csa#-subst (variant Foo (* Nat)) a (* Nat))) (term (variant Foo (* Nat)))))
@@ -977,8 +1080,6 @@
      (α-e e (a ...) natural_depth)
      [(timeout (* Nat)) (α-e e_timeout (a ...) natural_depth)])])
 
-;; TODO: support spawns
-;;
 ;; Abstracts the given expression to the given depth, with the given address list indicating the set
 ;; of internal addresses
 (define-metafunction csa#
@@ -987,13 +1088,14 @@
   [(α-e string _ _) (* String)]
   [(α-e x _ _) x]
   ;; TODO: canonicalize this address
-  [(α-e (addr natural) (_ ... (addr natural) _ ...) _) (init-addr natural)]
-  [(α-e (addr natural) _ _) (obs-ext natural)]
-  [(α-e a _ _) (* (Addr Nat))] ; TODO: fill in the real type here
+  [(α-e (addr natural τ) (_ ... (addr natural τ) _ ...) _) (init-addr natural τ)]
+  [(α-e (addr natural τ) _ _) (obs-ext natural τ)]
   [(α-e (goto s e ...) (a ...) natural_depth) (goto s (α-e e (a ...) natural_depth) ...)]
   [(α-e (begin e ...) (a ...) natural_depth) (begin (α-e e (a ...) natural_depth) ...)]
   [(α-e (send e_1 e_2) (a ...) natural_depth)
    (send (α-e e_1 (a ...) natural_depth) (α-e e_2 (a ...) natural_depth))]
+  [(α-e (spawn any_location τ e S ...) (a ...) natural_depth)
+   (spawn any_location τ (α-e e (a ...) natural_depth) (α-S S (a ...) natural_depth) ...)]
   [(α-e (let ([x e_binding] ...) e_body) (a ...) natural)
    (let ([x (α-e e_binding (a ...) natural)] ...) (α-e e_body (a ...) natural))]
   [(α-e (case e_val [(t x ...) e_clause] ...) (a ...) natural_depth)
@@ -1035,42 +1137,152 @@
                 (term (record [f1 (* Nat)] [f2 (* Nat)])))
   (check-not-false
    (redex-match? csa#
-                 (variant Foo (init-addr 1) (obs-ext 2))
-                 (term (α-e (variant Foo (addr 1) (addr 2)) ((addr 1)) 10))))
+                 (variant Foo (init-addr 1 Nat) (obs-ext 2 Nat))
+                 (term (α-e (variant Foo (addr 1 Nat) (addr 2 Nat)) ((addr 1 Nat)) 10))))
   (check-equal? (term (α-e (list 1 2) () 10))
                 (term (list (* Nat))))
   (check-equal? (term (α-e (vector 1 2) () 10))
                 (term (vector (* Nat)))))
 
-(define (α-typed-receptionist-list addresses)
-  (redex-let csa# ([(typed-a ...) addresses])
-             (term ((α-typed-a typed-a) ...))))
+(define (α-receptionists addresses)
+  (redex-let csa# ([(a ...) addresses])
+             (term ((α-a a) ...))))
 
 (define-metafunction csa#
-  α-typed-a : typed-a -> typed-a#int
-  [(α-typed-a (addr natural τ)) (init-addr natural τ)])
+  α-a : a -> a#int
+  [(α-a (addr natural τ)) (init-addr natural τ)])
 
 (module+ test
-  (check-equal? (α-typed-receptionist-list (term ((addr 0 Nat))))
+  (check-equal? (α-receptionists (term ((addr 0 Nat))))
                 (term ((init-addr 0 Nat)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Further Abstraction
 
+(define (blur-irrelevant-actors config flag-to-blur)
+  (redex-let csa# ([((α#n ...) μ# ρ# any_escaped) config])
+             (define all-actors (term (α#n ...)))
+             ;; 1. Get list of addresses to blur
+             (define actors-to-blur
+               (filter (lambda (actor)
+                         (address-has-flag? (csa#-actor-address actor) flag-to-blur))
+                       all-actors))
+             (define addrs-to-blur (map csa#-actor-address actors-to-blur))
+             ;; 2. for each blurred actor, get its ext-obs addrs
+             (define newly-escaped-externals (map obs-externals-in actors-to-blur))
+             ;; 3. blur those actors
+             (define remaining-actors
+               (filter
+                 (lambda (actor) (not (member (csa#-actor-address actor) addrs-to-blur)))
+                 all-actors))
+             ;; 4. rename those addresses throughout to "blurred-internal" and rename remaining flags
+             ;; to OLD
+             ;;
+             ;; 5. merge ext-obs addrs into escape
+             (term (,(blur-and-age-internal-addrs remaining-actors addrs-to-blur)
+                    ,(blur-and-age-internal-addrs (term μ#) addrs-to-blur)
+                    ,(blur-and-age-internal-addrs (term ρ#) addrs-to-blur)
+                    ,(remove-duplicates (append (term any_escaped) addrs-to-blur))))))
+
+;; TODO: remove this function; just use its parts
+(define (blur-and-age-internal-addrs some-term addresses-to-blur)
+  (csa#-age-internal-addrs (blur-internal-addrs some-term addresses-to-blur)))
+
+(define (blur-internal-addrs some-term addresses-to-blur)
+  (match some-term
+    [(and addr `(spawn-addr ,loc ,flag ,type))
+     (if (member addr addresses-to-blur)
+         (term blurred-internal)
+         addr)]
+    [(list terms ...)
+     (map (curryr blur-internal-addrs addresses-to-blur) terms)]
+    [_ some-term]))
+
+(define (csa#-age-internal-addrs some-term)
+  (match some-term
+    [(and addr `(spawn-addr ,loc ,flag ,type))
+     (if (equal? flag 'NEW)
+         (term (spawn-addr ,loc OLD ,type))
+         addr)]
+    [(list terms ...) (map csa#-age-internal-addrs terms)]
+    [_ some-term]))
+
+(module+ test
+  (test-equal? "blur and age test"
+    (blur-and-age-internal-addrs
+     (term (((spawn-addr foo OLD Nat) (spawn-addr foo NEW Nat))
+            (spawn-addr bar NEW Nat)
+            (spawn-addr bar OLD Nat)
+            (spawn-addr baz OLD Nat)
+            (spawn-addr quux NEW Nat)))
+     (list (term (spawn-addr foo NEW Nat)) (term (spawn-addr bar OLD Nat))))
+    (term (((spawn-addr foo OLD Nat) blurred-internal)
+           (spawn-addr bar OLD Nat)
+           blurred-internal
+           (spawn-addr baz OLD Nat)
+           (spawn-addr quux OLD Nat)))))
+
+(define (address-has-flag? addr flag)
+  (match flag
+    ['OLD (redex-match? csa# (spawn-addr _ OLD _) addr)]
+    ['NEW (redex-match? csa# (spawn-addr _ NEW _) addr)]))
+
+(define (obs-externals-in some-term)
+  (term (obs-externals-in/mf ,some-term)))
+
+(define-metafunction csa#
+  obs-externals-in/mf : any -> (a#ext ...)
+  [(obs-externals-in/mf (obs-ext natural any_type)) ((obs-ext natural any_type))]
+  [(obs-externals-in/mf (any ...))
+   (a#ext ... ...)
+   (where ((a#ext ...) ...) ((obs-externals-in/mf any) ...))]
+  [(obs-externals-in/mf _) ()])
+
+(define (csa#-blur-and-age-receptionists receptionists spawn-flag-to-blur)
+  (csa#-age-internal-addrs
+   (filter (negate (curryr address-has-flag? spawn-flag-to-blur)) receptionists)))
+
+(module+ test
+  (test-equal? "Receptionist blur/age test"
+    (csa#-blur-and-age-receptionists
+     (list '(init-addr 1 Nat)
+           '(init-addr 2 Nat)
+           '(spawn-addr 1 OLD Nat)
+           '(spawn-addr 2 OLD Nat)
+           '(spawn-addr 2 NEW Nat))
+     'OLD)
+    (list '(init-addr 1 Nat)
+          '(init-addr 2 Nat)
+          '(spawn-addr 2 OLD Nat)))
+  (test-equal? "Receptionist blur/age test 2"
+    (csa#-blur-and-age-receptionists
+     (list '(init-addr 1 Nat)
+           '(init-addr 2 Nat)
+           '(spawn-addr 1 OLD Nat)
+           '(spawn-addr 2 OLD Nat)
+           '(spawn-addr 2 NEW Nat))
+     'NEW)
+    (list '(init-addr 1 Nat)
+          '(init-addr 2 Nat)
+          '(spawn-addr 1 OLD Nat)
+          '(spawn-addr 2 OLD Nat))))
+
 ;; TODO: rename this function (need a better term than "blur"; "fuzz" is taken
 ;;
 ;; "Blurs" out any address not in the given "relevant" list into an unobserved address
 (define (blur-externals config relevant-external-addrs)
-  (redex-let csa# ([K# (term (blur-externals/mf ,config ,relevant-external-addrs))])
-             (term K#)))
+  (redex-let csa# ([(any_actors any_msg any_rec any_escapes) config])
+             (term ((blur-externals/mf any_actors ,relevant-external-addrs)
+                    (blur-externals/mf any_msg ,relevant-external-addrs)
+                    (blur-externals/mf any_rec ,relevant-external-addrs)
+                    ,(filter (curryr member relevant-external-addrs) (term any_escapes))))))
 
 (define-metafunction csa#
   blur-externals/mf : any (a#ext ...) -> any
-  [(blur-externals/mf (obs-ext natural) (_ ... (obs-ext natural) _ ...))
-   (obs-ext natural)]
-  [(blur-externals/mf (obs-ext natural) _)
-   ;; TODO: put the correct type here
-   (* (Addr Nat))]
+  [(blur-externals/mf (obs-ext natural any_type) (_ ... (obs-ext natural any_type) _ ...))
+   (obs-ext natural any_type)]
+  [(blur-externals/mf (obs-ext natural τ) _)
+   (* (Addr τ))]
   [(blur-externals/mf (any_kw any ...) (any_addr ...))
    (any_kw any_result ...)
    (side-condition (member (term any_kw) (list 'vector 'list 'hash)))
@@ -1084,41 +1296,47 @@
    (blur-externals
       (redex-let* csa#
                   ([α#n (term
-                         ((init-addr 0)
+                         ((init-addr 0 Nat)
                           (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
                               (begin
-                                (send (obs-ext 1) (* Nat))
-                                (send (obs-ext 2) (* Nat))
+                                (send (obs-ext 1 Nat) (* Nat))
+                                (send (obs-ext 2 Nat) (* Nat))
                                 (goto A x y z))))
-                           (goto A (obs-ext 2) (obs-ext 3) (obs-ext 4)))))]
-                   [K# (term ((α#n) () ((init-addr 0)) ()))])
+                           (goto A (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))))]
+                   [K# (term ((α#n) () ((init-addr 0 Nat)) ()))])
              (term K#))
-      (term ((obs-ext 1) (obs-ext 3))))
+      (term ((obs-ext 1 Nat) (obs-ext 3 Nat))))
    (redex-let* csa#
                ([α#n (term
-                      ((init-addr 0)
+                      ((init-addr 0 Nat)
                        (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
                            (begin
-                             (send (obs-ext 1) (* Nat))
+                             (send (obs-ext 1 Nat) (* Nat))
                              (send (* (Addr Nat)) (* Nat))
                              (goto A x y z))))
-                        (goto A (* (Addr Nat)) (obs-ext 3) (* (Addr Nat))))))]
-                [K# (term ((α#n) () ((init-addr 0)) ()))])
+                        (goto A (* (Addr Nat)) (obs-ext 3 Nat) (* (Addr Nat))))))]
+                [K# (term ((α#n) () ((init-addr 0 Nat)) ()))])
                (term K#)))
 
   ;; Make sure duplicates are removed from vectors, lists, and hashes
   (check-equal?
    (term (blur-externals/mf
           ,(redex-let csa#
-                      ([e# (term (hash (obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))])
+                      ([e# (term (hash (obs-ext 1 Nat)
+                                       (obs-ext 2 Nat)
+                                       (obs-ext 3 Nat)
+                                       (obs-ext 4 Nat)))])
                       (term e#))
-          ((obs-ext 1) (obs-ext 3))))
-   (term (hash (obs-ext 1) (* (Addr Nat)) (obs-ext 3))))
+          ((obs-ext 1 Nat) (obs-ext 3 Nat))))
+   (term (hash (obs-ext 1 Nat) (* (Addr Nat)) (obs-ext 3 Nat))))
 
   (check-equal?
    (term (blur-externals/mf
           ,(redex-let csa#
-                      ([e# (term (list (obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))])
+                      ([e# (term (list (obs-ext 1 Nat)
+                                       (obs-ext 2 Nat)
+                                       (obs-ext 3 Nat)
+                                       (obs-ext 4 Nat)))])
                       (term e#))
           ()))
    (term (list (* (Addr Nat)))))
@@ -1126,10 +1344,40 @@
   (check-equal?
    (term (blur-externals/mf
           ,(redex-let csa#
-                      ([e# (term (vector (obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))])
+                      ([e# (term (vector (obs-ext 1 Nat)
+                                         (obs-ext 2 Nat)
+                                         (obs-ext 3 Nat)
+                                         (obs-ext 4 Nat)))])
                       (term e#))
-          ((obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4))))
-   (term (vector (obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))))
+          ((obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat))))
+   (term (vector (obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat))))
+
+  (test-equal? "Just remove blurred addresses from escape list"
+               (blur-externals
+                (term (() () () ((obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat))))
+                (term ((obs-ext 1 Nat) (obs-ext 3 Nat))))
+               (term (() () () ((obs-ext 1 Nat) (obs-ext 3 Nat))))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Canonicalization Help
+
+(define (csa#-sort-escapes config)
+  (redex-let csa# ([(any_actors any_messages any_receptionists any_escapes) config])
+    (term (any_actors
+           any_messages
+           any_receptionists
+           ,(sort (term any_escapes) obs-ext<)))))
+
+(define (obs-ext< a b)
+  (< (second a) (second b)))
+
+(module+ test
+  (test-case "Obs-ext address comparison"
+    (define a (term (obs-ext 2 Nat)))
+    (define b (term (obs-ext 4 Nat)))
+    (check-not-false (redex-match csa# a#ext a))
+    (check-not-false (redex-match csa# a#ext b))
+    (check-true (obs-ext< a b))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Constructors
@@ -1160,18 +1408,32 @@
 (define-metafunction csa#
   config-actor-and-rest-by-address/mf : K# a#int -> ((α#n ...) α#n (α#n ...))
   [(config-actor-and-rest-by-address/mf ((any_1 ... (name the-actor (a#int _)) any_2 ...) _ _ _)
-                                        a#int)
-   ((any_1 ...) the-actor (any_2 ...))])
+                                        a#int_target)
+   ((any_1 ...) the-actor (any_2 ...))
+   (judgment-holds (same-internal-address-without-type? a#int a#int_target))])
+
+(define-judgment-form csa#
+  #:mode (same-internal-address-without-type? I I)
+  #:contract (same-internal-address-without-type? a#int a#int)
+  [------
+   (same-internal-address-without-type? (init-addr natural _) (init-addr natural _))]
+  [------
+   (same-internal-address-without-type? (spawn-addr any_loc NEW _) (spawn-addr any_loc NEW _))]
+  [------
+   (same-internal-address-without-type? (spawn-addr any_loc OLD _) (spawn-addr any_loc OLD _))])
 
 (define (csa#-actor-address a)
   (redex-let* csa# ([α#n a]
                     [(a#int _) (term α#n)])
               (term a#int)))
 
-(define (csa#-typed-address-type typed-address)
-  (redex-let* csa# ([typed-a#int typed-address]
-                    [(init-addr natural τ) (term typed-a#int)])
-             (term τ)))
+(define (csa#-receptionist-type addr)
+  (term (csa#-receptionist-type/mf ,addr)))
+
+(define-metafunction csa#
+  csa#-receptionist-type/mf : a#int -> τ
+  [(csa#-receptionist-type/mf (init-addr natural τ)) τ]
+  [(csa#-receptionist-type/mf (spawn-addr _ _ τ)) τ])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Boolean Logic
@@ -1232,19 +1494,19 @@
   (redex-match? csa# (a#int _) output))
 
 (module+ test
-  (check-true (internal-output? (term ((init-addr 1) (* Nat)))))
-  (check-false (internal-output? (term ((obs-ext 2) (* Nat))))))
+  (check-true (internal-output? (term ((init-addr 1 Nat) (* Nat)))))
+  (check-false (internal-output? (term ((obs-ext 2 Nat) (* Nat))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debug helpers
 
 (define (prog-config-without-state-defs config)
-  (redex-let csa# ([(((a#int (_ e#)) ...) μ# ρ# χ#) config])
-             (term (((a#int e#) ...) μ# ρ# χ#))))
+  (redex-let csa# ([(((a#int (_ e#)) ...) μ# ρ# any_escapes) config])
+             (term (((a#int e#) ...) μ# ρ# any_escapes))))
 
 (define (prog-config-goto config)
   ;; NOTE: only suports single-actor progs for now
-  (redex-let csa# ([(((a#int (_ e#))) μ# ρ# χ#) config])
+  (redex-let csa# ([(((a#int (_ e#))) μ# ρ# any_escapes) config])
              (term e#)))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -1258,6 +1520,14 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Misc.
 
-(define (csa#-typed-address->untyped the-addr)
-  (redex-let csa# ([(init-addr natural _) the-addr])
-             (term (init-addr natural))))
+(define (csa#-new-spawn-address? a)
+  (redex-match? csa# (spawn-addr _ NEW _) a))
+
+(module+ test
+  (test-case "New-span-addr? check"
+    (define a (term (spawn-addr 5 NEW Nat)))
+    (define b (term (spawn-addr 6 OLD Nat)))
+    (check-not-false (redex-match csa# a#int a))
+    (check-not-false (redex-match csa# a#int b))
+    (check-true (csa#-new-spawn-address? a))
+    (check-false (csa#-new-spawn-address? b))))

@@ -51,7 +51,7 @@
 (struct impl-step (from-observer? trigger outputs final-state) #:transparent)
 
 ;; TODO: probably want to add satisfied commitments here
-(struct spec-step (final-state) #:transparent)
+(struct spec-step (final-state spawned-specs revealed-addresses) #:transparent)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Main functions
@@ -153,9 +153,9 @@
   ;; avoid the performance issue associated with that package)
   ;;
   ;; TODO: decide on mutable vs. immutable programming style
-  (define to-visit (apply queue initial-tuples)) ; mutable
-  (define related-spec-steps (make-hash)) ; hash table from (tuple, impl-step) to (listof spec-step)
-  ;; hash table from tuple to (setof (tuple, trigger, outputs, tuple))
+  (define to-visit (apply queue initial-tuples))
+  (define related-spec-steps (make-hash))
+  ;; TODO: adjust my pseudocode and proof to note that the incoming edge is initialized here
   (define incoming (make-hash (map (lambda (t) (cons t (mutable-set))) initial-tuples)))
 
   ;; Debugging
@@ -165,7 +165,6 @@
   (let loop ([related-tuples (set)]
              [unrelated-successors (set)])
     (match (dequeue-if-non-empty! to-visit)
-      ;; TODO: adjust my pseudocode and proof to note that the incoming edge is initialized here
       [#f
        (when LOG-TUPLES (close-output-port log-file))
        (list related-tuples incoming related-spec-steps unrelated-successors)]
@@ -176,9 +175,9 @@
        (set! nodes-visited (add1 nodes-visited))
        ;; (printf "Program state #: ~s\n" nodes-visited)
        ;; (printf "Queue size: ~s\n" (queue-length to-visit))
-       ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs prog))
-       ;; (printf "The full prog config: ~s\n" prog)
-       ;; (printf "The spec config: ~s\n" spec)
+       ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs (simulation-node-prog-config tuple)))
+       ;; (printf "The full prog config: ~s\n" (simulation-node-prog-config tuple))
+       ;; (printf "The spec config: ~s\n" (simulation-node-spec-config tuple))
 
        (when LOG-TUPLES
          (fprintf log-file "TUPLE ~s. ~s\n" nodes-visited (tuple->debug-tuple tuple))
@@ -201,21 +200,27 @@
 
        ;; Add this tuple to appropriate list; add new worklist items
        (cond
-         [found-unmatchable-step? (loop related-tuples (set-add unrelated-successors tuple))]
+         [found-unmatchable-step?
+          ;; Debugging
+          ;; (displayln "Unrelated node")
+          (loop related-tuples (set-add unrelated-successors tuple))]
          [else
+          ;; Debugging
+          ;; (displayln "Related node")
           (for ([i-step i-steps])
             (for ([s-step (hash-ref related-spec-steps (list tuple i-step))])
               ;; TODO: simplify this new-tuple code (will be easier when receptionists are maintained
               ;; elsewhere)
-              (define new-tuple
-                (simulation-node
-                 (impl-step-final-state i-step)
-                 (spec-step-final-state s-step)
-                 ;; TODO: put the obs/unobs receptionists in the spec config
-                 (simulation-node-obs-receptionists tuple)
-                 (simulation-node-unobs-receptionists tuple)))
-              (define sbc-tuples (sbc new-tuple))
-              (for ([sbc-tuple sbc-tuples])
+              (define new-tuples
+                (for/list ([config (cons (spec-step-final-state s-step) (spec-step-spawned-specs s-step))])
+                  (simulation-node
+                   (impl-step-final-state i-step)
+                   config
+                   ;; TODO: put the obs/unobs receptionists in the spec config
+                   ;; TODO: canonicalize the receptionist set by sorting it after the rename
+                   (remove-duplicates (append (simulation-node-obs-receptionists tuple) (spec-step-revealed-addresses s-step)))
+                   (simulation-node-unobs-receptionists tuple))))
+              (for ([sbc-tuple (append* (map sbc new-tuples))])
                 (incoming-add! incoming sbc-tuple (list tuple i-step s-step))
                 (unless (or (member sbc-tuple (queue->list to-visit))
                             (set-member? related-tuples sbc-tuple)
@@ -248,13 +253,11 @@
      (display-step-line "Enumerating abstract messages (typed)")
      (for/fold ([transitions-so-far null])
                ;; TODO: get the max depth from somewhere
-               ([message (generate-abstract-messages (csa#-typed-address-type receptionist) 10)])
+               ([message (generate-abstract-messages (csa#-receptionist-type receptionist) 10)])
        (display-step-line "Evaluating a handler")
        ;; TODO: deal with the "observed?" flag
        (append transitions-so-far
-               (csa#-handle-message prog-config
-                                    (csa#-typed-address->untyped receptionist)
-                                    message))))))
+               (csa#-handle-message prog-config receptionist message))))))
 
 ;; Returns a set of the possible spec steps (see the struct above) from the given spec config that
 ;; match the given implementation step
@@ -262,14 +265,17 @@
   ;; TODO: decide if I should support instances where a single transition of the program uses
   ;; multiple transitions of the spec (I think this probably won't happen in practice)
   (define matched-stepped-configs (mutable-set))
-  (for ([config (aps#-steps-for-trigger spec-config
-                                        (impl-step-from-observer? i-step)
-                                        (impl-step-trigger i-step))])
+  (for ([(trigger-result) (aps#-steps-for-trigger spec-config
+                                          (impl-step-from-observer? i-step)
+                                          (impl-step-trigger i-step))])
+    (match-define (list config spawns1) trigger-result)
     (match (aps#-resolve-outputs config (impl-step-outputs i-step))
       [#f matched-stepped-configs]
-      [(list stepped-spec-config satisfied-commitments)
+      [(list stepped-spec-config spawns2 revealed-addresses satisfied-commitments)
        ;; TODO: record the satisfied commitments somehow
-       (set-add! matched-stepped-configs (spec-step stepped-spec-config))]))
+       (set-add! matched-stepped-configs (spec-step stepped-spec-config
+                                                    (append spawns1 spawns2)
+                                                    revealed-addresses))]))
   matched-stepped-configs)
 
 (module+ test
@@ -279,53 +285,57 @@
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step #f '(internal-receive (init-addr 0) (* Nat)) null #f))
-     (mutable-set (spec-step null-spec-config))))
+      (impl-step #f '(internal-receive (init-addr 0 Nat) (* Nat)) null #f))
+     (mutable-set (spec-step null-spec-config null null))))
   (test-case "Null transition not okay for observed input"
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step #t '(external-receive (init-addr 0) (* Nat)) null #f))
+      (impl-step #t '(external-receive (init-addr 0 Nat) (* Nat)) null #f))
      (mutable-set)))
   (test-case "No match if trigger does not match"
     (check-equal?
      (matching-spec-steps
       (make-Σ# '((define-state (A) [x -> (goto A)])) '(goto A) null)
-      (impl-step #t '(external-receive (init-addr 0) (* Nat)) null #f))
+      (impl-step #t '(external-receive (init-addr 0 Nat) (* Nat)) null #f))
      (mutable-set)))
   (test-case "Unobserved outputs don't need to match"
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step #f '(internal-receive (init-addr 0) (* Nat)) (list '((obs-ext 1) (* Nat))) #f))
-     (mutable-set (spec-step null-spec-config))))
+      (impl-step #f '(internal-receive (init-addr 0 Nat) (* Nat)) (list '((obs-ext 1 Nat) (* Nat))) #f))
+     (mutable-set (spec-step null-spec-config null null))))
   (test-case "No match if outputs do not match"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1))))
-      (impl-step #f '(internal-receive (init-addr 0) (* Nat)) (list '((obs-ext 1) (* Nat))) #f))
+      (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1 Nat))))
+      (impl-step #f '(internal-receive (init-addr 0 Nat) (* Nat)) (list '((obs-ext 1 Nat) (* Nat))) #f))
      (mutable-set)))
   (test-case "Output can be matched by previous commitment"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1) (single *))))
-      (impl-step #f '(internal-receive (init-addr 0) (* Nat)) (list '((obs-ext 1) (* Nat))) #f))
-     (mutable-set (spec-step (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1))))))))
+      (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1 Nat) (single *))))
+      (impl-step #f '(internal-receive (init-addr 0 Nat) (* Nat)) (list '((obs-ext 1 Nat) (* Nat))) #f))
+     (mutable-set (spec-step (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1 Nat)))) null null))))
   (test-case "Output can be matched by new commitment"
     (check-equal?
      (matching-spec-steps
       (make-Σ# '((define-state (A) [x -> (with-outputs ([x *]) (goto A))])) '(goto A) null)
-      (impl-step #t '(external-receive (init-addr 0) (obs-ext 1)) (list '((obs-ext 1) (* Nat))) #f))
+      (impl-step #t '(external-receive (init-addr 0 Nat) (obs-ext 1 Nat)) (list '((obs-ext 1 Nat) (* Nat))) #f))
      (mutable-set (spec-step (make-Σ# '((define-state (A) [x -> (with-outputs ([x *]) (goto A))]))
                               '(goto A)
-                              (list '((obs-ext 1))))))))
+                              (list '((obs-ext 1 Nat))))
+                             null
+                             null))))
   (test-case "Multiple copies of same commitment get merged"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1)) (list '[(obs-ext 1) (single *)]))
-      (impl-step #t '(external-receive (init-addr 0) (* Nat)) null #f))
+      (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1 Nat)) (list '[(obs-ext 1 Nat) (single *)]))
+      (impl-step #t '(external-receive (init-addr 0 Nat) (* Nat)) null #f))
      (mutable-set
-      (spec-step (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1)) (list '[(obs-ext 1) (many *)])))))))
+      (spec-step (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1 Nat)) (list '[(obs-ext 1 Nat) (many *)]))
+                 null
+                 null)))))
 
 ;; TODO: rename this function to something more generic (not incoming-based)
 (define (incoming-add! incoming key new-tuple)
@@ -339,24 +349,30 @@
 ;; provide a mapping in the spec instead (the spec semantics would probably look something like HD
 ;; automata)
 
-;; Splits, blurs, and canonicalizes the given tuple, returning the resulting list of tuples
+;; TODO: rename this now that blurring is not part of it
+;;
+;; Splits, blurs and canonicalizes the given tuple, returning the resulting tuple
 (define (sbc tuple)
-  (display-step-line "Splitting the spec config")
   (for/list ([spec-config-component (split-spec (simulation-node-spec-config tuple))])
     ;; TODO: make it an "error" for a non-precise address to match a spec state parameter
     (display-step-line "Abstracting a program")
-    (define abstracted-prog-config
-      (abstract-prog-config-by-spec (simulation-node-prog-config tuple) spec-config-component))
+    (match-define (list abstracted-prog-config
+                        aged-spec
+                        abstracted-obs-receptionists
+                        abstracted-unobs-receptionists)
+      (abstract-by-spec (simulation-node-prog-config tuple)
+                        (simulation-node-obs-receptionists tuple)
+                        (simulation-node-unobs-receptionists tuple)
+                        spec-config-component))
     (display-step-line "Canonicalizing the tuple, adding to queue")
     (match-define (list canonicalized-prog
                         canonicalized-spec
                         canonicalized-obs-recs
                         canonicalized-unobs-recs)
       (canonicalize-tuple (list abstracted-prog-config
-                                spec-config-component
-                                ;; TODO: include the receptionists in the splitting and blurring process
-                                (simulation-node-obs-receptionists tuple)
-                                (simulation-node-unobs-receptionists tuple))))
+                                aged-spec
+                                abstracted-obs-receptionists
+                                abstracted-unobs-receptionists)))
 
     (simulation-node canonicalized-prog
                      canonicalized-spec
@@ -366,33 +382,43 @@
 ;; Takes abstract prog config and abstract spec config; returns prog further abstracted according to
 ;; spec
 ;;
-;; TODO: maybe rename this to "project", since it's a kind of projection
-(define (abstract-prog-config-by-spec p s)
-  ;; How do we decide whether to keep the old or new stuff? Is that a different part of the
-  ;; abstraction from blurring out the addresses irrelevant to the current spec config?
+;; TODO: maybe rename this to "project", since it's a kind of projection (or just to "blur")
+(define (abstract-by-spec p obs-receptionists unobs-receptionists s)
+  (define spawn-flag-to-blur
+    (let ([spec-address (aps#-config-only-instance-address s)])
+      (if (or (csa#-new-spawn-address? spec-address)
+              (aps#-null-address? spec-address))
+          'OLD
+          'NEW)))
 
-  ;; Where do I change other addresses to dead-observable?
-
-  ;; TODO: blur out certain internal actors
-
-  (csa#-merge-duplicate-messages
-   (blur-externals p (aps#-relevant-external-addrs s))))
+  (list
+   (csa#-merge-duplicate-messages
+    (blur-externals
+     (blur-irrelevant-actors p spawn-flag-to-blur)
+     (aps#-relevant-external-addrs s)))
+   (aps#-age-address s)
+   (csa#-blur-and-age-receptionists obs-receptionists spawn-flag-to-blur)
+   (csa#-blur-and-age-receptionists unobs-receptionists spawn-flag-to-blur)))
 
 (module+ test
-  ;; check that messages with blurred addresses get merged together
-  (check-equal?
-   (abstract-prog-config-by-spec (term (()
-                                        (((init-addr 2) (obs-ext 1) 1)
-                                         ((init-addr 2) (obs-ext 2) 1)
-                                         ((init-addr 2) (obs-ext 3) 1))
-                                        ()
-                                        ()))
-                                 (term (() (((obs-ext 3))))))
-   (term (()
-          (((init-addr 2) (* (Addr Nat)) *)
-           ((init-addr 2) (obs-ext 3) 1))
-          ()
-          ()))))
+  (test-equal? "check that messages with blurred addresses get merged together"
+   (abstract-by-spec (term (()
+                            (((init-addr 2 Nat) (obs-ext 1 Nat) 1)
+                             ((init-addr 2 Nat) (obs-ext 2 Nat) 1)
+                             ((init-addr 2 Nat) (obs-ext 3 Nat) 1))
+                            ()
+                            ()))
+                     null
+                     null
+                     (term ((,aps#-no-transition-instance) (((obs-ext 3 Nat))))))
+   (list (term (()
+                (((init-addr 2 Nat) (* (Addr Nat)) *)
+                 ((init-addr 2 Nat) (obs-ext 3 Nat) 1))
+                ()
+                ()))
+         (term ((,aps#-no-transition-instance) (((obs-ext 3 Nat)))))
+         null
+         null)))
 
 ;; Returns the list of split spec-configs from the given one, failing if any of the FSMs share an
 ;; address
@@ -417,8 +443,8 @@
     (term
      (((define-state (A x)
          [* -> (goto A x)]))
-      (goto A (obs-ext 0))
-      (obs-ext 0))))
+      (goto A (obs-ext 0 Nat))
+      (init-addr 0 Nat))))
 
   (check-not-false (redex-match aps# z simple-instance-for-split-test))
 
@@ -429,17 +455,14 @@
 
   ;; split with one related commit
   (check-equal?
-   (split-spec (term ((,simple-instance-for-split-test) (((obs-ext 0) (single *))))))
-   (list (term ((,simple-instance-for-split-test) (((obs-ext 0) (single *)))))))
+   (split-spec (term ((,simple-instance-for-split-test) (((obs-ext 0 Nat) (single *))))))
+   (list (term ((,simple-instance-for-split-test) (((obs-ext 0 Nat) (single *)))))))
 
   ;; split with unrelated commit
   (check-same-items?
-   (split-spec (term ((,simple-instance-for-split-test) (((obs-ext 1) (single *))))))
+   (split-spec (term ((,simple-instance-for-split-test) (((obs-ext 1 Nat) (single *))))))
    (list (term ((,simple-instance-for-split-test) ()))
-         (term (() (((obs-ext 1) (single *)))))))
-
-  ;; TODO: check that none of the FSMs share an address
-  )
+         (term ((,aps#-no-transition-instance) (((obs-ext 1 Nat) (single *))))))))
 
 (define (remove-unsupported-tuples all-tuples incoming init-related-spec-steps init-unrelated-successors)
   (define remaining-tuples (set-copy all-tuples))
@@ -472,13 +495,13 @@
   (define bz-tuple (simulation-node 'B 'Z #f #f))
   (define cw-tuple (simulation-node 'C 'W #f #f))
 
-  (define aa-step (impl-step #f '(timeout (init-addr 0)) null 'A))
-  (define xx-step (spec-step 'X))
-  (define ab-step (impl-step #f '(timeout (init-addr 0)) null 'B))
-  (define xy-step (spec-step 'Y))
-  (define xz-step (spec-step 'Z))
-  (define bc-step (impl-step #f '(timeout (init-addr 0)) null 'C))
-  (define yw-step (spec-step 'W))
+  (define aa-step (impl-step #f '(timeout (init-addr 0 Nat)) null 'A))
+  (define xx-step (spec-step 'X null null))
+  (define ab-step (impl-step #f '(timeout (init-addr 0 Nat)) null 'B))
+  (define xy-step (spec-step 'Y null null))
+  (define xz-step (spec-step 'Z null null))
+  (define bc-step (impl-step #f '(timeout (init-addr 0 Nat)) null 'C))
+  (define yw-step (spec-step 'W null null))
 
   (test-equal? "Remove no nodes, because no list"
     (remove-unsupported-tuples
@@ -607,34 +630,39 @@
 (module+ test
   ;;;; Ignore everything
 
-  (define ignore-all-agent
-    (term
-     ((addr 0)
-      (((define-state (Always) (m) (goto Always)))
-       (goto Always)))))
-  (check-not-false (redex-match csa-eval αn ignore-all-agent))
-  (define ignore-all-config (make-single-agent-config ignore-all-agent))
-  (define ignore-all-spec-instance
+  (define (make-ignore-all-config addr-type)
+    (make-single-agent-config
+     (term
+      ((addr 0 ,addr-type)
+       (((define-state (Always) (m) (goto Always)))
+        (goto Always))))))
+  (define ignore-all-config (make-ignore-all-config 'Nat))
+  (define (make-ignore-all-spec-instance addr-type)
     (term
      (((define-state (Always) [* -> (goto Always)]))
       (goto Always)
-      (addr 0))))
+      (addr 0 ,addr-type))))
+  (define ignore-all-spec-instance
+    (make-ignore-all-spec-instance 'Nat))
   (check-not-false (redex-match csa-eval K ignore-all-config))
   (check-not-false (redex-match aps-eval z ignore-all-spec-instance))
 
   ;; TODO: supply concrete specs and programs to the checker, not abstract ones
   (check-true (analyze ignore-all-config
                        ignore-all-spec-instance
-                       (term ((addr 0 (Addr Nat)))) null
+                       (term ((addr 0 Nat))) null
                        (hash 'Always 'Always)))
 
   ;;;; Send one message to a statically-known address per request
 
   ;; TODO: remove the redundancy between the state defs and the current expression
-  (define static-response-address (term (addr 2)))
+
+  ;; TODO: pick up here with adding types
+  (define (make-static-response-address type) (term (addr 2 ,type)))
+  (define static-response-address (make-static-response-address (term (Union (Ack Nat)))))
   (define static-response-agent
     (term
-     ((addr 0)
+     ((addr 0 Nat)
       (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
           (begin
             (send response-dest (variant Ack 0))
@@ -642,7 +670,7 @@
        (goto Always ,static-response-address)))))
   (define static-double-response-agent
     (term
-     ((addr 0)
+     ((addr 0 Nat)
       (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
           (begin
             (send response-dest (variant Ack 0))
@@ -654,12 +682,12 @@
      (((define-state (Always response-dest)
          [* -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
       (goto Always ,static-response-address)
-      (addr 0))))
+      (addr 0 Nat))))
   (define ignore-all-with-addr-spec-instance
     (term
      (((define-state (Always response-dest) [* -> (goto Always response-dest)]))
       (goto Always ,static-response-address)
-      (addr 0))))
+      (addr 0 Nat))))
 
   (check-not-false (redex-match csa-eval αn static-response-agent))
   (check-not-false (redex-match csa-eval αn static-double-response-agent))
@@ -669,22 +697,22 @@
   (test-true "Static response works"
              (analyze (make-single-agent-config static-response-agent)
                       static-response-spec
-                      (term ((addr 0 (Union [Ack Nat])))) null
+                      (term ((addr 0 Nat))) null
                       (hash 'Always 'Always)))
   (test-false "Static response agent, ignore all spec"
               (analyze (make-single-agent-config static-response-agent)
                        ignore-all-with-addr-spec-instance
-                       (term ((addr 0 (Union [Ack Nat])))) null
+                       (term ((addr 0 Nat))) null
                        (hash 'Always 'Always)))
   (test-false "static double response agent"
               (analyze (make-single-agent-config static-double-response-agent)
                        static-response-spec
-                       (term ((addr 0 (Union [Ack Nat])))) null
+                       (term ((addr 0 Nat))) null
                        (hash 'Always 'Always)))
   (test-false "Static response spec, ignore-all config"
                (analyze ignore-all-config
                         static-response-spec
-                        (term ((addr 0 (Union [Ack Nat])))) null
+                        (term ((addr 0 Nat))) null
                         (hash 'Always 'Always)))
 
   ;;;; Pattern matching tests, without dynamic channels
@@ -695,11 +723,11 @@
          [(variant A *) -> (with-outputs ([r (variant A *)]) (goto Matching r))]
          [(variant B *) -> (with-outputs ([r (variant B *)]) (goto Matching r))]))
       (goto Matching ,static-response-address)
-      (addr 0))))
+      (addr 0 (Union [A Nat] [B Nat])))))
 
   (define pattern-matching-agent
     (term
-     ((addr 0)
+     ((addr 0 (Union [A Nat] [B Nat]))
       (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
           (case m
             [(A x) (begin (send r (variant A x)) (goto Always r))]
@@ -708,7 +736,7 @@
 
   (define reverse-pattern-matching-agent
     (term
-     ((addr 0)
+     ((addr 0 (Union [A Nat] [B Nat]))
       (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
           (case m
             [(A x) (begin (send r (variant B 0)) (goto Always r))]
@@ -717,7 +745,7 @@
 
   (define partial-pattern-matching-agent
     (term
-     ((addr 0)
+     ((addr 0 (Union [A Nat] [B Nat]))
       (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
           (case m
             [(A x) (begin (send r (variant A 0)) (goto Always r))]
@@ -752,7 +780,7 @@
      (((define-state (Always)
          [response-target -> (with-outputs ([response-target *]) (goto Always))]))
       (goto Always)
-      (addr 0))))
+      (addr 0 (Addr Nat)))))
 
   (define request-same-response-addr-spec
     (term
@@ -761,20 +789,18 @@
        (define-state (HaveAddr response-target)
          [new-response-target -> (with-outputs ([response-target *]) (goto HaveAddr response-target))]))
       (goto Init)
-      (addr 0))))
+      (addr 0 (Addr Nat)))))
   (define request-response-agent
     (term
-     ((addr 0)
+     ((addr 0 (Addr Nat))
       (((define-state (Always [i Nat]) (response-target)
           (begin
             (send response-target i)
-            ;; TODO: implement addition and make this a counter
-            ;; (goto Always (+ i 1))
             (goto Always i))))
        (goto Always 0)))))
   (define respond-to-first-addr-agent
     (term
-     ((addr 0)
+     ((addr 0 (Addr Nat))
       (((define-state (Init) (response-target)
           (begin
             (send response-target 0)
@@ -783,13 +809,11 @@
           (begin
             (send response-target i)
             ;; TODO: also try the case where we save new-response-target instead
-            ;; TODO: implement addition and make this a counter
-            ;; (goto HaveAddr (+ i 1) response-target)
             (goto HaveAddr i response-target))))
        (goto Init)))))
   (define respond-to-first-addr-agent2
     (term
-     ((addr 0)
+     ((addr 0 (Addr Nat))
       (((define-state (Always [original-addr (Union (NoAddr) (Original (Addr Nat)))]) (response-target)
           (begin
             (case original-addr
@@ -804,7 +828,7 @@
        (goto Always (variant NoAddr))))))
   (define delay-saving-address-agent
     (term
-     ((addr 0)
+     ((addr 0 (Addr Nat))
       (((define-state (Init) (response-target)
           (begin
             (send response-target 0)
@@ -817,7 +841,7 @@
             (goto HaveAddr i new-response-target))))
        (goto Init)))))
   (define double-response-agent
-    `((addr 0)
+    `((addr 0 (Addr Nat))
       (((define-state (Always [i Nat]) (response-dest)
           (begin
             (send response-dest i)
@@ -828,7 +852,7 @@
        (goto Always 0))))
   (define respond-once-agent
     (term
-     ((addr 0)
+     ((addr 0 (Addr Nat))
       (((define-state (Init) (response-target)
           (begin
             (send response-target 0)
@@ -862,14 +886,16 @@
                         request-same-response-addr-spec
                         (term ((addr 0 (Addr Nat)))) null
                         (hash 'Always 'Init)))
-  (check-false (analyze ignore-all-config
+  (test-false "ignore all actor does not satisfy request/response"
+              (analyze (make-ignore-all-config (term (Addr Nat)))
                         request-response-spec
                         (term ((addr 0 (Addr Nat)))) null
                         (hash 'Always 'Init)))
-  (check-false (analyze (make-single-agent-config respond-once-agent)
-                        request-response-spec
-                        (term ((addr 0 (Addr Nat)))) null
-                        (hash 'Always 'Init)))
+  (test-false "Respond-once actor does not satisfy request/response"
+              (analyze (make-single-agent-config respond-once-agent)
+                       request-response-spec
+                       (term ((addr 0 (Addr Nat)))) null
+                       (hash 'Always 'Init)))
   (check-true (analyze (make-single-agent-config respond-to-first-addr-agent)
                        request-same-response-addr-spec
                        (term ((addr 0 (Addr Nat)))) null
@@ -894,7 +920,7 @@
   ;; commitments
   (define reply-once-actor
     (term
-     ((addr 0)
+     ((addr 0 (Addr Nat))
       (((define-state (A) (r)
           (begin
             (send r 0)
@@ -909,7 +935,7 @@
        (define-state (B)
          [* -> (goto B)]))
       (goto A)
-      (addr 0))))
+      (addr 0 (Addr Nat)))))
 
   (check-not-false (redex-match csa-eval αn reply-once-actor))
   (check-not-false (redex-match aps-eval z maybe-reply-spec))
@@ -926,16 +952,16 @@
          [* -> (with-outputs ([r (variant Zero)])    (goto S1 r))]
          [* -> (with-outputs ([r (variant NonZero)]) (goto S1 r))]))
       (goto S1 ,static-response-address)
-      (addr 0))))
+      (addr 0 Nat))))
   (define zero-spec
     (term
      (((define-state (S1 r)
          [* -> (with-outputs ([r (variant Zero)])    (goto S1 r))]))
       (goto S1 ,static-response-address)
-      (addr 0))))
+      (addr 0 Nat))))
   (define primitive-branch-agent
     (term
-     ((addr 0)
+     ((addr 0 Nat)
       (((define-state (S1 [dest (Addr (Union [NonZero] [Zero]))]) (i)
           (begin
             (case (< 0 i)
@@ -963,13 +989,13 @@
      (((define-state (Always r)
          [* -> (with-outputs ([r *]) (goto Always r))]
          [* -> (goto Always r)]))
-      (goto Always (addr 1))
-      (addr 0))))
+      (goto Always (addr 1 (Addr Nat)))
+      (addr 0 Nat))))
 
   (check-not-false (redex-match aps-eval z optional-commitment-spec))
-  (check-true (analyze (make-single-agent-config ignore-all-agent)
+  (check-true (analyze ignore-all-config
                        optional-commitment-spec
-                       (term ((addr 0 (Addr Nat)))) null
+                       (term ((addr 0 Nat))) null
                        (hash 'Always 'Always)))
 
   ;;;; Stuck states in concrete evaluation
@@ -979,10 +1005,10 @@
      (((define-state (Always response-dest)
          [* -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
       (goto Always ,static-response-address)
-      (addr 0))))
+      (addr 0 Nat))))
   (define div-by-one-agent
     (term
-     ((addr 0)
+     ((addr 0 Nat)
       (((define-state (Always [response-dest (Addr Nat)]) (n)
           (begin
             (send response-dest (/ n 1))
@@ -990,7 +1016,7 @@
        (goto Always ,static-response-address)))))
   (define div-by-zero-agent
     (term
-     ((addr 0)
+     ((addr 0 Nat)
       (((define-state (Always [response-dest (Addr Nat)]) (n)
           (begin
             (send response-dest (/ n 0))
@@ -1001,11 +1027,13 @@
   (check-not-false (redex-match csa-eval αn div-by-zero-agent))
   (check-not-false (redex-match csa-eval αn div-by-one-agent))
 
-  (check-true (analyze (make-single-agent-config div-by-one-agent)
+  (test-true "Div by one vs. nat-to-nat spec"
+             (analyze (make-single-agent-config div-by-one-agent)
                        nat-to-nat-spec
                        (term ((addr 0 Nat))) null
                        (hash 'Always 'Always)))
-  (check-true (analyze (make-single-agent-config div-by-zero-agent)
+  (test-true "Div by zero vs. nat-to-nat spec"
+              (analyze (make-single-agent-config div-by-zero-agent)
                        nat-to-nat-spec
                        (term ((addr 0 Nat))) null
                        (hash 'Always 'Always)))
@@ -1013,24 +1041,27 @@
   ;;;; Unobservable communication
 
   ;; wildcard unobservables are ignored for the purpose of output commitments
-  (check-true (analyze (make-single-agent-config request-response-agent)
-                       ignore-all-spec-instance
-                       (term ((addr 0 (Addr Nat)))) null
-                       (hash 'Always 'Always)))
+  (test-true "request/response actor vs. ignore-all spec"
+             (analyze (make-single-agent-config request-response-agent)
+                      (make-ignore-all-spec-instance '(Addr Nat))
+                      (term ((addr 0 (Addr Nat)))) null
+                      (hash 'Always 'Always)))
 
   ;; 1. In dynamic req/resp, allowing unobserved perspective to send same messages does not affect conformance
-  (check-true (analyze (make-single-agent-config request-response-agent)
-                       request-response-spec
-                       (term ((addr 0 (Addr Nat))))
-                       (term ((addr 0 (Addr Nat))))
-                       (hash 'Always 'Always)))
+  (test-true "request response actor and spec, with unobs communication"
+             (analyze (make-single-agent-config request-response-agent)
+                      request-response-spec
+                      (term ((addr 0 (Addr Nat))))
+                      (term ((addr 0 (Addr Nat))))
+                      (hash 'Always 'Always)))
 
   ;; 2. Allowing same messages from unobs perspective violates conformance for static req/resp.
-  (check-false (analyze (make-single-agent-config static-response-agent)
-                        static-response-spec
-                        (term ((addr 0 (Addr Nat))))
-                        (term ((addr 0 (Addr Nat))))
-                        (hash 'Always 'Always)))
+  (test-false "static response with unobs communication"
+              (analyze (make-single-agent-config static-response-agent)
+                       static-response-spec
+                       (term ((addr 0 Nat)))
+                       (term ((addr 0 Nat)))
+                       (hash 'Always 'Always)))
 
   ;; 3. Conformance regained for static req/resp when add an unobs transition
   (define static-response-spec-with-unobs
@@ -1039,27 +1070,29 @@
          [*     -> (with-outputs ([response-dest *]) (goto Always response-dest))]
          [unobs -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
       (goto Always ,static-response-address)
-      (addr 0))))
+      (addr 0 Nat))))
   (check-not-false (redex-match aps-eval z static-response-spec-with-unobs))
 
   (check-true (analyze (make-single-agent-config static-response-agent)
                        static-response-spec-with-unobs
-                       (term ((addr 0 (Union [Ack Nat]))))
-                       (term ((addr 0 (Union [Ack Nat]))))
+                       (term ((addr 0 Nat)))
+                       (term ((addr 0 Nat)))
                        (hash 'Always 'Always)))
 
   ;; 4. unobs causes a particular behavior (like connected/error in TCP)
+  (define obs-unobs-static-response-address
+    (make-static-response-address (term (Union (TurningOn) (TurningOff)))))
   (define unobs-toggle-spec
     (term (((define-state (Off r)
               [* -> (with-outputs ([r (variant TurningOn)]) (goto On r))])
             (define-state (On r)
               [* -> (goto On r)]
               [unobs -> (with-outputs ([r (variant TurningOff)]) (goto Off r))]))
-           (goto Off ,static-response-address)
-           (addr 0))))
+           (goto Off ,obs-unobs-static-response-address)
+           (addr 0 (Union [FromObserver] [FromUnobservedEnvironment])))))
   (define unobs-toggle-agent
     (term
-     ((addr 0)
+     ((addr 0 (Union [FromObserver] [FromUnobservedEnvironment]))
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver)
@@ -1074,10 +1107,10 @@
              (begin
                (send r (variant TurningOff))
                (goto Off r))])))
-       (goto Off ,static-response-address)))))
+       (goto Off ,obs-unobs-static-response-address)))))
   (define unobs-toggle-agent-wrong1
     (term
-     ((addr 0)
+     ((addr 0 (Union [FromObserver] [FromUnobservedEnvironment]))
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver)
@@ -1093,10 +1126,10 @@
              (begin
                (send r (variant TurningOff))
                (goto Off r))])))
-       (goto Off ,static-response-address)))))
+       (goto Off ,obs-unobs-static-response-address)))))
   (define unobs-toggle-agent-wrong2
     (term
-     ((addr 0)
+     ((addr 0 (Union [FromObserver] [FromUnobservedEnvironment]))
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver)
@@ -1111,10 +1144,10 @@
              (begin
                (send r (variant TurningOff))
                (goto Off r))])))
-       (goto Off ,static-response-address)))))
+       (goto Off ,obs-unobs-static-response-address)))))
   (define unobs-toggle-agent-wrong3
     (term
-     ((addr 0)
+     ((addr 0 (Union [FromObserver] [FromUnobservedEnvironment]))
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver)
@@ -1129,10 +1162,10 @@
              (begin
                (send r (variant TurningOff))
                (goto On r))])))
-       (goto Off ,static-response-address)))))
+       (goto Off ,obs-unobs-static-response-address)))))
   (define unobs-toggle-agent-wrong4
     (term
-     ((addr 0)
+     ((addr 0 (Union [FromObserver] [FromUnobservedEnvironment]))
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver) (goto Off r)]
@@ -1147,7 +1180,7 @@
              (begin
                (send r (variant TurningOff))
                (goto Off r))])))
-       (goto Off ,static-response-address)))))
+       (goto Off ,obs-unobs-static-response-address)))))
 
   (check-not-false (redex-match aps-eval z unobs-toggle-spec))
   (check-not-false (redex-match aps-eval αn unobs-toggle-agent))
@@ -1156,21 +1189,23 @@
   (check-not-false (redex-match aps-eval αn unobs-toggle-agent-wrong3))
   (check-not-false (redex-match aps-eval αn unobs-toggle-agent-wrong4))
 
-  (check-true (analyze (make-single-agent-config unobs-toggle-agent)
-                       unobs-toggle-spec
-                       (term ((addr 0 (Union [FromObserver]))))
-                       (term ((addr 0 (Union [FromUnobservedEnvironment]))))
-                       (hash 'On 'On 'Off 'Off)))
+  (test-true "Obs/Unobs test"
+             (analyze (make-single-agent-config unobs-toggle-agent)
+                      unobs-toggle-spec
+                      (term ((addr 0 (Union [FromObserver]))))
+                      (term ((addr 0 (Union [FromUnobservedEnvironment]))))
+                      (hash 'On 'On 'Off 'Off)))
 
   (for ([agent (list unobs-toggle-agent-wrong1
                      unobs-toggle-agent-wrong2
                      unobs-toggle-agent-wrong3
                      unobs-toggle-agent-wrong4)])
-    (check-false (analyze (make-single-agent-config agent)
-                          unobs-toggle-spec
-                          (term ((addr 0 (Union [FromObserver]))))
-                          (term ((addr 0 (Union [FromUnobservedEnvironment]))))
-                          (hash 'On 'On 'Off 'Off))))
+    (test-false "Obs/Unobs bug-finding test(s)"
+                (analyze (make-single-agent-config agent)
+                         unobs-toggle-spec
+                         (term ((addr 0 (Union [FromObserver]))))
+                         (term ((addr 0 (Union [FromUnobservedEnvironment]))))
+                         (hash 'On 'On 'Off 'Off))))
 
   ;;;; Records
 
@@ -1180,10 +1215,10 @@
          [(record [dest dest] [msg (variant A)]) -> (with-outputs ([dest (variant A)]) (goto Always))]
          [(record [dest dest] [msg (variant B)]) -> (with-outputs ([dest (variant B)]) (goto Always))]))
       (goto Always)
-      (addr 0))))
+      (addr 0 (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])])))))
   (define record-req-resp-agent
     (term
-     ((addr 0)
+     ((addr 0 (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]))
       (((define-state (Always) (m)
           (begin
             (send (: m dest) (: m msg))
@@ -1191,7 +1226,7 @@
        (goto Always)))))
   (define record-req-wrong-resp-agent
     (term
-     ((addr 0)
+     ((addr 0 (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]))
       (((define-state (Always) (m)
           (begin
             (send (: m dest) (variant A))
@@ -1218,7 +1253,7 @@
   ;;;; Let
   (define static-response-let-agent
     (term
-     ((addr 0)
+     ((addr 0 Nat)
       (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
           (let ([new-r response-dest])
             (begin
@@ -1227,7 +1262,7 @@
        (goto Always ,static-response-address)))))
   (define static-double-response-let-agent
     (term
-     ((addr 0)
+     ((addr 0 Nat)
       (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
           (let ([new-r response-dest])
             (begin
@@ -1251,7 +1286,7 @@
   ;; Check that = gives both results
   (define equal-agent-wrong1
     (term
-     ((addr 0)
+     ((addr 0 Nat)
       (((define-state (A [dest (Addr Nat)]) (m)
           (begin
             (send dest 0)
@@ -1262,7 +1297,7 @@
        (goto A ,static-response-address)))))
   (define equal-agent-wrong2
     (term
-     ((addr 0)
+     ((addr 0 Nat)
       (((define-state (A [dest (Addr Nat)]) (m)
           (begin
             (send dest 0)
@@ -1273,7 +1308,7 @@
        (goto A ,static-response-address)))))
     (define equal-agent
     (term
-     ((addr 0)
+     ((addr 0 Nat)
       (((define-state (A [dest (Addr Nat)]) (m)
           (begin
             (send dest 0)
@@ -1309,7 +1344,7 @@
   ;;;; For loops
   (define loop-do-nothing-agent
     (term
-     ((addr 0)
+     ((addr 0 (Addr Nat))
       (((define-state (A) (m)
           (begin
             (for/fold ([folded 0])
@@ -1319,7 +1354,7 @@
        (goto A)))))
   (define loop-send-unobs-agent
     (term
-     ((addr 0)
+     ((addr 0 (Addr Nat))
       (((define-state (A [r (Addr Nat)]) (m)
           (begin
             (for/fold ([folded 0])
@@ -1329,7 +1364,7 @@
        (goto A ,static-response-address)))))
   (define send-before-loop-agent
     (term
-     ((addr 0)
+     ((addr 0 (Addr Nat))
       (((define-state (A) (r)
           (begin
             (send r 0)
@@ -1340,7 +1375,7 @@
        (goto A)))))
   (define send-inside-loop-agent
     (term
-     ((addr 0)
+     ((addr 0 (Addr Nat))
       (((define-state (A) (r)
           (begin
             (for/fold ([folded 0])
@@ -1350,7 +1385,7 @@
        (goto A)))))
   (define send-after-loop-agent
     (term
-     ((addr 0)
+     ((addr 0 (Addr Nat))
       (((define-state (A) (r)
           (begin
             (for/fold ([folded 0])
@@ -1368,12 +1403,12 @@
   (check-not-false (redex-match csa-eval αn send-after-loop-agent))
 
   (check-true (analyze (make-single-agent-config loop-do-nothing-agent)
-                       ignore-all-spec-instance
+                       (make-ignore-all-spec-instance '(Addr Nat))
                        (term ((addr 0 (Addr Nat))))
                        null
                        (hash 'A 'Always)))
   (check-true (analyze (make-single-agent-config loop-send-unobs-agent)
-                       ignore-all-spec-instance
+                       (make-ignore-all-spec-instance '(Addr Nat))
                        (term ((addr 0 (Addr Nat))))
                        null
                        (hash 'A 'Always)))
@@ -1405,16 +1440,16 @@
          [* -> (with-outputs ([r (variant GotMessage)]) (goto A r))]
          [unobs -> (with-outputs ([r (variant GotTimeout)]) (goto A r))]))
       (goto A ,static-response-address)
-      (addr 0))))
+      (addr 0 Nat))))
   (define got-message-only-spec
     (term
      (((define-state (A r)
          [* -> (with-outputs ([r (variant GotMessage)]) (goto A r))]))
       (goto A ,static-response-address)
-      (addr 0))))
+      (addr 0 Nat))))
   (define timeout-and-send-agent
     (term
-     ((addr 0)
+     ((addr 0 Nat)
       (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
           (begin
             (send r (variant GotMessage))
@@ -1440,7 +1475,7 @@
   ;; Multiple Disjoint Actors
   (define static-response-agent2
     (term
-     ((addr 1)
+     ((addr 1 Nat)
       (((define-state (Always2 [response-dest (Addr (Union [Ack Nat]))]) (m)
              (begin
                (send response-dest (variant Ack 0))
@@ -1448,35 +1483,38 @@
        (goto Always2 ,static-response-address)))))
   (define other-static-response-agent
     (term
-     ((addr 1)
+     ((addr 1 Nat)
       (((define-state (Always2 [response-dest (Addr (Union [Ack Nat]))]) (m)
              (begin
                (send response-dest (variant Ack 0))
                (goto Always2 response-dest))))
-       (goto Always2 (addr 3))))))
+       (goto Always2 (addr 3 (Union [Ack Nat])))))))
   (define static-response-with-extra-spec
     (term
      (((define-state (Always response-dest)
          [* -> (with-outputs ([response-dest *]) (goto Always response-dest))]
          [unobs -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
       (goto Always ,static-response-address)
-      (addr 0))))
+      (addr 0 Nat))))
 
   (check-not-false (redex-match csa-eval αn static-response-agent2))
   (check-not-false (redex-match csa-eval αn other-static-response-agent))
   (check-not-false (redex-match aps-eval z static-response-with-extra-spec))
 
-  (check-false (analyze
+  (test-false "Multi agent test 1"
+              (analyze
                 (make-empty-queues-config (list static-response-agent static-response-agent2) null)
                 static-response-spec
                 (term ((addr 0 Nat))) (term ((addr 1 Nat)))
                 (hash 'Always 'Always)))
-  (check-true (analyze
-               (make-empty-queues-config (list static-response-agent static-response-agent2) null)
-               static-response-with-extra-spec
-               (term ((addr 0 Nat))) (term ((addr 1 Nat)))
-               (hash 'Always 'Always)))
-  (check-true (analyze
+  (test-true "Multi agent test 2"
+             (analyze
+              (make-empty-queues-config (list static-response-agent static-response-agent2) null)
+              static-response-with-extra-spec
+              (term ((addr 0 Nat))) (term ((addr 1 Nat)))
+              (hash 'Always 'Always)))
+  (test-true "Multi agent test 3"
+             (analyze
                (make-empty-queues-config (list static-response-agent other-static-response-agent) null)
                static-response-spec
                (term ((addr 0 Nat))) (term ((addr 1 Nat)))
@@ -1487,30 +1525,31 @@
     (term
      (((define-state (Always2 response-dest)
          [* -> (with-outputs ([response-dest *]) (goto Always2 response-dest))]))
-      (goto Always2 (addr 3))
-      (addr 1))))
+      (goto Always2 (addr 3 (Union [Ack Nat])))
+      (addr 1 Nat))))
 
   (check-not-false (redex-match aps-eval z other-static-response-spec))
 
-  (check-true (model-check
-               (make-empty-queues-config (list static-response-agent other-static-response-agent) null)
-               (aps-config-from-instances (list static-response-spec other-static-response-spec))
-               (term ((addr 0 Nat) (addr 1 Nat))) null
-               (hash 'Always 'Always 'Always2 'Always2)))
+  (test-true "Multi-spec test"
+             (model-check
+              (make-empty-queues-config (list static-response-agent other-static-response-agent) null)
+              (aps-config-from-instances (list static-response-spec other-static-response-spec))
+              (term ((addr 0 Nat) (addr 1 Nat))) null
+              (hash 'Always 'Always 'Always2 'Always2)))
 
   ;; Actors working together
   (define statically-delegating-responder-actor
     (term
-     ((addr 0)
+     ((addr 0 (Addr Nat))
       (((define-state (A [responder (Addr (Addr Nat))]) (m)
           (begin
             (send responder m)
             (goto A responder))))
-       (goto A (addr 1))))))
+       (goto A (addr 1 (Addr Nat)))))))
 
   (define request-response-agent2
     (term
-     ((addr 1)
+     ((addr 1 (Addr Nat))
       (((define-state (Always) (response-target)
           (begin
             (send response-target 0)
@@ -1535,4 +1574,165 @@
   ;; * satisfied only if no other receive comes in
 
   ;; TODO: test for obs/unobs receptionists changing over time
-  )
+
+  ;;;; Self Reveal
+  (define self-reveal-spec
+    (term
+     (((define-state (Init r)
+         [unobs -> (with-outputs ([r self]) (goto Running))])
+       (define-state (Running)
+         [r -> (with-outputs ([r *]) (goto Running))]))
+      (goto Init (addr 1 (Addr (Addr Nat))))
+      null)))
+
+  (define self-reveal-actor
+    (term
+     ((addr 0 (Addr Nat))
+      (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
+          (goto Init r)
+          [(timeout 5)
+           (begin
+             (send r (addr 0 (Addr Nat)))
+             (goto Running))])
+        (define-state (Running) (r)
+          (begin
+            (send r 1)
+            (goto Running))))
+       (goto Init (addr 1 (Addr (Addr Nat))))))))
+
+  ;; TODO: redo this test in a type-correct way, with a second ignore-all actor
+  ;; (define reveal-wrong-address-actor
+  ;;   (term
+  ;;    ((addr 0 (Addr Nat))
+  ;;     (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
+  ;;         (goto Init r)
+  ;;         [(timeout 5)
+  ;;          (begin
+  ;;            (send r r)
+  ;;            (goto Running))])
+  ;;       (define-state (Running) (r)
+  ;;         (begin
+  ;;           (send r 1)
+  ;;           (goto Running))))
+  ;;      (goto Init (addr 1))))))
+
+  (define reveal-self-double-output-actor
+    (term
+     ((addr 0 (Addr Nat))
+      (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
+          (goto Init r)
+          [(timeout 5)
+           (begin
+             (send r (addr 0 (Addr Nat)))
+             (goto Running))])
+        (define-state (Running) (r)
+          (begin
+            (send r 1)
+            (send r 1)
+            (goto Running))))
+       (goto Init (addr 1 (Addr (Addr Nat))))))))
+
+  ;; TODO: do a version of this test with an ignore-all actor rather than double-send
+
+  (check-not-false (redex-match csa-eval αn self-reveal-actor))
+  ;; TODO: redo this test later
+  ;; (check-not-false (redex-match csa-eval αn reveal-wrong-address-actor))
+  (check-not-false (redex-match csa-eval αn reveal-self-double-output-actor))
+  (check-not-false (redex-match aps-eval z self-reveal-spec))
+
+  (test-true "Reveal self works"
+             (analyze
+              (make-single-agent-config self-reveal-actor)
+              self-reveal-spec
+              null null
+              (hash)))
+  ;; TODO: redo this test later
+  ;; (test-false "Catch self-reveal of wrong address"
+  ;;             (analyze
+  ;;              (make-single-agent-config reveal-wrong-address-actor)
+  ;;              self-reveal-spec
+  ;;              (term ((addr 0 (Addr (Addr (Addr Nat)))))) null
+  ;;              (hash)))
+  (test-false "Catch self-reveal of actor that doesn't follow its behavior"
+              (analyze
+               (make-single-agent-config reveal-self-double-output-actor)
+               self-reveal-spec
+               null null
+               (hash)))
+
+  ;; TODO: write tests for when we try to reveal it twice, but the second time the address doesn't
+  ;; match the first one
+
+  ;;;; Spawn
+  (define echo-spawning-actor
+    (term
+     ((addr 0 (Addr (Addr (Addr Nat))))
+      (((define-state (Always) (response-target)
+          (begin
+            ;; TODO: refactor this as a new use of the dynamic response actor above
+            (let ([child
+                   (spawn
+                    echo-spawn
+                    (Addr Nat)
+                    (goto EchoResponse)
+                    (define-state (EchoResponse) (echo-target)
+                      (begin
+                        (send echo-target 1)
+                        (goto EchoResponse))))])
+              (begin
+                (send response-target child)
+                (goto Always))))))
+       (goto Always)))))
+
+  (define double-response-spawning-actor
+    (term
+     ((addr 0 (Addr (Addr (Addr Nat))))
+      (((define-state (Always) (response-target)
+          (begin
+            ;; TODO: refactor this as a new use of the dynamic response actor above
+            (let ([child
+                   (spawn
+                    double-response-spawn
+                    (Addr Nat)
+                    (goto DoubleResponse)
+                    (define-state (DoubleResponse) (echo-target)
+                      (begin
+                        (send echo-target 1)
+                        (send echo-target 1)
+                        (goto NoResponse))))])
+              (begin
+                (send response-target child)
+                (goto Always))))))
+       (goto Always)))))
+
+  (define echo-spawn-spec
+    (term
+     (((define-state (Always)
+         [r -> (with-outputs ([r (spawn-spec
+                                  (goto EchoResponse)
+                                  (define-state (EchoResponse)
+                                    [er -> (with-outputs ([er *]) (goto EchoResponse))]))])
+                 (goto Always))]))
+      (goto Always)
+      (addr 0 (Addr (Addr (Addr Nat)))))))
+
+  (check-not-false (redex-match csa-eval αn echo-spawning-actor))
+  (check-not-false (redex-match csa-eval αn double-response-spawning-actor))
+  (check-not-false (redex-match aps-eval z echo-spawn-spec))
+
+  (test-true "Spawned echo matches dynamic response spec"
+             (analyze
+              (make-single-agent-config echo-spawning-actor)
+              echo-spawn-spec
+              ;; Echo receives messages of type Addr Nat
+              ;; The echo user receives message of type (Addr (Addr Nat))
+              ;; The echo creator receives messages of type (Addr (Addr (Addr Nat)))
+              (term ((addr 0 (Addr (Addr (Addr Nat)))))) null
+              (hash)))
+  ;; TODO: also add a sink-spawning actor when commitment satisfaction is working
+  (test-false "Spawned double-response actor does not match dynamic response spec"
+              (analyze
+               (make-single-agent-config double-response-spawning-actor)
+                echo-spawn-spec
+                (term ((addr 0 (Addr (Addr (Addr Nat)))))) null
+                (hash))))

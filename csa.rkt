@@ -25,7 +25,7 @@
 ;; CSA
 
 (define-language csa
-  (e (spawn τ e S ...)
+  (e (spawn any_loc τ e S ...)
      (goto s e ...)
      (send e e)
      (begin e ... e)
@@ -114,8 +114,7 @@
      (vector v ...)
      (hash [v v] ...))
   ;; TODO: remove this untyped address in favor of the typed one
-  (a (addr natural))
-  (typed-a (addr natural τ)) ; only used for the initial receptionist lists for now
+  (a (addr natural τ)) ; only used for the initial receptionist lists for now
   (A ((any_1 ... hole any_2 ...) μ ρ χ))
   (E hole
      (goto s v ... E e ...)
@@ -140,7 +139,7 @@
 
 (define (single-agent-prog->config prog address)
   ;; TODO: do I need to deal with the actor's type?
-  (redex-let csa-eval ([(let ([x v] ...) (spawn τ e S ...)) prog])
+  (redex-let csa-eval ([(let ([x v] ...) (spawn init-loc τ e S ...)) prog])
              (term (,address (((subst-n/S S [self ,address] [x v] ...) ...)
                               (subst-n e [self ,address] [x v] ...))))))
 
@@ -204,7 +203,7 @@
   (check-not-false (redex-match csa-eval S S1-def))
   (check-not-false (redex-match csa-eval A empty-A-context))
   (define init-config
-    (term (in-hole ,empty-A-context ((addr 1) ((,S1-def) (begin 0 2 (goto S1 1 0)))))))
+    (term (in-hole ,empty-A-context ((addr 1 Nat) ((,S1-def) (begin 0 2 (goto S1 1 0)))))))
   (check-not-false (redex-match csa-eval K init-config))
   ;; begin1
   ;; begin2
@@ -215,7 +214,7 @@
    (apply-reduction-relation* handler-step
                               init-config)
    (list (term (in-hole ,empty-A-context
-                        ((addr 1) ((,S1-def) (rcv (x) (begin 1 x (goto S1 0 1))))))))))
+                        ((addr 1 Nat) ((,S1-def) (rcv (x) (begin 1 x (goto S1 0 1))))))))))
 
 (define-metafunction csa-eval
   subst-n : e (x v) ... -> e
@@ -230,9 +229,9 @@
   [(subst n x v) n]
   [(subst a x v) a]
   [(subst string x v) string]
-  [(subst (spawn τ e S ...) self v) (spawn τ e S ...)]
-  [(subst (spawn τ e S ...) x v)
-    (spawn τ (subst e x v) (subst/S S x v) ...)]
+  [(subst (spawn any_loc τ e S ...) self v) (spawn any_loc τ e S ...)]
+  [(subst (spawn any_loc τ e S ...) x v)
+    (spawn any_loc τ (subst e x v) (subst/S S x v) ...)]
   [(subst (goto s e ...) x v) (goto s (subst e x v) ...)]
   [(subst (send e_1 e_2) x v)
    (send (subst e_1 x v) (subst e_2 x v))]
@@ -366,7 +365,7 @@
        (not (check-duplicates (csa-config-internal-addresses c)))))
 
 (define (csa-valid-receptionist-list? l)
-  (redex-match csa-eval (typed-a ...) l))
+  (redex-match csa-eval (a ...) l))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors

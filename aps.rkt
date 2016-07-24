@@ -23,7 +23,7 @@
 
 (define-extended-language aps
   csa-eval
-  (e-hat (let-spec (x (goto s u ...) S-hat ...) e-hat)
+  (e-hat (spawn-spec ((goto s u ...) S-hat ...) e-hat)
          (goto s u ...)
          (with-outputs ([u po] ...) e-hat))
   (S-hat (define-state (s x ...) (ε -> e-hat) ...))
@@ -32,16 +32,15 @@
   (u x) ; arguments
   (p *
      x
-     t
      (variant t p ...)
      (record [l p] ...))
   (po *
-      x
+      (spawn-spec (goto s u ...) S-hat ...)
       self
-      t
       (variant t po ...)
-      (record [l po] ...)
-      (or po po ...)))
+      (record [l po] ...)))
+
+;; TODO: remove the idea of instances, just need configs of a single instance
 
 (define-extended-language aps-eval
   aps
@@ -85,9 +84,7 @@
   [(subst/aps/po * x v-hat) *]
   [(subst/aps/po (variant t po ...) x v-hat) (variant t (subst/aps/po po x v-hat) ...)]
   [(subst/aps/po (record [l po] ...) x v-hat)
-   (record [l (subst/aps/po x v-hat)] ...)]
-  [(subst/aps/po (or po_1 po_rest ...) x v-hat)
-   (or (subst/aps/po po_1 x v-hat) (subst/aps/po po_rest x v-hat) ...)])
+   (record [l (subst/aps/po x v-hat)] ...)])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Predicates
