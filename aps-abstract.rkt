@@ -820,7 +820,7 @@
               (term Σ)))
 
 (define aps#-no-transition-instance
-  (term [((define-state (NoTransitionState))) (goto NoTransitionState) null]))
+  (term [((define-state (DummySpecFsmState))) (goto DummySpecFsmState) null]))
 
 (define (aps#-spec-from-commitment-entry entry)
   (redex-let aps# ([(a#ext any_1 ...) entry])
