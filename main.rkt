@@ -224,7 +224,8 @@
                 (incoming-add! incoming sbc-tuple (list tuple i-step s-step))
                 (unless (or (member sbc-tuple (queue->list to-visit))
                             (set-member? related-tuples sbc-tuple)
-                            (set-member? unrelated-successors sbc-tuple))
+                            (set-member? unrelated-successors sbc-tuple)
+                            (equal? sbc-tuple tuple))
                   (enqueue! to-visit sbc-tuple)))))
           (loop (set-add related-tuples tuple) unrelated-successors)])])))
 
