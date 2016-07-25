@@ -178,6 +178,9 @@
        ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs (simulation-node-prog-config tuple)))
        ;; (printf "The full prog config: ~s\n" (simulation-node-prog-config tuple))
        ;; (printf "The spec config: ~s\n" (simulation-node-spec-config tuple))
+       ;; (printf "Observer-side receptionists: ~s\n" (simulation-node-obs-receptionists tuple))
+       ;; (printf "Unobserved-side receptionists: ~s\n" (simulation-node-unobs-receptionists tuple))
+       ;; (printf "Incoming so far: ~s\n" (hash-ref incoming tuple))
 
        (when LOG-TUPLES
          (fprintf log-file "TUPLE ~s. ~s\n" nodes-visited (tuple->debug-tuple tuple))
@@ -220,6 +223,10 @@
                    ;; TODO: canonicalize the receptionist set by sorting it after the rename
                    (remove-duplicates (append (simulation-node-obs-receptionists tuple) (spec-step-revealed-addresses s-step)))
                    (simulation-node-unobs-receptionists tuple))))
+              ;; Debugging only
+              ;; (for ([new-tuple new-tuples])
+              ;;   (printf "pre-sbc: ~s\n" new-tuple)
+              ;;   (printf "post-sbc: ~s\n" (sbc new-tuple)))
               (for ([sbc-tuple (append* (map sbc new-tuples))])
                 (incoming-add! incoming sbc-tuple (list tuple i-step s-step))
                 (unless (or (member sbc-tuple (queue->list to-visit))
