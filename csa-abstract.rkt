@@ -934,7 +934,6 @@
   ;; [(csa#-subst n x v) n]
   [(csa#-subst (* τ) _ _) (* τ)]
   [(csa#-subst a# _ _) a#]
-  [(csa#-subst a x v) a] ; TODO: remove this clause?
   [(csa#-subst (spawn any_location τ e# S# ...) self v#) (spawn any_location τ e# S# ...)]
   [(csa#-subst (spawn any_location τ e# S# ...) x v#)
     (spawn any_location τ (csa#-subst e# x v#) (csa#-subst/S# S# x v#) ...)]
