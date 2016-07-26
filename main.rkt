@@ -1,8 +1,5 @@
 #lang racket
 
-;; TODO: probably shouldn't call this file "main" if it's exporting something to something else in the
-;; "package"
-
 ;; TODO: rename program/prog to implementation/impl
 
 ;; TODO: generally make all of the set-based code more functional
