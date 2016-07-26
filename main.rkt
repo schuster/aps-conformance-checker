@@ -1,7 +1,5 @@
 #lang racket
 
-;; TODO: rename program/prog to implementation/impl
-
 ;; TODO: generally make all of the set-based code more functional
 
 (provide analyze)
@@ -34,7 +32,7 @@
 ;; Trigger is as listed in csa-abstract
 ;;
 ;; TODO: rename all of these
-(struct simulation-node (prog-config spec-config obs-receptionists unobs-receptionists) #:transparent)
+(struct simulation-node (impl-config spec-config obs-receptionists unobs-receptionists) #:transparent)
 
 ;; TODO: think about whether the ranges given here are really "unique": could we have duplicate steps
 ;; with the same data? Does that matter? (Very related to the DDD idea of "identity")
@@ -43,10 +41,10 @@
 
 ;; related-spec-steps: dict from (tuple, impl-step) to (mutable-setof spec-step)
 
-(struct impl-step (from-observer? trigger outputs final-state) #:transparent)
+(struct impl-step (from-observer? trigger outputs final-config) #:transparent)
 
 ;; TODO: probably want to add satisfied commitments here
-(struct spec-step (final-state spawned-specs revealed-addresses) #:transparent)
+(struct spec-step (final-config spawned-specs revealed-addresses) #:transparent)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Main functions
@@ -55,37 +53,35 @@
 
 ;; TODO: add some sort of typechecker that runs ahead of the analyzer (but perhaps as part of it, for
 ;; the sake of tests) to prevent things like a goto to a state that doesn't exist (and make sure that
-;; a specs's type matches the program)
+;; a specs's type matches the implementation)
 
-;; TODO: add an initial mapping between the program and the spec (maybe? might need new definition of
-;; conformance for that)
+;; TODO: add an initial mapping between the implementation and the spec (maybe? might need new
+;; definition of conformance for that)
 
 ;; TODO: remove this function, or at least rename it
-(define (analyze initial-prog-config
+(define (analyze initial-impl-config
                  initial-spec-instance
                  init-obs-receptionists
                  init-unobs-receptionists)
   ;; TODO: make this into a contract
   (unless (aps-valid-instance? initial-spec-instance)
     (error 'analyze "Invalid initial specification instance ~s" initial-spec-instance))
-  (model-check initial-prog-config
+  (model-check initial-impl-config
                (aps-config-from-instances (list initial-spec-instance))
                init-obs-receptionists
                init-unobs-receptionists))
 
-;; TODO: rename "config" to "state"
-
-;; Given a concrete program configuration, a concrete specification configuration, and a list of pairs
-;; that specify the expected prog-state/spec-state matches, returns #t if the conformance check
+;; Given a concrete implementation configuration, a concrete specification configuration, and a list of pairs
+;; that specify the expected impl-config/spec-config matches, returns #t if the conformance check
 ;; algorithm can prove conformance, #f otherwise.
 
-(define (model-check initial-prog-config
+(define (model-check initial-impl-config
                      initial-spec-config
                      init-obs-receptionists ; TODO: shouldn't these be part of the spec config?
                      init-unobs-receptionists)
   ;; TODO: make these into contracts
-  (unless (csa-valid-config? initial-prog-config)
-    (error 'model-check "Invalid initial program configuration ~s" initial-prog-config))
+  (unless (csa-valid-config? initial-impl-config)
+    (error 'model-check "Invalid initial implementation configuration ~s" initial-impl-config))
   (unless (aps-valid-config? initial-spec-config)
     (error 'model-check "Invalid initial specification configuration ~s" initial-spec-config))
   (unless (csa-valid-receptionist-list? init-obs-receptionists)
@@ -98,7 +94,7 @@
      ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
      ;; message generation
      (apply simulation-node
-            (α-tuple initial-prog-config
+            (α-tuple initial-impl-config
                      initial-spec-config
                      init-obs-receptionists
                      init-unobs-receptionists
@@ -126,8 +122,8 @@
 
 ;; TODO: rename this function
 ;;
-;; Builds a set of nodes from the rank-1 conformance simulation by abstractly evaluating program
-;; states and finding matching specification transitions, starting from the given initial
+;; Builds a set of nodes from the rank-1 conformance simulation by abstractly evaluating implementation
+;; configs and finding matching specification transitions, starting from the given initial
 ;; tuples. Returns various data structures (see dissertation/model-checker-pseudocode.md for details)
 (define (build-immediate-simulation initial-tuples)
   ;; TODO: find a way to make this function shorter
@@ -155,10 +151,10 @@
 
        ;; Debugging
        (set! nodes-visited (add1 nodes-visited))
-       ;; (printf "Program state #: ~s\n" nodes-visited)
+       ;; (printf "Implementation config #: ~s\n" nodes-visited)
        ;; (printf "Queue size: ~s\n" (queue-length to-visit))
-       ;; (printf "The prog config: ~s\n" (prog-config-without-state-defs (simulation-node-prog-config tuple)))
-       ;; (printf "The full prog config: ~s\n" (simulation-node-prog-config tuple))
+       ;; (printf "The impl config: ~s\n" (impl-config-without-state-defs (simulation-node-impl-config tuple)))
+       ;; (printf "The full impl config: ~s\n" (simulation-node-impl-config tuple))
        ;; (printf "The spec config: ~s\n" (simulation-node-spec-config tuple))
        ;; (printf "Observer-side receptionists: ~s\n" (simulation-node-obs-receptionists tuple))
        ;; (printf "Unobserved-side receptionists: ~s\n" (simulation-node-unobs-receptionists tuple))
@@ -169,7 +165,7 @@
          (flush-output log-file))
 
        (define found-unmatchable-step? #f)
-       (define i (simulation-node-prog-config tuple))
+       (define i (simulation-node-impl-config tuple))
        (define i-steps
          (impl-steps-from i
                           (simulation-node-obs-receptionists tuple)
@@ -197,9 +193,9 @@
               ;; TODO: simplify this new-tuple code (will be easier when receptionists are maintained
               ;; elsewhere)
               (define new-tuples
-                (for/list ([config (cons (spec-step-final-state s-step) (spec-step-spawned-specs s-step))])
+                (for/list ([config (cons (spec-step-final-config s-step) (spec-step-spawned-specs s-step))])
                   (simulation-node
-                   (impl-step-final-state i-step)
+                   (impl-step-final-config i-step)
                    config
                    ;; TODO: put the obs/unobs receptionists in the spec config
                    ;; TODO: canonicalize the receptionist set by sorting it after the rename
@@ -220,7 +216,7 @@
 
 ;; TODO: add a test that the "incoming" dictionary is properly set up (this had a bug before)
 
-(define (impl-steps-from impl-state obs-receptionists unobs-receptionists)
+(define (impl-steps-from impl-config obs-receptionists unobs-receptionists)
   (define (add-observed-flag transition observed?)
     (impl-step observed?
                (csa#-transition-trigger transition)
@@ -228,16 +224,16 @@
                (csa#-transition-final-config transition)))
 
   (append (map (curryr add-observed-flag #t)
-               (external-message-transitions impl-state obs-receptionists #t))
+               (external-message-transitions impl-config obs-receptionists #t))
           (map (curryr add-observed-flag #f)
                (append
-                (external-message-transitions impl-state unobs-receptionists #f)
-                (csa#-handle-all-internal-messages impl-state)
-                (csa#-handle-all-timeouts impl-state)))))
+                (external-message-transitions impl-config unobs-receptionists #f)
+                (csa#-handle-all-internal-messages impl-config)
+                (csa#-handle-all-timeouts impl-config)))))
 
-;; Returns all possible transitions of the given program config caused by a received message to any of
+;; Returns all possible transitions of the given implementation config caused by a received message to any of
 ;; the given receptionist addresses
-(define (external-message-transitions prog-config receptionists observed?)
+(define (external-message-transitions impl-config receptionists observed?)
   (append*
    (for/list ([receptionist receptionists])
      (display-step-line "Enumerating abstract messages (typed)")
@@ -247,7 +243,7 @@
        (display-step-line "Evaluating a handler")
        ;; TODO: deal with the "observed?" flag
        (append transitions-so-far
-               (csa#-handle-message prog-config receptionist message))))))
+               (csa#-handle-message impl-config receptionist message))))))
 
 ;; Returns a set of the possible spec steps (see the struct above) from the given spec config that
 ;; match the given implementation step
@@ -337,31 +333,31 @@
 (define (sbc tuple)
   (for/list ([spec-config-component (split-spec (simulation-node-spec-config tuple))])
     ;; TODO: make it an "error" for a non-precise address to match a spec state parameter
-    (display-step-line "Abstracting a program")
-    (match-define (list abstracted-prog-config
+    (display-step-line "Abstracting an implementation config")
+    (match-define (list abstracted-impl-config
                         aged-spec
                         abstracted-obs-receptionists
                         abstracted-unobs-receptionists)
-      (abstract-by-spec (simulation-node-prog-config tuple)
+      (abstract-by-spec (simulation-node-impl-config tuple)
                         (simulation-node-obs-receptionists tuple)
                         (simulation-node-unobs-receptionists tuple)
                         spec-config-component))
     (display-step-line "Canonicalizing the tuple, adding to queue")
-    (match-define (list canonicalized-prog
+    (match-define (list canonicalized-impl
                         canonicalized-spec
                         canonicalized-obs-recs
                         canonicalized-unobs-recs)
-      (canonicalize-tuple (list abstracted-prog-config
+      (canonicalize-tuple (list abstracted-impl-config
                                 aged-spec
                                 abstracted-obs-receptionists
                                 abstracted-unobs-receptionists)))
 
-    (simulation-node canonicalized-prog
+    (simulation-node canonicalized-impl
                      canonicalized-spec
                      canonicalized-obs-recs
                      canonicalized-unobs-recs)))
 
-;; Takes abstract prog config and abstract spec config; returns prog further abstracted according to
+;; Takes abstract impl config and abstract spec config; returns impl further abstracted according to
 ;; spec
 ;;
 ;; TODO: maybe rename this to "project", since it's a kind of projection (or just to "blur")
@@ -601,7 +597,7 @@
   (when DISPLAY-STEPS (displayln msg)))
 
 (define (tuple->debug-tuple tuple)
-  (list (prog-config-without-state-defs (simulation-node-prog-config tuple))
+  (list (impl-config-without-state-defs (simulation-node-impl-config tuple))
         (spec-config-without-state-defs (simulation-node-spec-config tuple))
         (simulation-node-obs-receptionists tuple)
         (simulation-node-unobs-receptionists tuple)))

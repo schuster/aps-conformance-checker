@@ -69,15 +69,15 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
 
-(define (α-tuple initial-prog-config
+(define (α-tuple initial-impl-config
                  initial-spec-config
                  init-obs-receptionists
                  init-unobs-receptionists
                  max-depth)
   ;;    (where (a_internal ...) ((actor-address αn) ...))
-  (define internal-addresses (csa-config-internal-addresses initial-prog-config))
+  (define internal-addresses (csa-config-internal-addresses initial-impl-config))
   (list
-   (α-config initial-prog-config internal-addresses max-depth)
+   (α-config initial-impl-config internal-addresses max-depth)
    (aps#-α-Σ initial-spec-config internal-addresses)
    (α-receptionists init-obs-receptionists)
    (α-receptionists init-unobs-receptionists)))
@@ -219,9 +219,9 @@
 ;; Σ bool trigger -> ([Σ (Σ_spawn ...)] ...)
 ;;
 ;; Non-deterministically evaluates the given specification configuration with either a single trigger
-;; step, or no step, when given the specified trigger from the program on the actor with the given
-;; address, returning a list of pairs of the possible stepped specification configuration along with
-;; its spawned specifications
+;; step, or no step, when given the specified trigger from the implementation on the actor with the
+;; given address, returning a list of pairs of the possible stepped specification configuration along
+;; with its spawned specifications
 (define (aps#-steps-for-trigger spec-config from-observer? trigger)
   (match (aps#-config-instances spec-config)
     [(list) (list (list spec-config null))]
@@ -231,10 +231,10 @@
        (filter values
                (for/list ([transition (aps#-instance-transitions instance)])
           ;; TODO: refactor this; need better definition of triggers, patterns, etc.
-          (match (match-program-trigger-to-spec-trigger from-observer?
-                                                        trigger
-                                                        (aps#-instance-address instance)
-                                                        (aps#-transition-trigger transition))
+                 (match (match-impl-trigger-to-spec-trigger from-observer?
+                                                            trigger
+                                                            (aps#-instance-address instance)
+                                                            (aps#-transition-trigger transition))
             [#f #f]
             [(list bindings ...)
              (define exp-subst (term (subst-n/aps# ,(aps#-transition-body transition) ,@bindings)))
@@ -414,7 +414,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pattern matching
 
-(define (match-program-trigger-to-spec-trigger from-observer? trigger instance-address pattern)
+(define (match-impl-trigger-to-spec-trigger from-observer? trigger instance-address pattern)
   (match
       (judgment-holds
        (trigger-matches-trigger-pattern ,from-observer?
@@ -426,7 +426,7 @@
     [(list) #f]
     [(list binding-list) binding-list]
     [(list _ _ _ ...)
-     (error 'match-program-trigger-to-spec-trigger
+     (error 'match-impl-trigger-to-spec-trigger
             "Match resulted in multiple possible substitutions")]))
 
 (define-judgment-form aps#
@@ -460,35 +460,35 @@
 
 (module+ test
   (check-equal?
-   (match-program-trigger-to-spec-trigger #f '(timeout (init-addr 0 Nat)) '(init-addr 0 Nat) 'unobs)
+   (match-impl-trigger-to-spec-trigger #f '(timeout (init-addr 0 Nat)) '(init-addr 0 Nat) 'unobs)
    null)
 
   (check-equal?
-   (match-program-trigger-to-spec-trigger #f '(external-receive (init-addr 0 Nat) (* Nat)) '(init-addr 0 Nat) 'unobs)
+   (match-impl-trigger-to-spec-trigger #f '(external-receive (init-addr 0 Nat) (* Nat)) '(init-addr 0 Nat) 'unobs)
    null)
 
   (check-false
-   (match-program-trigger-to-spec-trigger #t '(external-receive (init-addr 0 Nat) (* Nat)) '(init-addr 0 Nat) 'unobs))
+   (match-impl-trigger-to-spec-trigger #t '(external-receive (init-addr 0 Nat) (* Nat)) '(init-addr 0 Nat) 'unobs))
 
   (check-equal?
-   (match-program-trigger-to-spec-trigger #t '(external-receive (init-addr 0 Nat) (obs-ext 1 Nat)) '(init-addr 0 Nat) 'x)
+   (match-impl-trigger-to-spec-trigger #t '(external-receive (init-addr 0 Nat) (obs-ext 1 Nat)) '(init-addr 0 Nat) 'x)
    (list '(x (obs-ext 1 Nat))))
 
   (check-false
-   (match-program-trigger-to-spec-trigger #f '(internal-receive (init-addr 0 Nat) (* Nat)) '(init-addr 0 Nat) 'x))
+   (match-impl-trigger-to-spec-trigger #f '(internal-receive (init-addr 0 Nat) (* Nat)) '(init-addr 0 Nat) 'x))
 
   (check-false
-   (match-program-trigger-to-spec-trigger #t '(external-receive (init-addr 0 Nat) (* Nat)) '(init-addr 0 Nat) 'x))
+   (match-impl-trigger-to-spec-trigger #t '(external-receive (init-addr 0 Nat) (* Nat)) '(init-addr 0 Nat) 'x))
 
   (check-equal?
-   (match-program-trigger-to-spec-trigger #f '(internal-receive (init-addr 0 Nat) (* Nat)) '(init-addr 0 Nat) 'unobs)
+   (match-impl-trigger-to-spec-trigger #f '(internal-receive (init-addr 0 Nat) (* Nat)) '(init-addr 0 Nat) 'unobs)
    null)
 
   (check-false
-   (match-program-trigger-to-spec-trigger #t '(external-receive (init-addr 0 (Union [A] [B])) (variant A)) '(init-addr 0 (Union [A])) 'unobs))
+   (match-impl-trigger-to-spec-trigger #t '(external-receive (init-addr 0 (Union [A] [B])) (variant A)) '(init-addr 0 (Union [A])) 'unobs))
 
   (check-equal?
-   (match-program-trigger-to-spec-trigger #t '(external-receive (init-addr 0 (Union [A] [B])) (variant A)) '(init-addr 0 (Union [A])) '*)
+   (match-impl-trigger-to-spec-trigger #t '(external-receive (init-addr 0 (Union [A] [B])) (variant A)) '(init-addr 0 (Union [A])) '*)
    null))
 
 (define-judgment-form aps#
@@ -997,7 +997,7 @@
 
 ;; TODO: move this up to main.rkt
 
-;; Given a program config/spec config pair, rename the precise internal and external addresses in them
+;; Given a impl config/spec config pair, rename the precise internal and external addresses in them
 ;; such that the first one in each set starts at 0, then the next is 1, then 2, etc.
 (define (canonicalize-tuple tuple)
   (term (canonicalize-tuple/mf ,tuple)))

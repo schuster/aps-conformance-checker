@@ -1,4 +1,4 @@
-;; Defines the abstract interpretation of CSA programs/configurations
+;; Defines the abstract interpretation of CSA configurations
 
 #lang racket
 
@@ -27,8 +27,8 @@
  same-internal-address-without-type?
 
  ;; Debug helpers
- prog-config-without-state-defs
- prog-config-goto
+ impl-config-without-state-defs
+ impl-config-goto
  ;; handler-step#
  )
 
@@ -252,7 +252,7 @@
 (struct csa#-transition
   (trigger ; follows trigger# above
    outputs ; list of abstract-addr/abstract-message 2-tuples
-   final-config) ; an abstract program configuration
+   final-config) ; an abstract implementation configuration
   #:transparent)
 
 (define (csa#-internal-trigger? trigger)
@@ -266,15 +266,15 @@
 
 ;; Evaluates the handler triggered by sending message to actor-address, return the list of possible
 ;; results (which are tuples of the final behavior expression and the list of outputs)
-(define (csa#-handle-message prog-config actor-address message)
+(define (csa#-handle-message impl-config actor-address message)
   (redex-let csa# ([(any_actors-before
                      (a# ((name state-defs (_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e# any_timeout-clause ...) _ ...)) (in-hole E# (goto s v# ..._n))))
                      any_actors-after)
-                    (config-actor-and-rest-by-address prog-config actor-address)]
-                   [(_ any_messages any_receptionists any_externals) prog-config])
+                    (config-actor-and-rest-by-address impl-config actor-address)]
+                   [(_ any_messages any_receptionists any_externals) impl-config])
     ;; TODO: deal with the case where x_m shadows an x_s
     (define initial-config (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...))))
-    (define prog-config-context
+    (define impl-config-context
       (term (,(append (term any_actors-before)
                       (list (term (a# (state-defs hole))))
                       (term any_actors-after))
@@ -284,13 +284,14 @@
     (eval-handler initial-config
                   (term (external-receive ,actor-address ,message))
                   actor-address
-                  prog-config-context)))
+                  impl-config-context)))
 
-;; Returns all transitions possible from this program configuration by handling an internal message
-(define (csa#-handle-all-internal-messages prog-config)
+;; Returns all transitions possible from this implementation configuration by handling an internal
+;; message
+(define (csa#-handle-all-internal-messages impl-config)
   (let loop ([transitions-so-far null]
              [processed-messages null]
-             [messages-to-process (csa#-config-messages prog-config)])
+             [messages-to-process (csa#-config-messages impl-config)])
     (match messages-to-process
       [(list) transitions-so-far]
       [(list message messages-to-process ...)
@@ -299,11 +300,11 @@
           [(any_actors-before
             (_ ((name state-defs (_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e# any_timeout-clause ...) _ ...)) (in-hole E# (goto s v# ..._n))))
             any_actors-after)
-           (config-actor-and-rest-by-address prog-config (term a#int))]
-          [(_ _ any_receptionists any_externals) prog-config])
+           (config-actor-and-rest-by-address impl-config (term a#int))]
+          [(_ _ any_receptionists any_externals) impl-config])
          ;; TODO: deal with the case where x_m shadows an x_s
          (define initial-config (inject/H# (term (csa#-subst-n e# [x_m v#_msg] [x_s v#] ...))))
-         (define prog-config-context
+         (define impl-config-context
            (term (,(append (term any_actors-before)
                            (list (term (a#int (state-defs hole))))
                            (term any_actors-after))
@@ -316,14 +317,14 @@
            (eval-handler initial-config
                          (term (internal-receive a#int v#_msg))
                          (term a#int)
-                         prog-config-context))
+                         impl-config-context))
          (loop (append transitions-so-far new-transitions)
                (append processed-messages (list message))
                messages-to-process))])))
 
-;; Returns all transitions possible from this program configuration by taking a timeout
-(define (csa#-handle-all-timeouts prog-config)
-  (redex-let csa# ([(any_actors any_messages any_receptionists any_externals) prog-config])
+;; Returns all transitions possible from this configuration by taking a timeout
+(define (csa#-handle-all-timeouts impl-config)
+  (redex-let csa# ([(any_actors any_messages any_receptionists any_externals) impl-config])
     (let loop ([transitions-so-far null]
                [actors-before null]
                [actors-after (term any_actors)])
@@ -361,7 +362,7 @@
                       [e# (get-binding 'e#)]
                       [any_address (get-binding 'any_address)]
                       [(name state-defs _) (get-binding 'state-defs)])
-       (define prog-config-context
+       (define impl-config-context
          (term (,(append actors-before (term ((any_address (state-defs hole)))) actors-after)
                 ,messages
                 ,receptionists
@@ -369,7 +370,7 @@
        (eval-handler (inject/H# (term (csa#-subst-n e# [x_s v#] ...)))
                      (term (timeout any_address))
                      (term any_address)
-                     prog-config-context))]
+                     impl-config-context))]
     [_ (error 'csa#-handle-actor-maybe-timeout "Got multiple matches for actor: ~s\n" actor)]))
 
 (define (eval-handler handler-config trigger address config-context)
@@ -390,15 +391,15 @@
            (filter (compose not complete-handler-config?) non-abstraction-stuck-final-configs)))
   (for/list ([config non-abstraction-stuck-final-configs])
     ;; TODO: rename outputs to something like "transmissions", because some of them stay internal to
-    ;; the program
+    ;; the configuration
     (match-define (list behavior-exp outputs loop-outputs spawns) config)
     ;; TODO: check that there are no internal loop outputs, or refactor that code entirely
-    (define new-prog-config
+    (define new-impl-config
       (merge-new-messages
        (merge-new-actors (plug config-context behavior-exp) spawns)
        (filter internal-output? outputs)))
     (define next-state (redex-let csa# ([(in-hole E# (goto s _ ...)) behavior-exp]) (term s)))
-    (csa#-transition trigger (filter (negate internal-output?) outputs) new-prog-config)))
+    (csa#-transition trigger (filter (negate internal-output?) outputs) new-impl-config)))
 
 ;; Returns true if the config is one that is unable to step because of an over-approximation in the
 ;; abstraction
@@ -761,8 +762,8 @@
      (inject/H# (term (begin (spawn L Nat (goto A) (define-state (A) (x) (goto A))) (goto B)))))
    (list (term ((goto B) () () ([(spawn-addr L NEW Nat) [((define-state (A) (x) (goto A))) (goto A)]]))))))
 
-(define (csa#-merge-duplicate-messages prog-config)
-  (redex-let csa# ([(any_actors any_messages any_rec any_ext) prog-config])
+(define (csa#-merge-duplicate-messages impl-config)
+  (redex-let csa# ([(any_actors any_messages any_rec any_ext) impl-config])
     (term (any_actors
            ,(merge-duplicate-messages-from-list (term any_messages))
            any_rec
@@ -783,8 +784,8 @@
        (loop (append processed-messages (list new-message))
              remaining-without-duplicates)])))
 
-;; For two "messages" (the things inside the message queue in a program config), returns true if they
-;; have the same address and value
+;; For two "messages" (the things inside the message queue in a config), returns true if they have the
+;; same address and value
 (define (same-message? m1 m2)
   (redex-let csa# ([(a#_1 v#_1 _) m1]
                    [(a#_2 v#_2 _) m2])
@@ -997,7 +998,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
 
-;; Abstracts the given CSA program configuration, with a maximum recursion depth for values
+;; Abstracts the given CSA configuration, with a maximum recursion depth for values
 ;;
 ;; NOTE: currently supports only no-messages, no-externals configs
 (define (α-config concrete-config internal-addresses max-depth)
@@ -1445,12 +1446,12 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debug helpers
 
-(define (prog-config-without-state-defs config)
+(define (impl-config-without-state-defs config)
   (redex-let csa# ([(((a#int (_ e#)) ...) μ# ρ# any_escapes) config])
              (term (((a#int e#) ...) μ# ρ# any_escapes))))
 
-(define (prog-config-goto config)
-  ;; NOTE: only suports single-actor progs for now
+(define (impl-config-goto config)
+  ;; NOTE: only suports single-actor impls for now
   (redex-let csa# ([(((a#int (_ e#))) μ# ρ# any_escapes) config])
              (term e#)))
 
