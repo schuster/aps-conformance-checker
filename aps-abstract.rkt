@@ -306,22 +306,21 @@
    (where [any_goto (any_outputs ...) (any_spawns ...)]
           (aps#-eval/mf e-hat))])
 
-;; TODO: rename this function to be more accurate to what it does (gets all external addresses in the
-;; term)
-(define (free-addrs sexp)
-  (remove-duplicates (term (free-addrs/mf ,sexp))))
+;; Returns the list of all (precise) external addresses in the given term
+(define (externals-in the-term)
+  (remove-duplicates (term (externals-in/mf ,the-term))))
 
 (define-metafunction aps#
-  free-addrs/mf : any -> (a#ext ...)
-  [(free-addrs/mf a#ext) (a#ext)]
-  [(free-addrs/mf (any ...))
+  externals-in/mf : any -> (a#ext ...)
+  [(externals-in/mf a#ext) (a#ext)]
+  [(externals-in/mf (any ...))
    (any_addr ... ...)
-   (where ((any_addr ...) ...) ((free-addrs/mf any) ...))]
-  [(free-addrs/mf _) ()])
+   (where ((any_addr ...) ...) ((externals-in/mf any) ...))]
+  [(externals-in/mf _) ()])
 
 (module+ test
   (check-same-items?
-   (free-addrs (term ((obs-ext 1 Nat)
+   (externals-in (term ((obs-ext 1 Nat)
                       (obs-ext 2 Nat)
                       (obs-ext 2 Nat)
                       (foo bar (baz (init-addr 2 Nat) (obs-ext 3 Nat))))))
@@ -339,7 +338,7 @@
                 ([spawn-info spawn-infos])
         (match-define (list state-defs goto address) spawn-info)
         (match-define (list remaining-map spawned-map)
-          (fork-commitment-map current-commitment-map (free-addrs (list state-defs goto))))
+          (fork-commitment-map current-commitment-map (externals-in (list state-defs goto))))
         (define new-instance (term (,state-defs ,goto ,address)))
         (values remaining-map
                 (cons (term ((,new-instance) ,spawned-map))
