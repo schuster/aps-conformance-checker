@@ -19,7 +19,6 @@
  ;; aps#-transition-pattern
  ;; aps#-transition-expression
  aps#-commitment-entry-address
- aps#-goto-state
  aps#-instance-state
  aps#-instance-arguments
  aps#-relevant-external-addrs
@@ -863,14 +862,6 @@
 (define (aps#-transition-expression transition)
   (redex-let aps# ([(_ -> e-hat) transition])
     (term e-hat)))
-
-(define (aps#-goto-state goto-exp)
-  (redex-let aps# ([(goto s _ ...) goto-exp])
-             (term s)))
-
-(module+ test
-  (check-equal? (aps#-goto-state (term (goto A))) (term A))
-  (check-equal? (aps#-goto-state (term (goto B (obs-ext 2 Nat) (obs-ext 1 Nat)))) (term B)))
 
 (define (aps#-commitment-entry-address entry)
   (redex-let aps# ([(a#ext _ ...)  entry])
