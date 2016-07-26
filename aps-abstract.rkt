@@ -59,7 +59,7 @@
   (Σ ((z ...) O))
   (z ((S-hat ...) e-hat σ))
   (σ a# null)
-  (u .... a#) ; TODO: make this a#ext instead; allowing saves of spawned addresses is future work
+  (u .... a#ext)
   (v-hat a# a-hat)
   ;; (O ((a#ext (po boolean) ...) ...))
   (O ((a#ext (m po) ...) ...))
