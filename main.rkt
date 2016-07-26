@@ -71,16 +71,14 @@
 (define (analyze initial-prog-config
                  initial-spec-instance
                  init-obs-receptionists
-                 init-unobs-receptionists
-                 state-matches)
+                 init-unobs-receptionists)
   ;; TODO: make this into a contract
   (unless (aps-valid-instance? initial-spec-instance)
     (error 'analyze "Invalid initial specification instance ~s" initial-spec-instance))
   (model-check initial-prog-config
                (aps-config-from-instances (list initial-spec-instance))
                init-obs-receptionists
-               init-unobs-receptionists
-               state-matches))
+               init-unobs-receptionists))
 
 ;; TODO: rename "config" to "state"
 
@@ -91,8 +89,7 @@
 (define (model-check initial-prog-config
                      initial-spec-config
                      init-obs-receptionists ; TODO: shouldn't these be part of the spec config?
-                     init-unobs-receptionists
-                     state-matches) ; TODO: remove state-matches
+                     init-unobs-receptionists)
   ;; TODO: make these into contracts
   (unless (csa-valid-config? initial-prog-config)
     (error 'model-check "Invalid initial program configuration ~s" initial-prog-config))
@@ -641,8 +638,7 @@
 
   (check-true (analyze ignore-all-config
                        ignore-all-spec-instance
-                       (term ((addr 0 Nat))) null
-                       (hash 'Always 'Always)))
+                       (term ((addr 0 Nat))) null))
 
   ;;;; Send one message to a statically-known address per request
 
@@ -685,23 +681,19 @@
   (test-true "Static response works"
              (analyze (make-single-agent-config static-response-agent)
                       static-response-spec
-                      (term ((addr 0 Nat))) null
-                      (hash 'Always 'Always)))
+                      (term ((addr 0 Nat))) null))
   (test-false "Static response agent, ignore all spec"
               (analyze (make-single-agent-config static-response-agent)
                        ignore-all-with-addr-spec-instance
-                       (term ((addr 0 Nat))) null
-                       (hash 'Always 'Always)))
+                       (term ((addr 0 Nat))) null))
   (test-false "static double response agent"
               (analyze (make-single-agent-config static-double-response-agent)
                        static-response-spec
-                       (term ((addr 0 Nat))) null
-                       (hash 'Always 'Always)))
+                       (term ((addr 0 Nat))) null))
   (test-false "Static response spec, ignore-all config"
                (analyze ignore-all-config
                         static-response-spec
-                        (term ((addr 0 Nat))) null
-                        (hash 'Always 'Always)))
+                        (term ((addr 0 Nat))) null))
 
   ;;;; Pattern matching tests, without dynamic channels
 
@@ -740,8 +732,6 @@
             [(B y) (goto Always r)])))
        (goto Always ,static-response-address)))))
 
-  (define pattern-matching-map (hash 'Always 'Matching))
-
   (check-not-false (redex-match aps-eval z pattern-match-spec))
   (check-not-false (redex-match csa-eval αn pattern-matching-agent))
   (check-not-false (redex-match csa-eval αn reverse-pattern-matching-agent))
@@ -749,17 +739,14 @@
 
   (check-true (analyze (make-single-agent-config pattern-matching-agent)
                        pattern-match-spec
-                       (term ((addr 0 (Union [A Nat] [B Nat])))) null
-                       pattern-matching-map))
+                       (term ((addr 0 (Union [A Nat] [B Nat])))) null))
   (test-false "Send on A but not B; should send on both"
               (analyze (make-single-agent-config partial-pattern-matching-agent)
                        pattern-match-spec
-                       (term ((addr 0 (Union [A Nat] [B Nat])))) null
-                       pattern-matching-map))
+                       (term ((addr 0 (Union [A Nat] [B Nat])))) null))
   (check-false (analyze (make-single-agent-config reverse-pattern-matching-agent)
                         pattern-match-spec
-                        (term ((addr 0 (Union [A Nat] [B Nat])))) null
-                        pattern-matching-map))
+                        (term ((addr 0 (Union [A Nat] [B Nat])))) null))
 
   ;;;; Dynamic request/response
 
@@ -856,49 +843,36 @@
 
   (check-true (analyze (make-single-agent-config request-response-agent)
                        request-response-spec
-                       (term ((addr 0 (Addr Nat)))) null
-                       (hash 'Always 'Always)))
+                       (term ((addr 0 (Addr Nat)))) null))
   (check-false (analyze (make-single-agent-config respond-to-first-addr-agent)
                         request-response-spec
-                        (term ((addr 0 (Addr Nat)))) null
-                        (hash 'Init 'Always 'HaveAddr 'Always)))
+                        (term ((addr 0 (Addr Nat)))) null))
   (check-false (analyze (make-single-agent-config respond-to-first-addr-agent2)
                         request-response-spec
-                        (term ((addr 0 (Addr Nat)))) null
-                        (hash 'Always 'Always)))
+                        (term ((addr 0 (Addr Nat)))) null))
   (check-false (analyze (make-single-agent-config request-response-agent)
                         request-same-response-addr-spec
-                        (term ((addr 0 (Addr Nat)))) null
-                        (hash 'Always 'Init)))
+                        (term ((addr 0 (Addr Nat)))) null))
   (test-false "ignore all actor does not satisfy request/response"
               (analyze (make-ignore-all-config (term (Addr Nat)))
                         request-response-spec
-                        (term ((addr 0 (Addr Nat)))) null
-                        (hash 'Always 'Init)))
+                        (term ((addr 0 (Addr Nat)))) null))
   (test-false "Respond-once actor does not satisfy request/response"
               (analyze (make-single-agent-config respond-once-agent)
                        request-response-spec
-                       (term ((addr 0 (Addr Nat)))) null
-                       (hash 'Always 'Init)))
+                       (term ((addr 0 (Addr Nat)))) null))
   (check-true (analyze (make-single-agent-config respond-to-first-addr-agent)
                        request-same-response-addr-spec
-                       (term ((addr 0 (Addr Nat)))) null
-                       (hash 'Init 'Init 'HaveAddr 'HaveAddr)))
-  ;; TODO: figure out some way to get this test to work (won't right now because agent's Always state
-  ;; corresponds to both states of the spec, depending on its parameter
-  ;; (check-true (analyze (make-single-agent-config respond-to-first-addr-agent2)
-  ;;                       request-same-response-addr-spec
-  ;;                       (term ((addr 0))) null
-  ;;                       (hash 'Always 'Always)))
-
+                       (term ((addr 0 (Addr Nat)))) null))
+  (check-true (analyze (make-single-agent-config respond-to-first-addr-agent2)
+                       request-same-response-addr-spec
+                       (term ((addr 0 (Addr Nat)))) null))
   (check-false (analyze (make-single-agent-config double-response-agent)
                         request-response-spec
-                        (term ((addr 0 (Addr Nat)))) null
-                        (hash 'Always 'Always)))
+                        (term ((addr 0 (Addr Nat)))) null))
   (check-false (analyze (make-single-agent-config delay-saving-address-agent)
                         request-response-spec
-                        (term ((addr 0 (Addr Nat)))) null
-                        (hash 'Init 'Always 'HaveAddr 'Always)))
+                        (term ((addr 0 (Addr Nat)))) null))
 
   ;; When given two choices to/from same state, have to take the one where the outputs match the
   ;; commitments
@@ -925,8 +899,7 @@
   (check-not-false (redex-match aps-eval z maybe-reply-spec))
   (check-true (analyze (make-single-agent-config reply-once-actor)
                        maybe-reply-spec
-                       (term ((addr 0 (Addr Nat)))) null
-                       (hash 'A 'A 'B 'B)))
+                       (term ((addr 0 (Addr Nat)))) null))
 
   ;;;; Non-deterministic branching in spec
 
@@ -961,11 +934,9 @@
 
   (check-true (analyze (make-single-agent-config primitive-branch-agent)
                        zero-nonzero-spec
-                       (term ((addr 0 Nat))) null
-                       (hash 'S1 'S1)))
+                       (term ((addr 0 Nat))) null))
   (check-false (analyze (make-single-agent-config primitive-branch-agent)
-                        zero-spec (term ((addr 0 Nat))) null
-                        (hash 'S1 'S1)))
+                        zero-spec (term ((addr 0 Nat))) null))
 
   ;;;; Optional Commitments
   (define optional-commitment-spec
@@ -979,8 +950,7 @@
   (check-not-false (redex-match aps-eval z optional-commitment-spec))
   (check-true (analyze ignore-all-config
                        optional-commitment-spec
-                       (term ((addr 0 Nat))) null
-                       (hash 'Always 'Always)))
+                       (term ((addr 0 Nat))) null))
 
   ;;;; Stuck states in concrete evaluation
 
@@ -1014,13 +984,11 @@
   (test-true "Div by one vs. nat-to-nat spec"
              (analyze (make-single-agent-config div-by-one-agent)
                        nat-to-nat-spec
-                       (term ((addr 0 Nat))) null
-                       (hash 'Always 'Always)))
+                       (term ((addr 0 Nat))) null))
   (test-true "Div by zero vs. nat-to-nat spec"
               (analyze (make-single-agent-config div-by-zero-agent)
                        nat-to-nat-spec
-                       (term ((addr 0 Nat))) null
-                       (hash 'Always 'Always)))
+                       (term ((addr 0 Nat))) null))
 
   ;;;; Unobservable communication
 
@@ -1028,24 +996,21 @@
   (test-true "request/response actor vs. ignore-all spec"
              (analyze (make-single-agent-config request-response-agent)
                       (make-ignore-all-spec-instance '(Addr Nat))
-                      (term ((addr 0 (Addr Nat)))) null
-                      (hash 'Always 'Always)))
+                      (term ((addr 0 (Addr Nat)))) null))
 
   ;; 1. In dynamic req/resp, allowing unobserved perspective to send same messages does not affect conformance
   (test-true "request response actor and spec, with unobs communication"
              (analyze (make-single-agent-config request-response-agent)
                       request-response-spec
                       (term ((addr 0 (Addr Nat))))
-                      (term ((addr 0 (Addr Nat))))
-                      (hash 'Always 'Always)))
+                      (term ((addr 0 (Addr Nat))))))
 
   ;; 2. Allowing same messages from unobs perspective violates conformance for static req/resp.
   (test-false "static response with unobs communication"
               (analyze (make-single-agent-config static-response-agent)
                        static-response-spec
                        (term ((addr 0 Nat)))
-                       (term ((addr 0 Nat)))
-                       (hash 'Always 'Always)))
+                       (term ((addr 0 Nat)))))
 
   ;; 3. Conformance regained for static req/resp when add an unobs transition
   (define static-response-spec-with-unobs
@@ -1060,8 +1025,7 @@
   (check-true (analyze (make-single-agent-config static-response-agent)
                        static-response-spec-with-unobs
                        (term ((addr 0 Nat)))
-                       (term ((addr 0 Nat)))
-                       (hash 'Always 'Always)))
+                       (term ((addr 0 Nat)))))
 
   ;; 4. unobs causes a particular behavior (like connected/error in TCP)
   (define obs-unobs-static-response-address
@@ -1177,8 +1141,7 @@
              (analyze (make-single-agent-config unobs-toggle-agent)
                       unobs-toggle-spec
                       (term ((addr 0 (Union [FromObserver]))))
-                      (term ((addr 0 (Union [FromUnobservedEnvironment]))))
-                      (hash 'On 'On 'Off 'Off)))
+                      (term ((addr 0 (Union [FromUnobservedEnvironment]))))))
 
   (for ([agent (list unobs-toggle-agent-wrong1
                      unobs-toggle-agent-wrong2
@@ -1188,8 +1151,7 @@
                 (analyze (make-single-agent-config agent)
                          unobs-toggle-spec
                          (term ((addr 0 (Union [FromObserver]))))
-                         (term ((addr 0 (Union [FromUnobservedEnvironment]))))
-                         (hash 'On 'On 'Off 'Off))))
+                         (term ((addr 0 (Union [FromUnobservedEnvironment])))))))
 
   ;;;; Records
 
@@ -1226,13 +1188,11 @@
   (check-true (analyze (make-single-agent-config record-req-resp-agent)
                        record-req-resp-spec
                        (term ((addr 0 (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]))))
-                       null
-                       (hash 'Always 'Always)))
+                       null))
   (check-false (analyze (make-single-agent-config record-req-wrong-resp-agent)
                         record-req-resp-spec
                         (term ((addr 0 (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]))))
-                        null
-                        (hash 'Always 'Always)))
+                        null))
 
   ;;;; Let
   (define static-response-let-agent
@@ -1260,12 +1220,10 @@
 
   (check-true (analyze (make-single-agent-config static-response-let-agent)
                        static-response-spec
-                       (term ((addr 0 Nat))) null
-                       (hash 'Always 'Always)))
+                       (term ((addr 0 Nat))) null))
   (check-false (analyze (make-single-agent-config static-double-response-let-agent)
                         static-response-spec
-                        (term ((addr 0 Nat))) null
-                        (hash 'Always 'Always)))
+                        (term ((addr 0 Nat))) null))
 
   ;; Check that = gives both results
   (define equal-agent-wrong1
@@ -1309,21 +1267,18 @@
   (check-not-false (redex-match csa-eval αn equal-agent-wrong2))
   (check-not-false (redex-match csa-eval αn equal-agent))
 
-  (check-false
+  (test-false "Equal agent wrong 1"
    (analyze (make-single-agent-config equal-agent-wrong1)
             static-response-spec
-            (term ((addr 0 Nat))) null
-            (hash 'A 'Always 'B 'Always)))
-  (check-false
+            (term ((addr 0 Nat))) null))
+  (test-false "Equal agent wrong 2"
    (analyze (make-single-agent-config equal-agent-wrong2)
             static-response-spec
-            (term ((addr 0 Nat))) null
-            (hash 'A 'Always 'B 'Always)))
+            (term ((addr 0 Nat))) null))
   (check-true
    (analyze (make-single-agent-config equal-agent)
             static-response-spec
-            (term ((addr 0 Nat))) null
-            (hash 'A 'Always 'B 'Always)))
+            (term ((addr 0 Nat))) null))
 
   ;;;; For loops
   (define loop-do-nothing-agent
@@ -1389,17 +1344,14 @@
   (check-true (analyze (make-single-agent-config loop-do-nothing-agent)
                        (make-ignore-all-spec-instance '(Addr Nat))
                        (term ((addr 0 (Addr Nat))))
-                       null
-                       (hash 'A 'Always)))
+                       null))
   (check-true (analyze (make-single-agent-config loop-send-unobs-agent)
                        (make-ignore-all-spec-instance '(Addr Nat))
                        (term ((addr 0 (Addr Nat))))
-                       null
-                       (hash 'A 'Always)))
+                       null))
   (check-true (analyze (make-single-agent-config send-before-loop-agent)
                        request-response-spec
-                       (term ((addr 0 (Addr Nat)))) null
-                       (hash 'A 'Always)))
+                       (term ((addr 0 (Addr Nat)))) null))
   ;; TODO: get this test working again (need to at least check that none of the outputs in a loop were
   ;; observed)
   ;;
@@ -1409,8 +1361,7 @@
   ;;                      (hash 'A 'Always)))
   (check-true (analyze (make-single-agent-config send-after-loop-agent)
                        request-response-spec
-                       (term ((addr 0 (Addr Nat)))) null
-                       (hash 'A 'Always)))
+                       (term ((addr 0 (Addr Nat)))) null))
 
   ;;;; Timeouts
 
@@ -1449,12 +1400,10 @@
   (check-not-false (redex-match csa-eval αn timeout-and-send-agent))
   (check-true (analyze (make-single-agent-config timeout-and-send-agent)
                        timeout-spec
-                       (term ((addr 0 Nat))) null
-                       (hash 'A 'A)))
+                       (term ((addr 0 Nat))) null))
   (check-false (analyze (make-single-agent-config timeout-and-send-agent)
                        got-message-only-spec
-                       (term ((addr 0 Nat))) null
-                       (hash 'A 'A)))
+                       (term ((addr 0 Nat))) null))
 
   ;; Multiple Disjoint Actors
   (define static-response-agent2
@@ -1489,20 +1438,17 @@
               (analyze
                 (make-empty-queues-config (list static-response-agent static-response-agent2) null)
                 static-response-spec
-                (term ((addr 0 Nat))) (term ((addr 1 Nat)))
-                (hash 'Always 'Always)))
+                (term ((addr 0 Nat))) (term ((addr 1 Nat)))))
   (test-true "Multi agent test 2"
              (analyze
               (make-empty-queues-config (list static-response-agent static-response-agent2) null)
               static-response-with-extra-spec
-              (term ((addr 0 Nat))) (term ((addr 1 Nat)))
-              (hash 'Always 'Always)))
+              (term ((addr 0 Nat))) (term ((addr 1 Nat)))))
   (test-true "Multi agent test 3"
              (analyze
                (make-empty-queues-config (list static-response-agent other-static-response-agent) null)
                static-response-spec
-               (term ((addr 0 Nat))) (term ((addr 1 Nat)))
-               (hash 'Always 'Always)))
+               (term ((addr 0 Nat))) (term ((addr 1 Nat)))))
 
   ;; Multiple specifications
   (define other-static-response-spec
@@ -1518,8 +1464,7 @@
              (model-check
               (make-empty-queues-config (list static-response-agent other-static-response-agent) null)
               (aps-config-from-instances (list static-response-spec other-static-response-spec))
-              (term ((addr 0 Nat) (addr 1 Nat))) null
-              (hash 'Always 'Always 'Always2 'Always2)))
+              (term ((addr 0 Nat) (addr 1 Nat))) null))
 
   ;; Actors working together
   (define statically-delegating-responder-actor
@@ -1547,8 +1492,7 @@
              (analyze
               (make-empty-queues-config (list request-response-agent2 statically-delegating-responder-actor) null)
               request-response-spec
-              (term ((addr 0 (Addr Nat)))) null
-              (hash 'A 'Always)))
+              (term ((addr 0 (Addr Nat)))) null))
 
   ;; TODO: tests for:
   ;; * commitment satisfied immediately
@@ -1628,8 +1572,7 @@
              (analyze
               (make-single-agent-config self-reveal-actor)
               self-reveal-spec
-              null null
-              (hash)))
+              null null))
   ;; TODO: redo this test later
   ;; (test-false "Catch self-reveal of wrong address"
   ;;             (analyze
@@ -1641,8 +1584,7 @@
               (analyze
                (make-single-agent-config reveal-self-double-output-actor)
                self-reveal-spec
-               null null
-               (hash)))
+               null null))
 
   ;; TODO: write tests for when we try to reveal it twice, but the second time the address doesn't
   ;; match the first one
@@ -1711,12 +1653,10 @@
               ;; Echo receives messages of type Addr Nat
               ;; The echo user receives message of type (Addr (Addr Nat))
               ;; The echo creator receives messages of type (Addr (Addr (Addr Nat)))
-              (term ((addr 0 (Addr (Addr (Addr Nat)))))) null
-              (hash)))
+              (term ((addr 0 (Addr (Addr (Addr Nat)))))) null))
   ;; TODO: also add a sink-spawning actor when commitment satisfaction is working
   (test-false "Spawned double-response actor does not match dynamic response spec"
               (analyze
                (make-single-agent-config double-response-spawning-actor)
                 echo-spawn-spec
-                (term ((addr 0 (Addr (Addr (Addr Nat)))))) null
-                (hash))))
+                (term ((addr 0 (Addr (Addr (Addr Nat)))))) null)))
