@@ -13,8 +13,8 @@
  "main.rkt")
 
 ;; TODO: put this in a common place so it isn't repeated across files
-(define single-agent-concrete-addr (term (addr 0)))
-(define (single-agent-typed-concrete-addr type) (term (addr 0 ,type)))
+(define single-actor-concrete-addr (term (addr 0)))
+(define (single-actor-typed-concrete-addr type) (term (addr 0 ,type)))
 
 ;; TODO: write a check that alerts for any underscores in the spec (b/c those are invalid)
 (define raft-spec
@@ -46,7 +46,7 @@
        [(variant PeerMessage (variant AppendSuccessful * * *)) -> (goto Running)]))
     ;; TODO: switch the order of the init exp and the states
     (goto Init)
-    ,single-agent-concrete-addr)))
+    ,single-actor-concrete-addr)))
 
 (define raft-actor-surface-prog (term (
 
@@ -1030,14 +1030,14 @@
 ;; version, using arbitrary addresses for each initial output address
 (define desugared-raft-program (desugar-single-actor-program raft-actor-surface-prog))
 (define desugared-raft-actor
-  (single-agent-prog->config desugared-raft-program single-agent-concrete-addr))
+  (single-actor-prog->config desugared-raft-program single-actor-concrete-addr))
 
 (check-not-false (redex-match csa-eval e desugared-raft-program))
 (check-not-false (redex-match csa-eval αn desugared-raft-actor))
 (check-not-false (redex-match aps-eval z raft-spec))
 
 ;; 3. Move the actor definition into a config, with addresses assigned appropriately
-(define raft-config (make-single-agent-config desugared-raft-actor))
+(define raft-config (make-single-actor-config desugared-raft-actor))
 
 (define cluster-config-variant
   ;; TODO:
@@ -1066,8 +1066,8 @@
 ;; 4. Run the verifier
 (check-true (analyze raft-config
                      raft-spec
-                     (list (single-agent-typed-concrete-addr (term (Union (PeerMessage ,desugared-raft-message-type)))) )
-                     (list (single-agent-typed-concrete-addr
+                     (list (single-actor-typed-concrete-addr (term (Union (PeerMessage ,desugared-raft-message-type)))) )
+                     (list (single-actor-typed-concrete-addr
                             (term (Union ,cluster-config-variant
                                          (ClientMessage (Addr Nat) ; TODO: add the real type here
                                                         String)

@@ -1,13 +1,13 @@
 #lang racket
 
-;; Models the grammar for APS (Agent Protocol Specifications)
+;; Models the grammar for APS (Actor Protocol Specifications)
 
 (provide csa
          csa-eval
          inject-message
-         make-single-agent-config
+         make-single-actor-config
          make-empty-queues-config
-         single-agent-prog->config
+         single-actor-prog->config
          handler-step
          type-subst
          csa-valid-config?
@@ -133,17 +133,17 @@
      (for/fold ([x E]) ([x e]) e)
      (for/fold ([x v]) ([x E]) e)))
 
-(define (make-single-agent-config agent)
-  (term (make-single-agent-config/mf ,agent)))
+(define (make-single-actor-config actor)
+  (term (make-single-actor-config/mf ,actor)))
 
-(define (single-agent-prog->config prog address)
+(define (single-actor-prog->config prog address)
   (redex-let csa-eval ([(let ([x v] ...) (spawn init-loc τ e S ...)) prog])
              (term (,address (((subst-n/S S [self ,address] [x v] ...) ...)
                               (subst-n e [self ,address] [x v] ...))))))
 
 (define-metafunction csa-eval
-  make-single-agent-config/mf : αn -> K
-  [(make-single-agent-config/mf αn)
+  make-single-actor-config/mf : αn -> K
+  [(make-single-actor-config/mf αn)
    ((αn) () (a) ())
    (where (a _) αn)])
 
