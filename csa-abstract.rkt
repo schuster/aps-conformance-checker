@@ -398,7 +398,6 @@
       (merge-new-messages
        (merge-new-actors (plug config-context behavior-exp) spawns)
        (filter internal-output? outputs)))
-    (define next-state (redex-let csa# ([(in-hole E# (goto s _ ...)) behavior-exp]) (term s)))
     (csa#-transition trigger (filter (negate internal-output?) outputs) new-impl-config)))
 
 ;; Returns true if the config is one that is unable to step because of an over-approximation in the
