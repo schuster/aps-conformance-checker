@@ -57,8 +57,6 @@
   [(subst-n/aps e-hat (x v-hat) any_rest ...)
    (subst-n/aps (subst/aps e-hat x v-hat) any_rest ...)])
 
-;; TODO: write tests for this substitution
-
 (define-metafunction aps-eval
   subst/aps : e-hat x v-hat -> e-hat
   [(subst/aps (goto s u ...) x v-hat)

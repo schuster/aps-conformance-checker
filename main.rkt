@@ -60,9 +60,6 @@
 
 ;; TODO: rename "analyze" to something like "check" or "verify" or "model-check"
 
-;; TODO: test this method separately, apart from the idea of visiting a transition (just check the BFS
-;; implementation
-
 ;; TODO: add some sort of typechecker that runs ahead of the analyzer (but perhaps as part of it, for
 ;; the sake of tests) to prevent things like a goto to a state that doesn't exist (and make sure that
 ;; a specs's type matches the program)
@@ -90,9 +87,7 @@
 ;; Given a concrete program configuration, a concrete specification configuration, and a list of pairs
 ;; that specify the expected prog-state/spec-state matches, returns #t if the conformance check
 ;; algorithm can prove conformance, #f otherwise.
-;;
-;; NOTE: this currently handles only programs consisting of a single actor that does not spawn other
-;; actors. Also assumes that the spec starts in a state in which it has no state parameters.
+
 (define (model-check initial-prog-config
                      initial-spec-config
                      init-obs-receptionists ; TODO: shouldn't these be part of the spec config?
@@ -139,8 +134,6 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Simulation
 
-;; TODO: test this function
-;;
 ;; TODO: rename this function
 ;;
 ;; Builds a set of nodes from the rank-1 conformance simulation by abstractly evaluating program
@@ -155,7 +148,6 @@
   ;; TODO: decide on mutable vs. immutable programming style
   (define to-visit (apply queue initial-tuples))
   (define related-spec-steps (make-hash))
-  ;; TODO: adjust my pseudocode and proof to note that the incoming edge is initialized here
   (define incoming (make-hash (map (lambda (t) (cons t (mutable-set))) initial-tuples)))
 
   ;; Debugging
@@ -270,8 +262,6 @@
 ;; Returns a set of the possible spec steps (see the struct above) from the given spec config that
 ;; match the given implementation step
 (define (matching-spec-steps spec-config i-step)
-  ;; TODO: decide if I should support instances where a single transition of the program uses
-  ;; multiple transitions of the spec (I think this probably won't happen in practice)
   (define matched-stepped-configs (mutable-set))
   (for ([(trigger-result) (aps#-steps-for-trigger spec-config
                                           (impl-step-from-observer? i-step)
@@ -353,12 +343,6 @@
     [the-set
      (set-add! the-set new-tuple)]))
 
-;; TODO: consider defining the spec semantics completely independently of concrete addresses, and
-;; provide a mapping in the spec instead (the spec semantics would probably look something like HD
-;; automata)
-
-;; TODO: rename this now that blurring is not part of it
-;;
 ;; Splits, blurs and canonicalizes the given tuple, returning the resulting tuple
 (define (sbc tuple)
   (for/list ([spec-config-component (split-spec (simulation-node-spec-config tuple))])
@@ -655,7 +639,6 @@
   (check-not-false (redex-match csa-eval K ignore-all-config))
   (check-not-false (redex-match aps-eval z ignore-all-spec-instance))
 
-  ;; TODO: supply concrete specs and programs to the checker, not abstract ones
   (check-true (analyze ignore-all-config
                        ignore-all-spec-instance
                        (term ((addr 0 Nat))) null
@@ -663,9 +646,6 @@
 
   ;;;; Send one message to a statically-known address per request
 
-  ;; TODO: remove the redundancy between the state defs and the current expression
-
-  ;; TODO: pick up here with adding types
   (define (make-static-response-address type) (term (addr 2 ,type)))
   (define static-response-address (make-static-response-address (term (Union (Ack Nat)))))
   (define static-response-agent
@@ -844,8 +824,6 @@
         (define-state (HaveAddr [i Nat] [response-target (Addr Nat)]) (new-response-target)
           (begin
             (send response-target i)
-            ;; TODO: implement addition and make this a counter
-            ;; (goto HaveAddr (+ i 1) response-target)
             (goto HaveAddr i new-response-target))))
        (goto Init)))))
   (define double-response-agent
@@ -854,8 +832,6 @@
           (begin
             (send response-dest i)
             (send response-dest i)
-            ;; TODO: implement addition and make this a counter
-            ;; (goto Always (+ i 1))
             (goto Always i))))
        (goto Always 0))))
   (define respond-once-agent

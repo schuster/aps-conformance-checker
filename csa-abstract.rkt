@@ -78,8 +78,6 @@
       x
       v#)
   (a# a#int a#ext) ; internal and external addresses
-  ;; TODO: replace the untyped address with the typed one
-  ;; TODO: rename these to be just int-addr and ext-addr
   (a#int (init-addr natural τ)
          ;; OLD means it existed before the current handler was run, NEW means it was spawned in the
          ;; current handler (should all be OLD between runs, after blur/canonicalize)
@@ -90,7 +88,6 @@
    (* (Addr τ)) ; unobserved address
    ;; NOTE: only a finite number of addresses in the initial config, so we can use natural numbers
    ;; here
-   ;; TODO: do I need the dead observables?
    (obs-ext natural τ))
   (ρ# (a#int ...))
   ;; H# = handler config (exp + outputs + loop outputs so far)
@@ -121,44 +118,12 @@
             (internal-receive a#int v#)
             (external-receive a#int v#)))
 
-  ;; (define-metafunction csa#
-  ;;   abstract : K -> K#
-  ;;   ;; TODO: handle messages already in the queue
-  ;;   ;;
-  ;;   ;; TODO: handle ρ and χ
-  ;;   [(abstract (α () ρ χ))
-  ;;    (α# () ρ χ)
-  ;;    (where  ((a ((S ...) e)) ...) α)
-  ;;    (where α# ((a (((abstract/S S) ...) (abstract/e e))) ...))])
-
-  ;; (define-metafunction csa#
-  ;;   abstract/e : e -> e#
-  ;;   [(abstract/e n) Nat]
-  ;;   ;; TODO: do something different for addresses (probably need a dictionary of things to substitute
-  ;;   ;; for them?)
-  ;;   [(abstract/e a) a]
-  ;;   ;; TODO: do something more clever for tuples
-  ;;   [(abstract/e (tuple e ...)) (tuple (abstract/e e ...))]
-  ;;   [(abstract/e (rcv (x) e) [(timeout Nat)]) (rcv (x) (abstract/e e))]
-  ;;   ;; The rest of these from here just do the normal tree-walking thing
-  ;;   [(abstract/e (spawn e S ...)) (spawn (abstract/e e) (abstract/S S) ...)]
-  ;;   [(abstract/e (goto s e ...)) (goto s (abstract/e e) ...)]
-  ;;   [(abstract/e (send e_1 e_2)) (send (abstract/e e_1) (abstract/e e_2))]
-  ;;   [(abstract/e self) self]
-  ;;   [(abstract/e (begin e ...)) (begin (abstract/e e ...))]
-  ;;   ;; TODO: let
-  ;;   [(abstract/e (match e_1 [p e_2] ...)) (match (abstract/e e) [p (abstract/e e)] ...)]
-  ;;   [(abstract/e t) t]
-  ;;   [(abstract/e x) x]
-  ;;   [(abstract/e (rcv (x) e)) (rcv (x) (abstract/e e))])
-
 ;; ---------------------------------------------------------------------------------------------------
 ;; Message generation
 
-;; TODO: (maybe) remove this parameter hack and thread the number through instead
-;;
-;; TODO: figure out if we need to first find the max number currently in the spec/prog pair, so we
-;; don't reuse other addresses
+;; TODO: create a second type of "fresh" external address instead (one that gets converted into the
+;; other one during canonicalization), so I don't have to worry about overlapping with existing
+;; addresses
 (define next-generated-address 100)
 
 (define (generate-abstract-messages type max-depth)
@@ -217,8 +182,6 @@
        variants-so-far))
    ;; (side-condition (printf "generate-variants: ~s\n" (term ( t τ_1 τ_rest ...))))
    ])
-
-;; TODO: write a test for the n-squared match of record message generation
 
 (module+ test
   (require
@@ -459,7 +422,6 @@
               [H# (term (,exp () () ()))])
              (term H#)))
 
-;; TODO: make this relation work on a full abstract configuration (maybe?)
 (define handler-step#
   (reduction-relation csa#
     #:domain H#
@@ -516,8 +478,6 @@
          (record any_1 ... [l v#] any_2 ...)
          RecordUpdate)
     (==> (! (* (Record any_1 ... [l τ] any_2 ...)) [l v#])
-         ;; TODO: should I do something more precise here? That might violate the depth rules,
-         ;; though...
          (* (Record any_1 ... [l τ] any_2 ...))
          RecordWildcardUpdate)
 
@@ -541,7 +501,6 @@
          (side-condition (member (term primop) (list 'random 'ceiling)))
          UnaryNumericOp)
 
-    ;; TODO: make a check that both operands are booleans
     (==> (and v#_1 v#_2)
          (csa#-and (canonicalize-boolean v#_1) (canonicalize-boolean v#_2))
          And)
@@ -681,8 +640,6 @@
          v#
          RemoveLoopContext)
 
-    ;; TODO: make an actual implementation here (although this might be the real implementation once I
-    ;; figure out the representation for lsits
     (==> (sort-numbers-descending v#)
          v#
          Sort)
@@ -764,7 +721,6 @@
                       [ρ# (term ((init-addr 0 Nat)))])
                 (term (α# μ# ρ# ()))))
 
-  ;; TODO: remove this one
   (check-not-false (redex-match csa# K# (csa#-make-simple-test-config (term (* Nat)))))
 
   (define-check (csa#-exp-steps-to? e1 e2)
@@ -919,8 +875,6 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
 
-;; TODO: see if I can use Paul's binding specs to write this code automatically
-
 (define-metafunction csa#
   csa#-subst-n : e# (x v#) ... -> e#
   [(csa#-subst-n e#) e#]
@@ -1043,8 +997,6 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
 
-;; TODO: test these functions
-
 ;; Abstracts the given CSA program configuration, with a maximum recursion depth for values
 ;;
 ;; NOTE: currently supports only no-messages, no-externals configs
@@ -1086,7 +1038,6 @@
   [(α-e natural _ _) (* Nat)]
   [(α-e string _ _) (* String)]
   [(α-e x _ _) x]
-  ;; TODO: canonicalize this address
   [(α-e (addr natural τ) (_ ... (addr natural τ) _ ...) _) (init-addr natural τ)]
   [(α-e (addr natural τ) _ _) (obs-ext natural τ)]
   [(α-e (goto s e ...) (a ...) natural_depth) (goto s (α-e e (a ...) natural_depth) ...)]
@@ -1127,9 +1078,6 @@
    (for/fold ([x_1 (α-e e_1 (a ...) natural)])
              ([x_2 (α-e e_2 (a ...) natural)])
      (α-e e (a ...) natural))])
-
-;; TODO: write tests for the variant/record case, because the crappy version I have here isn't good
-;; enough
 
 (module+ test
   (check-equal? (term (α-e (record [f1 1] [f2 2]) () 1))
@@ -1436,8 +1384,6 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Boolean Logic
-
-;; TODO: make these contracts tighter
 
 (define-metafunction csa#
   canonicalize-boolean : v# -> v#

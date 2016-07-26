@@ -87,7 +87,6 @@
 ;; abstraction
 (define (aps#-α-Σ spec-config internal-addresses)
   ;; Doing a redex-let here just to add a codomain contract
-  ;; TODO: figure out how to get redex-let to report its line number if this fails
   (redex-let aps# ([Σ (term (aps#-α-Σ/mf ,spec-config ,internal-addresses))])
              (term Σ)))
 
@@ -684,8 +683,6 @@
 (define (aps#-resolve-outputs spec-config outputs)
   ;; TODO: deal with loop output
 
-  ;; TODO: deal with a self-reveal
-
   (let loop ([commitment-map (aps#-config-commitment-map spec-config)]
              [self-address (aps#-instance-address (first (aps#-config-instances spec-config)))]
              [spawn-infos null]
@@ -859,8 +856,6 @@
   config-commitment-map/mf : Σ -> O
   [(config-commitment-map/mf (_ O)) O])
 
-;; TODO: test these
-
 (define (aps#-transition-pattern transition)
   (redex-let aps# ([(ε -> _) transition])
     (term ε)))
@@ -868,16 +863,6 @@
 (define (aps#-transition-expression transition)
   (redex-let aps# ([(_ -> e-hat) transition])
     (term e-hat)))
-
-(module+ test
-  ;; TODO: rewrite these tests
-  ;; (define transition (term [(tuple a b) -> (with-outputs ([a *]) (goto S))]))
-
-  ;; (check-equal? (aps#-transition-pattern transition) (term (tuple a b)))
-  ;; (check-equal? (aps#-transition-expression transition) (term (with-outputs ([a *]) (goto S))))
-  ;; (define transition2 (term [unobs -> (with-outputs ([x *]) (goto S2))]))
-  ;; (check-equal? (aps#-transition-pattern transition2) (term unobs))
-  )
 
 (define (aps#-goto-state goto-exp)
   (redex-let aps# ([(goto s _ ...) goto-exp])
@@ -1023,8 +1008,6 @@
 
 ;; Given a program config/spec config pair, rename the precise internal and external addresses in them
 ;; such that the first one in each set starts at 0, then the next is 1, then 2, etc.
-;;
-;; TODO: do the internal address part
 (define (canonicalize-tuple tuple)
   (term (canonicalize-tuple/mf ,tuple)))
 
@@ -1109,12 +1092,7 @@
                (goto A)))))
      (() (((obs-ext 0 Nat) (single *))))
      ()
-     ())))
-
-  ;; TODO: test for an address that appears more than once in the spec (e.g. twice as a spec param)
-
-  ;; TODO: write a test for a program config with recently spawned actors
-  )
+     ()))))
 
 (define-metafunction aps#
   rename-addresses : any [natural_old natural_new] ... -> any
@@ -1130,10 +1108,7 @@
   (check-equal?
    (term (rename-addresses (some-term (obs-ext 2 Nat) (another-term (obs-ext 5 Nat)) (obs-ext 13 Nat))
                            [2 1] [13 2] [5 3]))
-   (term (some-term (obs-ext 1 Nat) (another-term (obs-ext 3 Nat)) (obs-ext 2 Nat))))
-
-  ;; TODO: rename spawned actors, too
-  )
+   (term (some-term (obs-ext 1 Nat) (another-term (obs-ext 3 Nat)) (obs-ext 2 Nat)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Misc.

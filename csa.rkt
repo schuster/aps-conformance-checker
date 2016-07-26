@@ -81,7 +81,7 @@
      variable-not-otherwise-mentioned )
   ((s t l) variable-not-otherwise-mentioned)
   (n natural)
-  (τ Nat ; TODO: change this to Int or something
+  (τ Nat
      String
      (minfixpt X τ)
      X
@@ -113,7 +113,6 @@
      (list v ...)
      (vector v ...)
      (hash [v v] ...))
-  ;; TODO: remove this untyped address in favor of the typed one
   (a (addr natural τ)) ; only used for the initial receptionist lists for now
   (A ((any_1 ... hole any_2 ...) μ ρ χ))
   (E hole
@@ -138,7 +137,6 @@
   (term (make-single-agent-config/mf ,agent)))
 
 (define (single-agent-prog->config prog address)
-  ;; TODO: do I need to deal with the actor's type?
   (redex-let csa-eval ([(let ([x v] ...) (spawn init-loc τ e S ...)) prog])
              (term (,address (((subst-n/S S [self ,address] [x v] ...) ...)
                               (subst-n e [self ,address] [x v] ...))))))
