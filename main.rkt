@@ -125,15 +125,16 @@
 
        ;; Debugging
        (set! nodes-visited (add1 nodes-visited))
+       ;; (printf "Current time: ~s\n" (current-seconds))
        ;; (printf "Implementation config #: ~s\n" nodes-visited)
        ;; (printf "Queue size: ~s\n" (queue-length to-visit))
        ;; (printf "The impl config: ~s\n" (impl-config-without-state-defs (simulation-node-impl-config tuple)))
        ;; (printf "The full impl config: ~s\n" (simulation-node-impl-config tuple))
-       ;; (printf "The spec config: ~s\n" (simulation-node-spec-config tuple))
+       ;; (printf "The spec config: ~s\n" (spec-config-without-state-defs (simulation-node-spec-config tuple)))
        ;; (printf "Incoming so far: ~s\n" (hash-ref incoming tuple))
 
        (when LOG-TUPLES
-         (fprintf log-file "TUPLE ~s. ~s\n" nodes-visited (tuple->debug-tuple tuple))
+         (fprintf log-file "TUPLE ~s (~s). ~s\n" nodes-visited (current-seconds) (tuple->debug-tuple tuple))
          (flush-output log-file))
 
        (define found-unmatchable-step? #f)
@@ -144,7 +145,7 @@
        ;; Find the matching s-steps
        (for ([i-step i-steps])
          ;; Debugging:
-         ;; (printf "Impl step: ~s\n" i-step)
+         ;; (printf "Impl step: ~s\n" (debug-impl-step i-step))
 
          ;; TODO: make sure the satisfied commitments are also recorded somewhere in here
          (define matching-s-steps (matching-spec-steps s i-step))
