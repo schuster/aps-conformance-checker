@@ -822,14 +822,18 @@
   (check-not-false (redex-match csa-eval αn respond-once-actor))
   (check-not-false (redex-match csa-eval αn delayed-send-no-timeout-actor))
   (check-not-false (redex-match csa-eval αn delayed-send-with-timeout-actor))
+  (test-true "request/response 1"
+             (model-check (make-single-actor-config request-response-actor)
+                          (make-exclusive-spec request-response-spec)))
 
-  (check-true (model-check (make-single-actor-config request-response-actor)
+  (test-false "request/response 2"
+              (model-check (make-single-actor-config respond-to-first-addr-actor)
                            (make-exclusive-spec request-response-spec)))
-  (check-false (model-check (make-single-actor-config respond-to-first-addr-actor)
+  (test-false "request/response 3"
+               (model-check (make-single-actor-config respond-to-first-addr-actor2)
                             (make-exclusive-spec request-response-spec)))
-  (check-false (model-check (make-single-actor-config respond-to-first-addr-actor2)
-                            (make-exclusive-spec request-response-spec)))
-  (check-false (model-check (make-single-actor-config request-response-actor)
+  (test-false "request/response 4"
+               (model-check (make-single-actor-config request-response-actor)
                             (make-exclusive-spec request-same-response-addr-spec)))
   (test-false "ignore all actor does not satisfy request/response"
               (model-check (make-ignore-all-config (term (Addr Nat)))
