@@ -117,7 +117,8 @@
 
 (define (make-spec instance receptionists)
   (redex-let* aps-eval ([z instance]
+                        [(a_rec ...) receptionists]
                         [(_ (goto _ a ...) _) (term z)]
                         ;; TODO: remove duplicates from a...
-                        [Σ (term ((z) ,receptionists ((a) ...)))])
+                        [Σ (term ((z) (a_rec ...) ((a) ...)))])
               (term Σ)))
