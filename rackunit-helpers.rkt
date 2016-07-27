@@ -18,4 +18,7 @@
   (syntax-parse stx
     [(_  name actual expected)
      #`(test-case name
-         (check-same-items? actual expected))]))
+         #,(syntax/loc stx (check-same-items? actual expected)))]
+    [(_  actual expected)
+     #`(test-begin
+         #,(syntax/loc stx (check-same-items? actual expected)))]))
