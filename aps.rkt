@@ -49,7 +49,7 @@
   (Σ ((z ...) (a ...) O))
   (O ((a po ...) ...))
   (z ((S-hat ...) e-hat σ))
-  (σ a null)
+  (σ a UNKNOWN)
   (u .... a)
   (v-hat a))
 

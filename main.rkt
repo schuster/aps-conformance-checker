@@ -190,9 +190,8 @@
                (csa#-transition-final-config transition)))
 
   (define observed-external-receives
-    (match (aps#-config-only-instance-address spec-config)
-      ['null null]
-      [addr (external-message-transitions impl-config addr)]))
+    (let ([addr (aps#-config-only-instance-address spec-config)])
+      (if (aps#-unknown-address? addr) null (external-message-transitions impl-config addr))))
   (define unobserved-external-receives
     (append*
      (for/list ([receptionist (aps#-config-receptionists spec-config)])
@@ -318,7 +317,7 @@
   (define spawn-flag-to-blur
     (let ([spec-address (aps#-config-only-instance-address s)])
       (if (or (csa#-new-spawn-address? spec-address)
-              (aps#-null-address? spec-address))
+              (aps#-unknown-address? spec-address))
           'OLD
           'NEW)))
 
@@ -1461,7 +1460,7 @@
        (define-state (Running)
          [r -> (with-outputs ([r *]) (goto Running))]))
       (goto Init (addr 1 (Addr (Addr Nat))))
-      null)))
+      UNKNOWN)))
 
   (define self-reveal-actor
     (term

@@ -25,7 +25,7 @@
  aps#-external-addresses
  canonicalize-pair
  aps#-config-has-commitment?
- aps#-null-address?
+ aps#-unknown-address?
  aps#-abstract-and-age
 
  ;; Testing helpers
@@ -58,8 +58,7 @@
   aps-eval-with-csa#
   (Σ ((z ...) (a#int_unobs-receptionists ...) O))
   (z ((S-hat ...) e-hat σ))
-  ;; TODO: rename null to UNASSIGNED, or something like that
-  (σ a# null)
+  (σ a# UNKNOWN)
   (u .... a#ext)
   (v-hat a#)
   ;; (O ((a#ext (po boolean) ...) ...))
@@ -320,7 +319,7 @@
   [(aps#-eval/mf (with-outputs () e-hat))
    (aps#-eval/mf e-hat)]
   [(aps#-eval/mf (spawn-spec ((goto s a#ext ...) S-hat ...) e-hat))
-   [any_goto (any_outputs ...) ([(S-hat ...) (goto s a#ext ...) null] any_spawns ...)]
+   [any_goto (any_outputs ...) ([(S-hat ...) (goto s a#ext ...) UNKNOWN] any_spawns ...)]
    (where [any_goto (any_outputs ...) (any_spawns ...)]
           (aps#-eval/mf e-hat))])
 
@@ -385,13 +384,13 @@
 
 (module+ test
   (test-equal? "Degenerate fork config case"
-               (fork-configs (term (([((define-state (A))) (goto A) null]) () ())) null)
-               (list (term (([((define-state (A))) (goto A) null]) () ())) null))
+               (fork-configs (term (([((define-state (A))) (goto A) UNKNOWN]) () ())) null)
+               (list (term (([((define-state (A))) (goto A) UNKNOWN]) () ())) null))
 
   (test-equal? "Basic fork config case"
-    (fork-configs (term (([((define-state (A))) (goto A) null]) () ([(obs-ext 1 Nat) (single *)] [(obs-ext 2 Nat) (single (record))])))
+    (fork-configs (term (([((define-state (A))) (goto A) UNKNOWN]) () ([(obs-ext 1 Nat) (single *)] [(obs-ext 2 Nat) (single (record))])))
                   (term ([((define-state (B r))) (goto B (obs-ext 2 Nat)) null])))
-    (list (term (([((define-state (A))) (goto A) null]) () ([(obs-ext 1 Nat) (single *)])))
+    (list (term (([((define-state (A))) (goto A) UNKNOWN]) () ([(obs-ext 1 Nat) (single *)])))
           (list (term (([((define-state (B r))) (goto B (obs-ext 2 Nat)) null]) () ([(obs-ext 2 Nat) (single (record))])))))))
 
 (define (fork-commitment-map commitment-map addresses)
@@ -603,7 +602,7 @@
    (aps#-matches-po?/j a#int a#int self a#int () ())]
 
   [----
-   (aps#-matches-po?/j a#int null self a#int () ())]
+   (aps#-matches-po?/j a#int UNKNOWN self a#int () ())]
 
   [(aps#-list-matches-po?/j ((v# po) ...) σ any_self-addr any_spawns any_receptionists)
    ------
@@ -665,20 +664,20 @@
 
 (module+ test
   (check-equal?
-   (aps#-match-po '(* Nat) 'null '*)
-   (list 'null null null))
+   (aps#-match-po '(* Nat) 'UNKNOWN '*)
+   (list 'UNKNOWN null null))
   (check-false
-   (aps#-match-po '(* Nat) 'null '(record)))
+   (aps#-match-po '(* Nat) 'UNKNOWN '(record)))
   (check-equal?
-   (aps#-match-po '(init-addr 0 Nat) 'null 'self)
+   (aps#-match-po '(init-addr 0 Nat) 'UNKNOWN 'self)
    (list '(init-addr 0 Nat) null null))
   (check-equal?
-   (aps#-match-po '(init-addr 0 Nat) 'null '*)
-   (list 'null null (list '(init-addr 0 Nat))))
+   (aps#-match-po '(init-addr 0 Nat) 'UNKNOWN '*)
+   (list 'UNKNOWN null (list '(init-addr 0 Nat))))
   (check-false
-   (aps#-match-po '(obs-ext 0 Nat) 'null 'self))
+   (aps#-match-po '(obs-ext 0 Nat) 'UNKNOWN 'self))
   (check-equal?
-   (aps#-match-po '(variant A (* Nat) (init-addr 2 Nat)) 'null '(variant A * self))
+   (aps#-match-po '(variant A (* Nat) (init-addr 2 Nat)) 'UNKNOWN '(variant A * self))
    (list '(init-addr 2 Nat) '() '()))
   (check-equal?
    (aps#-match-po '(variant A (* Nat) (init-addr 2 Nat)) '(init-addr 2 Nat) '(variant A * self))
@@ -687,14 +686,14 @@
    (aps#-match-po '(variant A (* Nat) (init-addr 2 Nat)) '(init-addr 1 Nat) '(variant A * self)))
   (test-equal? "Spawn match po test"
    (aps#-match-po '(spawn-addr 'foo NEW Nat)
-                  'null
+                  'UNKNOWN
                   '(spawn-spec (goto B) (define-state (B))))
-   (list 'null
+   (list 'UNKNOWN
          '([((define-state (B))) (goto B) (spawn-addr 'foo NEW Nat)])
          '()))
   (test-equal? "Full match po test"
    (aps#-match-po '(variant A (spawn-addr 'foo NEW Nat) (init-addr 2 Nat))
-                  'null
+                  'UNKNOWN
                   '(variant A (spawn-spec (goto B) (define-state (B))) self))
    (list '(init-addr 2 Nat)
          '([((define-state (B))) (goto B) (spawn-addr 'foo NEW Nat)])
@@ -784,7 +783,7 @@
           (list pattern self-addr spawn-infos new-receptionists)])])))
 
 (module+ test
-  (define dummy-instance (term (((define-state (DummyState))) (goto DummyState) null)))
+  (define dummy-instance (term (((define-state (DummyState))) (goto DummyState) UNKNOWN)))
   (test-false "resolve test 1"
    (aps#-resolve-outputs
     (term ((,dummy-instance) () (((obs-ext 1 Nat)))))
@@ -901,11 +900,11 @@
 ;; Constructors
 
 (define aps#-no-transition-instance
-  (term [((define-state (DummySpecFsmState))) (goto DummySpecFsmState) null]))
+  (term [((define-state (DummySpecFsmState))) (goto DummySpecFsmState) UNKNOWN]))
 
 (define (aps#-spec-from-commitment-entry entry old-fsm-addr receptionists)
   (define receptionists-from-old-addr
-    (if (equal? old-fsm-addr 'null) '() (list old-fsm-addr)))
+    (if (equal? old-fsm-addr 'UNKNOWN) '() (list old-fsm-addr)))
   (redex-let aps# ([(a#ext any_1 ...) entry])
              (term ((,aps#-no-transition-instance)
                     ,(append receptionists receptionists-from-old-addr)
@@ -913,7 +912,7 @@
 
 (module+ test
   (check-equal?
-   (aps#-spec-from-commitment-entry (term ((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))  'null null)
+   (aps#-spec-from-commitment-entry (term ((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))  'UNKNOWN null)
    (term ((,aps#-no-transition-instance) () (((obs-ext 0 Nat) (single *) (single (record [a *] [b *])))))))
 
   (test-equal? "Commitment entry spec should also include old FSM address as unobs receptionist"
@@ -1033,13 +1032,13 @@
   (test-equal? "instate-state check 1"
    (aps#-instance-state (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
                                (goto Always (* (Addr Nat)) (obs-ext 1 Nat))
-                               null)))
+                               UNKNOWN)))
    (term Always))
 
   (test-equal? "instate-state check 2"
    (aps#-instance-arguments (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
                                    (goto Always (* (Addr Nat)) (obs-ext 1 Nat))
-                                   null)))
+                                   UNKNOWN)))
    (term ((* (Addr Nat)) (obs-ext 1 Nat)))))
 
 (define (aps#-relevant-external-addrs Σ)
@@ -1059,10 +1058,10 @@
     (redex-let* aps#
                 ([z_1 (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
                              (goto Always (obs-ext 1 Nat) (obs-ext 2 Nat))
-                             null))]
+                             UNKNOWN))]
                  [z_2 (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
                              (goto Always (obs-ext 1 Nat) (obs-ext 3 Nat))
-                             null))]
+                             UNKNOWN))]
                  [O (term (((obs-ext 1 Nat)) ((obs-ext 3 Nat)) ((obs-ext 4 Nat))))]
                  [Σ (term ((z_1 z_2) () O))])
                 (term Σ)))
@@ -1242,8 +1241,8 @@
   (check-false (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 1 Nat) (record)])))
   (check-false (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 3 Nat) *]))))
 
-(define (aps#-null-address? a)
-  (equal? a 'null))
+(define (aps#-unknown-address? a)
+  (equal? a 'UNKNOWN))
 
 (define (aps#-abstract-and-age s spawn-flag-to-blur)
   (redex-let aps# ([[([any_state-defs any_exp any_addr]) any_receptionists any_out-coms] s])
