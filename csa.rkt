@@ -137,7 +137,7 @@
   (term (make-single-actor-config/mf ,actor)))
 
 (define (single-actor-prog->config prog address)
-  (redex-let csa-eval ([(let ([x v] ...) (spawn init-loc τ e S ...)) prog])
+  (redex-let csa-eval ([(let ([x v] ...) (spawn τ e S ...)) prog])
              (term (,address (((subst-n/S S [self ,address] [x v] ...) ...)
                               (subst-n e [self ,address] [x v] ...))))))
 

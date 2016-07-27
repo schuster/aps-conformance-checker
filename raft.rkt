@@ -13,8 +13,41 @@
  "main.rkt")
 
 ;; TODO: put this in a common place so it isn't repeated across files
-(define single-actor-concrete-addr (term (addr 0)))
 (define (single-actor-typed-concrete-addr type) (term (addr 0 ,type)))
+
+(define desugared-raft-message-type
+  `(Union
+    (RequestVote Nat
+                 (Addr Nat) ;; TODO: add the minfixpt here
+                 Nat
+                 Nat)
+    (VoteCandidate Nat (Addr Nat))
+    (DeclineCandidate Nat (Addr Nat)) ;; TODO: add the minfixpt here
+    (AppendEntries
+     Nat
+     Nat
+     Nat
+     (Vectorof (Record [command String] [term Nat] [index Nat] [client (Addr String)]))
+     Nat
+     (Addr Nat) ; TODO: add the minfixpt here
+     (Addr Nat)) ; TODO: add a real representation of the ClientMessage type here
+    (AppendRejected Nat Nat (Addr Nat)) ; TODO: add the minfixpt here
+    (AppendSuccessful Nat Nat (Addr Nat)))   ; TODO: add the minfixpt here
+  )
+
+(define cluster-config-variant
+  ;; TODO:
+  (term (Config (Record [members (Listof (Addr Nat ;; RaftMessage
+                                               ))]))))
+
+(define full-raft-actor-type
+  (term
+   (Union (PeerMessage ,desugared-raft-message-type)
+          ,cluster-config-variant
+          (ClientMessage (Addr Nat) ; TODO: add the real type here
+                         String)
+          (Timeout Nat)
+          (SendHeartbeatTimeouts Nat))))
 
 ;; TODO: write a check that alerts for any underscores in the spec (b/c those are invalid)
 (define raft-spec
@@ -26,14 +59,18 @@
        ;; TODO: consider removing the "PeerMessage" part of the type, just to make things more
        ;; concise, esp. for sending back *out*
        [(variant PeerMessage (variant RequestVote * candidate * *)) ->
-        (with-outputs ([candidate (variant PeerMessage (or (variant VoteCandidate * *)
-                                                           (variant DeclineCandidate * *)))])
+        (with-outputs ([candidate (variant PeerMessage (variant VoteCandidate * *))])
+          (goto Running))]
+       [(variant PeerMessage (variant RequestVote * candidate * *)) ->
+        (with-outputs ([candidate (variant PeerMessage (variant DeclineCandidate * *))])
           (goto Running))]
        [(variant PeerMessage (variant VoteCandidate * *)) -> (goto Running)]
        [(variant PeerMessage (variant DeclineCandidate * *)) -> (goto Running)]
        [(variant PeerMessage (variant AppendEntries * * * * * leader *)) ->
-        (with-outputs ([leader (variant PeerMessage (or (variant AppendRejected * * *)
-                                                        (variant AppendSuccessful * * *)))])
+        (with-outputs ([leader (variant PeerMessage (variant AppendRejected * * *))])
+          (goto Running))]
+       [(variant PeerMessage (variant AppendEntries * * * * * leader *)) ->
+        (with-outputs ([leader (variant PeerMessage (variant AppendSuccessful * * *))])
           (goto Running))]
        ;; TODO: break these out into separate states so that the append retry can only happen when in
        ;; the leader state (and otherwise the leader must fall back to being a follower)
@@ -46,7 +83,7 @@
        [(variant PeerMessage (variant AppendSuccessful * * *)) -> (goto Running)]))
     ;; TODO: switch the order of the init exp and the states
     (goto Init)
-    ,single-actor-concrete-addr)))
+    ,(single-actor-typed-concrete-addr (term (Union (PeerMessage ,desugared-raft-message-type)))))))
 
 (define raft-actor-surface-prog (term (
 
@@ -1019,7 +1056,7 @@
 ;; The main program expression
 
 ;; TODO: think of a way to not have to give concrete addresses here
-(spawn RaftActor (addr 2) (addr 3)))))
+(spawn RaftActor (addr 2 TimerMessage) (addr 3 String)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing code
@@ -1029,51 +1066,30 @@
 ;; 2. Desugar that into the actor definition the verifier needs/translate it into the structural
 ;; version, using arbitrary addresses for each initial output address
 (define desugared-raft-program (desugar-single-actor-program raft-actor-surface-prog))
-(define desugared-raft-actor
-  (single-actor-prog->config desugared-raft-program single-actor-concrete-addr))
+(check-not-false (redex-match csa-eval (let ([x v] ...) (spawn τ e S ...)) desugared-raft-program))
 
-(check-not-false (redex-match csa-eval e desugared-raft-program))
+(define desugared-raft-actor
+  (single-actor-prog->config desugared-raft-program
+                             (single-actor-typed-concrete-addr full-raft-actor-type)))
+
 (check-not-false (redex-match csa-eval αn desugared-raft-actor))
 (check-not-false (redex-match aps-eval z raft-spec))
 
 ;; 3. Move the actor definition into a config, with addresses assigned appropriately
 (define raft-config (make-single-actor-config desugared-raft-actor))
 
-(define cluster-config-variant
-  ;; TODO:
-  (term (Config (Record [members (Listof (Addr Nat ;; RaftMessage
-                             ))]))))
+(define unobserved-interface-type
+  (term (Union ,cluster-config-variant
+               (ClientMessage (Addr Nat) ; TODO: add the real type here
+                              String)
+               (Timeout Nat)
+               (SendHeartbeatTimeouts Nat))))
 
-(define desugared-raft-message-type
-  `(Union
-    (RequestVote Nat
-                 (Addr Nat) ;; TODO: add the minfixpt here
-                 Nat
-                 Nat)
-    (VoteCandidate Nat (Addr Nat))
-    (DeclineCandidate Nat (Addr Nat)) ;; TODO: add the minfixpt here
-    (AppendEntries
-     Nat
-     Nat
-     Nat
-     (Vectorof (Record [command String] [term Nat] [index Nat] [client (Addr String)]))
-     Nat
-     (Addr Nat) ; TODO: add the minfixpt here
-     (Addr Nat)) ; TODO: add a real representation of the ClientMessage type here
-    (AppendRejected Nat Nat (Addr Nat)) ; TODO: add the minfixpt here
-    (AppendSuccessful Nat Nat (Addr Nat)))   ; TODO: add the minfixpt here
-  )
+(check-not-false
+ (redex-match csa-eval τ unobserved-interface-type))
+
 ;; 4. Run the verifier
-(check-true (analyze raft-config
-                     raft-spec
-                     (list (single-actor-typed-concrete-addr (term (Union (PeerMessage ,desugared-raft-message-type)))) )
-                     (list (single-actor-typed-concrete-addr
-                            (term (Union ,cluster-config-variant
-                                         (ClientMessage (Addr Nat) ; TODO: add the real type here
-                                                        String)
-                                         (Timeout Nat)
-                                         (SendHeartbeatTimeouts Nat)))))
-                     (hash 'Init 'Init
-                           'Follower 'Running
-                           'Candidate 'Running
-                           'Leader 'Running)))
+(test-true "Raft verification"
+ (model-check raft-config
+              (make-spec raft-spec
+                         (list (single-actor-typed-concrete-addr unobserved-interface-type)))))

@@ -97,7 +97,7 @@
        (for ([x1 e1]) e2 e* ...)
        (let ([x e] ...) e2 e* ...)
        (let* ([x e] ...) e2 e* ...)
-       (addr n) ; only for giving the initial output addresses
+       (addr n τ) ; only for giving the initial output addresses
        (f e ...))
   (FuncDef (fd)
            (define-function (f [x τ] ...) e1 e* ...))
