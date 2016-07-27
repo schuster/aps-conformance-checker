@@ -229,40 +229,16 @@
 
 ;; Σ bool trigger -> ([Σ (Σ_spawn ...)] ...)
 ;;
-;; Non-deterministically evaluates the given specification configuration with either a single trigger
-;; step, or no step, when given the specified trigger from the implementation on the actor with the
-;; given address, returning a list of pairs of the possible stepped specification configuration along
-;; with its spawned specifications
+;; Returns all spec configs that can possibly be reached in one step by transitioning from the given
+;; trigger, also returning spec configs spawned during that transition
 (define (aps#-matching-steps spec-config from-observer? trigger)
   (match (aps#-config-instances spec-config)
     [(list instance)
-     ;; evaluate all ways the trigger can hit a transition
-     (define eval-results
-       (filter values
-               (for/list ([transition (aps#-instance-transitions instance)])
-          ;; TODO: refactor this; need better definition of triggers, patterns, etc.
-                 (match (match-trigger from-observer?
-                                       trigger
-                                       (aps#-instance-address instance)
-                                       (aps#-transition-trigger transition))
-            [#f #f]
-            [(list bindings ...)
-             (define exp-subst (term (subst-n/aps# ,(aps#-transition-body transition) ,@bindings)))
-             (match-define (list new-goto commitments spawn-infos) (aps#-eval exp-subst))
-             (define updated-map
-               (term
-                (add-commitments
-                 ,(observe-addresses-from-subst
-                   (aps#-config-commitment-map spec-config) bindings)
-                 ,@commitments)))
-             (define stepped-current-config
-               (term (((,(aps#-instance-state-defs instance)
-                        ,new-goto
-                        ,(aps#-instance-address instance)))
-                      ,(aps#-config-receptionists spec-config)
-                      ,updated-map)))
-             (fork-configs stepped-current-config spawn-infos)]))))
-     (remove-duplicates eval-results)]))
+     (remove-duplicates
+      (filter
+       values
+       (map (lambda (t) (attempt-transition spec-config t from-observer? trigger))
+            (aps#-instance-transitions instance))))]))
 
 (module+ test
   (test-equal? "Null step is possible"
@@ -295,6 +271,33 @@
                           null
                           (term (((obs-ext 0 Nat) (many *)))))
                  null))))
+
+;; Returns the config updated by running the given transition, if it can be taken from the given
+;; trigger, along with all configs spawned in the transition, or #f if the transition is not possible
+;; from this trigger
+(define (attempt-transition config transition from-observer? trigger)
+  (define instance (first (aps#-config-instances config)))
+  (match (match-trigger from-observer?
+                        trigger
+                        (aps#-instance-address instance)
+                        (aps#-transition-trigger transition))
+    [#f #f]
+    [(list bindings ...)
+     (define body-with-bindings (term (subst-n/aps# ,(aps#-transition-body transition) ,@bindings)))
+     (match-define (list new-goto commitments spawn-infos) (aps#-eval body-with-bindings))
+     (define updated-commitment-map
+       (term
+        (add-commitments
+         ,(observe-addresses-from-subst
+           (aps#-config-commitment-map config) bindings)
+         ,@commitments)))
+     (define stepped-current-config
+       (term (((,(aps#-instance-state-defs instance)
+                ,new-goto
+                ,(aps#-instance-address instance)))
+              ,(aps#-config-receptionists config)
+              ,updated-commitment-map)))
+     (fork-configs stepped-current-config spawn-infos)]))
 
 ;; exp -> goto-exp ([a po] ...) (<S ..., e, σ> ...)
 ;;
