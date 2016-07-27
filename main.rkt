@@ -17,6 +17,7 @@
   (require
    rackunit
    redex/reduction-semantics
+   (for-syntax syntax/parse)
    "rackunit-helpers.rkt"))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -378,18 +379,15 @@
 
   (test-not-false "simple instance" (redex-match aps# z simple-instance-for-split-test))
 
-  ;; split spec with one FSM gets same spec
-  (test-equal? "split-spec 1"
+  (test-equal? "split spec with one FSM gets same spec"
    (split-spec (term ((,simple-instance-for-split-test) () ())))
    (list (term ((,simple-instance-for-split-test) () ()))))
 
-  ;; split with one related commit
-  (test-equal? "split-spec 2"
+  (test-equal? "split with one related commit"
    (split-spec (term ((,simple-instance-for-split-test) () (((obs-ext 0 Nat) (single *))))))
    (list (term ((,simple-instance-for-split-test) () (((obs-ext 0 Nat) (single *)))))))
 
-  ;; split with unrelated commit
-  (check-same-items?
+  (test-same-items? "split with unrelated commit"
    (split-spec (term ((,simple-instance-for-split-test) () (((obs-ext 1 Nat) (single *))))))
    (list (term ((,simple-instance-for-split-test) () ()))
          (term ((,aps#-no-transition-instance) ((init-addr 0 Nat)) (((obs-ext 1 Nat) (single *))))))))
@@ -561,6 +559,30 @@
 ;; Top-level tests
 
 (module+ test
+  (define-simple-check (check-valid-actor? actual)
+    (redex-match? csa-eval αn actual))
+
+  (define-syntax (test-valid-actor? stx)
+    (syntax-parse stx
+      [(_ name the-term)
+       #`(test-case name
+           (check-valid-actor? the-term))]
+      [(_ the-term)
+       #`(test-begin
+           (check-valid-actor? the-term))]))
+
+  (define-simple-check (check-valid-instance? actual)
+    (redex-match? aps-eval z actual))
+
+  (define-syntax (test-valid-instance? stx)
+    (syntax-parse stx
+      [(_ name the-term)
+       #`(test-case name
+           (check-valid-instance? the-term))]
+      [(_ the-term)
+       #`(test-begin
+           (check-valid-instance? the-term))]))
+
   ;;;; Ignore everything
 
   (define (make-ignore-all-config addr-type)
@@ -615,10 +637,10 @@
       (goto Always ,static-response-address)
       (addr 0 Nat))))
 
-  (check-not-false (redex-match csa-eval αn static-response-actor))
-  (check-not-false (redex-match csa-eval αn static-double-response-actor))
-  (check-not-false (redex-match aps-eval z static-response-spec))
-  (check-not-false (redex-match aps-eval z ignore-all-with-addr-spec-instance))
+  (test-valid-actor? static-response-actor)
+  (test-valid-actor? static-double-response-actor)
+  (test-valid-instance? static-response-spec)
+  (test-valid-instance? ignore-all-with-addr-spec-instance)
 
   (test-true "Static response works"
              (model-check (make-single-actor-config static-response-actor)

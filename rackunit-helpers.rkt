@@ -2,10 +2,20 @@
 
 ;; Various helper checks for RackUnit
 (provide
- check-same-items?)
+ check-same-items?
+ test-same-items?)
 
 ;; ---------------------------------------------------------------------------------------------------
-(require rackunit)
+(require
+ rackunit
+ redex/reduction-semantics
+ (for-syntax syntax/parse))
 
 (define-simple-check (check-same-items? actual expected)
   (equal? (list->set actual) (list->set expected)))
+
+(define-syntax (test-same-items? stx)
+  (syntax-parse stx
+    [(_  name actual expected)
+     #`(test-case name
+         (check-same-items? actual expected))]))
