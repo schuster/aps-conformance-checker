@@ -4,7 +4,7 @@
 
 (provide
  aps#
- α-tuple
+ α-pair
  ;; subst-n/aps#
  ;; aps#-current-transitions
  ;; aps#-null-transition
@@ -23,7 +23,7 @@
  aps#-instance-arguments
  aps#-relevant-external-addrs
  aps#-external-addresses
- canonicalize-tuple
+ canonicalize-pair
  aps#-config-has-commitment?
  aps#-null-address?
  aps#-abstract-and-age
@@ -70,9 +70,9 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
 
-(define (α-tuple initial-impl-config
-                 initial-spec-config
-                 max-depth)
+(define (α-pair initial-impl-config
+                initial-spec-config
+                max-depth)
   (define internal-addresses (csa-config-internal-addresses initial-impl-config))
   (list
    (α-config initial-impl-config internal-addresses max-depth)
@@ -1102,7 +1102,7 @@
 
 ;; Given a impl config/spec config pair, rename the precise internal and external addresses in them
 ;; such that the first one in each set starts at 0, then the next is 1, then 2, etc.
-(define (canonicalize-tuple tuple)
+(define (canonicalize-pair tuple)
   (term (canonicalize-tuple/mf ,tuple)))
 
 (define-metafunction aps#
@@ -1119,7 +1119,7 @@
 
 (module+ test
   (test-equal? "canonicalize 1"
-   (canonicalize-tuple
+   (canonicalize-pair
     (term
      (,(make-single-actor-abstract-config
         (term ((init-addr 0 Nat)
@@ -1142,7 +1142,7 @@
       ()))))
 
   (test-equal? "canonicalize 2"
-   (canonicalize-tuple
+   (canonicalize-pair
     (term
      (,(make-single-actor-abstract-config
         (term ((init-addr 0 Nat)
@@ -1165,7 +1165,7 @@
       ()))))
 
   (test-equal? "canonicalize 3"
-   (canonicalize-tuple
+   (canonicalize-pair
     (term
      (,(make-single-actor-abstract-config
         (term ((init-addr 0 Nat)

@@ -28,7 +28,7 @@
 ;; representation in code, which is something else.
 ;;
 ;; My thought: the range of the "incoming" dictionary should be sets of info-tuples that include *all*
-;; the information needed to trace back to the previous related tuple.
+;; the information needed to trace back to the previous related pair.
 
 ;; Trigger is as listed in csa-abstract
 ;;
@@ -38,9 +38,9 @@
 ;; TODO: think about whether the ranges given here are really "unique": could we have duplicate steps
 ;; with the same data? Does that matter? (Very related to the DDD idea of "identity")
 
-;; Incoming: dict from tuple to (mutable-setof (tuple, impl-step, spec-step)
+;; Incoming: dict from related-pair to (mutable-setof (related-pair, impl-step, spec-step)
 
-;; related-spec-steps: dict from (tuple, impl-step) to (mutable-setof spec-step)
+;; related-spec-steps: dict from (related-pair, impl-step) to (mutable-setof spec-step)
 
 (struct impl-step (from-observer? trigger outputs final-config) #:transparent)
 
@@ -76,79 +76,72 @@
   (unless (aps-valid-config? initial-spec-config)
     (error 'model-check "Invalid initial specification configuration ~s" initial-spec-config))
 
-  (define initial-tuples
+  (define initial-pairs
     (sbc
-     (apply related-pair (α-tuple initial-impl-config initial-spec-config MAX-RECURSION-DEPTH))))
-  (match-define (list rank1-tuples incoming rank1-related-spec-steps rank1-unrelated-successors)
-    (build-immediate-simulation initial-tuples))
-  (match-define (list simulation-tuples simulation-related-spec-steps)
-    (remove-unsupported-tuples rank1-tuples
-                               incoming
-                               rank1-related-spec-steps
-                               rank1-unrelated-successors))
-  (define commitment-satisfying-tuples
-    (find-satisfying-tuples simulation-tuples simulation-related-spec-steps))
-  (define unsatisfying-tuples (set-copy simulation-tuples))
-  (set-symmetric-difference! unsatisfying-tuples commitment-satisfying-tuples)
-  (match-define (list conforming-tuples _)
-    (remove-unsupported-tuples commitment-satisfying-tuples
-                               incoming
-                               simulation-related-spec-steps
-                               unsatisfying-tuples))
-  (andmap (curry set-member? conforming-tuples) initial-tuples))
+     (apply related-pair (α-pair initial-impl-config initial-spec-config MAX-RECURSION-DEPTH))))
+  (match-define (list rank1-pairs incoming rank1-related-spec-steps rank1-unrelated-successors)
+    (find-rank1-simulation initial-pairs))
+  (match-define (list simulation-pairs simulation-related-spec-steps)
+    (remove-unsupported rank1-pairs
+                              incoming
+                              rank1-related-spec-steps
+                              rank1-unrelated-successors))
+  (define commitment-satisfying-pairs
+    (find-satisfying-pairs simulation-pairs simulation-related-spec-steps))
+  (define unsatisfying-pairs (set-copy simulation-pairs))
+  (set-symmetric-difference! unsatisfying-pairs commitment-satisfying-pairs)
+  (match-define (list conforming-pairs _)
+    (remove-unsupported commitment-satisfying-pairs
+                        incoming
+                        simulation-related-spec-steps
+                        unsatisfying-pairs))
+  (andmap (curry set-member? conforming-pairs) initial-pairs))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Simulation
 
-;; TODO: rename this function
-;;
-;; Builds a set of nodes from the rank-1 conformance simulation by abstractly evaluating implementation
-;; configs and finding matching specification transitions, starting from the given initial
-;; tuples. Returns various data structures (see dissertation/model-checker-pseudocode.md for details)
-(define (build-immediate-simulation initial-tuples)
-  ;; TODO: find a way to make this function shorter
-
-  ;; TODO: think about using queues from the pfds collection if I switch to Typed Racket (which would
-  ;; avoid the performance issue associated with that package)
-  ;;
+;; Builds a set of related pairs from the rank-1 conformance simulation by abstractly evaluating
+;; implementation configs and finding matching specification transitions, starting from the given
+;; initial pairs. Returns various data structures (see dissertation/model-checker-pseudocode.md for
+;; details)
+(define (find-rank1-simulation initial-pairs)
   ;; TODO: decide on mutable vs. immutable programming style
-  (define to-visit (apply queue initial-tuples))
+  (define to-visit (apply queue initial-pairs))
   (define related-spec-steps (make-hash))
-  (define incoming (make-hash (map (lambda (t) (cons t (mutable-set))) initial-tuples)))
+  (define incoming (make-hash (map (lambda (t) (cons t (mutable-set))) initial-pairs)))
 
   ;; Debugging
-  (define nodes-visited 0)
-  (define log-file (if LOG-TUPLES (open-output-file "tuple_log.dat" #:exists 'replace) #f))
+  (define pairs-visited 0)
+  (define log-file (if LOG-PAIRS (open-output-file "related_pair_log.dat" #:exists 'replace) #f))
 
-  (let loop ([related-tuples (set)]
+  (let loop ([related-pairs (set)]
              [unrelated-successors (set)])
     (match (dequeue-if-non-empty! to-visit)
       [#f
-       (when LOG-TUPLES (close-output-port log-file))
-       (list related-tuples incoming related-spec-steps unrelated-successors)]
-      ;; TODO: change this pattern if we change the tuple structure
-      [tuple
+       (when LOG-PAIRS (close-output-port log-file))
+       (list related-pairs incoming related-spec-steps unrelated-successors)]
+      [pair
 
        ;; Debugging
-       (set! nodes-visited (add1 nodes-visited))
+       (set! pairs-visited (add1 pairs-visited))
        ;; (printf "Current time: ~s\n" (current-seconds))
-       ;; (printf "Implementation config #: ~s\n" nodes-visited)
+       ;; (printf "Implementation config #: ~s\n" pairs-visited)
        ;; (printf "Queue size: ~s\n" (queue-length to-visit))
-       ;; (printf "The impl config: ~s\n" (impl-config-without-state-defs (related-pair-impl-config tuple)))
-       ;; (printf "The full impl config: ~s\n" (related-pair-impl-config tuple))
-       ;; (printf "The spec config: ~s\n" (spec-config-without-state-defs (related-pair-spec-config tuple)))
-       ;; (printf "Incoming so far: ~s\n" (hash-ref incoming tuple))
+       ;; (printf "The impl config: ~s\n" (impl-config-without-state-defs (related-pair-impl-config pair)))
+       ;; (printf "The full impl config: ~s\n" (related-pair-impl-config pair))
+       ;; (printf "The spec config: ~s\n" (spec-config-without-state-defs (related-pair-spec-config pair)))
+       ;; (printf "Incoming so far: ~s\n" (hash-ref incoming pair))
 
-       (when LOG-TUPLES
-         (fprintf log-file "TUPLE ~s (~s). ~s\n" nodes-visited (current-seconds) (tuple->debug-tuple tuple))
+       (when LOG-PAIRS
+         (fprintf log-file "PAIR ~s (~s). ~s\n" pairs-visited (current-seconds) (pair->debug-pair pair))
          (flush-output log-file))
 
-       (define found-unmatchable-step? #f)
-       (define i (related-pair-impl-config tuple))
-       (define s (related-pair-spec-config tuple))
+       (define i (related-pair-impl-config pair))
+       (define s (related-pair-spec-config pair))
        (define i-steps (impl-steps-from i s))
 
        ;; Find the matching s-steps
+       (define found-unmatchable-step? #f)
        (for ([i-step i-steps])
          ;; Debugging:
          ;; (printf "Impl step: ~s\n" (debug-impl-step i-step))
@@ -158,38 +151,36 @@
          ;; Debugging:
          ;; (printf "Matching spec steps: ~s\n" matching-s-steps)
 
-         (hash-set! related-spec-steps (list tuple i-step) matching-s-steps)
+         (hash-set! related-spec-steps (list pair i-step) matching-s-steps)
          (when (set-empty? matching-s-steps)
            (set! found-unmatchable-step? #t)))
 
-       ;; Add this tuple to appropriate list; add new worklist items
+       ;; Add this pair to appropriate list; add new worklist items
        (cond
          [found-unmatchable-step?
           ;; Debugging
-          ;; (displayln "Unrelated node")
-          (loop related-tuples (set-add unrelated-successors tuple))]
+          ;; (displayln "Unrelated pair")
+          (loop related-pairs (set-add unrelated-successors pair))]
          [else
           ;; Debugging
-          ;; (displayln "Related node")
+          ;; (displayln "Related pair")
           (for ([i-step i-steps])
-            (for ([s-step (hash-ref related-spec-steps (list tuple i-step))])
-              (define new-tuples
+            (for ([s-step (hash-ref related-spec-steps (list pair i-step))])
+              (define successor-pairs
                 (for/list ([config (cons (spec-step-final-config s-step) (spec-step-spawned-specs s-step))])
                   (related-pair (impl-step-final-config i-step) config)))
               ;; Debugging only
-              ;; (for ([new-tuple new-tuples])
-              ;;   (printf "pre-sbc: ~s\n" new-tuple)
-              ;;   (printf "post-sbc: ~s\n" (sbc new-tuple)))
-              (for ([sbc-tuple (append* (map sbc new-tuples))])
-                (incoming-add! incoming sbc-tuple (list tuple i-step s-step))
-                (unless (or (member sbc-tuple (queue->list to-visit))
-                            (set-member? related-tuples sbc-tuple)
-                            (set-member? unrelated-successors sbc-tuple)
-                            (equal? sbc-tuple tuple))
-                  (enqueue! to-visit sbc-tuple)))))
-          (loop (set-add related-tuples tuple) unrelated-successors)])])))
-
-;; TODO: add a test that the "incoming" dictionary is properly set up (this had a bug before)
+              ;; (for ([successor-pair successor-pairs])
+              ;;   (printf "pre-sbc: ~s\n" successor-pair)
+              ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
+              (for ([sbc-pair (sbc* successor-pairs)])
+                (dict-of-sets-add! incoming sbc-pair (list pair i-step s-step))
+                (unless (or (member sbc-pair (queue->list to-visit))
+                            (set-member? related-pairs sbc-pair)
+                            (set-member? unrelated-successors sbc-pair)
+                            (equal? sbc-pair pair))
+                  (enqueue! to-visit sbc-pair)))))
+          (loop (set-add related-pairs pair) unrelated-successors)])])))
 
 (define (impl-steps-from impl-config spec-config)
   (define (add-observed-flag transition observed?)
@@ -297,24 +288,27 @@
                  null)))))
 
 ;; TODO: rename this function to something more generic (not incoming-based)
-(define (incoming-add! incoming key new-tuple)
-  (match (hash-ref incoming key #f)
+(define (dict-of-sets-add! dict key new-pair)
+  (match (hash-ref dict key #f)
     [#f
-     (hash-set! incoming key (mutable-set new-tuple))]
+     (hash-set! dict key (mutable-set new-pair))]
     [the-set
-     (set-add! the-set new-tuple)]))
+     (set-add! the-set new-pair)]))
 
-;; Splits, blurs and canonicalizes the given tuple, returning the resulting tuple
-(define (sbc tuple)
-  (for/list ([spec-config-component (split-spec (related-pair-spec-config tuple))])
+;; Splits, blurs and canonicalizes the given pair, returning the resulting pair
+(define (sbc pair)
+  (for/list ([spec-config-component (split-spec (related-pair-spec-config pair))])
     ;; TODO: make it an "error" for a non-precise address to match a spec state parameter
     (display-step-line "Abstracting an implementation config")
     (match-define (list abstracted-impl-config abstracted-spec)
-      (abstract-by-spec (related-pair-impl-config tuple) spec-config-component))
-    (display-step-line "Canonicalizing the tuple, adding to queue")
+      (abstract-by-spec (related-pair-impl-config pair) spec-config-component))
+    (display-step-line "Canonicalizing the pair, adding to queue")
     (match-define (list canonicalized-impl canonicalized-spec)
-      (canonicalize-tuple (list abstracted-impl-config abstracted-spec)))
+      (canonicalize-pair (list abstracted-impl-config abstracted-spec)))
     (related-pair canonicalized-impl canonicalized-spec)))
+
+(define (sbc* pairs)
+  (append* (map sbc pairs)))
 
 ;; Takes abstract impl config and abstract spec config; returns impl further abstracted according to
 ;; spec
@@ -398,23 +392,23 @@
    (list (term ((,simple-instance-for-split-test) () ()))
          (term ((,aps#-no-transition-instance) ((init-addr 0 Nat)) (((obs-ext 1 Nat) (single *))))))))
 
-(define (remove-unsupported-tuples all-tuples incoming init-related-spec-steps init-unrelated-successors)
-  (define remaining-tuples (set-copy all-tuples))
+(define (remove-unsupported all-pairs incoming init-related-spec-steps init-unrelated-successors)
+  (define remaining-pairs (set-copy all-pairs))
   (define unrelated-successors (apply queue (set->list init-unrelated-successors)))
   (define related-spec-steps (hash-copy init-related-spec-steps))
 
   (let loop ()
     (match (dequeue-if-non-empty! unrelated-successors)
-      [#f (list remaining-tuples related-spec-steps)]
-      [unrelated-tuple
-       (for ([transition (hash-ref incoming unrelated-tuple)])
+      [#f (list remaining-pairs related-spec-steps)]
+      [unrelated-pair
+       (for ([transition (hash-ref incoming unrelated-pair)])
          (match-define (list predecessor i-step s-step) transition)
-         (when (set-member? remaining-tuples predecessor)
+         (when (set-member? remaining-pairs predecessor)
            (define spec-steps (hash-ref related-spec-steps (list predecessor i-step)))
            (when (set-member? spec-steps s-step)
              (set-remove! spec-steps s-step)
              (when (set-empty? spec-steps)
-               (set-remove! remaining-tuples predecessor)
+               (set-remove! remaining-pairs predecessor)
                (enqueue! unrelated-successors predecessor)))))
        (loop)])))
 
@@ -424,10 +418,10 @@
   ;; Because remove-unsupported does not care about the actual content of the impl or spec
   ;; configurations, we replace them here with letters (A, B, C, etc. for impls and X, Y, Z, etc. for
   ;; specs) for simplification
-  (define ax-tuple (related-pair 'A 'X))
-  (define by-tuple (related-pair 'B 'Y))
-  (define bz-tuple (related-pair 'B 'Z))
-  (define cw-tuple (related-pair 'C 'W))
+  (define ax-pair (related-pair 'A 'X))
+  (define by-pair (related-pair 'B 'Y))
+  (define bz-pair (related-pair 'B 'Z))
+  (define cw-pair (related-pair 'C 'W))
 
   (define aa-step (impl-step #f '(timeout (init-addr 0 Nat)) null 'A))
   (define xx-step (spec-step 'X null))
@@ -437,76 +431,76 @@
   (define bc-step (impl-step #f '(timeout (init-addr 0 Nat)) null 'C))
   (define yw-step (spec-step 'W null))
 
-  (test-equal? "Remove no nodes, because no list"
-    (remove-unsupported-tuples
-     (mutable-set ax-tuple)
+  (test-equal? "Remove no pairs, because no list"
+    (remove-unsupported
+     (mutable-set ax-pair)
      ;; incoming
-     (mutable-hash [ax-tuple (mutable-set (list ax-tuple aa-step xx-step))])
+     (mutable-hash [ax-pair (mutable-set (list ax-pair aa-step xx-step))])
      ;; related spec steps
-     (mutable-hash [(list ax-tuple aa-step) (mutable-set xx-step)])
+     (mutable-hash [(list ax-pair aa-step) (mutable-set xx-step)])
      ;; unrelated sucessors
      null)
     (list
-     (mutable-set ax-tuple)
-     (mutable-hash [(list ax-tuple aa-step) (mutable-set xx-step)])))
+     (mutable-set ax-pair)
+     (mutable-hash [(list ax-pair aa-step) (mutable-set xx-step)])))
 
-  (test-equal? "Remove no nodes, because unrelated-matches contained only a redundant support"
-    (remove-unsupported-tuples
-     (mutable-set ax-tuple bz-tuple)
-     (mutable-hash [by-tuple (mutable-set (list ax-tuple ab-step xy-step))]
-                   [bz-tuple (mutable-set (list ax-tuple ab-step xz-step))]
-                   [ax-tuple (mutable-set)])
-     (mutable-hash [(list ax-tuple ab-step) (mutable-set xy-step xz-step)])
-     (list by-tuple))
+  (test-equal? "Remove no pairs, because unrelated-matches contained only a redundant support"
+    (remove-unsupported
+     (mutable-set ax-pair bz-pair)
+     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
+                   [bz-pair (mutable-set (list ax-pair ab-step xz-step))]
+                   [ax-pair (mutable-set)])
+     (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step xz-step)])
+     (list by-pair))
     (list
-     (mutable-set ax-tuple bz-tuple)
-     (mutable-hash [(list ax-tuple ab-step) (mutable-set xz-step)])))
+     (mutable-set ax-pair bz-pair)
+     (mutable-hash [(list ax-pair ab-step) (mutable-set xz-step)])))
 
-  (test-equal? "Remove last remaining node"
-    (remove-unsupported-tuples
-     (mutable-set ax-tuple)
-     (mutable-hash [by-tuple (mutable-set (list ax-tuple ab-step xy-step))]
-                   [ax-tuple (mutable-set)])
-     (mutable-hash [(list ax-tuple ab-step) (mutable-set xy-step)])
-     (list by-tuple))
+  (test-equal? "Remove last remaining pair"
+    (remove-unsupported
+     (mutable-set ax-pair)
+     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
+                   [ax-pair (mutable-set)])
+     (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step)])
+     (list by-pair))
     (list
      (mutable-set)
-     (mutable-hash [(list ax-tuple ab-step) (mutable-set)])))
+     (mutable-hash [(list ax-pair ab-step) (mutable-set)])))
 
   (test-equal? "Remove a redundant support"
-    (remove-unsupported-tuples
-     (mutable-set ax-tuple bz-tuple by-tuple)
+    (remove-unsupported
+     (mutable-set ax-pair bz-pair by-pair)
      ;; incoming
-     (mutable-hash [by-tuple (mutable-set (list ax-tuple ab-step xy-step))]
-                   [bz-tuple (mutable-set (list ax-tuple ab-step xz-step))]
-                   [ax-tuple (mutable-set)]
-                   [cw-tuple (mutable-set (list by-tuple bc-step yw-step))])
+     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
+                   [bz-pair (mutable-set (list ax-pair ab-step xz-step))]
+                   [ax-pair (mutable-set)]
+                   [cw-pair (mutable-set (list by-pair bc-step yw-step))])
      ;; matching spec steps
-     (mutable-hash [(list ax-tuple ab-step) (mutable-set xy-step xz-step)]
-                   [(list by-tuple bc-step) (mutable-set yw-step)])
+     (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step xz-step)]
+                   [(list by-pair bc-step) (mutable-set yw-step)])
      ;; unrelated successors
-     (list cw-tuple))
+     (list cw-pair))
     (list
-     (mutable-set ax-tuple bz-tuple)
-     (mutable-hash [(list ax-tuple ab-step) (mutable-set xz-step)]
-                   [(list by-tuple bc-step) (mutable-set)])))
+     (mutable-set ax-pair bz-pair)
+     (mutable-hash [(list ax-pair ab-step) (mutable-set xz-step)]
+                   [(list by-pair bc-step) (mutable-set)])))
 
     (test-equal? "Remove a non-redundant support"
-      (remove-unsupported-tuples
-       (mutable-set ax-tuple by-tuple)
+      (remove-unsupported
+       (mutable-set ax-pair by-pair)
        ;; incoming
-       (mutable-hash [by-tuple (mutable-set (list ax-tuple ab-step xy-step))]
-                     [ax-tuple (mutable-set)]
-                     [cw-tuple (mutable-set (list by-tuple bc-step yw-step))])
+       (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
+                     [ax-pair (mutable-set)]
+                     [cw-pair (mutable-set (list by-pair bc-step yw-step))])
        ;; matching spec steps
-       (mutable-hash [(list ax-tuple ab-step) (mutable-set xy-step)]
-                     [(list by-tuple bc-step) (mutable-set yw-step)])
+       (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step)]
+                     [(list by-pair bc-step) (mutable-set yw-step)])
        ;; unrelated successors
-       (list cw-tuple))
+       (list cw-pair))
       (list
        (mutable-set)
-       (mutable-hash [(list ax-tuple ab-step) (mutable-set)]
-                     [(list by-tuple bc-step) (mutable-set)]))))
+       (mutable-hash [(list ax-pair ab-step) (mutable-set)]
+                     [(list by-pair bc-step) (mutable-set)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Commitment Satisfaction
@@ -514,9 +508,9 @@
 ;; TODO: when walking the edges, take care of edges that do an address rename (because the commitment
 ;; will also need to be renamed)
 
-(define (find-satisfying-tuples simulation-tuples related-spec-steps)
+(define (find-satisfying-pairs simulation-pairs related-spec-steps)
   ;; TODO: implement this for real
-  simulation-tuples)
+  simulation-pairs)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Misc. Helpers
@@ -547,14 +541,14 @@
 
 (define DISPLAY-STEPS #f)
 
-(define LOG-TUPLES #f)
+(define LOG-PAIRS #f)
 
 (define (display-step-line msg)
   (when DISPLAY-STEPS (displayln msg)))
 
-(define (tuple->debug-tuple tuple)
-  (list (impl-config-without-state-defs (related-pair-impl-config tuple))
-        (spec-config-without-state-defs (related-pair-spec-config tuple))))
+(define (pair->debug-pair pair)
+  (list (impl-config-without-state-defs (related-pair-impl-config pair))
+        (spec-config-without-state-defs (related-pair-spec-config pair))))
 
 (define (debug-impl-step step)
   (list (impl-step-from-observer? step)
