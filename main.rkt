@@ -33,7 +33,7 @@
 ;; Trigger is as listed in csa-abstract
 ;;
 ;; TODO: rename all of these
-(struct simulation-node (impl-config spec-config) #:transparent)
+(struct related-pair (impl-config spec-config) #:transparent)
 
 ;; TODO: think about whether the ranges given here are really "unique": could we have duplicate steps
 ;; with the same data? Does that matter? (Very related to the DDD idea of "identity")
@@ -72,7 +72,7 @@
     (sbc
      ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
      ;; message generation
-     (apply simulation-node (α-tuple initial-impl-config initial-spec-config 10))))
+     (apply related-pair (α-tuple initial-impl-config initial-spec-config 10))))
   (match-define (list rank1-tuples incoming rank1-related-spec-steps rank1-unrelated-successors)
     (build-immediate-simulation initial-tuples))
   (match-define (list simulation-tuples simulation-related-spec-steps)
@@ -128,9 +128,9 @@
        ;; (printf "Current time: ~s\n" (current-seconds))
        ;; (printf "Implementation config #: ~s\n" nodes-visited)
        ;; (printf "Queue size: ~s\n" (queue-length to-visit))
-       ;; (printf "The impl config: ~s\n" (impl-config-without-state-defs (simulation-node-impl-config tuple)))
-       ;; (printf "The full impl config: ~s\n" (simulation-node-impl-config tuple))
-       ;; (printf "The spec config: ~s\n" (spec-config-without-state-defs (simulation-node-spec-config tuple)))
+       ;; (printf "The impl config: ~s\n" (impl-config-without-state-defs (related-pair-impl-config tuple)))
+       ;; (printf "The full impl config: ~s\n" (related-pair-impl-config tuple))
+       ;; (printf "The spec config: ~s\n" (spec-config-without-state-defs (related-pair-spec-config tuple)))
        ;; (printf "Incoming so far: ~s\n" (hash-ref incoming tuple))
 
        (when LOG-TUPLES
@@ -138,8 +138,8 @@
          (flush-output log-file))
 
        (define found-unmatchable-step? #f)
-       (define i (simulation-node-impl-config tuple))
-       (define s (simulation-node-spec-config tuple))
+       (define i (related-pair-impl-config tuple))
+       (define s (related-pair-spec-config tuple))
        (define i-steps (impl-steps-from i s))
 
        ;; Find the matching s-steps
@@ -169,7 +169,7 @@
             (for ([s-step (hash-ref related-spec-steps (list tuple i-step))])
               (define new-tuples
                 (for/list ([config (cons (spec-step-final-config s-step) (spec-step-spawned-specs s-step))])
-                  (simulation-node (impl-step-final-config i-step) config)))
+                  (related-pair (impl-step-final-config i-step) config)))
               ;; Debugging only
               ;; (for ([new-tuple new-tuples])
               ;;   (printf "pre-sbc: ~s\n" new-tuple)
@@ -301,15 +301,15 @@
 
 ;; Splits, blurs and canonicalizes the given tuple, returning the resulting tuple
 (define (sbc tuple)
-  (for/list ([spec-config-component (split-spec (simulation-node-spec-config tuple))])
+  (for/list ([spec-config-component (split-spec (related-pair-spec-config tuple))])
     ;; TODO: make it an "error" for a non-precise address to match a spec state parameter
     (display-step-line "Abstracting an implementation config")
     (match-define (list abstracted-impl-config abstracted-spec)
-      (abstract-by-spec (simulation-node-impl-config tuple) spec-config-component))
+      (abstract-by-spec (related-pair-impl-config tuple) spec-config-component))
     (display-step-line "Canonicalizing the tuple, adding to queue")
     (match-define (list canonicalized-impl canonicalized-spec)
       (canonicalize-tuple (list abstracted-impl-config abstracted-spec)))
-    (simulation-node canonicalized-impl canonicalized-spec)))
+    (related-pair canonicalized-impl canonicalized-spec)))
 
 ;; Takes abstract impl config and abstract spec config; returns impl further abstracted according to
 ;; spec
@@ -419,10 +419,10 @@
   ;; Because remove-unsupported does not care about the actual content of the impl or spec
   ;; configurations, we replace them here with letters (A, B, C, etc. for impls and X, Y, Z, etc. for
   ;; specs) for simplification
-  (define ax-tuple (simulation-node 'A 'X))
-  (define by-tuple (simulation-node 'B 'Y))
-  (define bz-tuple (simulation-node 'B 'Z))
-  (define cw-tuple (simulation-node 'C 'W))
+  (define ax-tuple (related-pair 'A 'X))
+  (define by-tuple (related-pair 'B 'Y))
+  (define bz-tuple (related-pair 'B 'Z))
+  (define cw-tuple (related-pair 'C 'W))
 
   (define aa-step (impl-step #f '(timeout (init-addr 0 Nat)) null 'A))
   (define xx-step (spec-step 'X null))
@@ -548,8 +548,8 @@
   (when DISPLAY-STEPS (displayln msg)))
 
 (define (tuple->debug-tuple tuple)
-  (list (impl-config-without-state-defs (simulation-node-impl-config tuple))
-        (spec-config-without-state-defs (simulation-node-spec-config tuple))))
+  (list (impl-config-without-state-defs (related-pair-impl-config tuple))
+        (spec-config-without-state-defs (related-pair-spec-config tuple))))
 
 (define (debug-impl-step step)
   (list (impl-step-from-observer? step)
