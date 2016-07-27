@@ -135,25 +135,21 @@
   [(generate-abstract-messages/mf Nat _) ((* Nat))]
   [(generate-abstract-messages/mf String _) ((* String))]
   [(generate-abstract-messages/mf (Union) _) ()]
-  [(generate-abstract-messages/mf (Union [t τ ...] ...) 0) ((* (Union [t τ ...] ...)))]
   [(generate-abstract-messages/mf (Union [t_1 τ_1 ...] [t_rest τ_rest ...] ...) natural_max-depth)
    (v#_1 ... v#_rest ...)
-   ;; (side-condition (displayln "generate-abs-var"))
    (where (v#_1 ...) (generate-variants natural_max-depth t_1 τ_1 ...))
    (where (v#_rest ...)
           (generate-abstract-messages/mf (Union [t_rest τ_rest ...] ...) natural_max-depth))]
   [(generate-abstract-messages/mf (Union) _) ()]
+  [(generate-abstract-messages/mf (minfixpt X τ) 0)
+   ((* (minfixpt X τ)))]
   [(generate-abstract-messages/mf (minfixpt X τ) natural_max-depth)
-   (generate-abstract-messages/mf (type-subst τ X (minfixpt X τ)) natural_max-depth)]
-  [(generate-abstract-messages/mf (Record [l τ] ...) 0)
-   ((* (Record [l τ] ...)))]
-  ;; TODO: max-depth should refer to the number of unrollings of the fixpoint; that's it
+   (generate-abstract-messages/mf (type-subst τ X (minfixpt X τ)) ,(sub1 (term natural_max-depth)))]
   [(generate-abstract-messages/mf (Record [l_1 τ_1] [l_rest τ_rest] ...) natural_max-depth)
    ,(for/fold ([records-so-far null])
               ([sub-record (term (generate-abstract-messages/mf (Record [l_rest τ_rest] ...) natural_max-depth))])
       (append
-       ;; TODO: do I need to do a (max 0) on natural_max-depth here?
-       (for/list ([generated-v (term (generate-abstract-messages/mf τ_1 ,(sub1 (term natural_max-depth))))])
+       (for/list ([generated-v (term (generate-abstract-messages/mf τ_1 natural_max-depth))])
          (redex-let csa# ([(record [l_other v#_other] ...) sub-record]
                           [v#_1 generated-v])
            (term (record [l_1 v#_1] [l_other v#_other] ...))))
@@ -175,77 +171,60 @@
    ,(for/fold ([variants-so-far null])
               ([sub-variant (term (generate-variants natural_max-depth t τ_rest ...))])
       (append
-       ;; TODO: do I need to do a (max 0) on natural_max-depth here?
-       (for/list ([generated-v (term (generate-abstract-messages/mf τ_1 ,(sub1 (term natural_max-depth))))])
+       (for/list ([generated-v (term (generate-abstract-messages/mf τ_1 natural_max-depth))])
          (redex-let csa# ([(variant t v#_other ...) sub-variant]
                           [v#_1 generated-v])
            (term (variant t v#_1 v#_other ...))))
-       variants-so-far))
-   ;; (side-condition (printf "generate-variants: ~s\n" (term ( t τ_1 τ_rest ...))))
-   ])
+       variants-so-far))])
 
 (module+ test
   (require
    rackunit
    "rackunit-helpers.rkt")
 
-  (check-same-items?
-   (term (generate-abstract-messages/mf Nat 0))
-   (term ((* Nat))))
-  ;; tuples of both depths
-  ;; addresses...?
-  ;; symbols
-  ;; recursive types (list of Nat, up to certain depth
-
-  ;; TODO: rewrite these tests using records and variants
-  ;; (check-same-items? (term (generate-abstract-messages/mf 'Begin 0)) (term ('Begin)))
-  ;; (check-same-items?
-  ;;  (term (generate-abstract-messages/mf (Union 'A 'B) 0))
-  ;;  (term ('A 'B)))
-  ;; ;; check: allow reordering
-  ;; (check-same-items?
-  ;;  (term (generate-abstract-messages/mf (Union 'A 'B) 0))
-  ;;  (term ('B 'A)))
-  ;; (check-same-items? (term (generate-abstract-messages/mf (Union) 0)) (term ()))
-  ;; (check-same-items?
-  ;;  (term (generate-abstract-messages/mf (minfixpt Dummy Nat) 0))
-  ;;  (term ((* Nat))))
-  ;; (check-same-items?
-  ;;  (term (generate-abstract-messages/mf (Tuple Nat Nat) 0))
-  ;;  (term ((* (Tuple Nat Nat)))))
-  ;; (check-same-items?
-  ;;  (term (generate-abstract-messages/mf (Tuple Nat Nat) 1))
-  ;;  (term ((tuple (* Nat) (* Nat)))))
-  ;; (check-same-items?
-  ;;  (term (generate-abstract-messages/mf (Tuple (Union 'A 'B) (Union 'C 'D)) 0))
-  ;;  (term ((* (Tuple (Union 'A 'B) (Union 'C 'D))))))
-  ;; (check-same-items?
-  ;;  (term (generate-abstract-messages/mf (Tuple (Union 'A 'B) (Union 'C 'D)) 1))
-  ;;  (term ((tuple 'A 'C) (tuple 'A 'D) (tuple 'B 'C) (tuple 'B 'D))))
-  ;; (define list-of-nat (term (minfixpt NatList (Union 'Null (Tuple 'Cons Nat NatList)))))
-  ;; TODO: get this fixpoint test to work
-  ;; (check-same-items?
-  ;;  (term (generate-abstract-messages/mf ,list-of-nat 0))
-  ;;  (term ('Null (* ,list-of-nat))))
-  (check-same-items?
-   (term (generate-abstract-messages/mf (Union) 0))
-   (term ()))
-  (check-same-items?
-   (term (generate-abstract-messages/mf (Union) 1))
-   (term ()))
-  (check-same-items?
-   (term (generate-abstract-messages/mf (Union [A] [B String (Union [C] [D])]) 5))
-   (term ((variant A)
-          (variant B (* String) (variant C))
-          (variant B (* String) (variant D)))))
-  ;; (check-same-items?
-  ;;  (term (generate-abstract-messages/mf
-  ;;         (Union (AppendRejected Nat Nat (Addr Nat))
-  ;;                (AppendSuccessful Nat Nat (Addr Nat)))
-  ;;         5))
-  ;;  (term ((variant AppendRejected (* Nat) (* Nat) ADDR-HOLE)
-  ;;         (variant AppendSuccessful (* Nat) (* Nat) ADDR-HOLE))))
-  )
+  (test-same-items?
+   (generate-abstract-messages 'Nat 0)
+   '((* Nat)))
+  (test-same-items? (generate-abstract-messages '(Union [Begin]) 0) (list '(variant Begin)))
+  (test-same-items?
+   (generate-abstract-messages '(Union [A] [B]) 0)
+   '((variant A) (variant B)))
+  (test-same-items? (generate-abstract-messages '(Union) 0) null)
+  (test-same-items?
+   (generate-abstract-messages '(minfixpt Dummy Nat) 0)
+   (list '(* (minfixpt Dummy Nat))))
+  (test-same-items?
+   (generate-abstract-messages '(minfixpt Dummy Nat) 1)
+   (list '(* Nat)))
+  (test-same-items?
+   (generate-abstract-messages '(Record [a Nat] [b Nat]) 0)
+   (list '(record [a (* Nat)] [b (* Nat)])))
+  (test-same-items?
+   (generate-abstract-messages '(Record [x (Union [A] [B])] [y (Union [C] [D])]) 0)
+   (list '(record [x (variant A)] [y (variant C)])
+         '(record [x (variant A)] [y (variant D)])
+         '(record [x (variant B)] [y (variant C)])
+         '(record [x (variant B)] [y (variant D)])))
+  (define list-of-nat '(minfixpt NatList (Union [Null] [Cons Nat NatList])))
+  (test-same-items?
+   (generate-abstract-messages list-of-nat 0)
+   (list `(* ,list-of-nat)))
+  (test-same-items?
+   (generate-abstract-messages list-of-nat 1)
+   (list `(variant Null) `(variant Cons (* Nat) (* ,list-of-nat))))
+  (test-same-items?
+   (generate-abstract-messages list-of-nat 2)
+   (list `(variant Null)
+         `(variant Cons (* Nat) (variant Null))
+         `(variant Cons (* Nat) (variant Cons (* Nat) (* ,list-of-nat)))))
+  (test-same-items?
+   (generate-abstract-messages '(Union) 0)
+   '())
+  (test-same-items?
+   (generate-abstract-messages '(Union [A] [B String (Union [C] [D])]) 0)
+   '((variant A)
+     (variant B (* String) (variant C))
+     (variant B (* String) (variant D)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation

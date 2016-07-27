@@ -48,6 +48,14 @@
 (struct spec-step (final-config spawned-specs) #:transparent)
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Constants
+
+;; The maximum number of times to unfold a recursive type while generating an abstract value of that
+;; type. This number is an arbitrary choice for now. Later it may make sense to base it off of the
+;; level of detail in the spec or program.
+(define MAX-RECURSION-DEPTH 1)
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Main functions
 
 ;; TODO: add some sort of typechecker that runs ahead of the analyzer (but perhaps as part of it, for
@@ -70,9 +78,7 @@
 
   (define initial-tuples
     (sbc
-     ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
-     ;; message generation
-     (apply related-pair (α-tuple initial-impl-config initial-spec-config 10))))
+     (apply related-pair (α-tuple initial-impl-config initial-spec-config MAX-RECURSION-DEPTH))))
   (match-define (list rank1-tuples incoming rank1-related-spec-steps rank1-unrelated-successors)
     (build-immediate-simulation initial-tuples))
   (match-define (list simulation-tuples simulation-related-spec-steps)
@@ -213,10 +219,9 @@
 (define (external-message-transitions impl-config receptionist)
   (display-step-line "Enumerating abstract messages (typed)")
   (append*
-   ;; TODO: get the max depth from somewhere
-   (for/list ([message (generate-abstract-messages (csa#-receptionist-type receptionist) 10)])
-    (display-step-line "Evaluating a handler")
-    (csa#-handle-message impl-config receptionist message))))
+   (for/list ([message (generate-abstract-messages (csa#-receptionist-type receptionist) MAX-RECURSION-DEPTH)])
+     (display-step-line "Evaluating a handler")
+     (csa#-handle-message impl-config receptionist message))))
 
 ;; Returns a set of the possible spec steps (see the struct above) from the given spec config that
 ;; match the given implementation step
