@@ -819,14 +819,16 @@
 
 (define-metafunction aps#
   remove-commitment-pattern/mf : O a#ext po -> O
-  [(remove-commitment-pattern/mf (any_1 ... ((name addr (obs-ext natural _)) any_2 ... (single po) any_3 ...) any_4 ...)
-                                 (obs-ext natural _)
+  [(remove-commitment-pattern/mf (any_1 ... (a#ext_1 any_2 ... (single po) any_3 ...) any_4 ...)
+                                 a#ext_2
                                  po)
-   (any_1 ... (addr any_2 ... any_3 ...) any_4 ...)]
-  [(remove-commitment-pattern/mf (any_1 ... ((name addr (obs-ext natural _)) any_2 ... (many po) any_3 ...) any_4 ...)
-                                 (obs-ext natural _)
+   (any_1 ... (a#ext_1 any_2 ... any_3 ...) any_4 ...)
+   (judgment-holds (same-external-address-without-type? a#ext_1 a#ext_2))]
+  [(remove-commitment-pattern/mf (any_1 ... (a#ext_1 any_2 ... (many po) any_3 ...) any_4 ...)
+                                 a#ext_2
                                  po)
-   (any_1 ... (addr any_2 ... (many po) any_3 ...) any_4 ...)])
+   (any_1 ... (a#ext_1 any_2 ... (many po) any_3 ...) any_4 ...)
+   (judgment-holds (same-external-address-without-type? a#ext_1 a#ext_2))])
 
 (module+ test
   (check-equal?
@@ -970,9 +972,10 @@
 
 (define-metafunction aps#
   commitments-for-address/mf : O a#ext -> ((m po) ...) or #f
-  [(commitments-for-address/mf (_ ... ((obs-ext natural _) (m po) ...) _ ...)
-                               (obs-ext natural _))
-   ((m po) ...)]
+  [(commitments-for-address/mf (_ ... (a#ext_1 (m po) ...) _ ...)
+                               a#ext_2)
+   ((m po) ...)
+   (judgment-holds (same-external-address-without-type? a#ext_1 a#ext_2))]
   [(commitments-for-address/mf _ _) #f])
 
 (module+ test
