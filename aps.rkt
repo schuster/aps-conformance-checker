@@ -51,7 +51,7 @@
   (z ((S-hat ...) e-hat σ))
   (σ a null)
   (u .... a)
-  (v-hat a a-hat))
+  (v-hat a))
 
 (define-metafunction aps-eval
   subst-n/aps : e-hat (x v-hat) ... -> e-hat
@@ -79,7 +79,6 @@
   [(subst/aps/po x x v-hat) v-hat]
   [(subst/aps/po x_2 x v-hat) x_2]
   [(subst/aps/po a x v-hat) a]
-  [(subst/aps/po a-hat x v-hat) a-hat]
   [(subst/aps/po t x v-hat) t]
   [(subst/aps/po * x v-hat) *]
   [(subst/aps/po (variant t po ...) x v-hat) (variant t (subst/aps/po po x v-hat) ...)]

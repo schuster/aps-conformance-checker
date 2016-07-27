@@ -61,7 +61,7 @@
   ;; TODO: rename null to UNASSIGNED, or something like that
   (σ a# null)
   (u .... a#ext)
-  (v-hat a# a-hat)
+  (v-hat a#)
   ;; (O ((a#ext (po boolean) ...) ...))
   (O ((a#ext (m po) ...) ...))
   (m single many) ; m for "multiplicity"
