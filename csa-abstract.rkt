@@ -14,7 +14,6 @@
  csa#-output-message
  α-config
  α-e
- α-receptionists
  blur-irrelevant-actors
  csa#-blur-and-age-receptionists
  csa#-age-internal-addrs
@@ -25,6 +24,8 @@
  csa#-new-spawn-address?
  csa#-sort-escapes
  same-internal-address-without-type?
+ same-external-address-without-type?
+ type-join
 
  ;; Debug helpers
  impl-config-without-state-defs
@@ -1038,7 +1039,7 @@
   [(α-e natural _ _) (* Nat)]
   [(α-e string _ _) (* String)]
   [(α-e x _ _) x]
-  [(α-e (addr natural τ) (_ ... (addr natural τ) _ ...) _) (init-addr natural τ)]
+  [(α-e (addr natural τ) (_ ... (addr natural _) _ ...) _) (init-addr natural τ)]
   [(α-e (addr natural τ) _ _) (obs-ext natural τ)]
   [(α-e (goto s e ...) (a ...) natural_depth) (goto s (α-e e (a ...) natural_depth) ...)]
   [(α-e (begin e ...) (a ...) natural_depth) (begin (α-e e (a ...) natural_depth) ...)]
@@ -1089,19 +1090,13 @@
   (check-equal? (term (α-e (list 1 2) () 10))
                 (term (list (* Nat))))
   (check-equal? (term (α-e (vector 1 2) () 10))
-                (term (vector (* Nat)))))
-
-(define (α-receptionists addresses)
-  (redex-let csa# ([(a ...) addresses])
-             (term ((α-a a) ...))))
-
-(define-metafunction csa#
-  α-a : a -> a#int
-  [(α-a (addr natural τ)) (init-addr natural τ)])
-
-(module+ test
-  (check-equal? (α-receptionists (term ((addr 0 Nat))))
-                (term ((init-addr 0 Nat)))))
+                (term (vector (* Nat))))
+  (test-equal? "Abstraction on non-matching addresses"
+               (term (α-e (addr 1 (Union [A])) ((addr 1 (Union [B]))) 0))
+               (term (init-addr 1 (Union [A]))))
+  (test-equal? "Abstraction on non-matching addresses"
+               (term (α-e (addr 2 (Union [A])) ((addr 1 (Union [B]))) 0))
+               (term (obs-ext 2 (Union [A])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Further Abstraction
@@ -1369,6 +1364,12 @@
   [------
    (same-internal-address-without-type? (spawn-addr any_loc OLD _) (spawn-addr any_loc OLD _))])
 
+(define-judgment-form csa#
+  #:mode (same-external-address-without-type? I I)
+  #:contract (same-external-address-without-type? a#ext a#ext)
+  [------
+   (same-external-address-without-type? (obs-ext natural _) (obs-ext natural _))])
+
 (define (csa#-actor-address a)
   (redex-let* csa# ([α#n a]
                     [(a#int _) (term α#n)])
@@ -1441,6 +1442,28 @@
 (module+ test
   (check-true (internal-output? (term ((init-addr 1 Nat) (* Nat)))))
   (check-false (internal-output? (term ((obs-ext 2 Nat) (* Nat))))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Types
+
+(define-metafunction csa#
+  type-join : τ τ -> τ
+  [(type-join (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))
+   (Union [t_3 τ_3 ...] ...)
+   (where ([t_3 τ_3 ...] ...)
+          ,(remove-duplicates (term ([t_1 τ_1 ...] ... [t_2 τ_2 ...] ...))))]
+  ;; TODO: allow for more sophisticated joins that look at the inner types of records, variants,
+  ;; etc. and go recur into Union fields
+  [(type-join τ τ) τ])
+
+(module+ test
+  (test-equal? "type-join 1" (term (type-join Nat Nat)) 'Nat)
+  (test-equal? "type-join 2"
+               (term (type-join (Union [A]) (Union [B])))
+               '(Union [A] [B]))
+  (test-equal? "type-join 3"
+               (term (type-join (Union [A] [B]) (Union [B])))
+               '(Union [A] [B])))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debug helpers

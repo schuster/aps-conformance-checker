@@ -7,9 +7,11 @@
          subst-n/aps
          subst/aps
          aps-valid-config?
-         aps-valid-instance?
          aps-config-observable-addresses
-         aps-config-from-instances)
+
+         ;; Testing helpers
+         make-spec
+         make-exclusive-spec)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; APS
@@ -44,7 +46,7 @@
 
 (define-extended-language aps-eval
   aps
-  (Σ ((z ...) O))
+  (Σ ((z ...) (a ...) O))
   (O ((a po ...) ...))
   (z ((S-hat ...) e-hat σ))
   (σ a null)
@@ -90,9 +92,6 @@
 (define (aps-valid-config? c)
   (if (redex-match aps-eval Σ c) #t #f))
 
-(define (aps-valid-instance? i)
-  (if (redex-match aps-eval z i) #t #f))
-
 ;; ---------------------------------------------------------------------------------------------------
 ;; Misc.
 
@@ -108,15 +107,18 @@
 (module+ test
   (check-equal?
    (aps-config-observable-addresses
-    (aps-config-from-instances
+    (make-exclusive-spec
      (term ((((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
              (goto Always (addr 3) (addr 4))
              (addr 1))))))
    (term ((addr 3) (addr 4)))))
 
-(define (aps-config-from-instances instances)
-  (redex-let* aps-eval ([(z ...) instances]
-                        [((_ (goto _ a ...) _) ...) (term (z ...))]
+(define (make-exclusive-spec instance)
+  (make-spec instance null))
+
+(define (make-spec instance receptionists)
+  (redex-let* aps-eval ([z instance]
+                        [(_ (goto _ a ...) _) (term z)]
                         ;; TODO: remove duplicates from a...
-                        [Σ (term ((z ...) ((a) ... ...)))])
+                        [Σ (term ((z) ,receptionists ((a) ...)))])
               (term Σ)))

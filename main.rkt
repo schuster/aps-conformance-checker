@@ -2,7 +2,7 @@
 
 ;; TODO: generally make all of the set-based code more functional
 
-(provide analyze)
+(provide model-check)
 
 (require
  data/queue
@@ -32,7 +32,7 @@
 ;; Trigger is as listed in csa-abstract
 ;;
 ;; TODO: rename all of these
-(struct simulation-node (impl-config spec-config obs-receptionists unobs-receptionists) #:transparent)
+(struct simulation-node (impl-config spec-config) #:transparent)
 
 ;; TODO: think about whether the ranges given here are really "unique": could we have duplicate steps
 ;; with the same data? Does that matter? (Very related to the DDD idea of "identity")
@@ -44,12 +44,10 @@
 (struct impl-step (from-observer? trigger outputs final-config) #:transparent)
 
 ;; TODO: probably want to add satisfied commitments here
-(struct spec-step (final-config spawned-specs revealed-addresses) #:transparent)
+(struct spec-step (final-config spawned-specs) #:transparent)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Main functions
-
-;; TODO: rename "analyze" to something like "check" or "verify" or "model-check"
 
 ;; TODO: add some sort of typechecker that runs ahead of the analyzer (but perhaps as part of it, for
 ;; the sake of tests) to prevent things like a goto to a state that doesn't exist (and make sure that
@@ -58,47 +56,22 @@
 ;; TODO: add an initial mapping between the implementation and the spec (maybe? might need new
 ;; definition of conformance for that)
 
-;; TODO: remove this function, or at least rename it
-(define (analyze initial-impl-config
-                 initial-spec-instance
-                 init-obs-receptionists
-                 init-unobs-receptionists)
-  ;; TODO: make this into a contract
-  (unless (aps-valid-instance? initial-spec-instance)
-    (error 'analyze "Invalid initial specification instance ~s" initial-spec-instance))
-  (model-check initial-impl-config
-               (aps-config-from-instances (list initial-spec-instance))
-               init-obs-receptionists
-               init-unobs-receptionists))
-
 ;; Given a concrete implementation configuration, a concrete specification configuration, and a list of pairs
 ;; that specify the expected impl-config/spec-config matches, returns #t if the conformance check
 ;; algorithm can prove conformance, #f otherwise.
-
 (define (model-check initial-impl-config
-                     initial-spec-config
-                     init-obs-receptionists ; TODO: shouldn't these be part of the spec config?
-                     init-unobs-receptionists)
+                     initial-spec-config)
   ;; TODO: make these into contracts
   (unless (csa-valid-config? initial-impl-config)
     (error 'model-check "Invalid initial implementation configuration ~s" initial-impl-config))
   (unless (aps-valid-config? initial-spec-config)
     (error 'model-check "Invalid initial specification configuration ~s" initial-spec-config))
-  (unless (csa-valid-receptionist-list? init-obs-receptionists)
-    (error 'model-check "Invalid observable receptionist lists: ~s" init-obs-receptionists))
-  (unless (csa-valid-receptionist-list? init-unobs-receptionists)
-    (error 'model-check "Invalid unobservable receptionist lists: ~s" init-unobs-receptionists))
 
   (define initial-tuples
     (sbc
      ;; TODO: give a better value for max-tuple-depth, both here for the initial abstraction and for
      ;; message generation
-     (apply simulation-node
-            (α-tuple initial-impl-config
-                     initial-spec-config
-                     init-obs-receptionists
-                     init-unobs-receptionists
-                     10))))
+     (apply simulation-node (α-tuple initial-impl-config initial-spec-config 10))))
   (match-define (list rank1-tuples incoming rank1-related-spec-steps rank1-unrelated-successors)
     (build-immediate-simulation initial-tuples))
   (match-define (list simulation-tuples simulation-related-spec-steps)
@@ -156,8 +129,6 @@
        ;; (printf "The impl config: ~s\n" (impl-config-without-state-defs (simulation-node-impl-config tuple)))
        ;; (printf "The full impl config: ~s\n" (simulation-node-impl-config tuple))
        ;; (printf "The spec config: ~s\n" (simulation-node-spec-config tuple))
-       ;; (printf "Observer-side receptionists: ~s\n" (simulation-node-obs-receptionists tuple))
-       ;; (printf "Unobserved-side receptionists: ~s\n" (simulation-node-unobs-receptionists tuple))
        ;; (printf "Incoming so far: ~s\n" (hash-ref incoming tuple))
 
        (when LOG-TUPLES
@@ -166,15 +137,19 @@
 
        (define found-unmatchable-step? #f)
        (define i (simulation-node-impl-config tuple))
-       (define i-steps
-         (impl-steps-from i
-                          (simulation-node-obs-receptionists tuple)
-                          (simulation-node-unobs-receptionists tuple)))
+       (define s (simulation-node-spec-config tuple))
+       (define i-steps (impl-steps-from i s))
 
        ;; Find the matching s-steps
        (for ([i-step i-steps])
+         ;; Debugging:
+         ;; (printf "Impl step: ~s\n" i-step)
+
          ;; TODO: make sure the satisfied commitments are also recorded somewhere in here
-         (define matching-s-steps (matching-spec-steps (simulation-node-spec-config tuple) i-step))
+         (define matching-s-steps (matching-spec-steps s i-step))
+         ;; Debugging:
+         ;; (printf "Matching spec steps: ~s\n" matching-s-steps)
+
          (hash-set! related-spec-steps (list tuple i-step) matching-s-steps)
          (when (set-empty? matching-s-steps)
            (set! found-unmatchable-step? #t)))
@@ -190,17 +165,9 @@
           ;; (displayln "Related node")
           (for ([i-step i-steps])
             (for ([s-step (hash-ref related-spec-steps (list tuple i-step))])
-              ;; TODO: simplify this new-tuple code (will be easier when receptionists are maintained
-              ;; elsewhere)
               (define new-tuples
                 (for/list ([config (cons (spec-step-final-config s-step) (spec-step-spawned-specs s-step))])
-                  (simulation-node
-                   (impl-step-final-config i-step)
-                   config
-                   ;; TODO: put the obs/unobs receptionists in the spec config
-                   ;; TODO: canonicalize the receptionist set by sorting it after the rename
-                   (remove-duplicates (append (simulation-node-obs-receptionists tuple) (spec-step-revealed-addresses s-step)))
-                   (simulation-node-unobs-receptionists tuple))))
+                  (simulation-node (impl-step-final-config i-step) config)))
               ;; Debugging only
               ;; (for ([new-tuple new-tuples])
               ;;   (printf "pre-sbc: ~s\n" new-tuple)
@@ -216,61 +183,63 @@
 
 ;; TODO: add a test that the "incoming" dictionary is properly set up (this had a bug before)
 
-(define (impl-steps-from impl-config obs-receptionists unobs-receptionists)
+(define (impl-steps-from impl-config spec-config)
   (define (add-observed-flag transition observed?)
     (impl-step observed?
                (csa#-transition-trigger transition)
                (csa#-transition-outputs transition)
                (csa#-transition-final-config transition)))
 
-  (append (map (curryr add-observed-flag #t)
-               (external-message-transitions impl-config obs-receptionists #t))
+  (define observed-external-receives
+    (match (aps#-config-only-instance-address spec-config)
+      ['null null]
+      [addr (external-message-transitions impl-config addr)]))
+  (define unobserved-external-receives
+    (append*
+     (for/list ([receptionist (aps#-config-receptionists spec-config)])
+       (external-message-transitions impl-config receptionist))))
+
+  (append (map (curryr add-observed-flag #t) observed-external-receives)
           (map (curryr add-observed-flag #f)
                (append
-                (external-message-transitions impl-config unobs-receptionists #f)
+                unobserved-external-receives
                 (csa#-handle-all-internal-messages impl-config)
                 (csa#-handle-all-timeouts impl-config)))))
 
-;; Returns all possible transitions of the given implementation config caused by a received message to any of
-;; the given receptionist addresses
-(define (external-message-transitions impl-config receptionists observed?)
+;; Returns all possible transitions of the given implementation config caused by a received message to
+;; the given receptionist address
+(define (external-message-transitions impl-config receptionist)
+  (display-step-line "Enumerating abstract messages (typed)")
   (append*
-   (for/list ([receptionist receptionists])
-     (display-step-line "Enumerating abstract messages (typed)")
-     (for/fold ([transitions-so-far null])
-               ;; TODO: get the max depth from somewhere
-               ([message (generate-abstract-messages (csa#-receptionist-type receptionist) 10)])
-       (display-step-line "Evaluating a handler")
-       ;; TODO: deal with the "observed?" flag
-       (append transitions-so-far
-               (csa#-handle-message impl-config receptionist message))))))
+   ;; TODO: get the max depth from somewhere
+   (for/list ([message (generate-abstract-messages (csa#-receptionist-type receptionist) 10)])
+    (display-step-line "Evaluating a handler")
+    (csa#-handle-message impl-config receptionist message))))
 
 ;; Returns a set of the possible spec steps (see the struct above) from the given spec config that
 ;; match the given implementation step
 (define (matching-spec-steps spec-config i-step)
   (define matched-stepped-configs (mutable-set))
-  (for ([(trigger-result) (aps#-steps-for-trigger spec-config
-                                          (impl-step-from-observer? i-step)
-                                          (impl-step-trigger i-step))])
+  (for ([(trigger-result) (aps#-matching-steps spec-config
+                                               (impl-step-from-observer? i-step)
+                                               (impl-step-trigger i-step))])
     (match-define (list config spawns1) trigger-result)
     (match (aps#-resolve-outputs config (impl-step-outputs i-step))
       [#f matched-stepped-configs]
-      [(list stepped-spec-config spawns2 revealed-addresses satisfied-commitments)
+      [(list stepped-spec-config spawns2 satisfied-commitments)
        ;; TODO: record the satisfied commitments somehow
-       (set-add! matched-stepped-configs (spec-step stepped-spec-config
-                                                    (append spawns1 spawns2)
-                                                    revealed-addresses))]))
+       (set-add! matched-stepped-configs (spec-step stepped-spec-config (append spawns1 spawns2)))]))
   matched-stepped-configs)
 
 (module+ test
-  (define null-spec-config (make-Σ# '((define-state (S))) '(goto S) null))
+  (define null-spec-config (make-Σ# '((define-state (S))) '(goto S) null null))
 
   (test-case "Null transition okay for unobs"
     (check-equal?
      (matching-spec-steps
       null-spec-config
       (impl-step #f '(internal-receive (init-addr 0 Nat) (* Nat)) null #f))
-     (mutable-set (spec-step null-spec-config null null))))
+     (mutable-set (spec-step null-spec-config null))))
   (test-case "Null transition not okay for observed input"
     (check-equal?
      (matching-spec-steps
@@ -280,7 +249,7 @@
   (test-case "No match if trigger does not match"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A) [x -> (goto A)])) '(goto A) null)
+      (make-Σ# '((define-state (A) [x -> (goto A)])) '(goto A) null null)
       (impl-step #t '(external-receive (init-addr 0 Nat) (* Nat)) null #f))
      (mutable-set)))
   (test-case "Unobserved outputs don't need to match"
@@ -288,37 +257,36 @@
      (matching-spec-steps
       null-spec-config
       (impl-step #f '(internal-receive (init-addr 0 Nat) (* Nat)) (list '((obs-ext 1 Nat) (* Nat))) #f))
-     (mutable-set (spec-step null-spec-config null null))))
+     (mutable-set (spec-step null-spec-config null))))
   (test-case "No match if outputs do not match"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1 Nat))))
+      (make-Σ# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat))))
       (impl-step #f '(internal-receive (init-addr 0 Nat) (* Nat)) (list '((obs-ext 1 Nat) (* Nat))) #f))
      (mutable-set)))
   (test-case "Output can be matched by previous commitment"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1 Nat) (single *))))
+      (make-Σ# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat) (single *))))
       (impl-step #f '(internal-receive (init-addr 0 Nat) (* Nat)) (list '((obs-ext 1 Nat) (* Nat))) #f))
-     (mutable-set (spec-step (make-Σ# '((define-state (A))) '(goto A) (list '((obs-ext 1 Nat)))) null null))))
+     (mutable-set (spec-step (make-Σ# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat)))) null))))
   (test-case "Output can be matched by new commitment"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A) [x -> (with-outputs ([x *]) (goto A))])) '(goto A) null)
+      (make-Σ# '((define-state (A) [x -> (with-outputs ([x *]) (goto A))])) '(goto A) null null)
       (impl-step #t '(external-receive (init-addr 0 Nat) (obs-ext 1 Nat)) (list '((obs-ext 1 Nat) (* Nat))) #f))
      (mutable-set (spec-step (make-Σ# '((define-state (A) [x -> (with-outputs ([x *]) (goto A))]))
-                              '(goto A)
-                              (list '((obs-ext 1 Nat))))
-                             null
+                                      '(goto A)
+                                      null
+                                      (list '((obs-ext 1 Nat))))
                              null))))
   (test-case "Multiple copies of same commitment get merged"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1 Nat)) (list '[(obs-ext 1 Nat) (single *)]))
+      (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (single *)]))
       (impl-step #t '(external-receive (init-addr 0 Nat) (* Nat)) null #f))
      (mutable-set
-      (spec-step (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1 Nat)) (list '[(obs-ext 1 Nat) (many *)]))
-                 null
+      (spec-step (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (many *)]))
                  null)))))
 
 ;; TODO: rename this function to something more generic (not incoming-based)
@@ -334,34 +302,18 @@
   (for/list ([spec-config-component (split-spec (simulation-node-spec-config tuple))])
     ;; TODO: make it an "error" for a non-precise address to match a spec state parameter
     (display-step-line "Abstracting an implementation config")
-    (match-define (list abstracted-impl-config
-                        aged-spec
-                        abstracted-obs-receptionists
-                        abstracted-unobs-receptionists)
-      (abstract-by-spec (simulation-node-impl-config tuple)
-                        (simulation-node-obs-receptionists tuple)
-                        (simulation-node-unobs-receptionists tuple)
-                        spec-config-component))
+    (match-define (list abstracted-impl-config abstracted-spec)
+      (abstract-by-spec (simulation-node-impl-config tuple) spec-config-component))
     (display-step-line "Canonicalizing the tuple, adding to queue")
-    (match-define (list canonicalized-impl
-                        canonicalized-spec
-                        canonicalized-obs-recs
-                        canonicalized-unobs-recs)
-      (canonicalize-tuple (list abstracted-impl-config
-                                aged-spec
-                                abstracted-obs-receptionists
-                                abstracted-unobs-receptionists)))
-
-    (simulation-node canonicalized-impl
-                     canonicalized-spec
-                     canonicalized-obs-recs
-                     canonicalized-unobs-recs)))
+    (match-define (list canonicalized-impl canonicalized-spec)
+      (canonicalize-tuple (list abstracted-impl-config abstracted-spec)))
+    (simulation-node canonicalized-impl canonicalized-spec)))
 
 ;; Takes abstract impl config and abstract spec config; returns impl further abstracted according to
 ;; spec
 ;;
 ;; TODO: maybe rename this to "project", since it's a kind of projection (or just to "blur")
-(define (abstract-by-spec p obs-receptionists unobs-receptionists s)
+(define (abstract-by-spec p s)
   (define spawn-flag-to-blur
     (let ([spec-address (aps#-config-only-instance-address s)])
       (if (or (csa#-new-spawn-address? spec-address)
@@ -374,9 +326,7 @@
     (blur-externals
      (blur-irrelevant-actors p spawn-flag-to-blur)
      (aps#-relevant-external-addrs s)))
-   (aps#-age-address s)
-   (csa#-blur-and-age-receptionists obs-receptionists spawn-flag-to-blur)
-   (csa#-blur-and-age-receptionists unobs-receptionists spawn-flag-to-blur)))
+   (aps#-abstract-and-age s spawn-flag-to-blur)))
 
 (module+ test
   (test-equal? "check that messages with blurred addresses get merged together"
@@ -386,23 +336,20 @@
                              ((init-addr 2 Nat) (obs-ext 3 Nat) 1))
                             ()
                             ()))
-                     null
-                     null
-                     (term ((,aps#-no-transition-instance) (((obs-ext 3 Nat))))))
+                     (term ((,aps#-no-transition-instance) () (((obs-ext 3 Nat))))))
    (list (term (()
                 (((init-addr 2 Nat) (* (Addr Nat)) *)
                  ((init-addr 2 Nat) (obs-ext 3 Nat) 1))
                 ()
                 ()))
-         (term ((,aps#-no-transition-instance) (((obs-ext 3 Nat)))))
-         null
-         null)))
+         (term ((,aps#-no-transition-instance) () (((obs-ext 3 Nat))))))))
 
 ;; Returns the list of split spec-configs from the given one, failing if any of the FSMs share an
 ;; address
 ;;
 ;; TODO: move this to the APS# module, since it has to deal so much with the internal representation
 (define (split-spec config)
+  (define receptionists (aps#-config-receptionists config))
   (define-values (fsm-specs remaining-commitment-map)
     (for/fold ([fsm-specs null]
                [remaining-commitment-map (aps#-config-commitment-map config)])
@@ -412,9 +359,14 @@
                (aps#-instance-arguments instance)))
       (define relevant-entries (filter entry-relevant? remaining-commitment-map))
       (values
-       (cons (aps#-spec-from-fsm-and-commitments instance relevant-entries) fsm-specs)
+       ;; TODO: use redex "term" here instead of quasiquote, when I move this into the APS# module
+       (cons `((,instance) ,receptionists ,relevant-entries) fsm-specs)
        (filter (negate entry-relevant?) remaining-commitment-map))))
-  (append fsm-specs (map aps#-spec-from-commitment-entry remaining-commitment-map)))
+  (append fsm-specs
+          (for/list ([entry remaining-commitment-map])
+            (aps#-spec-from-commitment-entry entry
+                                             (aps#-config-only-instance-address config)
+                                             receptionists))))
 
 (module+ test
   (define simple-instance-for-split-test
@@ -424,23 +376,23 @@
       (goto A (obs-ext 0 Nat))
       (init-addr 0 Nat))))
 
-  (check-not-false (redex-match aps# z simple-instance-for-split-test))
+  (test-not-false "simple instance" (redex-match aps# z simple-instance-for-split-test))
 
   ;; split spec with one FSM gets same spec
-  (check-equal?
-   (split-spec (term ((,simple-instance-for-split-test) ())))
-   (list (term ((,simple-instance-for-split-test) ()))))
+  (test-equal? "split-spec 1"
+   (split-spec (term ((,simple-instance-for-split-test) () ())))
+   (list (term ((,simple-instance-for-split-test) () ()))))
 
   ;; split with one related commit
-  (check-equal?
-   (split-spec (term ((,simple-instance-for-split-test) (((obs-ext 0 Nat) (single *))))))
-   (list (term ((,simple-instance-for-split-test) (((obs-ext 0 Nat) (single *)))))))
+  (test-equal? "split-spec 2"
+   (split-spec (term ((,simple-instance-for-split-test) () (((obs-ext 0 Nat) (single *))))))
+   (list (term ((,simple-instance-for-split-test) () (((obs-ext 0 Nat) (single *)))))))
 
   ;; split with unrelated commit
   (check-same-items?
-   (split-spec (term ((,simple-instance-for-split-test) (((obs-ext 1 Nat) (single *))))))
-   (list (term ((,simple-instance-for-split-test) ()))
-         (term ((,aps#-no-transition-instance) (((obs-ext 1 Nat) (single *))))))))
+   (split-spec (term ((,simple-instance-for-split-test) () (((obs-ext 1 Nat) (single *))))))
+   (list (term ((,simple-instance-for-split-test) () ()))
+         (term ((,aps#-no-transition-instance) ((init-addr 0 Nat)) (((obs-ext 1 Nat) (single *))))))))
 
 (define (remove-unsupported-tuples all-tuples incoming init-related-spec-steps init-unrelated-successors)
   (define remaining-tuples (set-copy all-tuples))
@@ -468,18 +420,18 @@
   ;; Because remove-unsupported does not care about the actual content of the impl or spec
   ;; configurations, we replace them here with letters (A, B, C, etc. for impls and X, Y, Z, etc. for
   ;; specs) for simplification
-  (define ax-tuple (simulation-node 'A 'X #f #f))
-  (define by-tuple (simulation-node 'B 'Y #f #f))
-  (define bz-tuple (simulation-node 'B 'Z #f #f))
-  (define cw-tuple (simulation-node 'C 'W #f #f))
+  (define ax-tuple (simulation-node 'A 'X))
+  (define by-tuple (simulation-node 'B 'Y))
+  (define bz-tuple (simulation-node 'B 'Z))
+  (define cw-tuple (simulation-node 'C 'W))
 
   (define aa-step (impl-step #f '(timeout (init-addr 0 Nat)) null 'A))
-  (define xx-step (spec-step 'X null null))
+  (define xx-step (spec-step 'X null))
   (define ab-step (impl-step #f '(timeout (init-addr 0 Nat)) null 'B))
-  (define xy-step (spec-step 'Y null null))
-  (define xz-step (spec-step 'Z null null))
+  (define xy-step (spec-step 'Y null))
+  (define xz-step (spec-step 'Z null))
   (define bc-step (impl-step #f '(timeout (init-addr 0 Nat)) null 'C))
-  (define yw-step (spec-step 'W null null))
+  (define yw-step (spec-step 'W null))
 
   (test-equal? "Remove no nodes, because no list"
     (remove-unsupported-tuples
@@ -598,9 +550,12 @@
 
 (define (tuple->debug-tuple tuple)
   (list (impl-config-without-state-defs (simulation-node-impl-config tuple))
-        (spec-config-without-state-defs (simulation-node-spec-config tuple))
-        (simulation-node-obs-receptionists tuple)
-        (simulation-node-unobs-receptionists tuple)))
+        (spec-config-without-state-defs (simulation-node-spec-config tuple))))
+
+(define (debug-impl-step step)
+  (list (impl-step-from-observer? step)
+        (impl-step-trigger step)
+        (impl-step-outputs step)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Top-level tests
@@ -625,9 +580,7 @@
   (check-not-false (redex-match csa-eval K ignore-all-config))
   (check-not-false (redex-match aps-eval z ignore-all-spec-instance))
 
-  (check-true (analyze ignore-all-config
-                       ignore-all-spec-instance
-                       (term ((addr 0 Nat))) null))
+  (check-true (model-check ignore-all-config (make-exclusive-spec ignore-all-spec-instance)))
 
   ;;;; Send one message to a statically-known address per request
 
@@ -668,21 +621,17 @@
   (check-not-false (redex-match aps-eval z ignore-all-with-addr-spec-instance))
 
   (test-true "Static response works"
-             (analyze (make-single-actor-config static-response-actor)
-                      static-response-spec
-                      (term ((addr 0 Nat))) null))
+             (model-check (make-single-actor-config static-response-actor)
+                          (make-exclusive-spec static-response-spec)))
   (test-false "Static response actor, ignore all spec"
-              (analyze (make-single-actor-config static-response-actor)
-                       ignore-all-with-addr-spec-instance
-                       (term ((addr 0 Nat))) null))
+              (model-check (make-single-actor-config static-response-actor)
+                           (make-exclusive-spec ignore-all-with-addr-spec-instance)))
   (test-false "static double response actor"
-              (analyze (make-single-actor-config static-double-response-actor)
-                       static-response-spec
-                       (term ((addr 0 Nat))) null))
+              (model-check (make-single-actor-config static-double-response-actor)
+                           (make-exclusive-spec static-response-spec)))
   (test-false "Static response spec, ignore-all config"
-               (analyze ignore-all-config
-                        static-response-spec
-                        (term ((addr 0 Nat))) null))
+               (model-check ignore-all-config
+                            (make-exclusive-spec static-response-spec)))
 
   ;;;; Pattern matching tests, without dynamic channels
 
@@ -726,16 +675,13 @@
   (check-not-false (redex-match csa-eval αn reverse-pattern-matching-actor))
   (check-not-false (redex-match csa-eval αn partial-pattern-matching-actor))
 
-  (check-true (analyze (make-single-actor-config pattern-matching-actor)
-                       pattern-match-spec
-                       (term ((addr 0 (Union [A Nat] [B Nat])))) null))
+  (check-true (model-check (make-single-actor-config pattern-matching-actor)
+                           (make-exclusive-spec pattern-match-spec)))
   (test-false "Send on A but not B; should send on both"
-              (analyze (make-single-actor-config partial-pattern-matching-actor)
-                       pattern-match-spec
-                       (term ((addr 0 (Union [A Nat] [B Nat])))) null))
-  (check-false (analyze (make-single-actor-config reverse-pattern-matching-actor)
-                        pattern-match-spec
-                        (term ((addr 0 (Union [A Nat] [B Nat])))) null))
+              (model-check (make-single-actor-config partial-pattern-matching-actor)
+                           (make-exclusive-spec pattern-match-spec)))
+  (check-false (model-check (make-single-actor-config reverse-pattern-matching-actor)
+                            (make-exclusive-spec  pattern-match-spec)))
 
   ;;;; Dynamic request/response
 
@@ -772,7 +718,6 @@
         (define-state (HaveAddr [i Nat] [response-target (Addr Nat)]) (new-response-target)
           (begin
             (send response-target i)
-            ;; TODO: also try the case where we save new-response-target instead
             (goto HaveAddr i response-target))))
        (goto Init)))))
   (define respond-to-first-addr-actor2
@@ -820,6 +765,30 @@
         (define-state (NoMore) (new-response-target)
           (goto NoMore)))
        (goto Init)))))
+    (define delayed-send-no-timeout-actor
+      (term
+       ((addr 0 (Addr Nat))
+        (((define-state (NoAddr) (response-target)
+            (goto HaveAddr response-target))
+          (define-state (HaveAddr [response-target (Addr Nat)]) (new-response-target)
+            (begin
+              (send response-target 1)
+              (goto HaveAddr new-response-target))))
+         (goto NoAddr)))))
+      (define delayed-send-with-timeout-actor
+        (term
+         ((addr 0 (Addr Nat))
+          (((define-state (NoAddr) (response-target)
+              (goto HaveAddr response-target))
+            (define-state (HaveAddr [response-target (Addr Nat)]) (new-response-target)
+              (begin
+                (send response-target 1)
+                (goto HaveAddr new-response-target))
+              [(timeout 5)
+               (begin
+                 (send response-target 2)
+                 (goto NoAddr))]))
+           (goto NoAddr)))))
 
   (check-not-false (redex-match aps-eval z request-response-spec))
   (check-not-false (redex-match aps-eval z request-same-response-addr-spec))
@@ -829,39 +798,36 @@
   (check-not-false (redex-match csa-eval αn double-response-actor))
   (check-not-false (redex-match csa-eval αn delay-saving-address-actor))
   (check-not-false (redex-match csa-eval αn respond-once-actor))
+  (check-not-false (redex-match csa-eval αn delayed-send-no-timeout-actor))
+  (check-not-false (redex-match csa-eval αn delayed-send-with-timeout-actor))
 
-  (check-true (analyze (make-single-actor-config request-response-actor)
-                       request-response-spec
-                       (term ((addr 0 (Addr Nat)))) null))
-  (check-false (analyze (make-single-actor-config respond-to-first-addr-actor)
-                        request-response-spec
-                        (term ((addr 0 (Addr Nat)))) null))
-  (check-false (analyze (make-single-actor-config respond-to-first-addr-actor2)
-                        request-response-spec
-                        (term ((addr 0 (Addr Nat)))) null))
-  (check-false (analyze (make-single-actor-config request-response-actor)
-                        request-same-response-addr-spec
-                        (term ((addr 0 (Addr Nat)))) null))
+  (check-true (model-check (make-single-actor-config request-response-actor)
+                           (make-exclusive-spec request-response-spec)))
+  (check-false (model-check (make-single-actor-config respond-to-first-addr-actor)
+                            (make-exclusive-spec request-response-spec)))
+  (check-false (model-check (make-single-actor-config respond-to-first-addr-actor2)
+                            (make-exclusive-spec request-response-spec)))
+  (check-false (model-check (make-single-actor-config request-response-actor)
+                            (make-exclusive-spec request-same-response-addr-spec)))
   (test-false "ignore all actor does not satisfy request/response"
-              (analyze (make-ignore-all-config (term (Addr Nat)))
-                        request-response-spec
-                        (term ((addr 0 (Addr Nat)))) null))
+              (model-check (make-ignore-all-config (term (Addr Nat)))
+                           (make-exclusive-spec request-response-spec)))
   (test-false "Respond-once actor does not satisfy request/response"
-              (analyze (make-single-actor-config respond-once-actor)
-                       request-response-spec
-                       (term ((addr 0 (Addr Nat)))) null))
-  (check-true (analyze (make-single-actor-config respond-to-first-addr-actor)
-                       request-same-response-addr-spec
-                       (term ((addr 0 (Addr Nat)))) null))
-  (check-true (analyze (make-single-actor-config respond-to-first-addr-actor2)
-                       request-same-response-addr-spec
-                       (term ((addr 0 (Addr Nat)))) null))
-  (check-false (analyze (make-single-actor-config double-response-actor)
-                        request-response-spec
-                        (term ((addr 0 (Addr Nat)))) null))
-  (check-false (analyze (make-single-actor-config delay-saving-address-actor)
-                        request-response-spec
-                        (term ((addr 0 (Addr Nat)))) null))
+              (model-check (make-single-actor-config respond-once-actor)
+                           (make-exclusive-spec request-response-spec)))
+  (check-true (model-check (make-single-actor-config respond-to-first-addr-actor)
+                           (make-exclusive-spec request-same-response-addr-spec)))
+  (check-true (model-check (make-single-actor-config respond-to-first-addr-actor2)
+                           (make-exclusive-spec request-same-response-addr-spec)))
+  (check-false (model-check (make-single-actor-config double-response-actor)
+                            (make-exclusive-spec request-response-spec)))
+  (check-false (model-check (make-single-actor-config delay-saving-address-actor)
+                            (make-exclusive-spec request-response-spec)))
+  (test-false "Send only on next receive does not satisfy request/response"
+               (model-check (make-single-actor-config delayed-send-no-timeout-actor)
+                            (make-exclusive-spec request-response-spec)))
+  (check-true (model-check (make-single-actor-config delayed-send-with-timeout-actor)
+                           (make-exclusive-spec request-response-spec)))
 
   ;; When given two choices to/from same state, have to take the one where the outputs match the
   ;; commitments
@@ -886,9 +852,8 @@
 
   (check-not-false (redex-match csa-eval αn reply-once-actor))
   (check-not-false (redex-match aps-eval z maybe-reply-spec))
-  (check-true (analyze (make-single-actor-config reply-once-actor)
-                       maybe-reply-spec
-                       (term ((addr 0 (Addr Nat)))) null))
+  (check-true (model-check (make-single-actor-config reply-once-actor)
+                           (make-exclusive-spec maybe-reply-spec)))
 
   ;;;; Non-deterministic branching in spec
 
@@ -921,11 +886,10 @@
   (check-not-false (redex-match aps-eval z zero-spec))
   (check-not-false (redex-match csa-eval αn primitive-branch-actor))
 
-  (check-true (analyze (make-single-actor-config primitive-branch-actor)
-                       zero-nonzero-spec
-                       (term ((addr 0 Nat))) null))
-  (check-false (analyze (make-single-actor-config primitive-branch-actor)
-                        zero-spec (term ((addr 0 Nat))) null))
+  (check-true (model-check (make-single-actor-config primitive-branch-actor)
+                           (make-exclusive-spec zero-nonzero-spec)))
+  (check-false (model-check (make-single-actor-config primitive-branch-actor)
+                            (make-exclusive-spec zero-spec)))
 
   ;;;; Optional Commitments
   (define optional-commitment-spec
@@ -937,9 +901,7 @@
       (addr 0 Nat))))
 
   (check-not-false (redex-match aps-eval z optional-commitment-spec))
-  (check-true (analyze ignore-all-config
-                       optional-commitment-spec
-                       (term ((addr 0 Nat))) null))
+  (check-true (model-check ignore-all-config (make-exclusive-spec optional-commitment-spec)))
 
   ;;;; Stuck states in concrete evaluation
 
@@ -971,35 +933,29 @@
   (check-not-false (redex-match csa-eval αn div-by-one-actor))
 
   (test-true "Div by one vs. nat-to-nat spec"
-             (analyze (make-single-actor-config div-by-one-actor)
-                       nat-to-nat-spec
-                       (term ((addr 0 Nat))) null))
+             (model-check (make-single-actor-config div-by-one-actor)
+                          (make-exclusive-spec nat-to-nat-spec)))
   (test-true "Div by zero vs. nat-to-nat spec"
-              (analyze (make-single-actor-config div-by-zero-actor)
-                       nat-to-nat-spec
-                       (term ((addr 0 Nat))) null))
+              (model-check (make-single-actor-config div-by-zero-actor)
+                           (make-exclusive-spec nat-to-nat-spec)))
 
   ;;;; Unobservable communication
 
   ;; wildcard unobservables are ignored for the purpose of output commitments
   (test-true "request/response actor vs. ignore-all spec"
-             (analyze (make-single-actor-config request-response-actor)
-                      (make-ignore-all-spec-instance '(Addr Nat))
-                      (term ((addr 0 (Addr Nat)))) null))
+             (model-check (make-single-actor-config request-response-actor)
+                          (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
 
-  ;; 1. In dynamic req/resp, allowing unobserved perspective to send same messages does not affect conformance
+  ;; 1. In dynamic req/resp, allowing unobserved perspective to send same messages does not affect
+  ;; conformance
   (test-true "request response actor and spec, with unobs communication"
-             (analyze (make-single-actor-config request-response-actor)
-                      request-response-spec
-                      (term ((addr 0 (Addr Nat))))
-                      (term ((addr 0 (Addr Nat))))))
+             (model-check (make-single-actor-config request-response-actor)
+                          (make-spec request-response-spec (list '(addr 0 (Addr Nat))))))
 
   ;; 2. Allowing same messages from unobs perspective violates conformance for static req/resp.
   (test-false "static response with unobs communication"
-              (analyze (make-single-actor-config static-response-actor)
-                       static-response-spec
-                       (term ((addr 0 Nat)))
-                       (term ((addr 0 Nat)))))
+              (model-check (make-single-actor-config static-response-actor)
+                           (make-spec static-response-spec (list '(addr 0 Nat)))))
 
   ;; 3. Conformance regained for static req/resp when add an unobs transition
   (define static-response-spec-with-unobs
@@ -1011,10 +967,9 @@
       (addr 0 Nat))))
   (check-not-false (redex-match aps-eval z static-response-spec-with-unobs))
 
-  (check-true (analyze (make-single-actor-config static-response-actor)
-                       static-response-spec-with-unobs
-                       (term ((addr 0 Nat)))
-                       (term ((addr 0 Nat)))))
+  (test-true "static response with unobs, incl in spec"
+             (model-check (make-single-actor-config static-response-actor)
+                          (make-spec static-response-spec-with-unobs (list '(addr 0 Nat)))))
 
   ;; 4. unobs causes a particular behavior (like connected/error in TCP)
   (define obs-unobs-static-response-address
@@ -1026,7 +981,7 @@
               [* -> (goto On r)]
               [unobs -> (with-outputs ([r (variant TurningOff)]) (goto Off r))]))
            (goto Off ,obs-unobs-static-response-address)
-           (addr 0 (Union [FromObserver] [FromUnobservedEnvironment])))))
+           (addr 0 (Union [FromObserver])))))
   (define unobs-toggle-actor
     (term
      ((addr 0 (Union [FromObserver] [FromUnobservedEnvironment]))
@@ -1127,20 +1082,16 @@
   (check-not-false (redex-match aps-eval αn unobs-toggle-actor-wrong4))
 
   (test-true "Obs/Unobs test"
-             (analyze (make-single-actor-config unobs-toggle-actor)
-                      unobs-toggle-spec
-                      (term ((addr 0 (Union [FromObserver]))))
-                      (term ((addr 0 (Union [FromUnobservedEnvironment]))))))
+             (model-check (make-single-actor-config unobs-toggle-actor)
+                          (make-spec unobs-toggle-spec (list '(addr 0 (Union [FromUnobservedEnvironment]))))))
 
   (for ([actor (list unobs-toggle-actor-wrong1
                      unobs-toggle-actor-wrong2
                      unobs-toggle-actor-wrong3
                      unobs-toggle-actor-wrong4)])
     (test-false "Obs/Unobs bug-finding test(s)"
-                (analyze (make-single-actor-config actor)
-                         unobs-toggle-spec
-                         (term ((addr 0 (Union [FromObserver]))))
-                         (term ((addr 0 (Union [FromUnobservedEnvironment])))))))
+                (model-check (make-single-actor-config actor)
+                             (make-spec unobs-toggle-spec (list '(addr 0 (Union [FromUnobservedEnvironment])))))))
 
   ;;;; Records
 
@@ -1174,14 +1125,12 @@
 
   ;; TODO: figure out why this test fails when max-depth for the program and the messages is set to
   ;; 0
-  (check-true (analyze (make-single-actor-config record-req-resp-actor)
-                       record-req-resp-spec
-                       (term ((addr 0 (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]))))
-                       null))
-  (check-false (analyze (make-single-actor-config record-req-wrong-resp-actor)
-                        record-req-resp-spec
-                        (term ((addr 0 (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]))))
-                        null))
+  (test-true "record 1"
+             (model-check (make-single-actor-config record-req-resp-actor)
+                          (make-exclusive-spec record-req-resp-spec)))
+  (test-false "record 2"
+              (model-check (make-single-actor-config record-req-wrong-resp-actor)
+                           (make-exclusive-spec record-req-resp-spec)))
 
   ;;;; Let
   (define static-response-let-actor
@@ -1207,12 +1156,12 @@
   (check-not-false (redex-match csa-eval αn static-response-let-actor))
   (check-not-false (redex-match csa-eval αn static-double-response-let-actor))
 
-  (check-true (analyze (make-single-actor-config static-response-let-actor)
-                       static-response-spec
-                       (term ((addr 0 Nat))) null))
-  (check-false (analyze (make-single-actor-config static-double-response-let-actor)
-                        static-response-spec
-                        (term ((addr 0 Nat))) null))
+  (test-true "Let 1"
+             (model-check (make-single-actor-config static-response-let-actor)
+                          (make-exclusive-spec static-response-spec)))
+  (test-false "Let 2"
+              (model-check (make-single-actor-config static-double-response-let-actor)
+                           (make-exclusive-spec static-response-spec)))
 
   ;; Check that = gives both results
   (define equal-actor-wrong1
@@ -1257,17 +1206,14 @@
   (check-not-false (redex-match csa-eval αn equal-actor))
 
   (test-false "Equal actor wrong 1"
-   (analyze (make-single-actor-config equal-actor-wrong1)
-            static-response-spec
-            (term ((addr 0 Nat))) null))
+   (model-check (make-single-actor-config equal-actor-wrong1)
+            (make-exclusive-spec static-response-spec)))
   (test-false "Equal actor wrong 2"
-   (analyze (make-single-actor-config equal-actor-wrong2)
-            static-response-spec
-            (term ((addr 0 Nat))) null))
+   (model-check (make-single-actor-config equal-actor-wrong2)
+            (make-exclusive-spec static-response-spec)))
   (check-true
-   (analyze (make-single-actor-config equal-actor)
-            static-response-spec
-            (term ((addr 0 Nat))) null))
+   (model-check (make-single-actor-config equal-actor)
+                (make-exclusive-spec static-response-spec)))
 
   ;;;; For loops
   (define loop-do-nothing-actor
@@ -1330,27 +1276,21 @@
   (check-not-false (redex-match csa-eval αn send-inside-loop-actor))
   (check-not-false (redex-match csa-eval αn send-after-loop-actor))
 
-  (check-true (analyze (make-single-actor-config loop-do-nothing-actor)
-                       (make-ignore-all-spec-instance '(Addr Nat))
-                       (term ((addr 0 (Addr Nat))))
-                       null))
-  (check-true (analyze (make-single-actor-config loop-send-unobs-actor)
-                       (make-ignore-all-spec-instance '(Addr Nat))
-                       (term ((addr 0 (Addr Nat))))
-                       null))
-  (check-true (analyze (make-single-actor-config send-before-loop-actor)
-                       request-response-spec
-                       (term ((addr 0 (Addr Nat)))) null))
+  (check-true (model-check (make-single-actor-config loop-do-nothing-actor)
+                           (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
+  (check-true (model-check (make-single-actor-config loop-send-unobs-actor)
+                           (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
+  (check-true (model-check (make-single-actor-config send-before-loop-actor)
+                           (make-exclusive-spec request-response-spec)))
   ;; TODO: get this test working again (need to at least check that none of the outputs in a loop were
   ;; observed)
   ;;
-  ;; (check-false (analyze (make-single-actor-config send-inside-loop-actor)
+  ;; (check-false (model-check (make-single-actor-config send-inside-loop-actor)
   ;;                      request-response-spec
   ;;                      (term ((addr 0 (Addr Nat)))) null
   ;;                      (hash 'A 'Always)))
-  (check-true (analyze (make-single-actor-config send-after-loop-actor)
-                       request-response-spec
-                       (term ((addr 0 (Addr Nat)))) null))
+  (check-true (model-check (make-single-actor-config send-after-loop-actor)
+                           (make-exclusive-spec request-response-spec)))
 
   ;;;; Timeouts
 
@@ -1387,12 +1327,10 @@
   (check-not-false (redex-match aps-eval z timeout-spec))
   (check-not-false (redex-match aps-eval z got-message-only-spec))
   (check-not-false (redex-match csa-eval αn timeout-and-send-actor))
-  (check-true (analyze (make-single-actor-config timeout-and-send-actor)
-                       timeout-spec
-                       (term ((addr 0 Nat))) null))
-  (check-false (analyze (make-single-actor-config timeout-and-send-actor)
-                       got-message-only-spec
-                       (term ((addr 0 Nat))) null))
+  (check-true (model-check (make-single-actor-config timeout-and-send-actor)
+                           (make-exclusive-spec timeout-spec)))
+  (check-false (model-check (make-single-actor-config timeout-and-send-actor)
+                       (make-exclusive-spec got-message-only-spec)))
 
   ;; Multiple Disjoint Actors
   (define static-response-actor2
@@ -1424,20 +1362,17 @@
   (check-not-false (redex-match aps-eval z static-response-with-extra-spec))
 
   (test-false "Multi actor test 1"
-              (analyze
+              (model-check
                 (make-empty-queues-config (list static-response-actor static-response-actor2) null)
-                static-response-spec
-                (term ((addr 0 Nat))) (term ((addr 1 Nat)))))
+                (make-spec static-response-spec (list '(addr 1 Nat)))))
   (test-true "Multi actor test 2"
-             (analyze
+             (model-check
               (make-empty-queues-config (list static-response-actor static-response-actor2) null)
-              static-response-with-extra-spec
-              (term ((addr 0 Nat))) (term ((addr 1 Nat)))))
+              (make-spec static-response-with-extra-spec (list '(addr 1 Nat)))))
   (test-true "Multi actor test 3"
-             (analyze
+             (model-check
                (make-empty-queues-config (list static-response-actor other-static-response-actor) null)
-               static-response-spec
-               (term ((addr 0 Nat))) (term ((addr 1 Nat)))))
+               (make-spec static-response-spec (list '(addr 1 Nat)))))
 
   ;; Multiple specifications
   (define other-static-response-spec
@@ -1449,11 +1384,12 @@
 
   (check-not-false (redex-match aps-eval z other-static-response-spec))
 
-  (test-true "Multi-spec test"
-             (model-check
-              (make-empty-queues-config (list static-response-actor other-static-response-actor) null)
-              (aps-config-from-instances (list static-response-spec other-static-response-spec))
-              (term ((addr 0 Nat) (addr 1 Nat))) null))
+  ;; TODO: probably get rid of this test
+  ;; (test-true "Multi-spec test"
+  ;;            (model-check
+  ;;             (make-empty-queues-config (list static-response-actor other-static-response-actor) null)
+  ;;             (make-exclusive-spec (list static-response-spec other-static-response-spec))
+  ;;             (term ((addr 0 Nat) (addr 1 Nat))) null))
 
   ;; Actors working together
   (define statically-delegating-responder-actor
@@ -1478,10 +1414,9 @@
   (check-not-false (redex-match csa-eval αn request-response-actor2))
 
   (test-true "Multiple actors 3"
-             (analyze
+             (model-check
               (make-empty-queues-config (list request-response-actor2 statically-delegating-responder-actor) null)
-              request-response-spec
-              (term ((addr 0 (Addr Nat)))) null))
+              (make-exclusive-spec request-response-spec)))
 
   ;; TODO: tests for:
   ;; * commitment satisfied immediately
@@ -1558,22 +1493,20 @@
   (check-not-false (redex-match aps-eval z self-reveal-spec))
 
   (test-true "Reveal self works"
-             (analyze
+             (model-check
               (make-single-actor-config self-reveal-actor)
-              self-reveal-spec
-              null null))
+              (make-exclusive-spec self-reveal-spec)))
   ;; TODO: redo this test later
   ;; (test-false "Catch self-reveal of wrong address"
-  ;;             (analyze
+  ;;             (model-check
   ;;              (make-single-actor-config reveal-wrong-address-actor)
   ;;              self-reveal-spec
   ;;              (term ((addr 0 (Addr (Addr (Addr Nat)))))) null
   ;;              (hash)))
   (test-false "Catch self-reveal of actor that doesn't follow its behavior"
-              (analyze
+              (model-check
                (make-single-actor-config reveal-self-double-output-actor)
-               self-reveal-spec
-               null null))
+               (make-exclusive-spec self-reveal-spec)))
 
   ;; TODO: write tests for when we try to reveal it twice, but the second time the address doesn't
   ;; match the first one
@@ -1636,16 +1569,11 @@
   (check-not-false (redex-match aps-eval z echo-spawn-spec))
 
   (test-true "Spawned echo matches dynamic response spec"
-             (analyze
+             (model-check
               (make-single-actor-config echo-spawning-actor)
-              echo-spawn-spec
-              ;; Echo receives messages of type Addr Nat
-              ;; The echo user receives message of type (Addr (Addr Nat))
-              ;; The echo creator receives messages of type (Addr (Addr (Addr Nat)))
-              (term ((addr 0 (Addr (Addr (Addr Nat)))))) null))
+              (make-exclusive-spec echo-spawn-spec)))
   ;; TODO: also add a sink-spawning actor when commitment satisfaction is working
   (test-false "Spawned double-response actor does not match dynamic response spec"
-              (analyze
+              (model-check
                (make-single-actor-config double-response-spawning-actor)
-                echo-spawn-spec
-                (term ((addr 0 (Addr (Addr (Addr Nat)))))) null)))
+               (make-exclusive-spec echo-spawn-spec))))
