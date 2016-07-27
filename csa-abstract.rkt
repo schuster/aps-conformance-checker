@@ -402,17 +402,26 @@
     (csa#-transition trigger (filter (negate internal-output?) outputs) new-impl-config)))
 
 ;; Returns true if the config is one that is unable to step because of an over-approximation in the
-;; abstraction
+;; abstraction (assumes that there are no empty vector/list/hash references in the actual running
+;; progrm)
 (define (stuck-abstraction-handler-config? c)
-  (or (redex-match csa#
-                   ((in-hole E# (list-ref (list) v#)) ([a#ext v#_out] ...) any_loop)
-                   c)
-      (redex-match csa#
-                   ((in-hole E# (vector-ref (vector) v#)) ([a#ext v#_out] ...) any_loop)
-                   c)
-      (redex-match csa#
-                   ((in-hole E# (hash-ref (hash) v# v#_2)) ([a#ext v#_out] ...) any_loop)
-                   c)))
+  (or (redex-match? csa#
+                    ((in-hole E# (list-ref (list) v#)) any_out any_loop any_spawns)
+                    c)
+      (redex-match? csa#
+                    ((in-hole E# (vector-ref (vector) v#)) any_out any_loop any_spawns)
+                    c)
+      (redex-match? csa#
+                    ((in-hole E# (hash-ref (hash) v#)) any_out any_loop any_spawns)
+                    c)))
+
+(module+ test
+  (test-true "stuck config 1"
+    (stuck-abstraction-handler-config? (inject/H# (term (vector-ref (vector) (* Nat))))))
+  (test-true "stuck config 2"
+    (stuck-abstraction-handler-config? (inject/H# (term (list-ref (list) (* Nat))))))
+  (test-true "stuck config 3"
+    (stuck-abstraction-handler-config? (inject/H# (term (hash-ref (hash) (* Nat)))))))
 
 (define (complete-handler-config? c)
   (redex-match csa# ((in-hole E# (goto s v#_param ...)) any_output any_loop-output any_spawns) c))
