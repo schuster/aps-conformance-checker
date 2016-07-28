@@ -65,9 +65,9 @@
 ;; TODO: add an initial mapping between the implementation and the spec (maybe? might need new
 ;; definition of conformance for that)
 
-;; Given a concrete implementation configuration, a concrete specification configuration, and a list of pairs
-;; that specify the expected impl-config/spec-config matches, returns #t if the conformance check
-;; algorithm can prove conformance, #f otherwise.
+;; Given a concrete implementation configuration, a concrete specification configuration, and a list
+;; of pairs that specify the expected impl-config/spec-config matches, returns #t if the conformance
+;; check algorithm can prove conformance, #f otherwise.
 (define (model-check initial-impl-config
                      initial-spec-config)
   ;; TODO: make these into contracts
@@ -76,26 +76,33 @@
   (unless (aps-valid-config? initial-spec-config)
     (error 'model-check "Invalid initial specification configuration ~s" initial-spec-config))
 
-  (define initial-pairs
-    (sbc
-     (apply related-pair (α-pair initial-impl-config initial-spec-config MAX-RECURSION-DEPTH))))
-  (match-define (list rank1-pairs incoming rank1-related-spec-steps rank1-unrelated-successors)
-    (find-rank1-simulation initial-pairs))
-  (match-define (list simulation-pairs simulation-related-spec-steps)
-    (remove-unsupported rank1-pairs
-                              incoming
-                              rank1-related-spec-steps
-                              rank1-unrelated-successors))
-  (define commitment-satisfying-pairs
-    (find-satisfying-pairs simulation-pairs simulation-related-spec-steps))
-  (define unsatisfying-pairs (set-copy simulation-pairs))
-  (set-symmetric-difference! unsatisfying-pairs commitment-satisfying-pairs)
-  (match-define (list conforming-pairs _)
-    (remove-unsupported commitment-satisfying-pairs
-                        incoming
-                        simulation-related-spec-steps
-                        unsatisfying-pairs))
-  (andmap (curry set-member? conforming-pairs) initial-pairs))
+  (define spec-address (aps-config-only-instance-address initial-spec-config))
+  (cond
+    [(and (not (aps#-unknown-address? spec-address))
+          (andmap (lambda (a) (not (same-address-without-type? a spec-address)))
+                  (csa-config-receptionists initial-impl-config)))
+     #f]
+    [else
+     (define initial-pairs
+       (sbc
+        (apply related-pair (α-pair initial-impl-config initial-spec-config MAX-RECURSION-DEPTH))))
+     (match-define (list rank1-pairs incoming rank1-related-spec-steps rank1-unrelated-successors)
+       (find-rank1-simulation initial-pairs))
+     (match-define (list simulation-pairs simulation-related-spec-steps)
+       (remove-unsupported rank1-pairs
+                           incoming
+                           rank1-related-spec-steps
+                           rank1-unrelated-successors))
+     (define commitment-satisfying-pairs
+       (find-satisfying-pairs simulation-pairs simulation-related-spec-steps))
+     (define unsatisfying-pairs (set-copy simulation-pairs))
+     (set-symmetric-difference! unsatisfying-pairs commitment-satisfying-pairs)
+     (match-define (list conforming-pairs _)
+       (remove-unsupported commitment-satisfying-pairs
+                           incoming
+                           simulation-related-spec-steps
+                           unsatisfying-pairs))
+     (andmap (curry set-member? conforming-pairs) initial-pairs)]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Simulation
@@ -1601,4 +1608,18 @@
   (test-false "Spawned double-response actor does not match dynamic response spec"
               (model-check
                (make-single-actor-config double-response-spawning-actor)
-               (make-exclusive-spec echo-spawn-spec))))
+               (make-exclusive-spec echo-spawn-spec)))
+
+  ;;;; Initial spec address must have actor in the model checker
+  (define no-matching-address-spec
+    (term
+     (((define-state (DoAnything)
+         [* -> (goto DoAnything)]))
+      (goto DoAnything)
+      (addr 500 Nat))))
+  (test-valid-instance? no-matching-address-spec)
+
+  (test-false "Spec config address must have matching actor in implementation configuration"
+   (model-check
+    (make-single-actor-config static-response-actor)
+    (make-exclusive-spec no-matching-address-spec))))

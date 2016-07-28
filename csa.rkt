@@ -12,7 +12,9 @@
          type-subst
          csa-valid-config?
          csa-valid-receptionist-list?
-         csa-config-internal-addresses)
+         csa-config-receptionists
+         csa-config-internal-addresses
+         same-address-without-type?)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -371,3 +373,28 @@
 (define (csa-config-internal-addresses config)
   (redex-let* csa-eval ([(((a _) ...) _ _ _) config])
               (term (a ...))))
+
+(define (csa-config-receptionists config)
+  (third config))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Address matching
+
+(define-judgment-form csa-eval
+  #:mode (same-address-without-type?/j I I)
+  #:contract (same-address-without-type?/j a a)
+  [------
+   (same-address-without-type?/j (addr natural _) (addr natural _))])
+
+(define (same-address-without-type? a1 a2)
+  (judgment-holds (same-address-without-type?/j ,a1 ,a2)))
+
+(module+ test
+  (test-true "Same address"
+             (same-address-without-type? '(addr 1 (Union)) '(addr 1 (Union [A]))))
+  (test-true "Same address 2"
+             (same-address-without-type? '(addr 1 (Union)) '(addr 1 (Union))))
+  (test-false "Not same address"
+              (same-address-without-type? '(addr 2 (Union)) '(addr 1 (Union))))
+  (test-false "Not same address 2"
+              (same-address-without-type? '(addr 2 (Union)) '(addr 1 (Union [A])))))

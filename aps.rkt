@@ -8,6 +8,7 @@
          subst/aps
          aps-valid-config?
          aps-config-observable-addresses
+         aps-config-only-instance-address
 
          ;; Testing helpers
          make-spec
@@ -92,6 +93,20 @@
   (if (redex-match aps-eval Σ c) #t #f))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Selectors
+
+(define (aps-config-only-instance-address config)
+  (redex-let* aps-eval ([((z) _ _) config]
+                        [(_ _ σ) (term z)])
+              (term σ)))
+
+(module+ test
+  (test-case "config only instance address"
+    (define spec (term (([((define-state (A))) (goto A) (addr 2 Nat)]) () ())))
+    (check-not-false (redex-match aps-eval Σ spec))
+    (check-equal? (aps-config-only-instance-address spec) (term (addr 2 Nat)))))
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Misc.
 
 (define (aps-config-observable-addresses config)
@@ -99,7 +114,7 @@
 
 (define-metafunction aps-eval
   config-observable-addresses/mf : Σ -> (a ...)
-  [(config-observable-addresses/mf ((z ...) _))
+  [(config-observable-addresses/mf ((z ...) _ _))
    (a ... ...)
    (where ((_ (goto s a ...) _) ...) (z ...))])
 
@@ -107,10 +122,11 @@
   (check-equal?
    (aps-config-observable-addresses
     (make-exclusive-spec
-     (term ((((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
-             (goto Always (addr 3) (addr 4))
-             (addr 1))))))
-   (term ((addr 3) (addr 4)))))
+     (term (((define-state (Always r1 r2)
+               [* -> (goto Always r1 r2)]))
+            (goto Always (addr 3 Nat) (addr 4 Nat))
+            (addr 1 Nat)))))
+   (term ((addr 3 Nat) (addr 4 Nat)))))
 
 (define (make-exclusive-spec instance)
   (make-spec instance null))
