@@ -84,7 +84,7 @@
      #f]
     [else
      (define initial-pairs
-       (sbc
+       (spc
         (apply related-pair (α-pair initial-impl-config initial-spec-config MAX-RECURSION-DEPTH))))
      (match-define (list rank1-pairs incoming rank1-related-spec-steps rank1-unrelated-successors)
        (find-rank1-simulation initial-pairs))
@@ -178,15 +178,15 @@
                   (related-pair (impl-step-final-config i-step) config)))
               ;; Debugging only
               ;; (for ([successor-pair successor-pairs])
-              ;;   (printf "pre-sbc: ~s\n" successor-pair)
-              ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
-              (for ([sbc-pair (sbc* successor-pairs)])
-                (dict-of-sets-add! incoming sbc-pair (list pair i-step s-step))
-                (unless (or (member sbc-pair (queue->list to-visit))
-                            (set-member? related-pairs sbc-pair)
-                            (set-member? unrelated-successors sbc-pair)
-                            (equal? sbc-pair pair))
-                  (enqueue! to-visit sbc-pair)))))
+              ;;   (printf "pre-spc: ~s\n" successor-pair)
+              ;;   (printf "post-spc: ~s\n" (spc successor-pair)))
+              (for ([spc-pair (spc* successor-pairs)])
+                (dict-of-sets-add! incoming spc-pair (list pair i-step s-step))
+                (unless (or (member spc-pair (queue->list to-visit))
+                            (set-member? related-pairs spc-pair)
+                            (set-member? unrelated-successors spc-pair)
+                            (equal? spc-pair pair))
+                  (enqueue! to-visit spc-pair)))))
           (loop (set-add related-pairs pair) unrelated-successors)])])))
 
 (define (impl-steps-from impl-config spec-config)
@@ -293,7 +293,6 @@
       (spec-step (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (many *)]))
                  null)))))
 
-;; TODO: rename this function to something more generic (not incoming-based)
 (define (dict-of-sets-add! dict key new-pair)
   (match (hash-ref dict key #f)
     [#f
@@ -301,26 +300,27 @@
     [the-set
      (set-add! the-set new-pair)]))
 
-;; Splits, blurs and canonicalizes the given pair, returning the resulting pair
-(define (sbc pair)
+;; Splits, projects, and canonicalizes the given related pair, returning the resulting pairs
+(define (spc pair)
+  (display-step-line "Splitting a specification config")
   (for/list ([spec-config-component (split-spec (related-pair-spec-config pair))])
     ;; TODO: make it an "error" for a non-precise address to match a spec state parameter
-    (display-step-line "Abstracting an implementation config")
-    (match-define (list abstracted-impl-config abstracted-spec)
-      (abstract-by-spec (related-pair-impl-config pair) spec-config-component))
+    (display-step-line "Projecting an implementation config")
+    (match-define (list projected-impl projected-spec)
+      (project-by-relevant-addresses (related-pair-impl-config pair) spec-config-component))
     (display-step-line "Canonicalizing the pair, adding to queue")
     (match-define (list canonicalized-impl canonicalized-spec)
-      (canonicalize-pair (list abstracted-impl-config abstracted-spec)))
+      (canonicalize-pair (list projected-impl projected-spec)))
     (related-pair canonicalized-impl canonicalized-spec)))
 
-(define (sbc* pairs)
-  (append* (map sbc pairs)))
+;; Calls spc on every pair and merges the results into one long list
+(define (spc* pairs)
+  (append* (map spc pairs)))
 
-;; Takes abstract impl config and abstract spec config; returns impl further abstracted according to
-;; spec
-;;
-;; TODO: maybe rename this to "project", since it's a kind of projection (or just to "blur")
-(define (abstract-by-spec p s)
+;; Projects the given configurations into only the portions that are relevant to the specification
+;; configuration, moving the rest of the configurations into the "imprecise" sections of the
+;; abstraction
+(define (project-by-relevant-addresses p s)
   (define spawn-flag-to-blur
     (let ([spec-address (aps#-config-only-instance-address s)])
       (if (or (csa#-new-spawn-address? spec-address)
@@ -337,13 +337,14 @@
 
 (module+ test
   (test-equal? "check that messages with blurred addresses get merged together"
-   (abstract-by-spec (term (()
-                            (((init-addr 2 Nat) (obs-ext 1 Nat) 1)
-                             ((init-addr 2 Nat) (obs-ext 2 Nat) 1)
-                             ((init-addr 2 Nat) (obs-ext 3 Nat) 1))
-                            ()
-                            ()))
-                     (term ((,aps#-no-transition-instance) () (((obs-ext 3 Nat))))))
+   (project-by-relevant-addresses
+    (term (()
+           (((init-addr 2 Nat) (obs-ext 1 Nat) 1)
+            ((init-addr 2 Nat) (obs-ext 2 Nat) 1)
+            ((init-addr 2 Nat) (obs-ext 3 Nat) 1))
+           ()
+           ()))
+    (term ((,aps#-no-transition-instance) () (((obs-ext 3 Nat))))))
    (list (term (()
                 (((init-addr 2 Nat) (* (Addr Nat)) *)
                  ((init-addr 2 Nat) (obs-ext 3 Nat) 1))
