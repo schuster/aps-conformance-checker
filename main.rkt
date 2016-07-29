@@ -73,18 +73,32 @@
 (define MAX-RECURSION-DEPTH 1)
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Main functions
+;; Top-level Algorithm
 
-;; TODO: add some sort of typechecker that runs ahead of the analyzer (but perhaps as part of it, for
-;; the sake of tests) to prevent things like a goto to a state that doesn't exist (and make sure that
-;; a specs's type matches the implementation)
-
-;; TODO: add an initial mapping between the implementation and the spec (maybe? might need new
-;; definition of conformance for that)
-
-;; Given a concrete implementation configuration, a concrete specification configuration, and a list
-;; of pairs that specify the expected impl-config/spec-config matches, returns #t if the conformance
-;; check algorithm can prove conformance, #f otherwise.
+;; Given a concrete implementation configuration, a concrete specification configuration, returns #t
+;; if the conformance-check algorithm can prove that the implementation conforms to the specification,
+;; #f otherwise.
+;;
+;; The algorithm works by abstracting the given initial configurations into abstract configurations,
+;; then constructing a graph-like structure that acts as a constructive proof of conformance for the
+;; abstract pair (roughly, every vertex (pair of configurations) in the graph is in the conformance
+;; relation, and every edge points to the pair that supports some necessary dependency of the source
+;; pair. By the soundness theorem for abstract conformance, if conformance holds for the abstract
+;; pairs (i.e. the pairs are in the graph), then it holds for the original concrete pairs, as well.
+;;
+;; To construct this structure, the algorithm first abstractly interprets the implementation and
+;; specification to find configuration pairs in which the specification can simulate the
+;; implementation up to one step (see find-rank1-simulation). This process also uncovers all edges and
+;; vertices that related pairs would rely upon to be part of a full simulation relation. By removing
+;; those pairs from our proof graph and propagating the results of those removals backwards until we
+;; reach a greatest fixpoint (see remove-unsupported), we end up with a proof graph whose vertices are
+;; all configuration pairs in the simulation.
+;;
+;; Next, we identify the the vertices in the graph whose implementation configurations are not
+;; guaranteed to satisfy all of their commitments in every fair execution (see find-unsatisfying-pairs
+;; below). By removing these nodes and again back-propagating the effects of those removals (with
+;; remove-unsupported again), the resulting graph represents a proof that all of its members are in
+;; the conformance relation.
 (define (model-check initial-impl-config
                      initial-spec-config)
   ;; TODO: make these into contracts
