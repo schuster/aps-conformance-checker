@@ -5,13 +5,13 @@
 (provide model-check)
 
 (require
+ ;; See README.md for a brief description of these files
  data/queue
- "queue-helpers.rkt"
  "aps.rkt"
  "aps-abstract.rkt"
  "csa.rkt"
  "csa-abstract.rkt"
- "graph.rkt")
+ "queue-helpers.rkt")
 
 (module+ test
   (require
@@ -21,38 +21,55 @@
    "rackunit-helpers.rkt"))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Data definitions
+;; Data Structures
 
-;; There are 2 separate issues here. There's a graph-like structure (most easily understood as the
-;; outgoing edges, the big tree-like thing I showed Olin with AND/OR edges), and there's the efficient
-;; representation in code, which is something else.
+;; When the algorithm terminates, all remaining related-pairs <i, s> have the property that the
+;; abstract implementation state i (abstractly) conforms to the abstract specification state s.
 ;;
-;; My thought: the range of the "incoming" dictionary should be sets of info-tuples that include *all*
-;; the information needed to trace back to the previous related pair.
-
-;; Trigger is as listed in csa-abstract
+;; These pairs are vertices of a dependency graph that constitutes a proof that all members of the
+;; graph are in the conformance relation. Earlier in the algorithm, the graph is unsound, and the
+;; algorithm uses a coinductive technique to remove the "local lies" and propagate the conseequences
+;; of retracting these nodes, until we reach a sound fixpoint.
 ;;
-;; TODO: rename all of these
+;; We use this general technique for multiple relations, each of which is a subset of the previous
+;; one, eventually leading to the spec conformance relation.
 (struct related-pair (impl-config spec-config) #:transparent)
 
-;; TODO: think about whether the ranges given here are really "unique": could we have duplicate steps
-;; with the same data? Does that matter? (Very related to the DDD idea of "identity")
+;; A possible transition step of an implementation configuration, representing the computation of a
+;; single message/timeout handler. Fields are as follows:
+;;
+;; trigger: A representation of the message-receive or timeout that kicked off this
+;; computation. Exact representation matches the trigger# form in csa#.
+;;
+;; from-observer?: A boolean indicating whether the trigger was caused by the "observer" portion of
+;; the environment, as described in the conformance semantics. Can be true only for steps with
+;; external-receive triggers.
+;;
+;; outputs: A list of abstract address/abstract value pairs indicating the messages sent to the
+;; environment during the computation.
+;;
+;; dest-config: The implementation configuration reached at the end of this transition step
+(struct impl-step (trigger from-observer? outputs dest-config) #:transparent)
 
-;; Incoming: dict from related-pair to (mutable-setof (related-pair, impl-step, spec-step)
-
-;; related-spec-steps: dict from (related-pair, impl-step) to (mutable-setof spec-step)
-
-(struct impl-step (from-observer? trigger outputs final-config) #:transparent)
-
-;; TODO: probably want to add satisfied commitments here
-(struct spec-step (final-config spawned-specs) #:transparent)
+;; A possible (weak) transition step of a specification configuration, representing the actions taken
+;; to match some (handler-level) implementation transition step. Weak transitions correspond to the
+;; general idea of weak simulations; see the dissertation for details. Fields are as follows:
+;;
+;; dest-config: The specification configuration reached at the end of the weak transition.
+;;
+;; spawned-specs: The set of specification configurations forked off by this transition
+;; step. A conforming implementation configuration must conform to all of these configs in
+;; addition to dest-config.
+(struct spec-step (dest-config spawned-specs) #:transparent)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Constants
 
-;; The maximum number of times to unfold a recursive type while generating an abstract value of that
-;; type. This number is an arbitrary choice for now. Later it may make sense to base it off of the
-;; level of detail in the spec or program.
+;; The maximum number of times to unfold a recursive type while generating an exhaustive set of
+;; abstract values for that type.
+;;
+;; This number is an arbitrary choice for now. Later it may make sense to base it off of the level of
+;; detail in the spec or program.
 (define MAX-RECURSION-DEPTH 1)
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -174,8 +191,8 @@
           (for ([i-step i-steps])
             (for ([s-step (hash-ref related-spec-steps (list pair i-step))])
               (define successor-pairs
-                (for/list ([config (cons (spec-step-final-config s-step) (spec-step-spawned-specs s-step))])
-                  (related-pair (impl-step-final-config i-step) config)))
+                (for/list ([config (cons (spec-step-dest-config s-step) (spec-step-spawned-specs s-step))])
+                  (related-pair (impl-step-dest-config i-step) config)))
               ;; Debugging only
               ;; (for ([successor-pair successor-pairs])
               ;;   (printf "pre-spc: ~s\n" successor-pair)
@@ -191,8 +208,8 @@
 
 (define (impl-steps-from impl-config spec-config)
   (define (add-observed-flag transition observed?)
-    (impl-step observed?
-               (csa#-transition-trigger transition)
+    (impl-step (csa#-transition-trigger transition)
+               observed?
                (csa#-transition-outputs transition)
                (csa#-transition-final-config transition)))
 
@@ -242,43 +259,43 @@
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step #f '(internal-receive (init-addr 0 Nat) (* Nat)) null #f))
+      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f null #f))
      (mutable-set (spec-step null-spec-config null))))
   (test-case "Null transition not okay for observed input"
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step #t '(external-receive (init-addr 0 Nat) (* Nat)) null #f))
+      (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null #f))
      (mutable-set)))
   (test-case "No match if trigger does not match"
     (check-equal?
      (matching-spec-steps
       (make-Σ# '((define-state (A) [x -> (goto A)])) '(goto A) null null)
-      (impl-step #t '(external-receive (init-addr 0 Nat) (* Nat)) null #f))
+      (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null #f))
      (mutable-set)))
   (test-case "Unobserved outputs don't need to match"
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step #f '(internal-receive (init-addr 0 Nat) (* Nat)) (list '((obs-ext 1 Nat) (* Nat))) #f))
+      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) #f))
      (mutable-set (spec-step null-spec-config null))))
   (test-case "No match if outputs do not match"
     (check-equal?
      (matching-spec-steps
       (make-Σ# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat))))
-      (impl-step #f '(internal-receive (init-addr 0 Nat) (* Nat)) (list '((obs-ext 1 Nat) (* Nat))) #f))
+      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) #f))
      (mutable-set)))
   (test-case "Output can be matched by previous commitment"
     (check-equal?
      (matching-spec-steps
       (make-Σ# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat) (single *))))
-      (impl-step #f '(internal-receive (init-addr 0 Nat) (* Nat)) (list '((obs-ext 1 Nat) (* Nat))) #f))
+      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) #f))
      (mutable-set (spec-step (make-Σ# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat)))) null))))
   (test-case "Output can be matched by new commitment"
     (check-equal?
      (matching-spec-steps
       (make-Σ# '((define-state (A) [x -> (with-outputs ([x *]) (goto A))])) '(goto A) null null)
-      (impl-step #t '(external-receive (init-addr 0 Nat) (obs-ext 1 Nat)) (list '((obs-ext 1 Nat) (* Nat))) #f))
+      (impl-step '(external-receive (init-addr 0 Nat) (obs-ext 1 Nat)) #t (list '((obs-ext 1 Nat) (* Nat))) #f))
      (mutable-set (spec-step (make-Σ# '((define-state (A) [x -> (with-outputs ([x *]) (goto A))]))
                                       '(goto A)
                                       null
@@ -288,7 +305,7 @@
     (check-equal?
      (matching-spec-steps
       (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (single *)]))
-      (impl-step #t '(external-receive (init-addr 0 Nat) (* Nat)) null #f))
+      (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null #f))
      (mutable-set
       (spec-step (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (many *)]))
                  null)))))
@@ -430,12 +447,12 @@
   (define bz-pair (related-pair 'B 'Z))
   (define cw-pair (related-pair 'C 'W))
 
-  (define aa-step (impl-step #f '(timeout (init-addr 0 Nat)) null 'A))
+  (define aa-step (impl-step '(timeout (init-addr 0 Nat)) #f null 'A))
   (define xx-step (spec-step 'X null))
-  (define ab-step (impl-step #f '(timeout (init-addr 0 Nat)) null 'B))
+  (define ab-step (impl-step '(timeout (init-addr 0 Nat)) #f null 'B))
   (define xy-step (spec-step 'Y null))
   (define xz-step (spec-step 'Z null))
-  (define bc-step (impl-step #f '(timeout (init-addr 0 Nat)) null 'C))
+  (define bc-step (impl-step '(timeout (init-addr 0 Nat)) #f null 'C))
   (define yw-step (spec-step 'W null))
 
   (test-equal? "Remove no pairs, because no list"
