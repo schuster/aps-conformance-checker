@@ -11,7 +11,8 @@
  "aps-abstract.rkt"
  "csa.rkt"
  "csa-abstract.rkt"
- "queue-helpers.rkt")
+ "queue-helpers.rkt"
+ "set-helpers.rkt")
 
 (module+ test
   (require
@@ -121,8 +122,10 @@
                            rank1-unrelated-successors))
      (define commitment-satisfying-pairs
        (find-satisfying-pairs simulation-pairs simulation-related-spec-steps))
-     (define unsatisfying-pairs (set-copy simulation-pairs))
-     (set-symmetric-difference! unsatisfying-pairs commitment-satisfying-pairs)
+     (define unsatisfying-pairs
+       ;; have to make a copy here because set-symmetric-difference has a bug when called with
+       ;; intensionally equal sets (https://github.com/racket/racket/issues/1403)
+       (set-symmetric-difference simulation-pairs (set-copy commitment-satisfying-pairs)))
      (match-define (list conforming-pairs _)
        (remove-unsupported commitment-satisfying-pairs
                            incoming
@@ -432,7 +435,7 @@
 
   (let loop ()
     (match (dequeue-if-non-empty! unrelated-successors)
-      [#f (list remaining-pairs related-spec-steps)]
+      [#f (list (set-freeze remaining-pairs) related-spec-steps)]
       [unrelated-pair
        (for ([transition (hash-ref incoming unrelated-pair)])
          (match-define (list predecessor i-step s-step) transition)
@@ -474,19 +477,19 @@
      ;; unrelated sucessors
      null)
     (list
-     (mutable-set ax-pair)
+     (set ax-pair)
      (mutable-hash [(list ax-pair aa-step) (mutable-set xx-step)])))
 
   (test-equal? "Remove no pairs, because unrelated-matches contained only a redundant support"
     (remove-unsupported
-     (mutable-set ax-pair bz-pair)
+     (set ax-pair bz-pair)
      (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
                    [bz-pair (mutable-set (list ax-pair ab-step xz-step))]
                    [ax-pair (mutable-set)])
      (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step xz-step)])
      (list by-pair))
     (list
-     (mutable-set ax-pair bz-pair)
+     (set ax-pair bz-pair)
      (mutable-hash [(list ax-pair ab-step) (mutable-set xz-step)])))
 
   (test-equal? "Remove last remaining pair"
@@ -497,7 +500,7 @@
      (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step)])
      (list by-pair))
     (list
-     (mutable-set)
+     (set)
      (mutable-hash [(list ax-pair ab-step) (mutable-set)])))
 
   (test-equal? "Remove a redundant support"
@@ -514,7 +517,7 @@
      ;; unrelated successors
      (list cw-pair))
     (list
-     (mutable-set ax-pair bz-pair)
+     (set ax-pair bz-pair)
      (mutable-hash [(list ax-pair ab-step) (mutable-set xz-step)]
                    [(list by-pair bc-step) (mutable-set)])))
 
@@ -531,7 +534,7 @@
        ;; unrelated successors
        (list cw-pair))
       (list
-       (mutable-set)
+       (set)
        (mutable-hash [(list ax-pair ab-step) (mutable-set)]
                      [(list by-pair bc-step) (mutable-set)]))))
 
