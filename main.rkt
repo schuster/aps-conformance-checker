@@ -103,12 +103,8 @@
 (define/contract (model-check initial-impl-config initial-spec-config)
   (-> csa-valid-config? aps-valid-config? boolean?)
 
-  (define spec-address (aps-config-only-instance-address initial-spec-config))
   (cond
-    [(and (not (aps#-unknown-address? spec-address))
-          (andmap (lambda (a) (not (same-address-without-type? a spec-address)))
-                  (csa-config-receptionists initial-impl-config)))
-     #f]
+    [(spec-address-in-impl? initial-impl-config initial-spec-config) #f]
     [else
      (define initial-pairs
        (spc
@@ -132,6 +128,14 @@
                            simulation-related-spec-steps
                            unsatisfying-pairs))
      (andmap (curry set-member? conforming-pairs) initial-pairs)]))
+
+;; Returns #t if the self-address for the specification configuration belongs to an actor in the
+;; implementation configuration (an initial requirement for conformance), #f otherwise.
+(define (spec-address-in-impl? impl-config spec-config)
+  (define spec-address (aps-config-only-instance-address spec-config))
+  (and (not (aps#-unknown-address? spec-address))
+       (andmap (lambda (a) (not (same-address-without-type? a spec-address)))
+               (csa-config-receptionists impl-config))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Simulation
