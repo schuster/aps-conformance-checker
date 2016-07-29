@@ -99,13 +99,8 @@
 ;; below). By removing these nodes and again back-propagating the effects of those removals (with
 ;; remove-unsupported again), the resulting graph represents a proof that all of its members are in
 ;; the conformance relation.
-(define (model-check initial-impl-config
-                     initial-spec-config)
-  ;; TODO: make these into contracts
-  (unless (csa-valid-config? initial-impl-config)
-    (error 'model-check "Invalid initial implementation configuration ~s" initial-impl-config))
-  (unless (aps-valid-config? initial-spec-config)
-    (error 'model-check "Invalid initial specification configuration ~s" initial-spec-config))
+(define/contract (model-check initial-impl-config initial-spec-config)
+  (-> csa-valid-config? aps-valid-config? boolean?)
 
   (define spec-address (aps-config-only-instance-address initial-spec-config))
   (cond
