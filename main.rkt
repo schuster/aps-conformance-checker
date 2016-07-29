@@ -91,9 +91,9 @@
 ;; specification to find configuration pairs in which the specification can simulate the
 ;; implementation up to one step (see find-rank1-simulation). This process also uncovers all edges and
 ;; vertices that related pairs would rely upon to be part of a full simulation relation. By removing
-;; those pairs from our proof graph and propagating the results of those removals backwards until we
-;; reach a greatest fixpoint (see remove-unsupported), we end up with a proof graph whose vertices are
-;; all configuration pairs in the simulation.
+;; from the graph all pairs that depend on pairs outside the graph and propagating the results of
+;; those removals backwards until we reach a greatest fixpoint (see remove-unsupported), we end up
+;; with a proof graph whose vertices are all configuration pairs in the simulation.
 ;;
 ;; Next, we identify the the vertices in the graph whose implementation configurations are not
 ;; guaranteed to satisfy all of their commitments in every fair execution (see find-unsatisfying-pairs
