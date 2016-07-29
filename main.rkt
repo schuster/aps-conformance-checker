@@ -546,30 +546,6 @@
   simulation-pairs)
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Misc. Helpers
-
-;; Returns the unique minimal element from the list according to the rank function, if there is such
-;; an element, or #f otherwise
-(define (unique-min elements rank)
-  (cond
-    [(null? elements) #f]
-    [else
-       (define rank-list (map (lambda (e) (cons (rank e) e)) elements))
-       (define min-rank (apply min (map car rank-list)))
-       (match (filter (lambda (re) (equal? (car re) min-rank)) rank-list)
-         [(list re) (cdr re)]
-         [_ #f])]))
-
-(module+ test
-  (check-false (unique-min null values))
-  (check-equal? (unique-min (list 1 2 3) values) 1)
-  (check-equal? (unique-min (list 3 2 1) values) 1)
-  (check-false (unique-min (list 3 1 2 1) values))
-
-  (check-false (unique-min (list "a" "aa" "b" "aaa") string-length))
-  (check-equal? (unique-min (list "a" "aa" "aaa") string-length) "a"))
-
-;; ---------------------------------------------------------------------------------------------------
 ;; Debugging
 
 (define DISPLAY-STEPS #f)
