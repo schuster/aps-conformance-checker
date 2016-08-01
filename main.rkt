@@ -401,7 +401,32 @@
     [the-set
      (set-add! the-set val)]))
 
-;; Splits, projects, and canonicalizes the given related pair, returning the resulting pairs
+;; ---------------------------------------------------------------------------------------------------
+;; Split/Project/Canonicalize (SPC)
+
+;; Performs the SPC (split/project/canonicalize) operation on a config pair, returning its derivative
+;; pairs. This entails the following:
+;;
+;; 1. For each address in the output commitment map that is *not* an argument to the current state,
+;; split those commitments off into a new specification with a dummy FSM.
+;;
+;; 2. For each specification resulting from step 1, project the implementation configuration according
+;; to the addresses relevant to that spec. This means merging external addresses not used in the spec
+;; into a single abstract value and choosing some subset of actors (up to some statically known
+;; number) to remain precise while merging the others together.
+;;
+;; 3. Canonicalize the addresses in both configurations. That is, rename them to some canonical naming
+;; so that we avoid the orbit problem with other similar pairs that we have already explored (or that
+;; we will explore).
+;;
+;; SPC keeps our explored state-space finite. By creating a new spec for each no-longer-used
+;; commitment address, we ensure that the number of adddresses in a spec config is no more than max(1,
+;; maxStateParams), where maxStateParams is the maximum number of formal parameters for any state in
+;; the original (static) specification. Projecting the implementation configuration according to the
+;; new spec component keeps the state-space of the impl configs finite.
+;;
+;; Canonicalization does not change the finite-ness of the state-space, but it does add a useful
+;; symmetry reduction (as mentioned above).
 (define (spc pair)
   (display-step-line "Splitting a specification config")
   (for/list ([spec-config-component (split-spec (config-pair-spec-config pair))])
