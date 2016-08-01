@@ -10,6 +10,7 @@
  csa#-handle-all-internal-messages
  csa#-handle-all-timeouts
  csa#-new-spawn-address?
+ csa#-abstract-config
 
  ;; Required by APS#
  csa#-output-address
@@ -20,11 +21,10 @@
  csa#-sort-escapes
  csa#-blur-and-age-receptionists
  csa#-age-internal-addrs
+ csa#-abstract-address
 
  ;; Unclear what needs them
  csa#-internal-trigger?
- α-config
- α-e
  blur-irrelevant-actors
  blur-externals
  csa#-merge-duplicate-messages
@@ -994,101 +994,118 @@
 ;; Abstracts the given CSA configuration, with a maximum recursion depth for values
 ;;
 ;; NOTE: currently supports only no-messages, no-externals configs
-(define (α-config concrete-config internal-addresses max-depth)
-  (term (α-config/mf ,concrete-config ,internal-addresses ,max-depth)))
+(define (csa#-abstract-config concrete-config internal-addresses max-depth)
+  (term (abstract-config/mf ,concrete-config ,internal-addresses ,max-depth)))
 
 (define-metafunction csa#
-  α-config/mf : K (a_internal ...) natural_recursion-depth -> K#
-  [(α-config/mf ((αn ...) ; actors
+  abstract-config/mf : K (a_internal ...) natural_recursion-depth -> K#
+  [(abstract-config/mf ((αn ...) ; actors
                  () ; messages-in-transit
                  (a_rec ...) ; receptionists
                  () ; externals
                  )
                 (a_internal ...)
                 natural_depth)
-   ((α#n ...) () ((α-e a_rec (a_internal ...) natural_depth) ...) ())
-   (where (α#n ...) ((α-actor αn (a_internal ...) natural_depth) ...))])
+   ((α#n ...) () ((abstract-e a_rec (a_internal ...) natural_depth) ...) ())
+   (where (α#n ...) ((abstract-actor αn (a_internal ...) natural_depth) ...))])
 
 (define-metafunction csa#
-  α-actor : αn (a_internals ...) natural_depth -> α#n
-  [(α-actor (a_this ((S ...) e)) (a ...) natural_depth)
-   ((α-e a_this (a ...) natural_depth)
-    (((α-S S (a ...) natural_depth) ...)
-     (α-e e (a ...) natural_depth)))])
+  abstract-actor : αn (a_internals ...) natural_depth -> α#n
+  [(abstract-actor (a_this ((S ...) e)) (a ...) natural_depth)
+   ((abstract-e a_this (a ...) natural_depth)
+    (((abstract-S S (a ...) natural_depth) ...)
+     (abstract-e e (a ...) natural_depth)))])
 
 (define-metafunction csa#
-  α-S : S (a_internals ...) natural_depth -> S#
-  [(α-S (define-state (s [x τ] ...) (x_m) e) (a ...) natural_depth)
-   (define-state (s [x τ] ...) (x_m) (α-e e (a ...) natural_depth))]
-  [(α-S (define-state (s [x τ] ...) (x_m) e [(timeout n) e_timeout]) (a ...) natural_depth)
+  abstract-S : S (a_internals ...) natural_depth -> S#
+  [(abstract-S (define-state (s [x τ] ...) (x_m) e) (a ...) natural_depth)
+   (define-state (s [x τ] ...) (x_m) (abstract-e e (a ...) natural_depth))]
+  [(abstract-S (define-state (s [x τ] ...) (x_m) e [(timeout n) e_timeout]) (a ...) natural_depth)
    (define-state (s [x τ] ...) (x_m)
-     (α-e e (a ...) natural_depth)
-     [(timeout (* Nat)) (α-e e_timeout (a ...) natural_depth)])])
+     (abstract-e e (a ...) natural_depth)
+     [(timeout (* Nat)) (abstract-e e_timeout (a ...) natural_depth)])])
 
 ;; Abstracts the given expression to the given depth, with the given address list indicating the set
 ;; of internal addresses
 (define-metafunction csa#
-  α-e : e (a ...) natural_depth -> e#
-  [(α-e natural _ _) (* Nat)]
-  [(α-e string _ _) (* String)]
-  [(α-e x _ _) x]
-  [(α-e (addr natural τ) (_ ... (addr natural _) _ ...) _) (init-addr natural τ)]
-  [(α-e (addr natural τ) _ _) (obs-ext natural τ)]
-  [(α-e (goto s e ...) (a ...) natural_depth) (goto s (α-e e (a ...) natural_depth) ...)]
-  [(α-e (begin e ...) (a ...) natural_depth) (begin (α-e e (a ...) natural_depth) ...)]
-  [(α-e (send e_1 e_2) (a ...) natural_depth)
-   (send (α-e e_1 (a ...) natural_depth) (α-e e_2 (a ...) natural_depth))]
-  [(α-e (spawn any_location τ e S ...) (a ...) natural_depth)
-   (spawn any_location τ (α-e e (a ...) natural_depth) (α-S S (a ...) natural_depth) ...)]
-  [(α-e (let ([x e_binding] ...) e_body) (a ...) natural)
-   (let ([x (α-e e_binding (a ...) natural)] ...) (α-e e_body (a ...) natural))]
-  [(α-e (case e_val [(t x ...) e_clause] ...) (a ...) natural_depth)
-   (case (α-e e_val (a ...) natural_depth) [(t x ...) (α-e e_clause (a ...) natural_depth)] ...)]
-  [(α-e (printf string e ...) (a ...) natural_depth)
-   (printf string (α-e e (a ...) natural_depth) ...)]
-  [(α-e (primop e ...) (a ...) natural_depth) (primop (α-e e (a ...) natural_depth) ...)]
+  abstract-e : e (a ...) natural_depth -> e#
+  [(abstract-e natural _ _) (* Nat)]
+  [(abstract-e string _ _) (* String)]
+  [(abstract-e x _ _) x]
+  [(abstract-e a (a_int ...) _) (abstract-address a (a_int ...))]
+  [(abstract-e (goto s e ...) (a ...) natural_depth)
+   (goto s (abstract-e e (a ...) natural_depth) ...)]
+  [(abstract-e (begin e ...) (a ...) natural_depth) (begin (abstract-e e (a ...) natural_depth) ...)]
+  [(abstract-e (send e_1 e_2) (a ...) natural_depth)
+   (send (abstract-e e_1 (a ...) natural_depth) (abstract-e e_2 (a ...) natural_depth))]
+  [(abstract-e (spawn any_location τ e S ...) (a ...) natural_depth)
+   (spawn any_location
+          τ
+          (abstract-e e (a ...) natural_depth)
+          (abstract-S S (a ...) natural_depth) ...)]
+  [(abstract-e (let ([x e_binding] ...) e_body) (a ...) natural)
+   (let ([x (abstract-e e_binding (a ...) natural)] ...) (abstract-e e_body (a ...) natural))]
+  [(abstract-e (case e_val [(t x ...) e_clause] ...) (a ...) natural_depth)
+   (case (abstract-e e_val (a ...) natural_depth)
+     [(t x ...) (abstract-e e_clause (a ...) natural_depth)] ...)]
+  [(abstract-e (printf string e ...) (a ...) natural_depth)
+   (printf string (abstract-e e (a ...) natural_depth) ...)]
+  [(abstract-e (primop e ...) (a ...) natural_depth)
+   (primop (abstract-e e (a ...) natural_depth) ...)]
   ;; TODO: check for the depth=0 case on variants
-  [(α-e (variant t e ...) (a ...) natural_depth)
+  [(abstract-e (variant t e ...) (a ...) natural_depth)
    ;; TODO: take out the "max" issue here
-   (variant t (α-e e (a ...) ,(max 0 (- (term natural_depth) 1))) ...)]
+   (variant t (abstract-e e (a ...) ,(max 0 (- (term natural_depth) 1))) ...)]
   ;; TODO: check for the depth=0 case on records
-  [(α-e (record [l e] ...) (a ...) natural_depth)
+  [(abstract-e (record [l e] ...) (a ...) natural_depth)
    ;; TODO: take out the "max" issue here
-   (record [l (α-e e (a ...) ,(max 0 (sub1 (term natural_depth))))] ...)]
-  [(α-e (: e l) (a ...) natural_depth) (: (α-e e (a ...) natural_depth) l)]
-  [(α-e (! e_1 [l e_2]) (a ...) natural_depth)
-   (! (α-e e_1 (a ...) natural_depth) [l (α-e e_2 (a ...) natural_depth)])]
+   (record [l (abstract-e e (a ...) ,(max 0 (sub1 (term natural_depth))))] ...)]
+  [(abstract-e (: e l) (a ...) natural_depth) (: (abstract-e e (a ...) natural_depth) l)]
+  [(abstract-e (! e_1 [l e_2]) (a ...) natural_depth)
+   (! (abstract-e e_1 (a ...) natural_depth) [l (abstract-e e_2 (a ...) natural_depth)])]
   ;; TODO: check for the depth=0 case on lists and vectors
-  [(α-e (list e ...) (a ...) natural_depth)
+  [(abstract-e (list e ...) (a ...) natural_depth)
    (list e#_unique ...)
-   (where (e# ...) ((α-e e (a ...) ,(max 0 (sub1 (term natural_depth)))) ...))
+   (where (e# ...) ((abstract-e e (a ...) ,(max 0 (sub1 (term natural_depth)))) ...))
    (where (e#_unique ...) ,(set->list (list->set (term (e# ...)) )))]
-  [(α-e (vector e ...) (a ...) natural_depth)
+  [(abstract-e (vector e ...) (a ...) natural_depth)
    (vector e#_unique ...)
-   (where (e# ...) ((α-e e (a ...) ,(max 0 (sub1 (term natural_depth)))) ...))
+   (where (e# ...) ((abstract-e e (a ...) ,(max 0 (sub1 (term natural_depth)))) ...))
    (where (e#_unique ...) ,(set->list (list->set (term (e# ...)) )))]
-  [(α-e (hash) _ _) (hash)]
-  [(α-e (for/fold ([x_1 e_1]) ([x_2 e_2]) e) (a ...) natural)
-   (for/fold ([x_1 (α-e e_1 (a ...) natural)])
-             ([x_2 (α-e e_2 (a ...) natural)])
-     (α-e e (a ...) natural))])
+  [(abstract-e (hash) _ _) (hash)]
+  [(abstract-e (for/fold ([x_1 e_1]) ([x_2 e_2]) e) (a ...) natural)
+   (for/fold ([x_1 (abstract-e e_1 (a ...) natural)])
+             ([x_2 (abstract-e e_2 (a ...) natural)])
+     (abstract-e e (a ...) natural))])
+
+
+;; Abstracts the address a, where internal-addresses is the list of all addresses belonging to actors
+;; in a's implementation configuration.
+(define (csa#-abstract-address a internal-addresses)
+  (term (abstract-address ,a ,internal-addresses)))
+
+(define-metafunction csa#
+  abstract-address : a (a ...) -> a#
+  [(abstract-address (addr natural τ) (_ ... (addr natural _) _ ...)) (init-addr natural τ)]
+  [(abstract-address (addr natural τ) _) (obs-ext natural τ)])
+
 
 (module+ test
-  (check-equal? (term (α-e (record [f1 1] [f2 2]) () 1))
+  (check-equal? (term (abstract-e (record [f1 1] [f2 2]) () 1))
                 (term (record [f1 (* Nat)] [f2 (* Nat)])))
   (check-not-false
    (redex-match? csa#
                  (variant Foo (init-addr 1 Nat) (obs-ext 2 Nat))
-                 (term (α-e (variant Foo (addr 1 Nat) (addr 2 Nat)) ((addr 1 Nat)) 10))))
-  (check-equal? (term (α-e (list 1 2) () 10))
+                 (term (abstract-e (variant Foo (addr 1 Nat) (addr 2 Nat)) ((addr 1 Nat)) 10))))
+  (check-equal? (term (abstract-e (list 1 2) () 10))
                 (term (list (* Nat))))
-  (check-equal? (term (α-e (vector 1 2) () 10))
+  (check-equal? (term (abstract-e (vector 1 2) () 10))
                 (term (vector (* Nat))))
   (test-equal? "Abstraction on non-matching addresses"
-               (term (α-e (addr 1 (Union [A])) ((addr 1 (Union [B]))) 0))
+               (term (abstract-e (addr 1 (Union [A])) ((addr 1 (Union [B]))) 0))
                (term (init-addr 1 (Union [A]))))
   (test-equal? "Abstraction on non-matching addresses"
-               (term (α-e (addr 2 (Union [A])) ((addr 1 (Union [B]))) 0))
+               (term (abstract-e (addr 2 (Union [A])) ((addr 1 (Union [B]))) 0))
                (term (obs-ext 2 (Union [A])))))
 
 ;; ---------------------------------------------------------------------------------------------------

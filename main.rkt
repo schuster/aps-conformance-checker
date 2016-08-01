@@ -136,8 +136,7 @@
     [(spec-address-in-impl? initial-impl-config initial-spec-config) #f]
     [else
      (define initial-pairs
-       (spc
-        (apply config-pair (α-pair initial-impl-config initial-spec-config MAX-RECURSION-DEPTH))))
+       (spc (abstract-pair initial-impl-config initial-spec-config MAX-RECURSION-DEPTH)))
      (match-define (list rank1-pairs
                          rank1-unrelated-successors
                          incoming-steps
@@ -168,6 +167,17 @@
   (and (not (aps#-unknown-address? spec-address))
        (andmap (lambda (a) (not (same-address-without-type? a spec-address)))
                (csa-config-receptionists impl-config))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Abstraction
+
+;; Abstracts the given concrete implementation configuration and spec config, with max-depth
+;; indicating the maximum number of times to unroll a recursive type
+(define (abstract-pair impl-config spec-config max-depth)
+  (define internal-addresses (csa-config-internal-addresses impl-config))
+  (config-pair
+   (csa#-abstract-config impl-config internal-addresses max-depth)
+   (aps#-abstract-config spec-config internal-addresses)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Simulation

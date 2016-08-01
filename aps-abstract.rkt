@@ -10,6 +10,7 @@
  aps#-config-receptionists
  aps#-matching-steps
  aps#-resolve-outputs
+ aps#-abstract-config
 
  ;; Required by model checker for projection
  aps#-relevant-external-addrs
@@ -24,7 +25,7 @@
  aps#
 
  ;; Should be moved elsewhere
- α-pair
+
  canonicalize-pair
 
  ;; Testing helpers
@@ -68,33 +69,27 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
 
-(define (α-pair initial-impl-config
-                initial-spec-config
-                max-depth)
-  (define internal-addresses (csa-config-internal-addresses initial-impl-config))
-  (list
-   (α-config initial-impl-config internal-addresses max-depth)
-   (aps#-α-Σ initial-spec-config internal-addresses)))
+
 
 ;; TODO: change the language and conformance so that I don't have to do this little initial
 ;; abstraction
-(define (aps#-α-Σ spec-config internal-addresses)
+(define (aps#-abstract-config spec-config internal-addresses)
   ;; Doing a redex-let here just to add a codomain contract
-  (redex-let aps# ([Σ (term (aps#-α-Σ/mf ,spec-config ,internal-addresses))])
+  (redex-let aps# ([Σ (term (aps#-abstract-config/mf ,spec-config ,internal-addresses))])
              (term Σ)))
 
 ;; TODO: rewrite this and put a better contract on here once we put #'s on all the APS# non-terminals
 (define-metafunction aps#
-  aps#-α-Σ/mf : any (a ...) -> any
-  [(aps#-α-Σ/mf a (a_internal ...))
-   (α-e a (a_internal ...) 0)]
-  [(aps#-α-Σ/mf (any ...) (a ...))
-   ((aps#-α-Σ/mf any (a ...)) ...)]
-  [(aps#-α-Σ/mf any _) any])
+  aps#-abstract-config/mf : any (a ...) -> any
+  [(aps#-abstract-config/mf a (a_internal ...))
+   ,(csa#-abstract-address (term a) (term (a_internal ...)))]
+  [(aps#-abstract-config/mf (any ...) (a ...))
+   ((aps#-abstract-config/mf any (a ...)) ...)]
+  [(aps#-abstract-config/mf any _) any])
 
 (module+ test
   (check-equal?
-   (aps#-α-Σ (term (((((define-state (A x) (* -> (goto A x))))
+   (aps#-abstract-config (term (((((define-state (A x) (* -> (goto A x))))
                       (goto A (addr 1 Nat))
                       (addr 0 Nat)))
                     ()
@@ -107,7 +102,7 @@
           ())))
 
   (test-equal? "Abstraction check for addresses whose types don't match"
-   (aps#-α-Σ (term (((((define-state (A)))
+   (aps#-abstract-config (term (((((define-state (A)))
                       (goto A)
                       (addr 0 (Union [B]))))
                     ()
