@@ -5,7 +5,7 @@
 (provide
  ;; Required by model checker
  (struct-out csa#-transition)
- csa#-generate-abstract-messages
+ csa#-messages-of-type
  csa#-handle-message
  csa#-handle-all-internal-messages
  csa#-handle-all-timeouts
@@ -132,42 +132,42 @@
 ;; addresses
 (define next-generated-address 100)
 
-(define (csa#-generate-abstract-messages type max-depth)
-  (term (generate-abstract-messages/mf ,type ,max-depth)))
+(define (csa#-messages-of-type type max-depth)
+  (term (messages-of-type/mf ,type ,max-depth)))
 
 (define-metafunction csa#
-  generate-abstract-messages/mf : τ natural -> (v# ...)
-  [(generate-abstract-messages/mf Nat _) ((* Nat))]
-  [(generate-abstract-messages/mf String _) ((* String))]
-  [(generate-abstract-messages/mf (Union) _) ()]
-  [(generate-abstract-messages/mf (Union [t_1 τ_1 ...] [t_rest τ_rest ...] ...) natural_max-depth)
+  messages-of-type/mf : τ natural -> (v# ...)
+  [(messages-of-type/mf Nat _) ((* Nat))]
+  [(messages-of-type/mf String _) ((* String))]
+  [(messages-of-type/mf (Union) _) ()]
+  [(messages-of-type/mf (Union [t_1 τ_1 ...] [t_rest τ_rest ...] ...) natural_max-depth)
    (v#_1 ... v#_rest ...)
    (where (v#_1 ...) (generate-variants natural_max-depth t_1 τ_1 ...))
    (where (v#_rest ...)
-          (generate-abstract-messages/mf (Union [t_rest τ_rest ...] ...) natural_max-depth))]
-  [(generate-abstract-messages/mf (Union) _) ()]
-  [(generate-abstract-messages/mf (minfixpt X τ) 0)
+          (messages-of-type/mf (Union [t_rest τ_rest ...] ...) natural_max-depth))]
+  [(messages-of-type/mf (Union) _) ()]
+  [(messages-of-type/mf (minfixpt X τ) 0)
    ((* (minfixpt X τ)))]
-  [(generate-abstract-messages/mf (minfixpt X τ) natural_max-depth)
-   (generate-abstract-messages/mf (type-subst τ X (minfixpt X τ)) ,(sub1 (term natural_max-depth)))]
-  [(generate-abstract-messages/mf (Record [l_1 τ_1] [l_rest τ_rest] ...) natural_max-depth)
+  [(messages-of-type/mf (minfixpt X τ) natural_max-depth)
+   (messages-of-type/mf (type-subst τ X (minfixpt X τ)) ,(sub1 (term natural_max-depth)))]
+  [(messages-of-type/mf (Record [l_1 τ_1] [l_rest τ_rest] ...) natural_max-depth)
    ,(for/fold ([records-so-far null])
-              ([sub-record (term (generate-abstract-messages/mf (Record [l_rest τ_rest] ...) natural_max-depth))])
+              ([sub-record (term (messages-of-type/mf (Record [l_rest τ_rest] ...) natural_max-depth))])
       (append
-       (for/list ([generated-v (term (generate-abstract-messages/mf τ_1 natural_max-depth))])
+       (for/list ([generated-v (term (messages-of-type/mf τ_1 natural_max-depth))])
          (redex-let csa# ([(record [l_other v#_other] ...) sub-record]
                           [v#_1 generated-v])
            (term (record [l_1 v#_1] [l_other v#_other] ...))))
        records-so-far))]
-  [(generate-abstract-messages/mf (Record) natural_max-depth)
+  [(messages-of-type/mf (Record) natural_max-depth)
    ((record))]
-  [(generate-abstract-messages/mf (Addr τ) _)
+  [(messages-of-type/mf (Addr τ) _)
    ,(begin
       (set! next-generated-address (add1 next-generated-address))
       (term ((obs-ext ,next-generated-address τ))))]
-  [(generate-abstract-messages/mf (Listof τ) _) ((* (Listof τ)))]
-  [(generate-abstract-messages/mf (Vectorof τ) _) ((* (Vectorof τ)))]
-  [(generate-abstract-messages/mf (Hash τ_1 τ_2) _) ((* (Hash τ_1 τ_2)))])
+  [(messages-of-type/mf (Listof τ) _) ((* (Listof τ)))]
+  [(messages-of-type/mf (Vectorof τ) _) ((* (Vectorof τ)))]
+  [(messages-of-type/mf (Hash τ_1 τ_2) _) ((* (Hash τ_1 τ_2)))])
 
 (define-metafunction csa#
   generate-variants : natural t τ ... -> ((variant t v# ...) ...)
@@ -176,7 +176,7 @@
    ,(for/fold ([variants-so-far null])
               ([sub-variant (term (generate-variants natural_max-depth t τ_rest ...))])
       (append
-       (for/list ([generated-v (term (generate-abstract-messages/mf τ_1 natural_max-depth))])
+       (for/list ([generated-v (term (messages-of-type/mf τ_1 natural_max-depth))])
          (redex-let csa# ([(variant t v#_other ...) sub-variant]
                           [v#_1 generated-v])
            (term (variant t v#_1 v#_other ...))))
@@ -188,45 +188,45 @@
    "rackunit-helpers.rkt")
 
   (test-same-items?
-   (csa#-generate-abstract-messages 'Nat 0)
+   (csa#-messages-of-type 'Nat 0)
    '((* Nat)))
-  (test-same-items? (csa#-generate-abstract-messages '(Union [Begin]) 0) (list '(variant Begin)))
+  (test-same-items? (csa#-messages-of-type '(Union [Begin]) 0) (list '(variant Begin)))
   (test-same-items?
-   (csa#-generate-abstract-messages '(Union [A] [B]) 0)
+   (csa#-messages-of-type '(Union [A] [B]) 0)
    '((variant A) (variant B)))
-  (test-same-items? (csa#-generate-abstract-messages '(Union) 0) null)
+  (test-same-items? (csa#-messages-of-type '(Union) 0) null)
   (test-same-items?
-   (csa#-generate-abstract-messages '(minfixpt Dummy Nat) 0)
+   (csa#-messages-of-type '(minfixpt Dummy Nat) 0)
    (list '(* (minfixpt Dummy Nat))))
   (test-same-items?
-   (csa#-generate-abstract-messages '(minfixpt Dummy Nat) 1)
+   (csa#-messages-of-type '(minfixpt Dummy Nat) 1)
    (list '(* Nat)))
   (test-same-items?
-   (csa#-generate-abstract-messages '(Record [a Nat] [b Nat]) 0)
+   (csa#-messages-of-type '(Record [a Nat] [b Nat]) 0)
    (list '(record [a (* Nat)] [b (* Nat)])))
   (test-same-items?
-   (csa#-generate-abstract-messages '(Record [x (Union [A] [B])] [y (Union [C] [D])]) 0)
+   (csa#-messages-of-type '(Record [x (Union [A] [B])] [y (Union [C] [D])]) 0)
    (list '(record [x (variant A)] [y (variant C)])
          '(record [x (variant A)] [y (variant D)])
          '(record [x (variant B)] [y (variant C)])
          '(record [x (variant B)] [y (variant D)])))
   (define list-of-nat '(minfixpt NatList (Union [Null] [Cons Nat NatList])))
   (test-same-items?
-   (csa#-generate-abstract-messages list-of-nat 0)
+   (csa#-messages-of-type list-of-nat 0)
    (list `(* ,list-of-nat)))
   (test-same-items?
-   (csa#-generate-abstract-messages list-of-nat 1)
+   (csa#-messages-of-type list-of-nat 1)
    (list `(variant Null) `(variant Cons (* Nat) (* ,list-of-nat))))
   (test-same-items?
-   (csa#-generate-abstract-messages list-of-nat 2)
+   (csa#-messages-of-type list-of-nat 2)
    (list `(variant Null)
          `(variant Cons (* Nat) (variant Null))
          `(variant Cons (* Nat) (variant Cons (* Nat) (* ,list-of-nat)))))
   (test-same-items?
-   (csa#-generate-abstract-messages '(Union) 0)
+   (csa#-messages-of-type '(Union) 0)
    '())
   (test-same-items?
-   (csa#-generate-abstract-messages '(Union [A] [B String (Union [C] [D])]) 0)
+   (csa#-messages-of-type '(Union [A] [B String (Union [C] [D])]) 0)
    '((variant A)
      (variant B (* String) (variant C))
      (variant B (* String) (variant D)))))

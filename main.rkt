@@ -314,7 +314,7 @@
   (display-step-line "Enumerating abstract messages (typed)")
   (define addr-type (csa#-receptionist-type receptionist))
   (append*
-   (for/list ([message (csa#-generate-abstract-messages addr-type MAX-RECURSION-DEPTH)])
+   (for/list ([message (csa#-messages-of-type addr-type MAX-RECURSION-DEPTH)])
      (display-step-line "Evaluating a handler")
      (csa#-handle-message impl-config receptionist message))))
 
