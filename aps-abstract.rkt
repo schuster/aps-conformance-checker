@@ -3,29 +3,29 @@
 ;; Defines the abstract APS configurations and helper functions
 
 (provide
- aps#
- α-pair
- ;; subst-n/aps#
- ;; aps#-current-transitions
- ;; aps#-null-transition
- aps#-matching-steps
- aps#-spec-from-commitment-entry
- aps#-resolve-outputs
- aps#-config-instances
- aps#-config-receptionists
+ ;; Required by model checker
+ ;; TODO: consider having this one return the address or #f
  aps#-config-only-instance-address
- aps#-config-only-instance-state
- aps#-config-commitment-map
- ;; aps#-transition-pattern
- ;; aps#-transition-expression
- aps#-commitment-entry-address
- aps#-instance-state
- aps#-instance-arguments
- aps#-relevant-external-addrs
- aps#-external-addresses
- canonicalize-pair
  aps#-unknown-address?
+ aps#-config-receptionists
+ aps#-matching-steps
+ aps#-resolve-outputs
+
+ ;; Required by model checker for projection
+ aps#-relevant-external-addrs
  aps#-abstract-and-age
+
+ ;; Used by model checker; should be internal to here
+ aps#-config-commitment-map
+ aps#-config-instances
+ aps#-commitment-entry-address
+ aps#-instance-arguments
+ aps#-spec-from-commitment-entry
+ aps#
+
+ ;; Should be moved elsewhere
+ α-pair
+ canonicalize-pair
 
  ;; Testing helpers
  make-Σ#
@@ -942,11 +942,6 @@
 (define (aps#-config-commitment-map config)
   (term (config-commitment-map/mf ,config)))
 
-(define (aps#-config-only-instance-state config)
-  (match (aps#-config-instances config)
-    [(list instance) (aps#-instance-state instance)]
-    [_ (error 'aps#-config-only-instance-state "More than one instance in config ~s" config)]))
-
 (define (aps#-config-only-instance-address config)
   (match (aps#-config-instances config)
     [(list instance) (aps#-instance-address instance)]
@@ -1065,28 +1060,6 @@
                  [Σ (term ((z_1 z_2) () O))])
                 (term Σ)))
    (term ((obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))))
-
-;; Returns all external addresses of the given term (with possible duplicates)
-(define (aps#-external-addresses t)
-  (term (external-addresses/mf ,t)))
-
-(define-metafunction aps#
-  external-addresses/mf : any -> (a#ext ...)
-  [(external-addresses/mf a#ext) (a#ext)]
-  [(external-addresses/mf (any ...))
-   (a#ext ... ...)
-   (where ((a#ext ...) ...) ((external-addresses/mf any) ...))]
-  [(external-addresses/mf any) ()])
-
-(module+ test
-  (check-equal? (aps#-external-addresses (term (goto A))) null)
-  (check-equal?
-   (aps#-external-addresses (term (goto B (obs-ext 4 Nat) (obs-ext 5 Nat))))
-   (term ((obs-ext 4 Nat) (obs-ext 5 Nat))))
-    (check-equal?
-     (aps#-external-addresses
-      (term [* -> (with-outputs ([(obs-ext 3 Nat) *]) (goto C (obs-ext 7 Nat) (* (Addr Nat))))]))
-     (term ((obs-ext 3 Nat) (obs-ext 7 Nat) (* (Addr Nat))))))
 
 (define (aps#-transition-trigger transition)
   (redex-let aps# ([(ε -> _) transition])
