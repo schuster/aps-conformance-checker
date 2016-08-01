@@ -3,35 +3,40 @@
 #lang racket
 
 (provide
- csa#
- generate-abstract-messages
+ ;; Required by model checker
+ (struct-out csa#-transition)
+ csa#-generate-abstract-messages
  csa#-handle-message
  csa#-handle-all-internal-messages
  csa#-handle-all-timeouts
- (struct-out csa#-transition)
- csa#-internal-trigger?
+ csa#-new-spawn-address?
+
+ ;; Required by APS#
  csa#-output-address
  csa#-output-message
+
+ ;; Required by APS#; should go into a "common" language instead
+ csa#
+ csa#-sort-escapes
+ csa#-blur-and-age-receptionists
+ csa#-age-internal-addrs
+
+ ;; Unclear what needs them
+ csa#-internal-trigger?
  α-config
  α-e
  blur-irrelevant-actors
- csa#-blur-and-age-receptionists
- csa#-age-internal-addrs
  blur-externals
  csa#-merge-duplicate-messages
  make-single-actor-abstract-config
  csa#-receptionist-type
- csa#-new-spawn-address?
- csa#-sort-escapes
  same-internal-address-without-type?
  same-external-address-without-type?
  type-join
 
  ;; Debug helpers
  impl-config-without-state-defs
- impl-config-goto
- ;; handler-step#
- )
+ impl-config-goto)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -127,7 +132,7 @@
 ;; addresses
 (define next-generated-address 100)
 
-(define (generate-abstract-messages type max-depth)
+(define (csa#-generate-abstract-messages type max-depth)
   (term (generate-abstract-messages/mf ,type ,max-depth)))
 
 (define-metafunction csa#
@@ -183,45 +188,45 @@
    "rackunit-helpers.rkt")
 
   (test-same-items?
-   (generate-abstract-messages 'Nat 0)
+   (csa#-generate-abstract-messages 'Nat 0)
    '((* Nat)))
-  (test-same-items? (generate-abstract-messages '(Union [Begin]) 0) (list '(variant Begin)))
+  (test-same-items? (csa#-generate-abstract-messages '(Union [Begin]) 0) (list '(variant Begin)))
   (test-same-items?
-   (generate-abstract-messages '(Union [A] [B]) 0)
+   (csa#-generate-abstract-messages '(Union [A] [B]) 0)
    '((variant A) (variant B)))
-  (test-same-items? (generate-abstract-messages '(Union) 0) null)
+  (test-same-items? (csa#-generate-abstract-messages '(Union) 0) null)
   (test-same-items?
-   (generate-abstract-messages '(minfixpt Dummy Nat) 0)
+   (csa#-generate-abstract-messages '(minfixpt Dummy Nat) 0)
    (list '(* (minfixpt Dummy Nat))))
   (test-same-items?
-   (generate-abstract-messages '(minfixpt Dummy Nat) 1)
+   (csa#-generate-abstract-messages '(minfixpt Dummy Nat) 1)
    (list '(* Nat)))
   (test-same-items?
-   (generate-abstract-messages '(Record [a Nat] [b Nat]) 0)
+   (csa#-generate-abstract-messages '(Record [a Nat] [b Nat]) 0)
    (list '(record [a (* Nat)] [b (* Nat)])))
   (test-same-items?
-   (generate-abstract-messages '(Record [x (Union [A] [B])] [y (Union [C] [D])]) 0)
+   (csa#-generate-abstract-messages '(Record [x (Union [A] [B])] [y (Union [C] [D])]) 0)
    (list '(record [x (variant A)] [y (variant C)])
          '(record [x (variant A)] [y (variant D)])
          '(record [x (variant B)] [y (variant C)])
          '(record [x (variant B)] [y (variant D)])))
   (define list-of-nat '(minfixpt NatList (Union [Null] [Cons Nat NatList])))
   (test-same-items?
-   (generate-abstract-messages list-of-nat 0)
+   (csa#-generate-abstract-messages list-of-nat 0)
    (list `(* ,list-of-nat)))
   (test-same-items?
-   (generate-abstract-messages list-of-nat 1)
+   (csa#-generate-abstract-messages list-of-nat 1)
    (list `(variant Null) `(variant Cons (* Nat) (* ,list-of-nat))))
   (test-same-items?
-   (generate-abstract-messages list-of-nat 2)
+   (csa#-generate-abstract-messages list-of-nat 2)
    (list `(variant Null)
          `(variant Cons (* Nat) (variant Null))
          `(variant Cons (* Nat) (variant Cons (* Nat) (* ,list-of-nat)))))
   (test-same-items?
-   (generate-abstract-messages '(Union) 0)
+   (csa#-generate-abstract-messages '(Union) 0)
    '())
   (test-same-items?
-   (generate-abstract-messages '(Union [A] [B String (Union [C] [D])]) 0)
+   (csa#-generate-abstract-messages '(Union [A] [B String (Union [C] [D])]) 0)
    '((variant A)
      (variant B (* String) (variant C))
      (variant B (* String) (variant D)))))

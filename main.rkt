@@ -282,6 +282,9 @@
                   (enqueue! to-visit spc-pair)))))
           (loop (set-add related-pairs pair) unrelated-successors)])])))
 
+;; Returns all implementation steps possible from the given impl-config/spec-config pair. The spec
+;; config is used to determine whether sending a message to a given receptionist in the implementation
+;; config can be observed, unobserved, or both.
 (define (impl-steps-from impl-config spec-config)
   (define (add-observed-flag transition observed?)
     (impl-step (csa#-transition-trigger transition)
@@ -289,9 +292,11 @@
                (csa#-transition-outputs transition)
                (csa#-transition-final-config transition)))
 
+  (define addr (aps#-config-only-instance-address spec-config))
   (define observed-external-receives
-    (let ([addr (aps#-config-only-instance-address spec-config)])
-      (if (aps#-unknown-address? addr) null (external-message-transitions impl-config addr))))
+    (if (aps#-unknown-address? addr)
+        null
+        (external-message-transitions impl-config addr)))
   (define unobserved-external-receives
     (append*
      (for/list ([receptionist (aps#-config-receptionists spec-config)])
@@ -308,8 +313,9 @@
 ;; the given receptionist address
 (define (external-message-transitions impl-config receptionist)
   (display-step-line "Enumerating abstract messages (typed)")
+  (define addr-type (csa#-receptionist-type receptionist))
   (append*
-   (for/list ([message (generate-abstract-messages (csa#-receptionist-type receptionist) MAX-RECURSION-DEPTH)])
+   (for/list ([message (csa#-generate-abstract-messages addr-type MAX-RECURSION-DEPTH)])
      (display-step-line "Evaluating a handler")
      (csa#-handle-message impl-config receptionist message))))
 
@@ -317,12 +323,12 @@
 ;; match the given implementation step
 (define (matching-spec-steps spec-config i-step)
   (define matched-stepped-configs (mutable-set))
-  (for ([(trigger-result) (aps#-matching-steps spec-config
-                                               (impl-step-from-observer? i-step)
-                                               (impl-step-trigger i-step))])
+  (for ([trigger-result (aps#-matching-steps spec-config
+                                             (impl-step-from-observer? i-step)
+                                             (impl-step-trigger i-step))])
     (match-define (list config spawns1) trigger-result)
     (match (aps#-resolve-outputs config (impl-step-outputs i-step))
-      [#f matched-stepped-configs]
+      [#f (void)]
       [(list stepped-spec-config spawns2 satisfied-commitments)
        ;; TODO: record the satisfied commitments somehow
        (set-add! matched-stepped-configs (spec-step stepped-spec-config (append spawns1 spawns2)))]))
