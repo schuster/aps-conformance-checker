@@ -43,8 +43,8 @@
 ;; A possible transition step of an implementation configuration, representing the computation of a
 ;; single message/timeout handler. Fields are as follows:
 ;;
-;; trigger: A representation of the message-receive or timeout that kicked off this
-;; computation. Exact representation matches the trigger# form in csa#.
+;; trigger: A representation of the message-receive or timeout that kicked off this computation. Exact
+;; representation matches the trigger# form in csa#.
 ;;
 ;; from-observer?: A boolean indicating whether the trigger was caused by the "observer" portion of
 ;; the environment, as described in the conformance semantics. Can be true only for steps with
@@ -53,19 +53,18 @@
 ;; outputs: A list of abstract address/abstract value pairs indicating the messages sent to the
 ;; environment during the computation.
 ;;
-;; dest-config: The implementation configuration reached at the end of this transition step
-(struct impl-step (trigger from-observer? outputs dest-config) #:transparent)
+;; destination: The implementation configuration reached at the end of this transition step
+(struct impl-step (trigger from-observer? outputs destination) #:transparent)
 
 ;; A possible (weak) transition step of a specification configuration, representing the actions taken
 ;; to match some (handler-level) implementation transition step. Weak transitions correspond to the
 ;; general idea of weak simulations; see the dissertation for details. Fields are as follows:
 ;;
-;; dest-config: The specification configuration reached at the end of the weak transition.
+;; destination: The specification configuration reached at the end of the weak transition.
 ;;
-;; spawned-specs: The set of specification configurations forked off by this transition
-;; step. A conforming implementation configuration must conform to all of these configs in
-;; addition to dest-config.
-(struct spec-step (dest-config spawned-specs) #:transparent)
+;; spawns: The set of specification configurations forked off by this transition step. A conforming
+;; implementation configuration must conform to all of these configs in addition to destination.
+(struct spec-step (destination spawns) #:transparent)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; "Type" Definitions
@@ -91,7 +90,7 @@
 ;;
 ;; Formally, related-spec-steps(<i, s>, i-step) = {s-step, ...} such that if <i, s> is a related pair
 ;; for some relation R and i-step is a transition from i, s-step matches i-step and all pairs <i', s'>
-;; ∈ spc(i-step.dest-config, s-step.dest-config) are also related pairs in R.
+;; ∈ spc(i-step.destination, s-step.destination) are also related pairs in R.
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Constants
@@ -267,8 +266,8 @@
           (for ([i-step i-steps])
             (for ([s-step (hash-ref related-spec-steps (list pair i-step))])
               (define successor-pairs
-                (for/list ([config (cons (spec-step-dest-config s-step) (spec-step-spawned-specs s-step))])
-                  (config-pair (impl-step-dest-config i-step) config)))
+                (for/list ([config (cons (spec-step-destination s-step) (spec-step-spawns s-step))])
+                  (config-pair (impl-step-destination i-step) config)))
               ;; Debugging only
               ;; (for ([successor-pair successor-pairs])
               ;;   (printf "pre-spc: ~s\n" successor-pair)
