@@ -24,7 +24,6 @@
  aps#-relevant-external-addrs
  aps#-external-addresses
  canonicalize-pair
- aps#-config-has-commitment?
  aps#-unknown-address?
  aps#-abstract-and-age
 
@@ -1213,33 +1212,6 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Misc.
-
-(define (aps#-config-has-commitment? config commitment)
-  (judgment-holds (config-has-commitment?/j ,config ,commitment)))
-
-(define-judgment-form aps#
-  #:mode (config-has-commitment?/j I I)
-  #:contract (config-has-commitment?/j Σ [a#ext po])
-  [(where (_ ... (a#ext _ ... (_ po) _ ...) _ ... ) O)
-   ---------------------------------------------------
-   (config-has-commitment?/j (_ _ O) [a#ext po])])
-
-(module+ test
-  (define commitment-map-test-config
-    (term (()
-           ()
-           (((obs-ext 1 Nat) (single *))
-            ((obs-ext 2 Nat))
-            ((obs-ext 3 Nat) (single (record)) (single (variant True)))))))
-  (check-not-false (redex-match aps# Σ commitment-map-test-config))
-
-  (check-true (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 1 Nat) *])))
-  (check-true (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 3 Nat) (record)])))
-  (check-true (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 3 Nat) (variant True)])))
-
-  (check-false (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 2 Nat) *])))
-  (check-false (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 1 Nat) (record)])))
-  (check-false (aps#-config-has-commitment? commitment-map-test-config (term [(obs-ext 3 Nat) *]))))
 
 (define (aps#-unknown-address? a)
   (equal? a 'UNKNOWN))
