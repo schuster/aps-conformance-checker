@@ -386,12 +386,14 @@
       (spec-step (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (many *)]))
                  null)))))
 
-(define (dict-of-sets-add! dict key new-pair)
+;; Given a hash table whose values are sets, add val to the set in dict corresponding to key (or
+;; create the hash-table entry with a set containing that val if no entry exists).
+(define (dict-of-sets-add! dict key val)
   (match (hash-ref dict key #f)
     [#f
-     (hash-set! dict key (mutable-set new-pair))]
+     (hash-set! dict key (mutable-set val))]
     [the-set
-     (set-add! the-set new-pair)]))
+     (set-add! the-set val)]))
 
 ;; Splits, projects, and canonicalizes the given related pair, returning the resulting pairs
 (define (spc pair)
