@@ -436,6 +436,9 @@
 ;;
 ;; Canonicalization does not change the finite-ness of the state-space, but it does add a useful
 ;; symmetry reduction (as mentioned above).
+
+;; NEXT TODO: clean up all the spc-related stuff
+
 (define (spc pair)
   (display-step-line "Splitting a specification config")
   (for/list ([spec-config-component (split-spec (config-pair-spec-config pair))])
@@ -487,52 +490,8 @@
                 ()))
          (term ((,aps#-no-transition-instance) () (((obs-ext 3 Nat))))))))
 
-;; Returns the list of split spec-configs from the given one, failing if any of the FSMs share an
-;; address
-;;
-;; TODO: move this to the APS# module, since it has to deal so much with the internal representation
-(define (split-spec config)
-  (define receptionists (aps#-config-receptionists config))
-  (define-values (fsm-specs remaining-commitment-map)
-    (for/fold ([fsm-specs null]
-               [remaining-commitment-map (aps#-config-commitment-map config)])
-              ([instance (aps#-config-instances config)])
-     (define (entry-relevant? entry)
-       (member (aps#-commitment-entry-address entry)
-               (aps#-instance-arguments instance)))
-      (define relevant-entries (filter entry-relevant? remaining-commitment-map))
-      (values
-       ;; TODO: use redex "term" here instead of quasiquote, when I move this into the APS# module
-       (cons `((,instance) ,receptionists ,relevant-entries) fsm-specs)
-       (filter (negate entry-relevant?) remaining-commitment-map))))
-  (append fsm-specs
-          (for/list ([entry remaining-commitment-map])
-            (aps#-spec-from-commitment-entry entry
-                                             (aps#-config-only-instance-address config)
-                                             receptionists))))
-
-(module+ test
-  (define simple-instance-for-split-test
-    (term
-     (((define-state (A x)
-         [* -> (goto A x)]))
-      (goto A (obs-ext 0 Nat))
-      (init-addr 0 Nat))))
-
-  (test-not-false "simple instance" (redex-match aps# z simple-instance-for-split-test))
-
-  (test-equal? "split spec with one FSM gets same spec"
-   (split-spec (term ((,simple-instance-for-split-test) () ())))
-   (list (term ((,simple-instance-for-split-test) () ()))))
-
-  (test-equal? "split with one related commit"
-   (split-spec (term ((,simple-instance-for-split-test) () (((obs-ext 0 Nat) (single *))))))
-   (list (term ((,simple-instance-for-split-test) () (((obs-ext 0 Nat) (single *)))))))
-
-  (test-same-items? "split with unrelated commit"
-   (split-spec (term ((,simple-instance-for-split-test) () (((obs-ext 1 Nat) (single *))))))
-   (list (term ((,simple-instance-for-split-test) () ()))
-         (term ((,aps#-no-transition-instance) ((init-addr 0 Nat)) (((obs-ext 1 Nat) (single *))))))))
+;; ---------------------------------------------------------------------------------------------------
+;; Pair-removal back-propagation
 
 (define (remove-unsupported all-pairs incoming-steps init-related-spec-steps init-unrelated-successors)
   (define remaining-pairs (set-copy all-pairs))

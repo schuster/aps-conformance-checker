@@ -3,6 +3,8 @@
 ;; Defines the abstract APS configurations and helper functions
 
 (provide
+ ;; TODO: remove the aps# prefix from the unambiguous functions
+
  ;; Required by model checker
  ;; TODO: consider having this one return the address or #f
  aps#-config-only-instance-address
@@ -11,21 +13,13 @@
  aps#-matching-steps
  aps#-resolve-outputs
  aps#-abstract-config
+ split-spec
 
  ;; Required by model checker for projection
  aps#-relevant-external-addrs
  aps#-abstract-and-age
 
- ;; Used by model checker; should be internal to here
- aps#-config-commitment-map
- aps#-config-instances
- aps#-commitment-entry-address
- aps#-instance-arguments
- aps#-spec-from-commitment-entry
- aps#
-
- ;; Should be moved elsewhere
-
+ ;; TODO: Should be moved elsewhere
  canonicalize-pair
 
  ;; Testing helpers
@@ -1063,6 +1057,54 @@
 (define (aps#-transition-body transition)
   (redex-let aps# ([(_ -> e-hat) transition])
              (term e-hat)))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Spec Split
+
+;; Returns the list of split spec-configs from the given one, failing if any of the FSMs share an
+;; address
+(define (split-spec config)
+  (define receptionists (aps#-config-receptionists config))
+  (define-values (fsm-specs remaining-commitment-map)
+    (for/fold ([fsm-specs null]
+               [remaining-commitment-map (aps#-config-commitment-map config)])
+              ([instance (aps#-config-instances config)])
+     (define (entry-relevant? entry)
+       (member (aps#-commitment-entry-address entry)
+               (aps#-instance-arguments instance)))
+      (define relevant-entries (filter entry-relevant? remaining-commitment-map))
+      (values
+       ;; TODO: use redex "term" here instead of quasiquote, when I move this into the APS# module
+       (cons `((,instance) ,receptionists ,relevant-entries) fsm-specs)
+       (filter (negate entry-relevant?) remaining-commitment-map))))
+  (append fsm-specs
+          (for/list ([entry remaining-commitment-map])
+            (aps#-spec-from-commitment-entry entry
+                                             (aps#-config-only-instance-address config)
+                                             receptionists))))
+
+(module+ test
+  (define simple-instance-for-split-test
+    (term
+     (((define-state (A x)
+         [* -> (goto A x)]))
+      (goto A (obs-ext 0 Nat))
+      (init-addr 0 Nat))))
+
+  (test-not-false "simple instance" (redex-match aps# z simple-instance-for-split-test))
+
+  (test-equal? "split spec with one FSM gets same spec"
+   (split-spec (term ((,simple-instance-for-split-test) () ())))
+   (list (term ((,simple-instance-for-split-test) () ()))))
+
+  (test-equal? "split with one related commit"
+   (split-spec (term ((,simple-instance-for-split-test) () (((obs-ext 0 Nat) (single *))))))
+   (list (term ((,simple-instance-for-split-test) () (((obs-ext 0 Nat) (single *)))))))
+
+  (test-same-items? "split with unrelated commit"
+   (split-spec (term ((,simple-instance-for-split-test) () (((obs-ext 1 Nat) (single *))))))
+   (list (term ((,simple-instance-for-split-test) () ()))
+         (term ((,aps#-no-transition-instance) ((init-addr 0 Nat)) (((obs-ext 1 Nat) (single *))))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Canonicalization (i.e. renaming)
