@@ -64,6 +64,32 @@
 (struct spec-step (dest-config spawned-specs) #:transparent)
 
 ;; ---------------------------------------------------------------------------------------------------
+;; "Type Definitions"
+
+;; IncomingStepsDict =
+;;   (Hash related-pair (List (MutableSetof (List related-pair impl-step spec-step)))
+;;
+;; Records all implementation and specification transitions that led to some pair discovered during
+;; the initial construction of the rank-1 simulation. Formally, for all pairs <i, s> in either the
+;; related pairs or unrelated successors returned by find-rank1-simulation, incoming-steps(i, s) = a
+;; set of tuples of the form (<i', s'>, i-step, s-step), where i-step is some transition from i',
+;; s-step is a transition from s' that matches i-step, and <i, s> ∈ spc(i'', s'') where i'' and s''
+;; are the destination configurations from i-step and s-step, respectively.
+;;
+;; In remove-unsupported, we use this data structure to determine the set of related pairs and
+;; transitions that depend on this pair to prove their own membership in a relation.
+
+;; RelatedSpecStepsDict = (Hash (List related-pair impl-step) (MutableSetof spec-step))
+;;
+;; Records all specification transitions currently believed to match the given implementation
+;; transition for some relation. To be in a simulation, every transition of the implementation
+;; configuration must have at least one such related pair.
+;;
+;; Formally, related-spec-steps(<i, s>, i-step) = {s-step, ...} such that if <i, s> is a related pair
+;; for some relation R and i-step is a transition from i, s-step matches i-step and all pairs <i', s'>
+;; ∈ spc(i-step.dest-config, s-step.dest-config) are also related pairs in R.
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Constants
 
 ;; The maximum number of times to unfold a recursive type while generating an exhaustive set of
