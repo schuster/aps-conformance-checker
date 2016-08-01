@@ -24,13 +24,17 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Data Structures
 
-;; When the algorithm terminates, all remaining related-pairs <i, s> have the property that the
-;; abstract implementation state i (abstractly) conforms to the abstract specification state s.
+;; A pair of an implementation configuration and a specification configuration discovered during the
+;; search for pairs in the rank-1 simulation. The algorithm uses these pairs as vertices in a
+;; graph-like structure that constitutes a proof that all of its vertices are in the conformance
+;; relation. Earlier in the algorithm, the graph is unsound, and the algorithm uses a coinductive
+;; technique to remove the "local lies" and propagate the conseequences of retracting these nodes,
+;; until we reach a sound fixpoint.
 ;;
-;; These pairs are vertices of a dependency graph that constitutes a proof that all members of the
-;; graph are in the conformance relation. Earlier in the algorithm, the graph is unsound, and the
-;; algorithm uses a coinductive technique to remove the "local lies" and propagate the conseequences
-;; of retracting these nodes, until we reach a sound fixpoint.
+;; Initially, every such pair is either in the rank-1 simulation or is an unrelated successor (through
+;; the transition relations) of one of the related pairs.  When the algorithm terminates, all
+;; remaining config-pairs <i, s> in the related set have the property that the abstract implementation
+;; state i (abstractly) conforms to the abstract specification state s.
 ;;
 ;; We use this general technique for multiple relations, each of which is a subset of the previous
 ;; one, eventually leading to the spec conformance relation.
@@ -64,10 +68,9 @@
 (struct spec-step (dest-config spawned-specs) #:transparent)
 
 ;; ---------------------------------------------------------------------------------------------------
-;; "Type Definitions"
+;; "Type" Definitions
 
-;; IncomingStepsDict =
-;;   (Hash related-pair (List (MutableSetof (List related-pair impl-step spec-step)))
+;; IncomingStepsDict = (Hash config-pair (List (MutableSetof (List config-pair impl-step spec-step)))
 ;;
 ;; Records all implementation and specification transitions that led to some pair discovered during
 ;; the initial construction of the rank-1 simulation. Formally, for all pairs <i, s> in either the
@@ -79,11 +82,12 @@
 ;; In remove-unsupported, we use this data structure to determine the set of related pairs and
 ;; transitions that depend on this pair to prove their own membership in a relation.
 
-;; RelatedSpecStepsDict = (Hash (List related-pair impl-step) (MutableSetof spec-step))
+;; RelatedSpecStepsDict = (Hash (List config-pair impl-step) (MutableSetof spec-step))
 ;;
 ;; Records all specification transitions currently believed to match the given implementation
 ;; transition for some relation. To be in a simulation, every transition of the implementation
-;; configuration must have at least one such related pair.
+;; configuration must have at least one such related pair. Specification steps will be removed from
+;; these sets when their destinations are found to be unrelated for the current relation.
 ;;
 ;; Formally, related-spec-steps(<i, s>, i-step) = {s-step, ...} such that if <i, s> is a related pair
 ;; for some relation R and i-step is a transition from i, s-step matches i-step and all pairs <i', s'>
@@ -137,12 +141,12 @@
         (apply config-pair (α-pair initial-impl-config initial-spec-config MAX-RECURSION-DEPTH))))
      (match-define (list rank1-pairs
                          rank1-unrelated-successors
-                         incoming
+                         incoming-steps
                          rank1-related-spec-steps)
        (find-rank1-simulation initial-pairs))
      (match-define (list simulation-pairs simulation-related-spec-steps)
        (remove-unsupported rank1-pairs
-                           incoming
+                           incoming-steps
                            rank1-related-spec-steps
                            rank1-unrelated-successors))
      (define commitment-satisfying-pairs
@@ -153,7 +157,7 @@
        (set-symmetric-difference simulation-pairs (set-copy commitment-satisfying-pairs)))
      (match-define (list conforming-pairs _)
        (remove-unsupported commitment-satisfying-pairs
-                           incoming
+                           incoming-steps
                            simulation-related-spec-steps
                            unsatisfying-pairs))
      (andmap (curry set-member? conforming-pairs) initial-pairs)]))
@@ -169,18 +173,34 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Simulation
 
-;; Builds a set of related pairs from the rank-1 conformance simulation by abstractly evaluating
+;; (Setof config-pair) -> (List (Setof config-pair)
+;;                              (Setof config-pair)
+;;                              IncomingDict
+;;                              RelatedSpecStepsDict)
+;;
+;; Finds a set of pairs that are related in the rank-1 conformance simulation by abstractly evaluating
 ;; implementation configs and finding matching specification transitions, starting from the given
-;; initial pairs. Returns various data structures (see dissertation/model-checker-pseudocode.md for
-;; details)
+;; initial pairs. Returns the set of related pairs along with other data structures that act as a
+;; proof of the pairs' membership. Specifically, it returns:
+;;
+;; related-pairs: the set of pairs found to be in the rank-1 simulation
+;;
+;; unrelated-successors: pairs reachable by from a pair in related-pairs by a matching
+;; impl-step/spec-step transition but are not themselves in the rank-1 simulation.
+;;
+;; incoming-steps: A dictionary from either a related pair or an unrelated successor to the set of
+;; impl/spec steps that lead to it (as described in the "Type" Definitions section above)
+;;
+;; related-spec-steps: A dictionary from a related pair and an implementation step from that pair to
+;; the set of specification steps that match the implementation step. See "Type" Definitions above for
+;; more details.
 (define (find-rank1-simulation initial-pairs)
-  ;; TODO: decide on mutable vs. immutable programming style
   (define to-visit (apply queue initial-pairs))
   (define related-spec-steps (make-hash))
-  (define incoming (make-hash (map (lambda (t) (cons t (mutable-set))) initial-pairs)))
+  (define incoming-steps (make-hash (map (lambda (t) (cons t (mutable-set))) initial-pairs)))
 
   ;; Debugging
-  (define pairs-visited 0)
+  (define visited-pairs-count 0)
   (define log-file (if LOG-PAIRS (open-output-file "related_pair_log.dat" #:exists 'replace) #f))
 
   (let loop ([related-pairs (set)]
@@ -188,13 +208,13 @@
     (match (dequeue-if-non-empty! to-visit)
       [#f
        (when LOG-PAIRS (close-output-port log-file))
-       (list related-pairs unrelated-successors incoming related-spec-steps)]
+       (list related-pairs unrelated-successors incoming-steps related-spec-steps)]
       [pair
 
        ;; Debugging
-       (set! pairs-visited (add1 pairs-visited))
+       (set! visited-pairs-count (add1 visited-pairs-count))
        ;; (printf "Current time: ~s\n" (current-seconds))
-       ;; (printf "Implementation config #: ~s\n" pairs-visited)
+       ;; (printf "Implementation config #: ~s\n" visited-pairs-count)
        ;; (printf "Queue size: ~s\n" (queue-length to-visit))
        ;; (printf "The impl config: ~s\n"
        ;;         (impl-config-without-state-defs (config-pair-impl-config pair)))
@@ -204,7 +224,9 @@
        ;; (printf "Incoming so far: ~s\n" (hash-ref incoming-steps pair))
 
        (when LOG-PAIRS
-         (fprintf log-file "PAIR ~s (~s). ~s\n" pairs-visited (current-seconds) (pair->debug-pair pair))
+         (fprintf log-file
+                  "PAIR ~s (~s). ~s\n"
+                  visited-pairs-count (current-seconds) (pair->debug-pair pair))
          (flush-output log-file))
 
        (define i (config-pair-impl-config pair))
@@ -217,7 +239,6 @@
          ;; Debugging:
          ;; (printf "Impl step: ~s\n" (debug-impl-step i-step))
 
-         ;; TODO: make sure the satisfied commitments are also recorded somewhere in here
          (define matching-s-steps (matching-spec-steps s i-step))
          ;; Debugging:
          ;; (printf "Matching spec steps: ~s\n" matching-s-steps)
@@ -226,13 +247,21 @@
          (when (set-empty? matching-s-steps)
            (set! found-unmatchable-step? #t)))
 
-       ;; Add this pair to appropriate list; add new worklist items
+       ;; Add this pair to either related or unrelated set; add new worklist items
        (cond
          [found-unmatchable-step?
+          ;; Some impl step has no matching spec step, so this pair is unrelated. Therefore we add it
+          ;; to the unrelated-successors list and do not further explore transitions from this pair.
+
           ;; Debugging
           ;; (displayln "Unrelated pair")
           (loop related-pairs (set-add unrelated-successors pair))]
          [else
+          ;; This pair is in the rank-1 simulation (because all of its impl steps have matching spec
+          ;; steps). We have to add it to the related-pairs set, spc each of the matching destination
+          ;; pairs and add them to the work-list so that we explore this pair's successors, and add
+          ;; the incoming transitions for those destination pairs to incoming-steps.
+
           ;; Debugging
           ;; (displayln "Related pair")
           (for ([i-step i-steps])
@@ -245,7 +274,7 @@
               ;;   (printf "pre-spc: ~s\n" successor-pair)
               ;;   (printf "post-spc: ~s\n" (spc successor-pair)))
               (for ([spc-pair (spc* successor-pairs)])
-                (dict-of-sets-add! incoming spc-pair (list pair i-step s-step))
+                (dict-of-sets-add! incoming-steps spc-pair (list pair i-step s-step))
                 (unless (or (member spc-pair (queue->list to-visit))
                             (set-member? related-pairs spc-pair)
                             (set-member? unrelated-successors spc-pair)
@@ -463,7 +492,7 @@
    (list (term ((,simple-instance-for-split-test) () ()))
          (term ((,aps#-no-transition-instance) ((init-addr 0 Nat)) (((obs-ext 1 Nat) (single *))))))))
 
-(define (remove-unsupported all-pairs incoming init-related-spec-steps init-unrelated-successors)
+(define (remove-unsupported all-pairs incoming-steps init-related-spec-steps init-unrelated-successors)
   (define remaining-pairs (set-copy all-pairs))
   (define unrelated-successors (apply queue (set->list init-unrelated-successors)))
   (define related-spec-steps (hash-copy init-related-spec-steps))
@@ -472,7 +501,7 @@
     (match (dequeue-if-non-empty! unrelated-successors)
       [#f (list (set-freeze remaining-pairs) related-spec-steps)]
       [unrelated-pair
-       (for ([transition (hash-ref incoming unrelated-pair)])
+       (for ([transition (hash-ref incoming-steps unrelated-pair)])
          (match-define (list predecessor i-step s-step) transition)
          (when (set-member? remaining-pairs predecessor)
            (define spec-steps (hash-ref related-spec-steps (list predecessor i-step)))
@@ -505,7 +534,7 @@
   (test-equal? "Remove no pairs, because no list"
     (remove-unsupported
      (mutable-set ax-pair)
-     ;; incoming
+     ;; incoming-steps
      (mutable-hash [ax-pair (mutable-set (list ax-pair aa-step xx-step))])
      ;; related spec steps
      (mutable-hash [(list ax-pair aa-step) (mutable-set xx-step)])
@@ -541,7 +570,7 @@
   (test-equal? "Remove a redundant support"
     (remove-unsupported
      (mutable-set ax-pair bz-pair by-pair)
-     ;; incoming
+     ;; incoming-steps
      (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
                    [bz-pair (mutable-set (list ax-pair ab-step xz-step))]
                    [ax-pair (mutable-set)]
@@ -559,7 +588,7 @@
     (test-equal? "Remove a non-redundant support"
       (remove-unsupported
        (mutable-set ax-pair by-pair)
-       ;; incoming
+       ;; incoming-steps
        (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
                      [ax-pair (mutable-set)]
                      [cw-pair (mutable-set (list by-pair bc-step yw-step))])
