@@ -34,7 +34,7 @@
 ;;
 ;; We use this general technique for multiple relations, each of which is a subset of the previous
 ;; one, eventually leading to the spec conformance relation.
-(struct related-pair (impl-config spec-config) #:transparent)
+(struct config-pair (impl-config spec-config) #:transparent)
 
 ;; A possible transition step of an implementation configuration, representing the computation of a
 ;; single message/timeout handler. Fields are as follows:
@@ -134,8 +134,11 @@
     [else
      (define initial-pairs
        (spc
-        (apply related-pair (α-pair initial-impl-config initial-spec-config MAX-RECURSION-DEPTH))))
-     (match-define (list rank1-pairs incoming rank1-related-spec-steps rank1-unrelated-successors)
+        (apply config-pair (α-pair initial-impl-config initial-spec-config MAX-RECURSION-DEPTH))))
+     (match-define (list rank1-pairs
+                         rank1-unrelated-successors
+                         incoming
+                         rank1-related-spec-steps)
        (find-rank1-simulation initial-pairs))
      (match-define (list simulation-pairs simulation-related-spec-steps)
        (remove-unsupported rank1-pairs
@@ -185,7 +188,7 @@
     (match (dequeue-if-non-empty! to-visit)
       [#f
        (when LOG-PAIRS (close-output-port log-file))
-       (list related-pairs incoming related-spec-steps unrelated-successors)]
+       (list related-pairs unrelated-successors incoming related-spec-steps)]
       [pair
 
        ;; Debugging
@@ -193,17 +196,19 @@
        ;; (printf "Current time: ~s\n" (current-seconds))
        ;; (printf "Implementation config #: ~s\n" pairs-visited)
        ;; (printf "Queue size: ~s\n" (queue-length to-visit))
-       ;; (printf "The impl config: ~s\n" (impl-config-without-state-defs (related-pair-impl-config pair)))
-       ;; (printf "The full impl config: ~s\n" (related-pair-impl-config pair))
-       ;; (printf "The spec config: ~s\n" (spec-config-without-state-defs (related-pair-spec-config pair)))
-       ;; (printf "Incoming so far: ~s\n" (hash-ref incoming pair))
+       ;; (printf "The impl config: ~s\n"
+       ;;         (impl-config-without-state-defs (config-pair-impl-config pair)))
+       ;; (printf "The full impl config: ~s\n" (config-pair-impl-config pair))
+       ;; (printf "The spec config: ~s\n"
+       ;;         (spec-config-without-state-defs (config-pair-spec-config pair)))
+       ;; (printf "Incoming so far: ~s\n" (hash-ref incoming-steps pair))
 
        (when LOG-PAIRS
          (fprintf log-file "PAIR ~s (~s). ~s\n" pairs-visited (current-seconds) (pair->debug-pair pair))
          (flush-output log-file))
 
-       (define i (related-pair-impl-config pair))
-       (define s (related-pair-spec-config pair))
+       (define i (config-pair-impl-config pair))
+       (define s (config-pair-spec-config pair))
        (define i-steps (impl-steps-from i s))
 
        ;; Find the matching s-steps
@@ -234,7 +239,7 @@
             (for ([s-step (hash-ref related-spec-steps (list pair i-step))])
               (define successor-pairs
                 (for/list ([config (cons (spec-step-dest-config s-step) (spec-step-spawned-specs s-step))])
-                  (related-pair (impl-step-dest-config i-step) config)))
+                  (config-pair (impl-step-dest-config i-step) config)))
               ;; Debugging only
               ;; (for ([successor-pair successor-pairs])
               ;;   (printf "pre-spc: ~s\n" successor-pair)
@@ -362,15 +367,15 @@
 ;; Splits, projects, and canonicalizes the given related pair, returning the resulting pairs
 (define (spc pair)
   (display-step-line "Splitting a specification config")
-  (for/list ([spec-config-component (split-spec (related-pair-spec-config pair))])
+  (for/list ([spec-config-component (split-spec (config-pair-spec-config pair))])
     ;; TODO: make it an "error" for a non-precise address to match a spec state parameter
     (display-step-line "Projecting an implementation config")
     (match-define (list projected-impl projected-spec)
-      (project-by-relevant-addresses (related-pair-impl-config pair) spec-config-component))
+      (project-by-relevant-addresses (config-pair-impl-config pair) spec-config-component))
     (display-step-line "Canonicalizing the pair, adding to queue")
     (match-define (list canonicalized-impl canonicalized-spec)
       (canonicalize-pair (list projected-impl projected-spec)))
-    (related-pair canonicalized-impl canonicalized-spec)))
+    (config-pair canonicalized-impl canonicalized-spec)))
 
 ;; Calls spc on every pair and merges the results into one long list
 (define (spc* pairs)
@@ -484,10 +489,10 @@
   ;; Because remove-unsupported does not care about the actual content of the impl or spec
   ;; configurations, we replace them here with letters (A, B, C, etc. for impls and X, Y, Z, etc. for
   ;; specs) for simplification
-  (define ax-pair (related-pair 'A 'X))
-  (define by-pair (related-pair 'B 'Y))
-  (define bz-pair (related-pair 'B 'Z))
-  (define cw-pair (related-pair 'C 'W))
+  (define ax-pair (config-pair 'A 'X))
+  (define by-pair (config-pair 'B 'Y))
+  (define bz-pair (config-pair 'B 'Z))
+  (define cw-pair (config-pair 'C 'W))
 
   (define aa-step (impl-step '(timeout (init-addr 0 Nat)) #f null 'A))
   (define xx-step (spec-step 'X null))
@@ -589,8 +594,8 @@
   (when DISPLAY-STEPS (displayln msg)))
 
 (define (pair->debug-pair pair)
-  (list (impl-config-without-state-defs (related-pair-impl-config pair))
-        (spec-config-without-state-defs (related-pair-spec-config pair))))
+  (list (impl-config-without-state-defs (config-pair-impl-config pair))
+        (spec-config-without-state-defs (config-pair-spec-config pair))))
 
 (define (debug-impl-step step)
   (list (impl-step-from-observer? step)
