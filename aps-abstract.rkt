@@ -14,13 +14,11 @@
  aps#-resolve-outputs
  aps#-abstract-config
  split-spec
+ canonicalize-pair
 
  ;; Required by model checker for projection
  aps#-relevant-external-addrs
  aps#-abstract-and-age
-
- ;; TODO: Should be moved elsewhere
- canonicalize-pair
 
  ;; Testing helpers
  make-Σ#
@@ -1116,102 +1114,108 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Canonicalization (i.e. renaming)
 
-;; TODO: move this up to main.rkt
-
-;; Given a impl config/spec config pair, rename the precise internal and external addresses in them
-;; such that the first one in each set starts at 0, then the next is 1, then 2, etc.
-(define (canonicalize-pair tuple)
-  (term (canonicalize-tuple/mf ,tuple)))
-
-(define-metafunction aps#
-  canonicalize-tuple/mf : (K# Σ) -> (K# Σ)
-  [(canonicalize-tuple/mf (K# Σ))
-   (,(csa#-sort-escapes (term (rename-addresses K# [natural_old natural_new] ...)))
-    (any_instances ,(sort (term any_new-rec) sexp<?) any_com))
-   (where ((z ...) any_old-rec ((a#ext_com _ ...) ...)) Σ)
-   (where ((obs-ext natural_old _) ...)
-          ,(remove-duplicates (append* (term (a#ext_com ...))
-                                       (term ((instance-arguments/mf z) ...)))))
-   (where (natural_new ...) ,(build-list (length (term (natural_old ...))) values))
-   (where (any_instances any_new-rec any_com) (rename-addresses Σ [natural_old natural_new] ...))])
+;; Given an impl config/spec config pair, transforms it into an equivalent (for the purpose of
+;; conformance), canonical form. Specifically, renames all precise external addresses such that the
+;; first one is address 0, then address 1, then address 2, and so on. Also sorts the escaped addresses
+;; in the impl config and the receptionists in the spec config (not strictly necessary to ensure a
+;; bounded state space, but provides a form of symmetry reduction).
+(define (canonicalize-pair impl-config spec-config)
+  (define commitment-map (aps#-config-commitment-map spec-config))
+  (define substitutions
+    (for/list ([entry commitment-map]
+               [new-number (build-list (length commitment-map) values)])
+      (redex-let aps# ([((obs-ext natural _) _ ...) entry])
+        (list (term natural) new-number))))
+  (match-define (list renamed-impl-config renamed-spec-config)
+    (term (rename-external-addresses ,(list impl-config spec-config) ,@substitutions)))
+  (list (csa#-sort-escapes renamed-impl-config)
+        (aps#-sort-receptionists renamed-spec-config)))
 
 (module+ test
   (test-equal? "canonicalize 1"
-   (canonicalize-pair
-    (term
-     (,(make-single-actor-abstract-config
-        (term ((init-addr 0 Nat)
-               (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
-                (goto A (obs-ext 25 Nat) (obs-ext 42 Nat) (obs-ext 10 Nat))))))
+    (canonicalize-pair
+     (make-single-actor-abstract-config
+      (term ((init-addr 0 Nat)
+             (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
+              (goto A (obs-ext 25 Nat) (obs-ext 42 Nat) (obs-ext 10 Nat))))))
+     (term
       (((((define-state (A a b c) [* -> (goto A)]))
          (goto A (obs-ext 25 Nat) (obs-ext 42 Nat) (obs-ext 10 Nat))
          (init-addr 0 Nat)))
        ()
-       ()))))
-   (term
-    (,(make-single-actor-abstract-config
-       (term ((init-addr 0 Nat)
-              (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
-               (goto A (obs-ext 0 Nat) (obs-ext 1 Nat) (obs-ext 2 Nat))))))
-     (((((define-state (A a b c) [* -> (goto A)]))
-        (goto A (obs-ext 0 Nat) (obs-ext 1 Nat) (obs-ext 2 Nat))
-        (init-addr 0 Nat)))
-      ()
-      ()))))
-
-  (test-equal? "canonicalize 2"
-   (canonicalize-pair
+       (((obs-ext 25 Nat)) ((obs-ext 42 Nat)) ((obs-ext 10 Nat))))))
     (term
      (,(make-single-actor-abstract-config
         (term ((init-addr 0 Nat)
                (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
-                (goto A (obs-ext 10 Nat) (obs-ext 42 Nat) (obs-ext 25 Nat))))))
+                (goto A (obs-ext 0 Nat) (obs-ext 1 Nat) (obs-ext 2 Nat))))))
+      (((((define-state (A a b c) [* -> (goto A)]))
+         (goto A (obs-ext 0 Nat) (obs-ext 1 Nat) (obs-ext 2 Nat))
+         (init-addr 0 Nat)))
+       ()
+       (((obs-ext 0 Nat)) ((obs-ext 1 Nat)) ((obs-ext 2 Nat)))))))
+
+  (test-equal? "canonicalize 2"
+    (canonicalize-pair
+     (make-single-actor-abstract-config
+      (term ((init-addr 0 Nat)
+             (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
+              (goto A (obs-ext 10 Nat) (obs-ext 42 Nat) (obs-ext 25 Nat))))))
+     (term
       (((((define-state (A c b a) [* -> (goto A)]))
          (goto A (obs-ext 25 Nat) (obs-ext 42 Nat) (obs-ext 10 Nat))
          (init-addr 0 Nat)))
        ()
-       ()))))
-   (term
-    (,(make-single-actor-abstract-config
-       (term ((init-addr 0 Nat)
-              (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
-               (goto A (obs-ext 2 Nat) (obs-ext 1 Nat) (obs-ext 0 Nat))))))
-     (((((define-state (A c b a) [* -> (goto A)]))
-        (goto A (obs-ext 0 Nat) (obs-ext 1 Nat) (obs-ext 2 Nat))
-        (init-addr 0 Nat)))
-      ()
-      ()))))
+       (((obs-ext 25 Nat)) ((obs-ext 42 Nat)) ((obs-ext 10 Nat))))))
+    (term
+     (,(make-single-actor-abstract-config
+        (term ((init-addr 0 Nat)
+               (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
+                (goto A (obs-ext 2 Nat) (obs-ext 1 Nat) (obs-ext 0 Nat))))))
+      (((((define-state (A c b a) [* -> (goto A)]))
+         (goto A (obs-ext 0 Nat) (obs-ext 1 Nat) (obs-ext 2 Nat))
+         (init-addr 0 Nat)))
+       ()
+       (((obs-ext 0 Nat)) ((obs-ext 1 Nat)) ((obs-ext 2 Nat)))))))
 
   (test-equal? "canonicalize 3"
-   (canonicalize-pair
+    (canonicalize-pair
+     (make-single-actor-abstract-config
+      (term ((init-addr 0 Nat)
+             (((define-state (A) (m) (goto A)))
+              (goto A)))))
+     (term
+      (() () (((obs-ext 101 Nat) (single *))))))
     (term
      (,(make-single-actor-abstract-config
         (term ((init-addr 0 Nat)
                (((define-state (A) (m) (goto A)))
                 (goto A)))))
-      (() () (((obs-ext 101 Nat) (single *)))))))
-   (term
-    (,(make-single-actor-abstract-config
-       (term ((init-addr 0 Nat)
-              (((define-state (A) (m) (goto A)))
-               (goto A)))))
-     (() () (((obs-ext 0 Nat) (single *))))))))
+      (() () (((obs-ext 0 Nat) (single *))))))))
 
+;; Renames precise external addresses in the given term by replacing its number natural_old with
+;; natural_new, according to the given substitution
 (define-metafunction aps#
-  rename-addresses : any [natural_old natural_new] ... -> any
-  [(rename-addresses (obs-ext natural_old any_type) _ ... [natural_old natural_new] _ ...)
+  rename-external-addresses : any [natural_old natural_new] ... -> any
+  [(rename-external-addresses (obs-ext natural_old any_type) _ ... [natural_old natural_new] _ ...)
    (obs-ext natural_new any_type)]
-  [(rename-addresses (obs-ext natural_old any_type) _ ...)
+  [(rename-external-addresses (obs-ext natural_old any_type) _ ...)
    (obs-ext natural_old any_type)]
-  [(rename-addresses (any ...) any_substs ...)
-   ((rename-addresses any any_substs ...) ...)]
-  [(rename-addresses any _ ...) any])
+  [(rename-external-addresses (any ...) any_substs ...)
+   ((rename-external-addresses any any_substs ...) ...)]
+  [(rename-external-addresses any _ ...) any])
 
 (module+ test
   (check-equal?
-   (term (rename-addresses (some-term (obs-ext 2 Nat) (another-term (obs-ext 5 Nat)) (obs-ext 13 Nat))
-                           [2 1] [13 2] [5 3]))
+   (term (rename-external-addresses
+          (some-term (obs-ext 2 Nat) (another-term (obs-ext 5 Nat)) (obs-ext 13 Nat))
+          [2 1] [13 2] [5 3]))
    (term (some-term (obs-ext 1 Nat) (another-term (obs-ext 3 Nat)) (obs-ext 2 Nat)))))
+
+;; Returns a spec config identical to the given one except that the the receptionist list is sorted
+(define (aps#-sort-receptionists config)
+  (redex-let aps# ([(any_instances any_receptionists any_com) config])
+    (term (any_instances ,(sort (term any_receptionists) sexp<?) any_com))))
 
 (define (sexp<? a b)
   (string<? (sexp->string a) (sexp->string b)))

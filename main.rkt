@@ -442,7 +442,7 @@
       (project-by-relevant-addresses (config-pair-impl-config pair) spec-config-component))
     (display-step-line "Canonicalizing the pair, adding to queue")
     (match-define (list canonicalized-impl canonicalized-spec)
-      (canonicalize-pair (list projected-impl projected-spec)))
+      (canonicalize-pair projected-impl projected-spec))
     (config-pair canonicalized-impl canonicalized-spec)))
 
 ;; Calls spc on every pair and merges the results into one long list
