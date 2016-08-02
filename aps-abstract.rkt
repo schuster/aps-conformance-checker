@@ -890,37 +890,6 @@
       (spawn-addr 3 OLD Nat)))))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Constructors
-
-;; A specification instance with an UNKNOWN address and an FSM with no transitions. Used for
-;; specifications where only the commitments are important.
-(define aps#-no-transition-instance
-  (term [((define-state (DummySpecFsmState))) (goto DummySpecFsmState) UNKNOWN]))
-
-;; Creates a spec config with a transition-less FSM and a commitment map with just the given
-;; entry. The receptionists for the unobserved environment will be the given list plus the given FSM
-;; address if it is not UNKONWN.
-(define (aps#-spec-from-commitment-entry entry fsm-addr receptionists)
-  (define all-receptionists
-    (remove-duplicates
-     (append receptionists
-             (if (equal? fsm-addr 'UNKNOWN) '() (list fsm-addr)))))
-  (term ((,aps#-no-transition-instance) ,all-receptionists ,(list entry))))
-
-(module+ test
-  (check-equal?
-   (aps#-spec-from-commitment-entry (term ((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))  'UNKNOWN null)
-   (term ((,aps#-no-transition-instance) () (((obs-ext 0 Nat) (single *) (single (record [a *] [b *])))))))
-
-  (test-equal? "Commitment entry spec should also include old FSM address as unobs receptionist"
-    (aps#-spec-from-commitment-entry (term ((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))
-                                     '(init-addr 0 Nat)
-                                     null)
-    (term ((,aps#-no-transition-instance)
-           ((init-addr 0 Nat))
-           (((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))))))
-
-;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
 
 (define (aps#-config-instances config)
@@ -1115,6 +1084,34 @@
    (split-spec (term ((,simple-instance-for-split-test) () (((obs-ext 1 Nat) (single *))))))
    (list (term ((,simple-instance-for-split-test) () ()))
          (term ((,aps#-no-transition-instance) ((init-addr 0 Nat)) (((obs-ext 1 Nat) (single *))))))))
+
+;; A specification instance with an UNKNOWN address and an FSM with no transitions. Used for
+;; specifications where only the commitments are important.
+(define aps#-no-transition-instance
+  (term [((define-state (DummySpecFsmState))) (goto DummySpecFsmState) UNKNOWN]))
+
+;; Creates a spec config with a transition-less FSM and a commitment map with just the given
+;; entry. The receptionists for the unobserved environment will be the given list plus the given FSM
+;; address if it is not UNKONWN.
+(define (aps#-spec-from-commitment-entry entry fsm-addr receptionists)
+  (define all-receptionists
+    (remove-duplicates
+     (append receptionists
+             (if (equal? fsm-addr 'UNKNOWN) '() (list fsm-addr)))))
+  (term ((,aps#-no-transition-instance) ,all-receptionists ,(list entry))))
+
+(module+ test
+  (check-equal?
+   (aps#-spec-from-commitment-entry (term ((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))  'UNKNOWN null)
+   (term ((,aps#-no-transition-instance) () (((obs-ext 0 Nat) (single *) (single (record [a *] [b *])))))))
+
+  (test-equal? "Commitment entry spec should also include old FSM address as unobs receptionist"
+    (aps#-spec-from-commitment-entry (term ((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))
+                                     '(init-addr 0 Nat)
+                                     null)
+    (term ((,aps#-no-transition-instance)
+           ((init-addr 0 Nat))
+           (((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Canonicalization (i.e. renaming)
