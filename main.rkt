@@ -439,7 +439,6 @@
 (define (spc pair)
   (display-step-line "Splitting a specification config")
   (for/list ([spec-config-component (split-spec (config-pair-spec-config pair))])
-    ;; TODO: make it an "error" for a non-precise address to match a spec state parameter
     (display-step-line "Projecting an implementation config")
     (match-define (list projected-impl projected-spec)
       (project-by-relevant-addresses (config-pair-impl-config pair) spec-config-component))
@@ -1690,4 +1689,65 @@
   (test-false "Spec config address must have matching actor in implementation configuration"
    (model-check
     (make-single-actor-config static-response-actor)
-    (make-exclusive-spec no-matching-address-spec))))
+    (make-exclusive-spec no-matching-address-spec)))
+
+  (define spawn-and-retain
+    (term
+     ((addr 0 (Addr (Addr (Addr Nat))))
+      (((define-state (Always [maybe-child (Union [NoChild] [Child (Addr (Addr Nat))])]) (dest)
+          (let ([new-child
+                 (spawn
+                  echo-spawn
+                  (Addr Nat)
+                  (goto EchoResponse)
+                  (define-state (EchoResponse) (echo-target)
+                    (begin
+                      (send echo-target 1)
+                      (goto EchoResponse))))])
+            (case maybe-child
+              [(NoChild)
+               (begin
+                 (send dest new-child)
+                 (goto Always (variant Child new-child)))]
+              [(Child old-child)
+               (begin
+                 (send dest old-child)
+                 (goto Always (variant Child old-child)))]))))
+       (goto Always (variant NoChild))))))
+
+  (define spawn-and-retain-but-send-new
+    (term
+     ((addr 0 (Addr (Addr (Addr Nat))))
+      (((define-state (Always [maybe-child (Union [NoChild] [Child (Addr (Addr Nat))])]) (dest)
+          (let ([new-child
+                 (spawn
+                  echo-spawn
+                  (Addr Nat)
+                  (goto EchoResponse)
+                  (define-state (EchoResponse) (echo-target)
+                    (begin
+                      (send echo-target 1)
+                      (goto EchoResponse))))])
+            (case maybe-child
+              [(NoChild)
+               (begin
+                 (send dest new-child)
+                 (goto Always (variant Child new-child)))]
+              [(Child old-child)
+               (begin
+                 (send dest new-child)
+                 (goto Always (variant Child old-child)))]))))
+       (goto Always (variant NoChild))))))
+
+  (test-valid-actor? spawn-and-retain)
+  (test-valid-actor? spawn-and-retain-but-send-new)
+
+  (test-false "Cannot match both old and new version of spawned child to same spec"
+    (model-check
+     (make-single-actor-config spawn-and-retain)
+     (make-exclusive-spec echo-spawn-spec)))
+
+  (test-true "Always sending new version of child matches echo-spawn"
+    (model-check
+     (make-single-actor-config spawn-and-retain-but-send-new)
+     (make-exclusive-spec echo-spawn-spec))))

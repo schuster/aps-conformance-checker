@@ -84,12 +84,13 @@
       x
       v#)
   (a# a#int a#ext) ; internal and external addresses
-  (a#int (init-addr natural τ)
-         ;; OLD means it existed before the current handler was run, NEW means it was spawned in the
-         ;; current handler (should all be OLD between runs, after blur/canonicalize)
-         (spawn-addr any_location OLD τ)
-         (spawn-addr any_location NEW τ)
+  (a#int a#int-precise
          blurred-internal)
+  (a#int-precise (init-addr natural τ)
+                 ;; OLD means it existed before the current handler was run, NEW means it was spawned
+                 ;; in the current handler (should all be OLD between runs, after blur/canonicalize)
+                 (spawn-addr any_location OLD τ)
+                 (spawn-addr any_location NEW τ))
   (a#ext
    (* (Addr τ)) ; unobserved address
    ;; NOTE: only a finite number of addresses in the initial config, so we can use natural numbers

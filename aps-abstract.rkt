@@ -584,13 +584,18 @@
    (aps#-matches-po?/j v# σ * σ () ,(internals-in (term v#)))]
 
   [----
-   (aps#-matches-po?/j a#int σ (spawn-spec e-hat S-hat ...) σ (((S-hat ...) e-hat a#int)) ())]
+   (aps#-matches-po?/j a#int-precise
+                       σ
+                       (spawn-spec e-hat S-hat ...)
+                       σ
+                       (((S-hat ...) e-hat a#int-precise))
+                       ())]
 
   [----
-   (aps#-matches-po?/j a#int a#int self a#int () ())]
+   (aps#-matches-po?/j a#int-precise a#int-precise self a#int-precise () ())]
 
   [----
-   (aps#-matches-po?/j a#int UNKNOWN self a#int () ())]
+   (aps#-matches-po?/j a#int-precise UNKNOWN self a#int-precise () ())]
 
   [(aps#-list-matches-po?/j ((v# po) ...) σ any_self-addr any_spawns any_receptionists)
    ------
