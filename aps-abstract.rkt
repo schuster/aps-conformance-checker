@@ -892,16 +892,20 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Constructors
 
+;; A specification instance with an UNKNOWN address and an FSM with no transitions. Used for
+;; specifications where only the commitments are important.
 (define aps#-no-transition-instance
   (term [((define-state (DummySpecFsmState))) (goto DummySpecFsmState) UNKNOWN]))
 
-(define (aps#-spec-from-commitment-entry entry old-fsm-addr receptionists)
-  (define receptionists-from-old-addr
-    (if (equal? old-fsm-addr 'UNKNOWN) '() (list old-fsm-addr)))
-  (redex-let aps# ([(a#ext any_1 ...) entry])
-             (term ((,aps#-no-transition-instance)
-                    ,(append receptionists receptionists-from-old-addr)
-                    ((a#ext any_1 ...))))))
+;; Creates a spec config with a transition-less FSM and a commitment map with just the given
+;; entry. The receptionists for the unobserved environment will be the given list plus the given FSM
+;; address if it is not UNKONWN.
+(define (aps#-spec-from-commitment-entry entry fsm-addr receptionists)
+  (define all-receptionists
+    (remove-duplicates
+     (append receptionists
+             (if (equal? fsm-addr 'UNKNOWN) '() (list fsm-addr)))))
+  (term ((,aps#-no-transition-instance) ,all-receptionists ,(list entry))))
 
 (module+ test
   (check-equal?
@@ -1066,27 +1070,28 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Spec Split
 
-;; Returns the list of split spec-configs from the given one, failing if any of the FSMs share an
-;; address
+;; Splits the given specifcation configuration into multiple configs, to ensure the space of explored
+;; spec configs is finite. For each external address in the commitment map that is not a state
+;; argument (and therefore will never have more commitments addeded), it creates a new config
+;; consisting only of the commitments on that address and a dummy FSM with no transitions. After
+;; removing those commitment map entries, the remaining config is also returned. The unobserved
+;; environment's interface does not change in any of the new configs.
 (define (split-spec config)
   (define receptionists (aps#-config-receptionists config))
-  (define-values (fsm-specs remaining-commitment-map)
-    (for/fold ([fsm-specs null]
-               [remaining-commitment-map (aps#-config-commitment-map config)])
-              ([instance (aps#-config-instances config)])
-     (define (entry-relevant? entry)
-       (member (aps#-commitment-entry-address entry)
-               (aps#-instance-arguments instance)))
-      (define relevant-entries (filter entry-relevant? remaining-commitment-map))
-      (values
-       ;; TODO: use redex "term" here instead of quasiquote, when I move this into the APS# module
-       (cons `((,instance) ,receptionists ,relevant-entries) fsm-specs)
-       (filter (negate entry-relevant?) remaining-commitment-map))))
-  (append fsm-specs
-          (for/list ([entry remaining-commitment-map])
-            (aps#-spec-from-commitment-entry entry
-                                             (aps#-config-only-instance-address config)
-                                             receptionists))))
+  (define instance (first (aps#-config-instances config)))
+  ;; A commitment map entry is "relevant" if it is used as a state argument
+  (define-values (relevant-entries irrelevant-entries)
+    (partition (lambda (entry)
+                 (member (aps#-commitment-entry-address entry)
+                         (aps#-instance-arguments instance)))
+               (aps#-config-commitment-map config)))
+  (define commitment-only-configs
+    (map (curryr aps#-spec-from-commitment-entry
+                 (aps#-config-only-instance-address config)
+                 receptionists)
+         irrelevant-entries))
+  (cons (term ((,instance) ,receptionists ,relevant-entries))
+        commitment-only-configs))
 
 (module+ test
   (define simple-instance-for-split-test
