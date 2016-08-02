@@ -643,10 +643,10 @@
     (syntax-parse stx
       [(_ name the-term)
        #`(test-case name
-           (check-valid-actor? the-term))]
+           #,(syntax/loc stx (check-valid-actor? the-term)))]
       [(_ the-term)
        #`(test-begin
-           (check-valid-actor? the-term))]))
+           #,(syntax/loc stx (check-valid-actor? the-term)))]))
 
   (define-simple-check (check-valid-instance? actual)
     (redex-match? aps-eval z actual))
@@ -655,10 +655,10 @@
     (syntax-parse stx
       [(_ name the-term)
        #`(test-case name
-           (check-valid-instance? the-term))]
+           #,(syntax/loc stx (check-valid-instance? the-term)))]
       [(_ the-term)
        #`(test-begin
-           (check-valid-instance? the-term))]))
+           #,(syntax/loc stx (check-valid-instance? the-term)))]))
 
   ;;;; Ignore everything
 
