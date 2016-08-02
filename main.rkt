@@ -1,7 +1,5 @@
 #lang racket
 
-;; TODO: generally make all of the set-based code more functional
-
 (provide model-check)
 
 (require
