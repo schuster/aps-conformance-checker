@@ -432,12 +432,9 @@
 ;; commitment address, we ensure that the number of adddresses in a spec config is no more than max(1,
 ;; maxStateParams), where maxStateParams is the maximum number of formal parameters for any state in
 ;; the original (static) specification. Projecting the implementation configuration according to the
-;; new spec component keeps the state-space of the impl configs finite.
-;;
-;; Canonicalization does not change the finite-ness of the state-space, but it does add a useful
-;; symmetry reduction (as mentioned above).
-
-;; NEXT TODO: clean up all the spc-related stuff
+;; new spec component keeps the state-space of the impl configs finite. Finally, canonicalize ensures
+;; that the address values do not keep increasing towards infinity and instead stay within a bounded
+;; space.
 
 (define (spc pair)
   (display-step-line "Splitting a specification config")
