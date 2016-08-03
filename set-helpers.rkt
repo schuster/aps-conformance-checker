@@ -1,10 +1,10 @@
 #lang racket
 
 (provide
- set-freeze)
+ set-immutable-copy)
 
 ;; ---------------------------------------------------------------------------------------------------
 
 ;; Creates an immutable copy of the given set
-(define (set-freeze s)
+(define (set-immutable-copy s)
   (list->set (set->list s)))

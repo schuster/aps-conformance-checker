@@ -522,21 +522,41 @@
 ;; init-related-spec-steps (i.e. the sets are subsets of those from init-related-spec-steps). This
 ;; dictionary consitutes a proof that all members of simulation-pairs are in the simulation relation.
 (define (remove-unsupported all-pairs incoming-steps init-related-spec-steps init-unrelated-successors)
-  (define remaining-pairs (set-copy all-pairs))
+  ;; The function implements a worklist algorithm, with init-unrelated-successors forming the initial
+  ;; worklist items. The objective is to remove unsupported items from remaining-pairs and
+  ;; related-spec-steps so that at the end of the algorithm, they comprise a globally consistent
+  ;; proof.
   (define unrelated-successors (apply queue (set->list init-unrelated-successors)))
+  (define remaining-pairs (set-copy all-pairs))
   (define related-spec-steps (hash-copy init-related-spec-steps))
 
+  ;; Loop invariant: For every pair in remaining-pairs and every impl-step possible from that pair,
+  ;; related-spec-steps(pair, impl-step) = a non-empty set of matching specification transitions such
+  ;; that the sbc-derivatives of (impl-step.destination, spec-step.destination) are all in
+  ;; remaining-pairs or unrelated-successors.
+  ;;
+  ;; Termination argument: Every iteration of the loop processes one worklist item. We never process a
+  ;; worklist item more than once (because they only come from remaining-pairs, and when an item is
+  ;; queued into the worklist it is permanently removed from remaining-pairs). The total set of items
+  ;; that might enter the worklist (all-pairs plus init-related-successors) is finite, so the queue is
+  ;; eventually emptied and the loop terminates.
   (let loop ()
     (match (dequeue-if-non-empty! unrelated-successors)
-      [#f (list (set-freeze remaining-pairs) related-spec-steps)]
+      [#f (list (set-immutable-copy remaining-pairs) related-spec-steps)]
       [unrelated-pair
        (for ([transition (hash-ref incoming-steps unrelated-pair)])
          (match-define (list predecessor i-step s-step) transition)
+         ;; Only check for lack of support for pairs still in remaining pairs
          (when (set-member? remaining-pairs predecessor)
            (define spec-steps (hash-ref related-spec-steps (list predecessor i-step)))
+           ;; Proceed to remove this spec step only if we have not already discovered that it is
+           ;; unsupported (we may have found some other sbc-derivative of the same step that also led
+           ;; to an unsupported pair)
            (when (set-member? spec-steps s-step)
              (set-remove! spec-steps s-step)
              (when (set-empty? spec-steps)
+               ;; There are no matching spec steps for this impl step, so remove this pair from the
+               ;; relation and add it to the worklist
                (set-remove! remaining-pairs predecessor)
                (enqueue! unrelated-successors predecessor)))))
        (loop)])))
