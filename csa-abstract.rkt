@@ -5,7 +5,7 @@
 (provide
  ;; Required by model checker
  (struct-out csa#-transition)
- csa#-messages-of-type
+ csa#-messages-of-address-type
  csa#-handle-message
  csa#-handle-all-internal-messages
  csa#-handle-all-timeouts
@@ -22,16 +22,12 @@
  csa#-sort-escapes
  csa#-abstract-address
  has-spawn-flag?
-
- ;; Testing helpers
- make-single-actor-abstract-config
-
- ;; Unclear what needs them
- csa#-internal-trigger?
- csa#-receptionist-type
  same-internal-address-without-type?
  same-external-address-without-type?
  type-join
+
+ ;; Testing helpers
+ make-single-actor-abstract-config
 
  ;; Debug helpers
  impl-config-without-state-defs
@@ -43,10 +39,7 @@
  redex/reduction-semantics
  "csa.rkt")
 
-;; Abstract interpretation version of CSA
-;;
-;; TODO: make the language inheritance hierarchy correct (or consider merging them all into a single
-;; mega-language)
+;; Abstract-interpretation version of CSA
 (define-extended-language csa# csa-eval
   (K# (α# μ# ρ# (a#_escaped-addrs ...)))
   (α# (α#n ...))
@@ -118,9 +111,7 @@
       (for/fold ([x E#]) ([x e#]) e#)
       (for/fold ([x v#]) ([x E#]) e#)
       (loop-context E#))
-  ;; TODO: make these more like labels, or something
   (trigger# (timeout a#int)
-            ;; TODO: maybe distinguish timeout when messages are there or not
             (internal-receive a#int v#)
             (external-receive a#int v#)))
 
@@ -132,9 +123,19 @@
 ;; addresses
 (define next-generated-address 100)
 
-(define (csa#-messages-of-type type max-depth)
-  (term (messages-of-type/mf ,type ,max-depth)))
+;; Returns an exhaustive list of abstract messages for the type of the given address, with max-depth
+;; indicating the maximum number of times to unfold recursive types.
+(define (csa#-messages-of-address-type address max-depth)
+  (term (messages-of-type/mf (receptionist-type ,address) ,max-depth)))
 
+;; Returns the type of the given internal precise address
+(define-metafunction csa#
+  receptionist-type : a#int-precise -> τ
+  [(receptionist-type (init-addr natural τ)) τ]
+  [(receptionist-type (spawn-addr _ _ τ)) τ])
+
+;; Returns an exhaustive list of abstract messages for the given type with the natural argument
+;; indicating the maximum number of times to unfold recursive types.
 (define-metafunction csa#
   messages-of-type/mf : τ natural -> (v# ...)
   [(messages-of-type/mf Nat _) ((* Nat))]
@@ -188,45 +189,45 @@
    "rackunit-helpers.rkt")
 
   (test-same-items?
-   (csa#-messages-of-type 'Nat 0)
+   (term (messages-of-type/mf Nat 0))
    '((* Nat)))
-  (test-same-items? (csa#-messages-of-type '(Union [Begin]) 0) (list '(variant Begin)))
+  (test-same-items? (term (messages-of-type/mf (Union [Begin]) 0)) (list '(variant Begin)))
   (test-same-items?
-   (csa#-messages-of-type '(Union [A] [B]) 0)
+   (term (messages-of-type/mf (Union [A] [B]) 0))
    '((variant A) (variant B)))
-  (test-same-items? (csa#-messages-of-type '(Union) 0) null)
+  (test-same-items? (term (messages-of-type/mf (Union) 0)) null)
   (test-same-items?
-   (csa#-messages-of-type '(minfixpt Dummy Nat) 0)
+   (term (messages-of-type/mf (minfixpt Dummy Nat) 0))
    (list '(* (minfixpt Dummy Nat))))
   (test-same-items?
-   (csa#-messages-of-type '(minfixpt Dummy Nat) 1)
+   (term (messages-of-type/mf (minfixpt Dummy Nat) 1))
    (list '(* Nat)))
   (test-same-items?
-   (csa#-messages-of-type '(Record [a Nat] [b Nat]) 0)
+   (term (messages-of-type/mf (Record [a Nat] [b Nat]) 0))
    (list '(record [a (* Nat)] [b (* Nat)])))
   (test-same-items?
-   (csa#-messages-of-type '(Record [x (Union [A] [B])] [y (Union [C] [D])]) 0)
+   (term (messages-of-type/mf (Record [x (Union [A] [B])] [y (Union [C] [D])]) 0))
    (list '(record [x (variant A)] [y (variant C)])
          '(record [x (variant A)] [y (variant D)])
          '(record [x (variant B)] [y (variant C)])
          '(record [x (variant B)] [y (variant D)])))
   (define list-of-nat '(minfixpt NatList (Union [Null] [Cons Nat NatList])))
   (test-same-items?
-   (csa#-messages-of-type list-of-nat 0)
+   (term (messages-of-type/mf ,list-of-nat 0))
    (list `(* ,list-of-nat)))
   (test-same-items?
-   (csa#-messages-of-type list-of-nat 1)
+   (term (messages-of-type/mf ,list-of-nat 1))
    (list `(variant Null) `(variant Cons (* Nat) (* ,list-of-nat))))
   (test-same-items?
-   (csa#-messages-of-type list-of-nat 2)
+   (term (messages-of-type/mf ,list-of-nat 2))
    (list `(variant Null)
          `(variant Cons (* Nat) (variant Null))
          `(variant Cons (* Nat) (variant Cons (* Nat) (* ,list-of-nat)))))
   (test-same-items?
-   (csa#-messages-of-type '(Union) 0)
+   (term (messages-of-type/mf (Union) 0))
    '())
   (test-same-items?
-   (csa#-messages-of-type '(Union [A] [B String (Union [C] [D])]) 0)
+   (term (messages-of-type/mf (Union [A] [B String (Union [C] [D])]) 0))
    '((variant A)
      (variant B (* String) (variant C))
      (variant B (* String) (variant D)))))
@@ -239,12 +240,6 @@
    outputs ; list of abstract-addr/abstract-message 2-tuples
    final-config) ; an abstract implementation configuration
   #:transparent)
-
-(define (csa#-internal-trigger? trigger)
-  (match trigger
-    ['timeout #t]
-    [`(internal-message ,_) #t]
-    [_ #f]))
 
 (define csa#-output-address car)
 (define csa#-output-message cadr)
@@ -1431,14 +1426,6 @@
   (redex-let* csa# ([α#n a]
                     [(a#int _) (term α#n)])
               (term a#int)))
-
-(define (csa#-receptionist-type addr)
-  (term (csa#-receptionist-type/mf ,addr)))
-
-(define-metafunction csa#
-  csa#-receptionist-type/mf : a#int -> τ
-  [(csa#-receptionist-type/mf (init-addr natural τ)) τ]
-  [(csa#-receptionist-type/mf (spawn-addr _ _ τ)) τ])
 
 (define (csa#-message-packet-address packet)
   (first packet))

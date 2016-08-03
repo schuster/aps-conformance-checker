@@ -340,9 +340,8 @@
 ;; the given receptionist address
 (define (external-message-transitions impl-config receptionist)
   (display-step-line "Enumerating abstract messages (typed)")
-  (define addr-type (csa#-receptionist-type receptionist))
   (append*
-   (for/list ([message (csa#-messages-of-type addr-type MAX-RECURSION-DEPTH)])
+   (for/list ([message (csa#-messages-of-address-type receptionist MAX-RECURSION-DEPTH)])
      (display-step-line "Evaluating a handler")
      (csa#-handle-message impl-config receptionist message))))
 
