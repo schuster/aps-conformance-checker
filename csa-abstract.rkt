@@ -383,7 +383,10 @@
       (merge-new-messages
        (merge-new-actors (plug config-context behavior-exp) spawns)
        (filter internal-output? outputs)))
-    (csa#-transition trigger (filter (negate internal-output?) outputs) new-impl-config)))
+    ;; TODO: find some better way to allow a transition to "fail"
+    (if new-impl-config
+        (csa#-transition trigger (filter (negate internal-output?) outputs) new-impl-config)
+        #f)))
 
 ;; Returns true if the config is one that is unable to step because of an over-approximation in the
 ;; abstraction (assumes that there are no empty vector/list/hash references in the actual running
@@ -763,10 +766,13 @@
   (redex-let csa# ([(any_actors any_messages any_rec any_ext) config]
                    [((a#_prec v#_prec) ...) messages-to-precise]
                    [((_ v#_imprec) ...) messages-to-blurred])
-    (term (any_actors
-           ,(merge-duplicate-messages-from-list (append (term any_messages) (term ((a#_prec v#_prec 1) ...))))
-           any_rec
-           ,(remove-duplicates (append (term any_ext) (precise-addrs-in (term (v#_imprec ...)))))))))
+    (if (null? (precise-addrs-in (term (v#_imprec ...))))
+        (term (any_actors
+               ,(merge-duplicate-messages-from-list (append (term any_messages) (term ((a#_prec v#_prec 1) ...))))
+               any_rec
+               ;; ,(remove-duplicates (append (term any_ext) (precise-addrs-in (term (v#_imprec ...)))))
+               any_ext))
+        #f)))
 
 (module+ test
   (check-equal?
@@ -797,7 +803,8 @@
           ())))
 
   (test-equal?
-      "Internal messages have their escapes added to the escape set, including variations on types"
+      ;; "Internal messages have their escapes added to the escape set, including variations on types"
+      "Internal messages with escapes return #f"
     (merge-new-messages (term (()
                                ()
                                ()
@@ -807,14 +814,16 @@
                                (blurred-internal (record [a (init-addr 0 Nat)]
                                                          [b (init-addr 1 Nat)]
                                                          [c (obs-ext 2 Nat)])))))
-    (term (()
-           ()
-           ()
-           ((obs-ext 1 Nat)
-            (init-addr 0 Nat)
-            (obs-ext 1 (Union))
-            (init-addr 1 Nat)
-            (obs-ext 2 Nat))))))
+    #f
+    ;; (term (()
+    ;;        ()
+    ;;        ()
+    ;;        ((obs-ext 1 Nat)
+    ;;         (init-addr 0 Nat)
+    ;;         (obs-ext 1 (Union))
+    ;;         (init-addr 1 Nat)
+    ;;         (obs-ext 2 Nat))))
+    ))
 
 (define (merge-new-actors config new-actors)
   (redex-let csa# ([((any_actors ...) any_messages any_rec any_ext) config])

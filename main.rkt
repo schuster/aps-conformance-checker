@@ -248,30 +248,34 @@
        ;; Find the matching s-steps
        (define found-unmatchable-step? #f)
        (for ([i-step i-steps])
-         ;; Debugging:
-         ;; (printf "Impl step: ~s\n" (debug-impl-step i-step))
+         (match i-step
+           [#f (set! found-unmatchable-step? #t)]
+           [_
+            ;; Debugging:
+            ;; (printf "Impl step: ~s\n" (debug-impl-step i-step))
 
-         (define matching-s-steps (matching-spec-steps s i-step))
-         ;; Debugging:
-         ;; (printf "Matching spec steps: ~s\n" matching-s-steps)
+            (define matching-s-steps (matching-spec-steps s i-step))
+            ;; Debugging:
+            ;; (printf "Matching spec steps: ~s\n" matching-s-steps)
 
-         (hash-set! related-spec-steps (list pair i-step) matching-s-steps)
-         (when (set-empty? matching-s-steps)
-           (set! found-unmatchable-step? #t))
-         ;; Get all derivatives. If sbc ever fails, that step is an unmatchable step
-         (for ([s-step matching-s-steps])
-           (define successor-pairs
-             (for/list ([config (cons (spec-step-destination s-step) (spec-step-spawns s-step))])
-               (config-pair (impl-step-destination i-step) config)))
-           (match (sbc* successor-pairs)
-             [#f (set! found-unmatchable-step? #t)]
-             [sbc-pairs (hash-set! saved-derivatives (config-pair i-step s-step) sbc-pairs)])))
+            (hash-set! related-spec-steps (list pair i-step) matching-s-steps)
+            (when (set-empty? matching-s-steps)
+              (set! found-unmatchable-step? #t))
+            ;; Get all derivatives. If sbc ever fails, that step is an unmatchable step
+            (for ([s-step matching-s-steps])
+              (define successor-pairs
+                (for/list ([config (cons (spec-step-destination s-step) (spec-step-spawns s-step))])
+                  (config-pair (impl-step-destination i-step) config)))
+              (match (sbc* successor-pairs)
+                [#f (set! found-unmatchable-step? #t)]
+                [sbc-pairs (hash-set! saved-derivatives (config-pair i-step s-step) sbc-pairs)]))]))
 
        ;; Add this pair to either related or unrelated set; add new worklist items
        (cond
          [found-unmatchable-step?
-          ;; Some impl step has no matching spec step, so this pair is unrelated. Therefore we add it
-          ;; to the unrelated-successors list and do not further explore transitions from this pair.
+          ;; Some impl step has no matching spec step (or an impl step goes to a known unverifiable
+          ;; configuration), so this pair is unrelated. Therefore we add it to the
+          ;; unrelated-successors list and do not further explore transitions from this pair.
 
           ;; Debugging
           ;; (displayln "Unrelated pair")
@@ -304,10 +308,13 @@
 ;; config can be observed, unobserved, or both.
 (define (impl-steps-from impl-config spec-config)
   (define (add-observed-flag transition observed?)
-    (impl-step (csa#-transition-trigger transition)
-               observed?
-               (csa#-transition-outputs transition)
-               (csa#-transition-final-config transition)))
+    (match transition
+      [#f #f]
+      [_
+       (impl-step (csa#-transition-trigger transition)
+                  observed?
+                  (csa#-transition-outputs transition)
+                  (csa#-transition-final-config transition))]))
 
   (define addr (aps#-config-only-instance-address spec-config))
   (define observed-external-receives
