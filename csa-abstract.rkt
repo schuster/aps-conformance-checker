@@ -48,7 +48,7 @@
 ;; TODO: make the language inheritance hierarchy correct (or consider merging them all into a single
 ;; mega-language)
 (define-extended-language csa# csa-eval
-  (K# (α# μ# ρ# (a#ext_escaped-observables ...)))
+  (K# (α# μ# ρ# (a#_escaped-addrs ...)))
   (α# (α#n ...))
   (α#n (a#int ((S# ...) e#)))
   (μ# ((a#int v# multiplicity) ...)) ; message packets
@@ -755,14 +755,18 @@
      (inject/H# (term (begin (spawn L Nat (goto A) (define-state (A) (x) (goto A))) (goto B)))))
    (list (term ((goto B) () () ([(spawn-addr L NEW Nat) [((define-state (A) (x) (goto A))) (goto A)]]))))))
 
-;; Abstractly adds the set of new messages to the existing set
+;; Abstractly adds the set of new messages to the existing set. Messages to the blurred-internal
+;; address have their escaped addresses added to the escape set rather than getting added to the queue.
 (define (merge-new-messages config new-message-list)
+  (define-values (messages-to-blurred messages-to-precise)
+    (partition (lambda (m) (equal? (first m) 'blurred-internal)) new-message-list))
   (redex-let csa# ([(any_actors any_messages any_rec any_ext) config]
-                   [((a# v#) ...) new-message-list])
+                   [((a#_prec v#_prec) ...) messages-to-precise]
+                   [((_ v#_imprec) ...) messages-to-blurred])
     (term (any_actors
-           ,(merge-duplicate-messages-from-list (append (term any_messages) (term ((a# v# 1) ...))))
+           ,(merge-duplicate-messages-from-list (append (term any_messages) (term ((a#_prec v#_prec 1) ...))))
            any_rec
-           any_ext))))
+           ,(remove-duplicates (append (term any_ext) (precise-addrs-in (term (v#_imprec ...)))))))))
 
 (module+ test
   (check-equal?
@@ -790,7 +794,27 @@
           (((init-addr 1 Nat) (* (Addr Nat)) *)
            ((init-addr 1 Nat) (obs-ext 0 Nat) 1))
           ()
-          ()))))
+          ())))
+
+  (test-equal?
+      "Internal messages have their escapes added to the escape set, including variations on types"
+    (merge-new-messages (term (()
+                               ()
+                               ()
+                               ((obs-ext 1 Nat)
+                                (init-addr 0 Nat))))
+                        (term ((blurred-internal (obs-ext 1 (Union)))
+                               (blurred-internal (record [a (init-addr 0 Nat)]
+                                                         [b (init-addr 1 Nat)]
+                                                         [c (obs-ext 2 Nat)])))))
+    (term (()
+           ()
+           ()
+           ((obs-ext 1 Nat)
+            (init-addr 0 Nat)
+            (obs-ext 1 (Union))
+            (init-addr 1 Nat)
+            (obs-ext 2 Nat))))))
 
 (define (merge-new-actors config new-actors)
   (redex-let csa# ([((any_actors ...) any_messages any_rec any_ext) config])
@@ -1055,9 +1079,8 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Blurring
 
-;; Blurs out all actors in the configuration with the given spawn flag, and also blurs out any
-;; external address not in relevant-externals. See the discussion of blurring in main.rkt for more
-;; details.
+;; Blurs out all actors in the configuration with the given spawn flag, and blurs out any external
+;; address not in relevant-externals. See the discussion of blurring in main.rkt for more details.
 (define (csa#-blur-config config spawn-flag-to-blur relevant-externals)
   ;; 1. Remove all blurred addresses and their messages
   (match-define (list remaining-config removed-actors removed-messages)
@@ -1069,27 +1092,27 @@
   ;; 3. Add escapes to the escape list
   ;; TODO: add escaped internal addresses here, too
   ;; TODO: remove externals that are actually blurred out
-  (define newly-escaped-externals
+  (define remaining-actor-addresses (map csa#-actor-address (csa#-config-actors renamed-config)))
+  (define newly-escaped-addrs
     (filter
-     (lambda (a) (not (member a relevant-externals)))
-     (append* (map obs-externals-in removed-actors))))
+     (lambda (a) (member a (append relevant-externals remaining-actor-addresses)))
+     (append* (map precise-addrs-in (list removed-actors removed-messages)))))
   ;; TODO: make merge work on the message list, not the whole config
   (csa#-merge-duplicate-messages
    (redex-let csa# ([(any_actors any_messages any_receptionists any_escapes) renamed-config])
      (term (any_actors
             any_messages
             any_receptionists
-            ,(remove-duplicates (append (term any_escapes) newly-escaped-externals))))))
+            ,(remove-duplicates (append (term any_escapes) newly-escaped-addrs))))))
 
+  ;; TODO (3 Aug):
+  ;; order should be: remove actors and messages, get escapes (even bad ones), add escapes, do rename, remove blurs from escape, remove duplicate escapes
 
-  ;; TODO: update escape list
 
   ;; 4. Take out any imprecise addresses from escape list
   ;; TODO: 4.
 
   ;; TODO: remove the blurry addresses from escape list, maybe receptionists?
-
-  ;; TODO: remove add escaped internal addresses to escape list, too
 
   ;; 5. Remove messages that may not be duplicates (some messages that only differed in the choice of
   ;; addresses may have the same addresses after blurring)
@@ -1233,16 +1256,17 @@
      (equal? addr-flag flag)]
     [_ #f]))
 
-(define (obs-externals-in some-term)
-  (term (obs-externals-in/mf ,some-term)))
+(define (precise-addrs-in some-term)
+  (term (precise-addrs-in/mf ,some-term)))
 
 (define-metafunction csa#
-  obs-externals-in/mf : any -> (a#ext ...)
-  [(obs-externals-in/mf (obs-ext natural any_type)) ((obs-ext natural any_type))]
-  [(obs-externals-in/mf (any ...))
-   (a#ext ... ...)
-   (where ((a#ext ...) ...) ((obs-externals-in/mf any) ...))]
-  [(obs-externals-in/mf _) ()])
+  precise-addrs-in/mf : any -> (a# ...)
+  [(precise-addrs-in/mf (obs-ext natural any_type)) ((obs-ext natural any_type))]
+  [(precise-addrs-in/mf a#int-precise) (a#int-precise)]
+  [(precise-addrs-in/mf (any ...))
+   (any_result ... ...)
+   (where ((any_result ...) ...) ((precise-addrs-in/mf any) ...))]
+  [(precise-addrs-in/mf _) ()])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Duplicate message merging

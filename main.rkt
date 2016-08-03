@@ -1802,4 +1802,104 @@
   (test-true "Always sending new version of child matches echo-spawn"
     (model-check
      (make-single-actor-config spawn-and-retain-but-send-new)
-     (make-exclusive-spec echo-spawn-spec))))
+     (make-exclusive-spec echo-spawn-spec)))
+
+  ;;;; Blur Tests
+
+  (define send-to-blurred-internal-actor
+    (term
+     ((addr 0 Nat)
+      (((define-state (Always [static-output (Addr Nat)]
+                              [saved-internal (Union [None] [Some (Addr Nat)])]) (m)
+          (begin
+            (case saved-internal
+              [(None) 1]
+              [(Some saved) (send saved 1)])
+            (goto Always
+                  static-output
+                  (variant Some
+                           (spawn internal-loc
+                                  (Addr Nat)
+                                  (goto InternalAlways)
+                                  (define-state (InternalAlways) (m)
+                                    (begin
+                                      (send static-output 1)
+                                      (goto InternalAlways)))))))))
+       (goto Always ,static-response-address (variant None))))))
+  (define send-whenever-spec
+    (term
+     (((define-state (Always r)
+         [* -> (goto Always r)]
+         [unobs -> (with-outputs ([r *]) (goto Always r))]))
+      (goto Always ,static-response-address)
+      (addr 0 Nat))))
+  (define never-send-spec
+    (term
+     (((define-state (Always r)
+         [* -> (goto Always r)]))
+      (goto Always ,static-response-address)
+      (addr 0 Nat))))
+
+  (test-true "Sending message to blurred-internal can match send-whenever spec"
+    (model-check
+     (make-single-actor-config send-to-blurred-internal-actor)
+     (make-exclusive-spec send-whenever-spec)))
+  (test-false "Sending message to blurred-internal does not match never-send spec"
+    (model-check
+     (make-single-actor-config send-to-blurred-internal-actor)
+     (make-exclusive-spec never-send-spec)))
+
+  ;; step 1: spawn the forwarder; save it
+  ;; step 2: spawn the new agent (spec follows it)
+  ;; step 3: new agent uses forwarder to fulfill its dynamic request/response (can't do static yet)
+  (define conflicts-only-test-actor
+    (term
+     ((addr 0 (Addr (Addr (Addr Nat))))
+      (((define-state (Always [maybe-forwarder (Union [None] [Forwarder (Addr (Addr Nat))])]) (dest)
+          (let ([forwarder
+                 (case maybe-forwarder
+                   [(None)
+                    ;; The forwarder actor takes any address it's given and sends a message to it
+                    (spawn forwarder-loc (Addr Nat)
+                                  (goto Forwarding)
+                                  (define-state (Forwarding) (r)
+                                    (begin
+                                      (send r 1)
+                                      (goto Forwarding))))]
+                   [(Forwarder the-addr) the-addr])])
+            (begin
+              (send dest
+                    (spawn surfaced-loc
+                           (Addr Nat)
+                           (goto Responding)
+                           (define-state (Responding) (r)
+                             (begin
+                               (send forwarder r)
+                               (goto Responding)))))
+              (goto Always (variant Forwarder forwarder))))))
+       (goto Always (variant None))))))
+
+  ;; (test-true "Only spawned actors with conflicts are blurred out"
+  ;;   (model-check
+  ;;    (make-single-actor-config conflicts-only-test-actor)
+  ;;    (make-exclusive-spec echo-spawn-spec)))
+
+  ;; first: do only for overlaps: on message A, spawn a forwarder (just once). on message B, either send directly or send to forwarder.
+
+  ;; test idea: check that a config with blurred thing that has escaped address satisfies send-whenever, but not send-once/never
+  ;;
+  ;; can do similar for internal address by having a single forwarding actor
+
+  ;; can send to obs address after blurred
+
+  ;; can send to other internal address after blurred
+
+
+
+  ;; (for both of these, it just sends the abstract wildcard value for that type)
+  ;; actually, this won't work: that message to an internal might contain an *external* observable address. Need to think about that one a little bit
+
+  ;; blur out only the *conflicting* actors
+
+  ;; merge messages to blurred actors, too
+  )
