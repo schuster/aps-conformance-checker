@@ -246,9 +246,6 @@
    final-config) ; an abstract implementation configuration
   #:transparent)
 
-(define csa#-output-address car)
-(define csa#-output-message cadr)
-
 ;; impl-config a#int v# -> (Listof #f or csa#-transition)
 ;;
 ;; Evaluates the handler triggered by sending message to actor-address, returning the list of possible
@@ -1457,6 +1454,10 @@
 
 (define (csa#-message-packet-value packet)
   (second packet))
+
+(define csa#-output-address car)
+
+(define csa#-output-message cadr)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Boolean Logic
