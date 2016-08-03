@@ -1,6 +1,6 @@
-;; Defines the abstract interpretation of CSA configurations
-
 #lang racket
+
+;; Abstract standard semantic domains for CSA#, and associated functions
 
 (provide
  ;; Required by model checker

@@ -1,6 +1,6 @@
 #lang racket
 
-;; Defines the desugaring from the surface syntax to the core syntax
+;; Nanopass-based desugarer for the bigger language (desugars down to CSA)
 
 (provide desugar-single-actor-program)
 

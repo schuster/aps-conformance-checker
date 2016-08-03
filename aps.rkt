@@ -1,6 +1,6 @@
 #lang racket
 
-;; Defines the Redex language and helpers for the APS specification language
+;; Concrete semantic domains for APS (specification language), and associated functions
 
 (provide aps
          aps-eval

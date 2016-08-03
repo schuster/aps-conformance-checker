@@ -1,6 +1,6 @@
 #lang racket
 
-;; Models the grammar for APS (Actor Protocol Specifications)
+;; Concrete standard semantic domains for CSA, and associated functions
 
 (provide
  csa-eval

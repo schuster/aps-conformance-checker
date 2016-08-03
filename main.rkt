@@ -1,5 +1,8 @@
 #lang racket
 
+;; Implements the top-level function, "model-check", and includes the core of the model-checking
+;; algorithm
+
 (provide model-check)
 
 (require

@@ -1,6 +1,6 @@
 #lang racket
 
-;; Defines the abstract APS configurations and helper functions
+;; Abstract semantic domains for APS (specification language), and associated functions
 
 (provide
  ;; TODO: remove the aps# prefix from the unambiguous functions
