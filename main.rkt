@@ -422,7 +422,8 @@
 ;; Split/Blur/Canonicalize (SBC)
 
 ;; Performs the SBC (split/blur/canonicalize) operation on a config pair, returning its derivative
-;; pairs. This entails the following:
+;; pairs. Returns #f if sbc was not possible (e.g. because blurring allowed a precise address to
+;; escape into the blurred section). SBC entails the following:
 ;;
 ;; 1. For each address in the output commitment map that is *not* an argument to the current state,
 ;; split those commitments off into a new specification with a dummy FSM.
@@ -445,22 +446,32 @@
 ;; space.
 (define (sbc pair)
   (display-step-line "Splitting a specification config")
-  (for/list ([spec-config-component (split-spec (config-pair-spec-config pair))])
-    (display-step-line "Blurring an implementation config")
-    (match-define (list blurred-impl blurred-spec)
-      (blur-by-relevant-addresses (config-pair-impl-config pair) spec-config-component))
-    (display-step-line "Canonicalizing the pair, adding to queue")
-    (match-define (list canonicalized-impl canonicalized-spec)
-      (canonicalize-pair blurred-impl blurred-spec))
-    (config-pair canonicalized-impl canonicalized-spec)))
+  (define spec-config-components (split-spec (config-pair-spec-config pair)))
+  (define blur-results
+    (for/list ([spec-config-component spec-config-components])
+      (display-step-line "Blurring an implementation config")
+      (blur-by-relevant-addresses (config-pair-impl-config pair) spec-config-component)))
+  (if (ormap false? blur-results)
+      #f
+      (for/list ([blur-result blur-results])
+        (match-define (list blurred-impl blurred-spec) blur-result)
+        (display-step-line "Canonicalizing the pair, adding to queue")
+        (match-define (list canonicalized-impl canonicalized-spec)
+          (canonicalize-pair blurred-impl blurred-spec))
+        (config-pair canonicalized-impl canonicalized-spec))))
 
-;; Calls sbc on every pair and merges the results into one long list
+;; Calls sbc on every pair and merges the results into one long list. If sbc returns #f for any pair,
+;; this function returns #f.
 (define (sbc* pairs)
-  (append* (map sbc pairs)))
+  (define sbc-results (map sbc pairs))
+  (if (ormap false? sbc-results)
+      #f
+      (append* sbc-results)))
 
 ;; Blurs the given configurations into only the portions that are relevant to the specification
 ;; configuration, moving the rest of the configurations into the "imprecise" sections of the
-;; abstraction.
+;; abstraction. Returns #f if blurring results in allowing a precise address to escape into the
+;; "blurred" section.
 ;;
 ;; Specifically, this chooses actors with either the NEW or OLD flag to be more likely to match this
 ;; specification, then merges all actors with the same spawn location and opposite flag into the
@@ -476,9 +487,11 @@
         'NEW))
   ;; TODO: only remove from the spec those addresses that HAVE to be removed because of overlap
   ;; (should get this info from csa#-blur-config)
-  ;; (define blurred-impl )
-  (list (csa#-blur-config impl-config spawn-flag-to-blur (aps#-relevant-external-addrs spec-config))
-        (aps#-blur-config spec-config spawn-flag-to-blur)))
+  (define blurred-impl
+    (csa#-blur-config impl-config spawn-flag-to-blur (aps#-relevant-external-addrs spec-config)))
+  (if blurred-impl
+      (list blurred-impl (aps#-blur-config spec-config spawn-flag-to-blur))
+      #f))
 
 (module+ test
   (test-equal? "check that messages with blurred addresses get merged together"

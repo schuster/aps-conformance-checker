@@ -1080,7 +1080,8 @@
 ;; Blurring
 
 ;; Blurs out all actors in the configuration with the given spawn flag, and blurs out any external
-;; address not in relevant-externals. See the discussion of blurring in main.rkt for more details.
+;; address not in relevant-externals. Returns #f if the blurring process causes a precise address to
+;; escape into the "blurred" section. See the discussion of blurring in main.rkt for more details.
 (define (csa#-blur-config config spawn-flag-to-blur relevant-externals)
   ;; 1. Remove all blurred addresses and their messages
   (match-define (list remaining-config removed-actors removed-messages)
@@ -1095,15 +1096,18 @@
   (define remaining-actor-addresses (map csa#-actor-address (csa#-config-actors renamed-config)))
   (define newly-escaped-addrs
     (filter
+     ;; TODO: make this check ignore types on addresses
      (lambda (a) (member a (append relevant-externals remaining-actor-addresses)))
      (append* (map precise-addrs-in (list removed-actors removed-messages)))))
-  ;; TODO: make merge work on the message list, not the whole config
-  (csa#-merge-duplicate-messages
-   (redex-let csa# ([(any_actors any_messages any_receptionists any_escapes) renamed-config])
-     (term (any_actors
-            any_messages
-            any_receptionists
-            ,(remove-duplicates (append (term any_escapes) newly-escaped-addrs))))))
+  (if (null? newly-escaped-addrs)
+      (csa#-merge-duplicate-messages
+       (redex-let csa# ([(any_actors any_messages any_receptionists any_escapes) renamed-config])
+         (term (any_actors
+                any_messages
+                any_receptionists
+                ,(remove-duplicates (append (term any_escapes) newly-escaped-addrs))))))
+      #f)
+
 
   ;; TODO (3 Aug):
   ;; order should be: remove actors and messages, get escapes (even bad ones), add escapes, do rename, remove blurs from escape, remove duplicate escapes
