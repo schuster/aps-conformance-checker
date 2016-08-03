@@ -965,6 +965,22 @@
 (module+ test
   (check-equal? (term (csa#-subst (variant Foo (* Nat)) a (* Nat))) (term (variant Foo (* Nat)))))
 
+(define-metafunction csa#
+  type-subst : τ X τ -> τ
+  [(type-subst Nat _ _) Nat]
+  [(type-subst (minfixpt X τ_1) X τ_2)
+   (minfixpt X τ_1)]
+  ;; TODO: do the full renaming here
+  [(type-subst (μ X_1 τ_1) X_2 τ_2)
+   (μ X_1 (type-subst τ_1 X_2 τ_2))]
+  [(type-subst X X τ) τ]
+  [(type-subst X_1 X_2 τ) X_1]
+  [(type-subst (Union [t τ ...] ...) X τ_2)
+   (Union [t (type-subst τ X τ_2) ...] ...)]
+  ;; TODO: Record
+  [(type-subst (Addr τ) X τ_2)
+   (Addr (type-subst τ X τ_2))])
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
 

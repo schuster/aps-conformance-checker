@@ -2,19 +2,16 @@
 
 ;; Models the grammar for APS (Actor Protocol Specifications)
 
-(provide csa
-         csa-eval
-         inject-message
-         make-single-actor-config
-         make-empty-queues-config
-         single-actor-prog->config
-         handler-step
-         type-subst
-         csa-valid-config?
-         csa-valid-receptionist-list?
-         csa-config-receptionists
-         csa-config-internal-addresses
-         same-address-without-type?)
+(provide
+ csa-eval
+ make-single-actor-config
+ make-empty-queues-config
+ single-actor-prog->config
+ csa-valid-config?
+ csa-valid-receptionist-list?
+ csa-config-receptionists
+ csa-config-internal-addresses
+ same-address-without-type?)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -104,9 +101,7 @@
   (m (a <= v))
   ((ρ χ) (a ...))
   (e ....
-     a
-     (rcv (x) e)
-     (rcv (x) e [(timeout n) e]))
+     a)
   (v n
      (variant t v ...)
      (record [l v] ...)
@@ -115,25 +110,7 @@
      (list v ...)
      (vector v ...)
      (hash [v v] ...))
-  (a (addr natural τ)) ; only used for the initial receptionist lists for now
-  (A ((any_1 ... hole any_2 ...) μ ρ χ))
-  (E hole
-     (goto s v ... E e ...)
-     (send E e)
-     (send v E)
-     (begin E e ...)
-     (let ([x v] ... [x E] [x e] ...) e)
-     (case E _ ...)
-     (variant t v ... E e ...)
-     (record [l v] ... [l E] [l e] ...)
-     (: E l)
-     (! E [l e])
-     (! v [l E])
-     (primop v ... E e ...)
-     (list v ... E e ...)
-     (vector v ... E e ...)
-     (for/fold ([x E]) ([x e]) e)
-     (for/fold ([x v]) ([x E]) e)))
+  (a (addr natural τ))) ; only used for the initial receptionist lists for now
 
 (define (make-single-actor-config actor)
   (term (make-single-actor-config/mf ,actor)))
@@ -160,61 +137,6 @@
     (a_receptionist ...)
     ())
    (where ((a_receptionist _) ...) (αn_receptionist ...))])
-
-(define handler-step
-  (reduction-relation csa-eval
-    #:domain K
-    (--> (in-hole A (a ((S ...) (in-hole E (goto s v ..._n)))))
-         (in-hole A (a ((S ...) (rcv (x_h) (subst-n e (x_s v) ...)))))
-         (where (_ ... (define-state (s [x_s τ_s] ..._n) (x_h) e) _ ...) (S ...))
-         Goto)
-
-    ;; TODO: goto with timeout
-
-    ;; let, match, begin, send, goto
-    (==> (begin v e e_rest ...)
-         (begin e e_rest ...)
-         Begin1)
-    (==> (begin v)
-         v
-         Begin2)
-
-    ;; TODO: do the ρ/χ updates
-    (--> ((any_a1 ... (a ((S ...) (in-hole E (send a_2 v)))) any_a2 ...)
-          (any_packets ...)
-          ρ χ)
-         ((any_a1 ... (a ((S ...) (in-hole E v)))            any_a2 ...)
-          (any_packets ... (a_2 <= v))
-          ρ χ)
-         Send)
-
-    ;; TODO: let
-    ;; TODO: case
-    ;; TODO: record lookup
-
-    with
-    [(--> (in-hole A (a ((S ...) (in-hole E old))))
-          (in-hole A (a ((S ...) (in-hole E new)))))
-     (==> old new)]))
-
-(module+ test
-  (define empty-A-context (term ((hole) () () ())))
-  (define S1-def (term (define-state (S1 [a Nat] [b Nat]) (x) (begin a x (goto S1 b a)))))
-  (check-not-false (redex-match csa-eval S S1-def))
-  (check-not-false (redex-match csa-eval A empty-A-context))
-  (define init-config
-    (term (in-hole ,empty-A-context ((addr 1 Nat) ((,S1-def) (begin 0 2 (goto S1 1 0)))))))
-  (check-not-false (redex-match csa-eval K init-config))
-  ;; begin1
-  ;; begin2
-  ;; goto
-  ;; all the way through a goto, with begins
-
-  (check-equal?
-   (apply-reduction-relation* handler-step
-                              init-config)
-   (list (term (in-hole ,empty-A-context
-                        ((addr 1 Nat) ((,S1-def) (rcv (x) (begin 1 x (goto S1 0 1))))))))))
 
 (define-metafunction csa-eval
   subst-n : e (x v) ... -> e
@@ -323,39 +245,7 @@
                 (term (! (record [field 1]) [field 2])))
   (check-equal?
    (term (subst-n/S (define-state (S1 [a Nat]) (m) (+ a b)) [a 1] [b 2] [m 3]))
-   (term (define-state (S1 [a Nat]) (m) (+ a 2))))
-  ;; TODO: more tests
-  )
-
-;; Substitutes an external message into the config. Will throw an error if the address is not in the
-;; set of receptionists.
-(define-metafunction csa-eval
-  inject-message : K a v -> K
-  ;; TODO: do the case for rcv with timeout, too
-  [(inject-message ((any_1 ... (a ((S ...) (rcv (x) e))) any_2 ...) μ (a_1 ... a a_2 ...) χ) a v)
-   ((any_1 ... (a ((S ...) (subst e x v))) any_2 ...) μ (a_1 ... a a_2 ...) χ)]
-  [(inject-message (_ _ ρ _) a v)
-   (side-condition (not (member (term ρ) (term a))))
-   (side-condition (error "Address ~s is not a receptionist address" (term a)))])
-
-;; ---------------------------------------------------------------------------------------------------
-;; Type system helpers
-
-(define-metafunction csa
-  type-subst : τ X τ -> τ
-  [(type-subst Nat _ _) Nat]
-  [(type-subst (minfixpt X τ_1) X τ_2)
-   (minfixpt X τ_1)]
-  ;; TODO: do the full renaming here
-  [(type-subst (μ X_1 τ_1) X_2 τ_2)
-   (μ X_1 (type-subst τ_1 X_2 τ_2))]
-  [(type-subst X X τ) τ]
-  [(type-subst X_1 X_2 τ) X_1]
-  [(type-subst (Union [t τ ...] ...) X τ_2)
-   (Union [t (type-subst τ X τ_2) ...] ...)]
-  ;; TODO: Record
-  [(type-subst (Addr τ) X τ_2)
-   (Addr (type-subst τ X τ_2))])
+   (term (define-state (S1 [a Nat]) (m) (+ a 2)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Predicates
