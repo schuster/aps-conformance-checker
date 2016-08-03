@@ -170,6 +170,8 @@
   [(messages-of-type/mf (Vectorof τ) _) ((* (Vectorof τ)))]
   [(messages-of-type/mf (Hash τ_1 τ_2) _) ((* (Hash τ_1 τ_2)))])
 
+;; Generate an exhaustive list of variant values for the given tag and type, with the natural argument
+;; acting as max-depth for the number of recursive type unfoldings
 (define-metafunction csa#
   generate-variants : natural t τ ... -> ((variant t v# ...) ...)
   [(generate-variants _ t) ((variant t))]
@@ -235,6 +237,9 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
 
+;; Represents a single handler-level transition of an actor. Trigger is the event that caused the
+;; handler to run, outputs is the list of outputs to the external world that happened execution, and
+;; final-config is the resulting abstract configuration.
 (struct csa#-transition
   (trigger ; follows trigger# above
    outputs ; list of abstract-addr/abstract-message 2-tuples
@@ -244,8 +249,10 @@
 (define csa#-output-address car)
 (define csa#-output-message cadr)
 
-;; Evaluates the handler triggered by sending message to actor-address, return the list of possible
-;; results (which are tuples of the final behavior expression and the list of outputs)
+;; impl-config a#int v# -> (Listof #f or csa#-transition)
+;;
+;; Evaluates the handler triggered by sending message to actor-address, returning the list of possible
+;; results (either csa#-transition or #f if a transition led to an unverifiable state)
 (define (csa#-handle-message impl-config actor-address message)
   (redex-let csa# ([(any_actors-before
                      (a# ((name state-defs (_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e# any_timeout-clause ...) _ ...)) (in-hole E# (goto s v# ..._n))))
@@ -266,8 +273,11 @@
                   actor-address
                   impl-config-context)))
 
-;; Returns all transitions possible from this implementation configuration by handling an internal
-;; message
+;; impl-config -> (Listof #f or csa#-transition)
+;;
+;; Evaluates all handlers triggered by the receipt of some in-transit message in impl-config,
+;; returning the list of possible results (either csa#-transition or #f if a transition led to an
+;; unverifiable state)
 (define (csa#-handle-all-internal-messages impl-config)
   (let loop ([transitions-so-far null]
              [processed-messages null]
@@ -302,7 +312,10 @@
                (append processed-messages (list message))
                messages-to-process))])))
 
-;; Returns all transitions possible from this configuration by taking a timeout
+;; impl-config -> (Listof #f or csa#-transition)
+;;
+;; Evaluates all handlers triggered by a timeout impl-config, returning the list of possible
+;; results (either csa#-transition or #f if a transition led to an unverifiable state)
 (define (csa#-handle-all-timeouts impl-config)
   (redex-let csa# ([(any_actors any_messages any_receptionists any_externals) impl-config])
     (let loop ([transitions-so-far null]
@@ -322,7 +335,11 @@
                (append actors-before (list actor))
                actors-after)]))))
 
-;; Returns the transitions that happen by executing this actor's timeout if it has one, or null if not
+;; (α#n ...) α#n (α#n ...) μ ρ χ -> (Listof #f or csa#-transition)
+;;
+;; Evaluates the handler triggered by a timeout on actor (if such a timeout exists), returning the
+;; list of possible results (either csa#-transition or #f if a transition led to an unverifiable
+;; state). If no such timeout exists, the empty list is returned.
 (define (csa#-handle-actor-maybe-timeout actors-before
                                          actor
                                          actors-after
@@ -353,6 +370,12 @@
                      impl-config-context))]
     [_ (error 'csa#-handle-actor-maybe-timeout "Got multiple matches for actor: ~s\n" actor)]))
 
+;; H# trigger# a#int config-context -> (Listof #f or csa#-transition)
+;;
+;; Evaluates the given handler configuration for the given trigger at the given actor address and
+;; inserts the resulting expression into the given configuration context. Returns a list of results,
+;; each of which is either #f (if that particular execution led to an unverifiable state) or a
+;; csa#-transition struct representing the transition.
 (define (eval-handler handler-config trigger address config-context)
   (define final-configs (apply-reduction-relation* handler-step# handler-config #:cache-all? #t))
   (define non-abstraction-stuck-final-configs
@@ -383,7 +406,7 @@
         (csa#-transition trigger (filter (negate internal-output?) outputs) new-impl-config)
         #f)))
 
-;; Returns true if the config is one that is unable to step because of an over-approximation in the
+;; Returns #t if the config is one that is unable to step because of an over-approximation in the
 ;; abstraction (assumes that there are no empty vector/list/hash references in the actual running
 ;; progrm)
 (define (stuck-abstraction-handler-config? c)
@@ -754,7 +777,8 @@
    (list (term ((goto B) () () ([(spawn-addr L NEW Nat) [((define-state (A) (x) (goto A))) (goto A)]]))))))
 
 ;; Abstractly adds the set of new messages to the existing set. Messages to the blurred-internal
-;; address have their escaped addresses added to the escape set rather than getting added to the queue.
+;; address have their escaped addresses added to the escape set rather than getting added to the
+;; queue.
 (define (merge-new-messages config new-message-list)
   (define-values (messages-to-blurred messages-to-precise)
     (partition (lambda (m) (equal? (first m) 'blurred-internal)) new-message-list))
@@ -960,6 +984,7 @@
 (module+ test
   (check-equal? (term (csa#-subst (variant Foo (* Nat)) a (* Nat))) (term (variant Foo (* Nat)))))
 
+;; Substitutes the second type for X in the first type
 (define-metafunction csa#
   type-subst : τ X τ -> τ
   [(type-subst Nat _ _) Nat]
