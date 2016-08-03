@@ -490,6 +490,37 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pair-removal back-propagation
 
+
+;; (Setof config-pair) IncomingDict RelatedSpecStepsDict (Setof config-pair) ->
+;;   (Setof config-pair) RelatedSpecStepsDict
+;;
+;; Removes from all-pairs those pairs whose proof of membership in a simulation (i.e. their matching
+;; transitions in init-related-spec-steps) depends on a transition to a pair known to not be in the
+;; relation (we call these "unsupported pairs"). The algorithm propagates the effects of these
+;; removals backwards through the proof structure and removes further unsupported pairs until a
+;; greatest fixpoint is reached, yielding a set of pairs whose members are all in the full simulation
+;; relation.
+;;
+;; all-pairs: The initial set of pairs, assumed to all be in the rank-1 simulation
+;;
+;; incoming-steps: A dictionary from either a related pair or an unrelated successor to the set of
+;; impl/spec steps that lead to it (as described in the "Type" Definitions section above). Must
+;; include entries for all pairs in both all-pairs and init-unrelated-successors.
+;;
+;; init-related-spec-steps: A dictionary from a related pair and an implementation step from that pair
+;; to the set of specification steps that match the implementation step. Must have an entry for every
+;; possible implementation step from a pair in all-pairs, and there must be at least one matching spec
+;; step per entry. See "Type" Definitions above for more details.
+;;
+;; init-unrelated-successors: A set of config-pairs that are known to *not* be in the rank-1 simulation. This list must include all
+;;
+;; Returns:
+;;
+;; simulation-pairs: The subset of all-pairs that the function was able to show are in the simulation.
+;;
+;; simulation-related-spec-steps: The RelatedSpecStepsDict that is a sub-dictionary of
+;; init-related-spec-steps (i.e. the sets are subsets of those from init-related-spec-steps). This
+;; dictionary consitutes a proof that all members of simulation-pairs are in the simulation relation.
 (define (remove-unsupported all-pairs incoming-steps init-related-spec-steps init-unrelated-successors)
   (define remaining-pairs (set-copy all-pairs))
   (define unrelated-successors (apply queue (set->list init-unrelated-successors)))
