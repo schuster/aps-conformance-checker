@@ -73,7 +73,7 @@
 ;; the initial construction of the rank-1 simulation. Formally, for all pairs <i, s> in either the
 ;; related pairs or unrelated successors returned by find-rank1-simulation, incoming-steps(i, s) = a
 ;; set of tuples of the form (<i', s'>, i-step, s-step), where i-step is some transition from i',
-;; s-step is a transition from s' that matches i-step, and <i, s> ∈ spc(i'', s'') where i'' and s''
+;; s-step is a transition from s' that matches i-step, and <i, s> ∈ sbc(i'', s'') where i'' and s''
 ;; are the destination configurations from i-step and s-step, respectively.
 ;;
 ;; In remove-unsupported, we use this data structure to determine the set of related pairs and
@@ -88,7 +88,7 @@
 ;;
 ;; Formally, related-spec-steps(<i, s>, i-step) = {s-step, ...} such that if <i, s> is a related pair
 ;; for some relation R and i-step is a transition from i, s-step matches i-step and all pairs <i', s'>
-;; ∈ spc(i-step.destination, s-step.destination) are also related pairs in R.
+;; ∈ sbc(i-step.destination, s-step.destination) are also related pairs in R.
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Constants
@@ -134,7 +134,7 @@
     [(spec-address-in-impl? initial-impl-config initial-spec-config) #f]
     [else
      (define initial-pairs
-       (spc (abstract-pair initial-impl-config initial-spec-config MAX-RECURSION-DEPTH)))
+       (sbc (abstract-pair initial-impl-config initial-spec-config MAX-RECURSION-DEPTH)))
      (match-define (list rank1-pairs
                          rank1-unrelated-successors
                          incoming-steps
@@ -265,7 +265,7 @@
           (loop related-pairs (set-add unrelated-successors pair))]
          [else
           ;; This pair is in the rank-1 simulation (because all of its impl steps have matching spec
-          ;; steps). We have to add it to the related-pairs set, spc each of the matching destination
+          ;; steps). We have to add it to the related-pairs set, sbc each of the matching destination
           ;; pairs and add them to the work-list so that we explore this pair's successors, and add
           ;; the incoming transitions for those destination pairs to incoming-steps.
 
@@ -278,15 +278,15 @@
                   (config-pair (impl-step-destination i-step) config)))
               ;; Debugging only
               ;; (for ([successor-pair successor-pairs])
-              ;;   (printf "pre-spc: ~s\n" successor-pair)
-              ;;   (printf "post-spc: ~s\n" (spc successor-pair)))
-              (for ([spc-pair (spc* successor-pairs)])
-                (dict-of-sets-add! incoming-steps spc-pair (list pair i-step s-step))
-                (unless (or (member spc-pair (queue->list to-visit))
-                            (set-member? related-pairs spc-pair)
-                            (set-member? unrelated-successors spc-pair)
-                            (equal? spc-pair pair))
-                  (enqueue! to-visit spc-pair)))))
+              ;;   (printf "pre-sbc: ~s\n" successor-pair)
+              ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
+              (for ([sbc-pair (sbc* successor-pairs)])
+                (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step))
+                (unless (or (member sbc-pair (queue->list to-visit))
+                            (set-member? related-pairs sbc-pair)
+                            (set-member? unrelated-successors sbc-pair)
+                            (equal? sbc-pair pair))
+                  (enqueue! to-visit sbc-pair)))))
           (loop (set-add related-pairs pair) unrelated-successors)])])))
 
 ;; Returns all implementation steps possible from the given impl-config/spec-config pair. The spec
@@ -409,15 +409,15 @@
      (set-add! the-set val)]))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Split/Project/Canonicalize (SPC)
+;; Split/Blur/Canonicalize (SBC)
 
-;; Performs the SPC (split/project/canonicalize) operation on a config pair, returning its derivative
+;; Performs the SBC (split/blur/canonicalize) operation on a config pair, returning its derivative
 ;; pairs. This entails the following:
 ;;
 ;; 1. For each address in the output commitment map that is *not* an argument to the current state,
 ;; split those commitments off into a new specification with a dummy FSM.
 ;;
-;; 2. For each specification resulting from step 1, project the implementation configuration according
+;; 2. For each specification resulting from step 1, blur the implementation configuration according
 ;; to the addresses relevant to that spec. This means merging external addresses not used in the spec
 ;; into a single abstract value and choosing some subset of actors (up to some statically known
 ;; number) to remain precise while merging the others together.
@@ -426,50 +426,53 @@
 ;; so that we avoid the orbit problem with other similar pairs that we have already explored (or that
 ;; we will explore).
 ;;
-;; SPC keeps our explored state-space finite. By creating a new spec for each no-longer-used
+;; SBC keeps our explored state-space finite. By creating a new spec for each no-longer-used
 ;; commitment address, we ensure that the number of adddresses in a spec config is no more than max(1,
 ;; maxStateParams), where maxStateParams is the maximum number of formal parameters for any state in
-;; the original (static) specification. Projecting the implementation configuration according to the
+;; the original (static) specification. Blurring the implementation configuration according to the
 ;; new spec component keeps the state-space of the impl configs finite. Finally, canonicalize ensures
 ;; that the address values do not keep increasing towards infinity and instead stay within a bounded
 ;; space.
-
-(define (spc pair)
+(define (sbc pair)
   (display-step-line "Splitting a specification config")
   (for/list ([spec-config-component (split-spec (config-pair-spec-config pair))])
-    (display-step-line "Projecting an implementation config")
-    (match-define (list projected-impl projected-spec)
-      (project-by-relevant-addresses (config-pair-impl-config pair) spec-config-component))
+    (display-step-line "Blurring an implementation config")
+    (match-define (list blurred-impl blurred-spec)
+      (blur-by-relevant-addresses (config-pair-impl-config pair) spec-config-component))
     (display-step-line "Canonicalizing the pair, adding to queue")
     (match-define (list canonicalized-impl canonicalized-spec)
-      (canonicalize-pair projected-impl projected-spec))
+      (canonicalize-pair blurred-impl blurred-spec))
     (config-pair canonicalized-impl canonicalized-spec)))
 
-;; Calls spc on every pair and merges the results into one long list
-(define (spc* pairs)
-  (append* (map spc pairs)))
+;; Calls sbc on every pair and merges the results into one long list
+(define (sbc* pairs)
+  (append* (map sbc pairs)))
 
-;; Projects the given configurations into only the portions that are relevant to the specification
+;; Blurs the given configurations into only the portions that are relevant to the specification
 ;; configuration, moving the rest of the configurations into the "imprecise" sections of the
-;; abstraction
-(define (project-by-relevant-addresses p s)
+;; abstraction.
+;;
+;; Specifically, this chooses actors with either the NEW or OLD flag to be more likely to match this
+;; specification, then merges all actors with the same spawn location and opposite flag into the
+;; "blurred" section of the impl config, taking any precise addresses known by those actors or in
+;; messages sent to those actors and adding them to special "escaped" sets. Also blurs out external
+;; addresses that are irrelevant to the current spec.
+(define (blur-by-relevant-addresses impl-config spec-config)
+  (define spec-address (aps#-config-only-instance-address spec-config))
   (define spawn-flag-to-blur
-    (let ([spec-address (aps#-config-only-instance-address s)])
-      (if (or (csa#-new-spawn-address? spec-address)
-              (aps#-unknown-address? spec-address))
-          'OLD
-          'NEW)))
-
-  (list
-   (csa#-merge-duplicate-messages
-    (blur-externals
-     (blur-irrelevant-actors p spawn-flag-to-blur)
-     (aps#-relevant-external-addrs s)))
-   (aps#-abstract-and-age s spawn-flag-to-blur)))
+    (if (or (csa#-new-spawn-address? spec-address)
+            (aps#-unknown-address? spec-address))
+        'OLD
+        'NEW))
+  ;; TODO: only remove from the spec those addresses that HAVE to be removed because of overlap
+  ;; (should get this info from csa#-blur-config)
+  ;; (define blurred-impl )
+  (list (csa#-blur-config impl-config spawn-flag-to-blur (aps#-relevant-external-addrs spec-config))
+        (aps#-blur-config spec-config spawn-flag-to-blur)))
 
 (module+ test
   (test-equal? "check that messages with blurred addresses get merged together"
-   (project-by-relevant-addresses
+   (blur-by-relevant-addresses
     (term (()
            (((init-addr 2 Nat) (obs-ext 1 Nat) 1)
             ((init-addr 2 Nat) (obs-ext 2 Nat) 1)

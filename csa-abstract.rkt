@@ -11,6 +11,7 @@
  csa#-handle-all-timeouts
  csa#-new-spawn-address?
  csa#-abstract-config
+ csa#-blur-config
 
  ;; Required by APS#
  csa#-output-address
@@ -19,16 +20,14 @@
  ;; Required by APS#; should go into a "common" language instead
  csa#
  csa#-sort-escapes
- csa#-blur-and-age-receptionists
- csa#-age-internal-addrs
  csa#-abstract-address
+ has-spawn-flag?
+
+ ;; Testing helpers
+ make-single-actor-abstract-config
 
  ;; Unclear what needs them
  csa#-internal-trigger?
- blur-irrelevant-actors
- blur-externals
- csa#-merge-duplicate-messages
- make-single-actor-abstract-config
  csa#-receptionist-type
  same-internal-address-without-type?
  same-external-address-without-type?
@@ -52,7 +51,7 @@
   (K# (α# μ# ρ# (a#ext_escaped-observables ...)))
   (α# (α#n ...))
   (α#n (a#int ((S# ...) e#)))
-  (μ# ((a#int v# multiplicity) ...))
+  (μ# ((a#int v# multiplicity) ...)) ; message packets
   (multiplicity 1 *)
   (S# (define-state (s [x τ] ...) (x) e#)
       (define-state (s [x τ] ...) (x) e# [(timeout v#) e#]))
@@ -89,8 +88,8 @@
   (a#int-precise (init-addr natural τ)
                  ;; OLD means it existed before the current handler was run, NEW means it was spawned
                  ;; in the current handler (should all be OLD between runs, after blur/canonicalize)
-                 (spawn-addr any_location OLD τ)
-                 (spawn-addr any_location NEW τ))
+                 (spawn-addr any_location spawn-flag τ))
+  (spawn-flag NEW OLD)
   (a#ext
    (* (Addr τ)) ; unobserved address
    ;; NOTE: only a finite number of addresses in the initial config, so we can use natural numbers
@@ -756,62 +755,6 @@
      (inject/H# (term (begin (spawn L Nat (goto A) (define-state (A) (x) (goto A))) (goto B)))))
    (list (term ((goto B) () () ([(spawn-addr L NEW Nat) [((define-state (A) (x) (goto A))) (goto A)]]))))))
 
-(define (csa#-merge-duplicate-messages impl-config)
-  (redex-let csa# ([(any_actors any_messages any_rec any_ext) impl-config])
-    (term (any_actors
-           ,(merge-duplicate-messages-from-list (term any_messages))
-           any_rec
-           any_ext))))
-
-(define (merge-duplicate-messages-from-list message-list)
-  (let loop ([processed-messages null]
-             [remaining-messages message-list])
-    (match remaining-messages
-      [(list) processed-messages]
-      [(list message remaining-messages ...)
-       (define remaining-without-duplicates (remove* (list message) remaining-messages same-message?))
-       (define new-message
-         ;; message stays same if nothing was duplicated, else have to change multiplicity
-         (if (equal? remaining-without-duplicates remaining-messages)
-             message
-             (redex-let csa# ([(any_addr any_value _) message]) (term (any_addr any_value *)))))
-       (loop (append processed-messages (list new-message))
-             remaining-without-duplicates)])))
-
-;; For two "messages" (the things inside the message queue in a config), returns true if they have the
-;; same address and value
-(define (same-message? m1 m2)
-  (redex-let csa# ([(a#_1 v#_1 _) m1]
-                   [(a#_2 v#_2 _) m2])
-    (equal? (term (a#_1 v#_1)) (term (a#_2 v#_2)))))
-
-(module+ test
-  (check-equal?
-   (merge-duplicate-messages-from-list
-    (term (((obs-ext 1 Nat) (* Nat) 1)
-           ((obs-ext 1 Nat) (* Nat) 1))))
-   (term (((obs-ext 1 Nat) (* Nat) *))))
-
-    (check-equal?
-   (merge-duplicate-messages-from-list
-    (term (((obs-ext 1 Nat) (* Nat) 1)
-           ((obs-ext 1 Nat) (* Nat) 1)
-           ((obs-ext 1 Nat) (* Nat) 1))))
-   (term (((obs-ext 1 Nat) (* Nat) *))))
-
-  (check-equal?
-   (merge-duplicate-messages-from-list
-    (term (((obs-ext 1 Nat) (* Nat) 1)
-           ((obs-ext 2 Nat) (* Nat) 1)
-           ((obs-ext 3 Nat) (* Nat) *)
-           ((* (Addr Nat)) (* Nat) *)
-           ((obs-ext 1 Nat) (* Nat) 1)
-           ((* (Addr Nat)) (* Nat) 1))))
-   (term (((obs-ext 1 Nat) (* Nat) *)
-          ((obs-ext 2 Nat) (* Nat) 1)
-          ((obs-ext 3 Nat) (* Nat) *)
-          ((* (Addr Nat)) (* Nat) *)))))
-
 ;; Abstractly adds the set of new messages to the existing set
 (define (merge-new-messages config new-message-list)
   (redex-let csa# ([(any_actors any_messages any_rec any_ext) config]
@@ -1110,75 +1053,185 @@
                (term (obs-ext 2 (Union [A])))))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Further Abstraction
+;; Blurring
 
-(define (blur-irrelevant-actors config flag-to-blur)
-  (redex-let csa# ([((α#n ...) μ# ρ# any_escaped) config])
-             (define all-actors (term (α#n ...)))
-             ;; 1. Get list of addresses to blur
-             (define actors-to-blur
-               (filter (lambda (actor)
-                         (address-has-flag? (csa#-actor-address actor) flag-to-blur))
-                       all-actors))
-             (define addrs-to-blur (map csa#-actor-address actors-to-blur))
-             ;; 2. for each blurred actor, get its ext-obs addrs
-             (define newly-escaped-externals (map obs-externals-in actors-to-blur))
-             ;; 3. blur those actors
-             (define remaining-actors
-               (filter
-                 (lambda (actor) (not (member (csa#-actor-address actor) addrs-to-blur)))
-                 all-actors))
-             ;; 4. rename those addresses throughout to "blurred-internal" and rename remaining flags
-             ;; to OLD
-             ;;
-             ;; 5. merge ext-obs addrs into escape
-             (term (,(blur-and-age-internal-addrs remaining-actors addrs-to-blur)
-                    ,(blur-and-age-internal-addrs (term μ#) addrs-to-blur)
-                    ,(blur-and-age-internal-addrs (term ρ#) addrs-to-blur)
-                    ,(remove-duplicates (append (term any_escaped) addrs-to-blur))))))
+;; Blurs out all actors in the configuration with the given spawn flag, and also blurs out any
+;; external address not in relevant-externals. See the discussion of blurring in main.rkt for more
+;; details.
+(define (csa#-blur-config config spawn-flag-to-blur relevant-externals)
+  ;; 1. Remove all blurred addresses and their messages
+  (match-define (list remaining-config removed-actors removed-messages)
+    ;; TODO: remove an actor only if another actor has same address with different flag
+    (remove-actors-by-flag config spawn-flag-to-blur))
+  ;; 2. Do the actual rename/blur for both internals and externals
+  (define renamed-config
+    (blur-addresses remaining-config (map csa#-actor-address removed-actors) relevant-externals))
+  ;; 3. Add escapes to the escape list
+  ;; TODO: add escaped internal addresses here, too
+  ;; TODO: remove externals that are actually blurred out
+  (define newly-escaped-externals
+    (filter
+     (lambda (a) (not (member a relevant-externals)))
+     (append* (map obs-externals-in removed-actors))))
+  ;; TODO: make merge work on the message list, not the whole config
+  (csa#-merge-duplicate-messages
+   (redex-let csa# ([(any_actors any_messages any_receptionists any_escapes) renamed-config])
+     (term (any_actors
+            any_messages
+            any_receptionists
+            ,(remove-duplicates (append (term any_escapes) newly-escaped-externals))))))
 
-;; TODO: remove this function; just use its parts
-(define (blur-and-age-internal-addrs some-term addresses-to-blur)
-  (csa#-age-internal-addrs (blur-internal-addrs some-term addresses-to-blur)))
 
-(define (blur-internal-addrs some-term addresses-to-blur)
+  ;; TODO: update escape list
+
+  ;; 4. Take out any imprecise addresses from escape list
+  ;; TODO: 4.
+
+  ;; TODO: remove the blurry addresses from escape list, maybe receptionists?
+
+  ;; TODO: remove add escaped internal addresses to escape list, too
+
+  ;; 5. Remove messages that may not be duplicates (some messages that only differed in the choice of
+  ;; addresses may have the same addresses after blurring)
+
+
+     )
+
+;; impl-config spawn-flag -> impl-config (α#n ...) (v# ...)
+;;
+;; Removes from the configuration all actors that have the given spawn flag in their address, along
+;; with any in-transit message packets sent to them. Returns the resulting config, the list of removed
+;; actors, and the list of removed messages.
+(define (remove-actors-by-flag config flag)
+  (redex-let csa# ([(α# μ# ρ# any_escaped) config])
+
+    ;; TODO: remove the receptionists too: what is the receptionist set now, anyway?
+
+    (define-values (removed-actors remaining-actors)
+      (partition
+       (lambda (actor)
+         (has-spawn-flag? (csa#-actor-address actor) flag))
+       (term α#)))
+    (define-values (removed-packets remaining-packets)
+      (partition
+       (lambda (packet)
+         (has-spawn-flag? (csa#-message-packet-address packet) flag))
+       (term μ#)))
+    (list (term (,remaining-actors ,remaining-packets ρ# any_escaped))
+          removed-actors
+          removed-packets)))
+
+;; impl-config (a#int ...) (a#ext ...) -> impl-config
+;;
+;; Renames internal addresses in internals-to-bour and external addresses *not* in
+;; relevant-externals to their respective imprecise forms
+(define (blur-addresses some-term internals-to-blur relevant-externals)
   (match some-term
-    [(and addr `(spawn-addr ,loc ,flag ,type))
-     (if (member addr addresses-to-blur)
+    [(and addr `(spawn-addr ,_ ,_ ,_))
+     (if (member addr internals-to-blur)
          (term blurred-internal)
          addr)]
+    [(and addr `(obs-ext ,_ ,type))
+     (if (member addr relevant-externals)
+         addr
+         (term (* (Addr ,type))))]
+    [(list (and keyword (or `vector 'list 'hash)) terms ...)
+     (define blurred-args (map (curryr blur-addresses internals-to-blur relevant-externals) terms))
+     (term (,keyword ,@(remove-duplicates blurred-args)))]
     [(list terms ...)
-     (map (curryr blur-internal-addrs addresses-to-blur) terms)]
-    [_ some-term]))
-
-(define (csa#-age-internal-addrs some-term)
-  (match some-term
-    [(and addr `(spawn-addr ,loc ,flag ,type))
-     (if (equal? flag 'NEW)
-         (term (spawn-addr ,loc OLD ,type))
-         addr)]
-    [(list terms ...) (map csa#-age-internal-addrs terms)]
+     (map (curryr blur-addresses internals-to-blur relevant-externals) terms)]
     [_ some-term]))
 
 (module+ test
-  (test-equal? "blur and age test"
-    (blur-and-age-internal-addrs
+  (test-equal? "blur test"
+    (blur-addresses
      (term (((spawn-addr foo OLD Nat) (spawn-addr foo NEW Nat))
             (spawn-addr bar NEW Nat)
+            (obs-ext 1 Nat)
+            (obs-ext 2 Nat)
             (spawn-addr bar OLD Nat)
             (spawn-addr baz OLD Nat)
             (spawn-addr quux NEW Nat)))
-     (list (term (spawn-addr foo NEW Nat)) (term (spawn-addr bar OLD Nat))))
+     (list (term (spawn-addr foo NEW Nat)) (term (spawn-addr bar NEW Nat)))
+     (list '(obs-ext 2 Nat)))
     (term (((spawn-addr foo OLD Nat) blurred-internal)
-           (spawn-addr bar OLD Nat)
            blurred-internal
+           (* (Addr Nat))
+           (obs-ext 2 Nat)
+           (spawn-addr bar OLD Nat)
            (spawn-addr baz OLD Nat)
-           (spawn-addr quux OLD Nat)))))
+           (spawn-addr quux NEW Nat))))
 
-(define (address-has-flag? addr flag)
-  (match flag
-    ['OLD (redex-match? csa# (spawn-addr _ OLD _) addr)]
-    ['NEW (redex-match? csa# (spawn-addr _ NEW _) addr)]))
+  (test-equal? "blur test 2"
+    (blur-addresses
+     (redex-let* csa#
+                 ([α#n (term
+                        ((init-addr 0 Nat)
+                         (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
+                             (begin
+                               (send (obs-ext 1 Nat) (* Nat))
+                               (send (obs-ext 2 Nat) (* Nat))
+                               (goto A x y z))))
+                          (goto A (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))))]
+                  [K# (term ((α#n) () ((init-addr 0 Nat)) ()))])
+                 (term K#))
+     null
+     (term ((obs-ext 1 Nat) (obs-ext 3 Nat))))
+    (redex-let* csa#
+                ([α#n (term
+                       ((init-addr 0 Nat)
+                        (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
+                            (begin
+                              (send (obs-ext 1 Nat) (* Nat))
+                              (send (* (Addr Nat)) (* Nat))
+                              (goto A x y z))))
+                         (goto A (* (Addr Nat)) (obs-ext 3 Nat) (* (Addr Nat))))))]
+                 [K# (term ((α#n) () ((init-addr 0 Nat)) ()))])
+                (term K#)))
+
+  ;; Make sure duplicates are removed from vectors, lists, and hashes
+  (test-equal? "blur test 3"
+   (blur-addresses
+    (redex-let csa#
+        ([e# (term (hash (obs-ext 1 Nat)
+                         (obs-ext 2 Nat)
+                         (obs-ext 3 Nat)
+                         (obs-ext 4 Nat)))])
+       (term e#))
+    null
+    '((obs-ext 1 Nat) (obs-ext 3 Nat)))
+   (term (hash (obs-ext 1 Nat) (* (Addr Nat)) (obs-ext 3 Nat))))
+
+  (test-equal? "blur test 4"
+   (blur-addresses
+    (redex-let csa#
+        ([e# (term (list (obs-ext 1 Nat)
+                         (obs-ext 2 Nat)
+                         (obs-ext 3 Nat)
+                         (obs-ext 4 Nat)))])
+      (term e#))
+    null
+    null)
+   (term (list (* (Addr Nat)))))
+
+  (test-equal? "blur test 5"
+   (blur-addresses
+    (redex-let csa#
+        ([e# (term (vector (obs-ext 1 Nat)
+                           (obs-ext 2 Nat)
+                           (obs-ext 3 Nat)
+                           (obs-ext 4 Nat)))])
+      (term e#))
+    null
+    `((obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))
+   (term (vector (obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))))
+
+;; Returns #t if the address is of the form (spawn-addr _ flag _), #f otherwise.
+(define (has-spawn-flag? addr flag)
+  (match addr
+    [`(spawn-addr ,_ ,addr-flag ,_)
+     (equal? addr-flag flag)]
+    [_ #f]))
 
 (define (obs-externals-in some-term)
   (term (obs-externals-in/mf ,some-term)))
@@ -1191,125 +1244,65 @@
    (where ((a#ext ...) ...) ((obs-externals-in/mf any) ...))]
   [(obs-externals-in/mf _) ()])
 
-(define (csa#-blur-and-age-receptionists receptionists spawn-flag-to-blur)
-  (csa#-age-internal-addrs
-   (filter (negate (curryr address-has-flag? spawn-flag-to-blur)) receptionists)))
+;; ---------------------------------------------------------------------------------------------------
+;; Duplicate message merging
 
-(module+ test
-  (test-equal? "Receptionist blur/age test"
-    (csa#-blur-and-age-receptionists
-     (list '(init-addr 1 Nat)
-           '(init-addr 2 Nat)
-           '(spawn-addr 1 OLD Nat)
-           '(spawn-addr 2 OLD Nat)
-           '(spawn-addr 2 NEW Nat))
-     'OLD)
-    (list '(init-addr 1 Nat)
-          '(init-addr 2 Nat)
-          '(spawn-addr 2 OLD Nat)))
-  (test-equal? "Receptionist blur/age test 2"
-    (csa#-blur-and-age-receptionists
-     (list '(init-addr 1 Nat)
-           '(init-addr 2 Nat)
-           '(spawn-addr 1 OLD Nat)
-           '(spawn-addr 2 OLD Nat)
-           '(spawn-addr 2 NEW Nat))
-     'NEW)
-    (list '(init-addr 1 Nat)
-          '(init-addr 2 Nat)
-          '(spawn-addr 1 OLD Nat)
-          '(spawn-addr 2 OLD Nat))))
+;; TODO: also use this during evaluation
+(define (csa#-merge-duplicate-messages impl-config)
+  (redex-let csa# ([(any_actors any_messages any_rec any_ext) impl-config])
+    (term (any_actors
+           ,(merge-duplicate-messages-from-list (term any_messages))
+           any_rec
+           any_ext))))
 
-;; TODO: rename this function (need a better term than "blur"; "fuzz" is taken
-;;
-;; "Blurs" out any address not in the given "relevant" list into an unobserved address
-(define (blur-externals config relevant-external-addrs)
-  (redex-let csa# ([(any_actors any_msg any_rec any_escapes) config])
-             (term ((blur-externals/mf any_actors ,relevant-external-addrs)
-                    (blur-externals/mf any_msg ,relevant-external-addrs)
-                    (blur-externals/mf any_rec ,relevant-external-addrs)
-                    ,(filter (curryr member relevant-external-addrs) (term any_escapes))))))
+(define (merge-duplicate-messages-from-list message-list)
+  (let loop ([processed-messages null]
+             [remaining-messages message-list])
+    (match remaining-messages
+      [(list) processed-messages]
+      [(list message remaining-messages ...)
+       (define remaining-without-duplicates (remove* (list message) remaining-messages same-message?))
+       (define new-message
+         ;; message stays same if nothing was duplicated, else have to change multiplicity
+         (if (equal? remaining-without-duplicates remaining-messages)
+             message
+             (redex-let csa# ([(any_addr any_value _) message]) (term (any_addr any_value *)))))
+       (loop (append processed-messages (list new-message))
+             remaining-without-duplicates)])))
 
-(define-metafunction csa#
-  blur-externals/mf : any (a#ext ...) -> any
-  [(blur-externals/mf (obs-ext natural any_type) (_ ... (obs-ext natural any_type) _ ...))
-   (obs-ext natural any_type)]
-  [(blur-externals/mf (obs-ext natural τ) _)
-   (* (Addr τ))]
-  [(blur-externals/mf (any_kw any ...) (any_addr ...))
-   (any_kw any_result ...)
-   (side-condition (member (term any_kw) (list 'vector 'list 'hash)))
-   (where (any_result ...) ,(remove-duplicates (term ((blur-externals/mf any (any_addr ...)) ...))))]
-  [(blur-externals/mf (any ...) (any_addr ...))
-   ((blur-externals/mf any (any_addr ...)) ...)]
-  [(blur-externals/mf any _) any])
+;; For two "messages" (the things inside the message queue in a config), returns true if they have the
+;; same address and value
+(define (same-message? m1 m2)
+  (redex-let csa# ([(a#_1 v#_1 _) m1]
+                   [(a#_2 v#_2 _) m2])
+    (equal? (term (a#_1 v#_1)) (term (a#_2 v#_2)))))
 
 (module+ test
   (check-equal?
-   (blur-externals
-      (redex-let* csa#
-                  ([α#n (term
-                         ((init-addr 0 Nat)
-                          (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
-                              (begin
-                                (send (obs-ext 1 Nat) (* Nat))
-                                (send (obs-ext 2 Nat) (* Nat))
-                                (goto A x y z))))
-                           (goto A (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))))]
-                   [K# (term ((α#n) () ((init-addr 0 Nat)) ()))])
-             (term K#))
-      (term ((obs-ext 1 Nat) (obs-ext 3 Nat))))
-   (redex-let* csa#
-               ([α#n (term
-                      ((init-addr 0 Nat)
-                       (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
-                           (begin
-                             (send (obs-ext 1 Nat) (* Nat))
-                             (send (* (Addr Nat)) (* Nat))
-                             (goto A x y z))))
-                        (goto A (* (Addr Nat)) (obs-ext 3 Nat) (* (Addr Nat))))))]
-                [K# (term ((α#n) () ((init-addr 0 Nat)) ()))])
-               (term K#)))
+   (merge-duplicate-messages-from-list
+    (term (((obs-ext 1 Nat) (* Nat) 1)
+           ((obs-ext 1 Nat) (* Nat) 1))))
+   (term (((obs-ext 1 Nat) (* Nat) *))))
 
-  ;; Make sure duplicates are removed from vectors, lists, and hashes
-  (check-equal?
-   (term (blur-externals/mf
-          ,(redex-let csa#
-                      ([e# (term (hash (obs-ext 1 Nat)
-                                       (obs-ext 2 Nat)
-                                       (obs-ext 3 Nat)
-                                       (obs-ext 4 Nat)))])
-                      (term e#))
-          ((obs-ext 1 Nat) (obs-ext 3 Nat))))
-   (term (hash (obs-ext 1 Nat) (* (Addr Nat)) (obs-ext 3 Nat))))
+    (check-equal?
+   (merge-duplicate-messages-from-list
+    (term (((obs-ext 1 Nat) (* Nat) 1)
+           ((obs-ext 1 Nat) (* Nat) 1)
+           ((obs-ext 1 Nat) (* Nat) 1))))
+   (term (((obs-ext 1 Nat) (* Nat) *))))
 
   (check-equal?
-   (term (blur-externals/mf
-          ,(redex-let csa#
-                      ([e# (term (list (obs-ext 1 Nat)
-                                       (obs-ext 2 Nat)
-                                       (obs-ext 3 Nat)
-                                       (obs-ext 4 Nat)))])
-                      (term e#))
-          ()))
-   (term (list (* (Addr Nat)))))
-
-  (check-equal?
-   (term (blur-externals/mf
-          ,(redex-let csa#
-                      ([e# (term (vector (obs-ext 1 Nat)
-                                         (obs-ext 2 Nat)
-                                         (obs-ext 3 Nat)
-                                         (obs-ext 4 Nat)))])
-                      (term e#))
-          ((obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat))))
-   (term (vector (obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat))))
-
-  (test-equal? "Just remove blurred addresses from escape list"
-               (blur-externals
-                (term (() () () ((obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat))))
-                (term ((obs-ext 1 Nat) (obs-ext 3 Nat))))
-               (term (() () () ((obs-ext 1 Nat) (obs-ext 3 Nat))))))
+   (merge-duplicate-messages-from-list
+    (term (((obs-ext 1 Nat) (* Nat) 1)
+           ((obs-ext 2 Nat) (* Nat) 1)
+           ((obs-ext 3 Nat) (* Nat) *)
+           ((* (Addr Nat)) (* Nat) *)
+           ((obs-ext 1 Nat) (* Nat) 1)
+           ((* (Addr Nat)) (* Nat) 1))))
+   (term (((obs-ext 1 Nat) (* Nat) *)
+          ((obs-ext 2 Nat) (* Nat) 1)
+          ((obs-ext 3 Nat) (* Nat) *)
+          ((* (Addr Nat)) (* Nat) *)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Canonicalization Help
@@ -1393,6 +1386,12 @@
   csa#-receptionist-type/mf : a#int -> τ
   [(csa#-receptionist-type/mf (init-addr natural τ)) τ]
   [(csa#-receptionist-type/mf (spawn-addr _ _ τ)) τ])
+
+(define (csa#-message-packet-address packet)
+  (first packet))
+
+(define (csa#-message-packet-value packet)
+  (second packet))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Boolean Logic

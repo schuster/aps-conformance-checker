@@ -14,11 +14,11 @@
  aps#-resolve-outputs
  aps#-abstract-config
  split-spec
+ aps#-blur-config
  canonicalize-pair
 
- ;; Required by model checker for projection
+ ;; Required by model checker for blurring
  aps#-relevant-external-addrs
- aps#-abstract-and-age
 
  ;; Testing helpers
  make-Σ#
@@ -1112,14 +1112,59 @@
            (((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))))))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Blurring
+
+;; Blurs the given specification configuration by removing all receptionists in the unobserved
+;; environment interface with the wrong spawn flag
+(define (aps#-blur-config config spawn-flag-to-blur)
+  (redex-let aps# ([[([any_state-defs any_exp any_addr]) any_receptionists any_out-coms] config])
+    (term [([any_state-defs any_exp any_addr])
+           ,(filter (negate (curryr has-spawn-flag? spawn-flag-to-blur)) (term any_receptionists))
+           any_out-coms])))
+
+(module+ test
+  (test-equal? "aps#-blur-config"
+    (aps#-blur-config (term ((,aps#-no-transition-instance)
+                             ((init-addr  0 Nat)
+                              (spawn-addr 1 OLD Nat)
+                              (spawn-addr 1 NEW Nat)
+                              (spawn-addr 2 NEW Nat)
+                              (spawn-addr 2 OLD Nat))
+                             ()))
+                      'NEW)
+    (term ((,aps#-no-transition-instance)
+           ((init-addr  0 Nat)
+            (spawn-addr 1 OLD Nat)
+            (spawn-addr 2 OLD Nat))
+           ()))))
+
+;; (define-metafunction aps#
+;;   blur-receptionists : (a#int ...) spawn-flag -> (a#int ...)
+;;   [(blur-receptionists () _) ()]
+;;   [(blur-receptionists ((spawn-addr any_loc spawn-flag τ) any_rest ...) spawn-flag)
+;;    (blur-receptionists (any_rest ...) spawn-flag)]
+;;   [(blur-receptionists (any_1 any_rest ...) spawn-flag)
+;;    (any_1 any_result ...)
+;;    (where (any_result ...) (blur-receptionists (any_rest ...) spawn-flag))])
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Canonicalization (i.e. renaming)
 
 ;; Given an impl config/spec config pair, transforms it into an equivalent (for the purpose of
-;; conformance), canonical form. Specifically, renames all precise external addresses such that the
-;; first one is address 0, then address 1, then address 2, and so on. Also sorts the escaped addresses
-;; in the impl config and the receptionists in the spec config (not strictly necessary to ensure a
-;; bounded state space, but provides a form of symmetry reduction).
+;; conformance), canonical form. Specifically:
+;;
+;; 1. Changes all spawn address new/old flags to OLD (assumes that these configs have already been
+;; blurred so that either an OLD or a NEW version of an address exists, but not both)
+;;
+;; 2. Renames all precise external addresses such that the first one is address 0, then address 1,
+;; then address 2, and so on.
+;;
+;; 3. Also sorts the escaped addresses in the impl config and the receptionists in the spec config
+;; (not strictly necessary to ensure a bounded state space, but provides a form of symmetry
+;; reduction).
 (define (canonicalize-pair impl-config spec-config)
+  (match-define (list aged-impl-config aged-spec-config)
+    (age-addresses (list impl-config spec-config)))
   (define commitment-map (aps#-config-commitment-map spec-config))
   (define substitutions
     (for/list ([entry commitment-map]
@@ -1127,7 +1172,7 @@
       (redex-let aps# ([((obs-ext natural _) _ ...) entry])
         (list (term natural) new-number))))
   (match-define (list renamed-impl-config renamed-spec-config)
-    (term (rename-external-addresses ,(list impl-config spec-config) ,@substitutions)))
+    (term (rename-external-addresses ,(list aged-impl-config aged-spec-config) ,@substitutions)))
   (list (csa#-sort-escapes renamed-impl-config)
         (aps#-sort-receptionists renamed-spec-config)))
 
@@ -1158,40 +1203,51 @@
   (test-equal? "canonicalize 2"
     (canonicalize-pair
      (make-single-actor-abstract-config
-      (term ((init-addr 0 Nat)
+      (term ((spawn-addr 0 OLD Nat)
              (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
               (goto A (obs-ext 10 Nat) (obs-ext 42 Nat) (obs-ext 25 Nat))))))
      (term
       (((((define-state (A c b a) [* -> (goto A)]))
          (goto A (obs-ext 25 Nat) (obs-ext 42 Nat) (obs-ext 10 Nat))
-         (init-addr 0 Nat)))
+         (spawn-addr 0 OLD Nat)))
        ()
        (((obs-ext 25 Nat)) ((obs-ext 42 Nat)) ((obs-ext 10 Nat))))))
     (term
      (,(make-single-actor-abstract-config
-        (term ((init-addr 0 Nat)
+        (term ((spawn-addr 0 OLD Nat)
                (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
                 (goto A (obs-ext 2 Nat) (obs-ext 1 Nat) (obs-ext 0 Nat))))))
       (((((define-state (A c b a) [* -> (goto A)]))
          (goto A (obs-ext 0 Nat) (obs-ext 1 Nat) (obs-ext 2 Nat))
-         (init-addr 0 Nat)))
+         (spawn-addr 0 OLD Nat)))
        ()
        (((obs-ext 0 Nat)) ((obs-ext 1 Nat)) ((obs-ext 2 Nat)))))))
 
   (test-equal? "canonicalize 3"
     (canonicalize-pair
      (make-single-actor-abstract-config
-      (term ((init-addr 0 Nat)
+      (term ((spawn-addr 0 NEW Nat)
              (((define-state (A) (m) (goto A)))
               (goto A)))))
      (term
       (() () (((obs-ext 101 Nat) (single *))))))
     (term
      (,(make-single-actor-abstract-config
-        (term ((init-addr 0 Nat)
+        (term ((spawn-addr 0 OLD Nat)
                (((define-state (A) (m) (goto A)))
                 (goto A)))))
       (() () (((obs-ext 0 Nat) (single *))))))))
+
+;; Given a term, changes all spawn addresses of the form (spawn-addr _ NEW _) to (spawn-addr _ OLD _),
+;; to ensure that spawned addresses in the next handler are fresh.
+(define (age-addresses some-term)
+  (match some-term
+    [(and addr `(spawn-addr ,loc ,flag ,type))
+     (if (equal? flag 'NEW)
+         (term (spawn-addr ,loc OLD ,type))
+         addr)]
+    [(list terms ...) (map age-addresses terms)]
+    [_ some-term]))
 
 ;; Renames precise external addresses in the given term by replacing its number natural_old with
 ;; natural_new, according to the given substitution
@@ -1236,13 +1292,6 @@
 
 (define (aps#-unknown-address? a)
   (equal? a 'UNKNOWN))
-
-(define (aps#-abstract-and-age s spawn-flag-to-blur)
-  (redex-let aps# ([[([any_state-defs any_exp any_addr]) any_receptionists any_out-coms] s])
-             ;; TODO: find a cleaner way to do this
-             (term [([any_state-defs any_exp ,(csa#-age-internal-addrs (term any_addr))])
-                    ,(csa#-blur-and-age-receptionists (term any_receptionists) spawn-flag-to-blur)
-                    any_out-coms])))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing Helpers
