@@ -1806,78 +1806,160 @@
 
   ;;;; Blur Tests
 
-  (define send-to-blurred-internal-actor
+  (define spawn-captures-static-address
     (term
      ((addr 0 Nat)
-      (((define-state (Always [static-output (Addr Nat)]
-                              [saved-internal (Union [None] [Some (Addr Nat)])]) (m)
+      (((define-state (Always [static-output (Addr (Union [Ack Nat]))]) (m)
           (begin
-            (case saved-internal
-              [(None) 1]
-              [(Some saved) (send saved 1)])
-            (goto Always
-                  static-output
-                  (variant Some
-                           (spawn internal-loc
-                                  (Addr Nat)
-                                  (goto InternalAlways)
-                                  (define-state (InternalAlways) (m)
-                                    (begin
-                                      (send static-output 1)
-                                      (goto InternalAlways)))))))))
-       (goto Always ,static-response-address (variant None))))))
-  (define send-whenever-spec
-    (term
-     (((define-state (Always r)
-         [* -> (goto Always r)]
-         [unobs -> (with-outputs ([r *]) (goto Always r))]))
-      (goto Always ,static-response-address)
-      (addr 0 Nat))))
-  (define never-send-spec
-    (term
-     (((define-state (Always r)
-         [* -> (goto Always r)]))
-      (goto Always ,static-response-address)
-      (addr 0 Nat))))
+            (send static-output (variant Ack 0))
+            (spawn child-loc
+                   Nat
+                   (goto InternalAlways static-output)
+                   (define-state (InternalAlways [the-addr (Addr (Union [Ack Nat]))]) (m2) (goto InternalAlways the-addr))
+                   )
+            (goto Always static-output))))
+       (goto Always ,static-response-address)))))
 
-  (test-true "Sending message to blurred-internal can match send-whenever spec"
+  (test-valid-actor? spawn-captures-static-address)
+
+  (test-false "Child capturing static address causes non-conformance"
+    (model-check
+     (make-single-actor-config spawn-captures-static-address)
+     (make-exclusive-spec static-response-spec)))
+
+  (define send-to-blurred-internal-actor
+    ;; Third time through, send to that actor
+    (term
+     ((addr 0 Nat)
+      (((define-state (Always [static-output (Addr (Union [Ack Nat]))]
+                              [saved-internal (Union [None]
+                                                     [First (Addr (Addr (Union [Ack Nat])))]
+                                                     [Second (Addr (Addr (Union [Ack Nat])))])]) (m)
+          (let ([new-child
+                 (spawn child-loc
+                        (Addr (Union [Ack Nat]))
+                        (goto InternalAlways)
+                        (define-state (InternalAlways) (m)
+                          (goto InternalAlways)))])
+            (begin
+              (send static-output (variant Ack 0))
+              (case saved-internal
+                [(None) (goto Always static-output (variant First new-child))]
+                [(First saved) (goto Always static-output (variant Second saved))]
+                [(Second saved)
+                 (begin
+                   ;; at this point, "saved" should have already been blurred out
+                   (send saved static-output)
+                   (goto Always static-output (variant Second saved)))])))))
+       (goto Always ,static-response-address (variant None))))))
+
+  (test-valid-actor? send-to-blurred-internal-actor)
+
+  (test-false "Sending precise address to blurred actor causes non-conformance"
     (model-check
      (make-single-actor-config send-to-blurred-internal-actor)
-     (make-exclusive-spec send-whenever-spec)))
-  (test-false "Sending message to blurred-internal does not match never-send spec"
-    (model-check
-     (make-single-actor-config send-to-blurred-internal-actor)
-     (make-exclusive-spec never-send-spec)))
+     (make-exclusive-spec static-response-spec)))
+
+
+  ;; (define send-to-blurred-internal-actor
+  ;;   (term
+  ;;    ((addr 0 Nat)
+  ;;     (((define-state (Always [static-output (Addr Nat)]
+  ;;                             [saved-internal (Union [None] [Some (Addr Nat)])]) (m)
+  ;;         (begin
+  ;;           (case saved-internal
+  ;;             [(None) 1]
+  ;;             [(Some saved) (send saved 1)])
+  ;;           (goto Always
+  ;;                 static-output
+  ;;                 (variant Some
+  ;;                          (spawn internal-loc
+  ;;                                 (Addr Nat)
+  ;;                                 (goto InternalAlways)
+  ;;                                 (define-state (InternalAlways) (m)
+  ;;                                   (begin
+  ;;                                     (send static-output 1)
+  ;;                                     (goto InternalAlways)))))))))
+  ;;      (goto Always ,static-response-address (variant None))))))
+
+
+  ;; (define send-to-blurred-internal-actor
+  ;;   (term
+  ;;    ((addr 0 Nat)
+  ;;     (((define-state (Always [static-output (Addr Nat)]
+  ;;                             [saved-internal (Union [None] [Some (Addr Nat)])]) (m)
+  ;;         (begin
+  ;;           (case saved-internal
+  ;;             [(None) 1]
+  ;;             [(Some saved) (send saved 1)])
+  ;;           (goto Always
+  ;;                 static-output
+  ;;                 (variant Some
+  ;;                          (spawn internal-loc
+  ;;                                 (Addr Nat)
+  ;;                                 (goto InternalAlways)
+  ;;                                 (define-state (InternalAlways) (m)
+  ;;                                   (begin
+  ;;                                     (send static-output 1)
+  ;;                                     (goto InternalAlways)))))))))
+  ;;      (goto Always ,static-response-address (variant None))))))
+  ;; (define send-whenever-spec
+  ;;   (term
+  ;;    (((define-state (Always r)
+  ;;        [* -> (goto Always r)]
+  ;;        [unobs -> (with-outputs ([r *]) (goto Always r))]))
+  ;;     (goto Always ,static-response-address)
+  ;;     (addr 0 Nat))))
+  ;; (define never-send-spec
+  ;;   (term
+  ;;    (((define-state (Always r)
+  ;;        [* -> (goto Always r)]))
+  ;;     (goto Always ,static-response-address)
+  ;;     (addr 0 Nat))))
+
+  ;; Tests:
+  ;; blurred actor that closed over internal/external
+  ;; blurred message that closed over internal/external
+  ;; send message with internal/external to blurred
+
+  ;; (test-true "Sending message to blurred-internal matches send-whenever spec"
+  ;;   (model-check
+  ;;    (make-single-actor-config send-to-blurred-internal-actor)
+  ;;    (make-exclusive-spec send-whenever-spec)))
+  ;; (test-false "Sending message to blurred-internal does not match never-send spec"
+  ;;   (model-check
+  ;;    (make-single-actor-config send-to-blurred-internal-actor)
+  ;;    (make-exclusive-spec never-send-spec)))
 
   ;; step 1: spawn the forwarder; save it
   ;; step 2: spawn the new agent (spec follows it)
   ;; step 3: new agent uses forwarder to fulfill its dynamic request/response (can't do static yet)
-  (define conflicts-only-test-actor
-    (term
-     ((addr 0 (Addr (Addr (Addr Nat))))
-      (((define-state (Always [maybe-forwarder (Union [None] [Forwarder (Addr (Addr Nat))])]) (dest)
-          (let ([forwarder
-                 (case maybe-forwarder
-                   [(None)
-                    ;; The forwarder actor takes any address it's given and sends a message to it
-                    (spawn forwarder-loc (Addr Nat)
-                                  (goto Forwarding)
-                                  (define-state (Forwarding) (r)
-                                    (begin
-                                      (send r 1)
-                                      (goto Forwarding))))]
-                   [(Forwarder the-addr) the-addr])])
-            (begin
-              (send dest
-                    (spawn surfaced-loc
-                           (Addr Nat)
-                           (goto Responding)
-                           (define-state (Responding) (r)
-                             (begin
-                               (send forwarder r)
-                               (goto Responding)))))
-              (goto Always (variant Forwarder forwarder))))))
-       (goto Always (variant None))))))
+  ;; (define conflicts-only-test-actor
+  ;;   (term
+  ;;    ((addr 0 (Addr (Addr (Addr Nat))))
+  ;;     (((define-state (Always [maybe-forwarder (Union [None] [Forwarder (Addr (Addr Nat))])]) (dest)
+  ;;         (let ([forwarder
+  ;;                (case maybe-forwarder
+  ;;                  [(None)
+  ;;                   ;; The forwarder actor takes any address it's given and sends a message to it
+  ;;                   (spawn forwarder-loc (Addr Nat)
+  ;;                                 (goto Forwarding)
+  ;;                                 (define-state (Forwarding) (r)
+  ;;                                   (begin
+  ;;                                     (send r 1)
+  ;;                                     (goto Forwarding))))]
+  ;;                  [(Forwarder the-addr) the-addr])])
+  ;;           (begin
+  ;;             (send dest
+  ;;                   (spawn surfaced-loc
+  ;;                          (Addr Nat)
+  ;;                          (goto Responding)
+  ;;                          (define-state (Responding) (r)
+  ;;                            (begin
+  ;;                              (send forwarder r)
+  ;;                              (goto Responding)))))
+  ;;             (goto Always (variant Forwarder forwarder))))))
+  ;;      (goto Always (variant None))))))
 
   ;; (test-true "Only spawned actors with conflicts are blurred out"
   ;;   (model-check
