@@ -1295,8 +1295,6 @@
   (check-not-false (redex-match csa-eval αn record-req-resp-actor))
   (check-not-false (redex-match csa-eval αn record-req-wrong-resp-actor))
 
-  ;; TODO: figure out why this test fails when max-depth for the program and the messages is set to
-  ;; 0
   (test-true "record 1"
              (model-check (make-single-actor-config record-req-resp-actor)
                           (make-exclusive-spec record-req-resp-spec)))
