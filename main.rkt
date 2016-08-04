@@ -1836,6 +1836,49 @@
      (make-single-actor-config spawn-and-retain-but-send-new)
      (make-exclusive-spec echo-spawn-spec)))
 
+  ;; TODO: try variations on this test. E.g., send child address during its constructor rather than in
+  ;; a later timeout, have spec have one state for child instead of two, etc.
+  (define spawn-self-revealing-echo
+    (term
+     ((addr 0 (Addr (Addr (Addr Nat))))
+      (((define-state (Always) (response-target)
+          (begin
+            (spawn
+             echo-spawn
+             (Addr Nat)
+             (goto Init response-target)
+             (define-state (Init [response-target (Addr (Addr (Addr Nat)))]) (response-target)
+               (goto Init response-target)
+               [(timeout 0)
+                (begin
+                  (send response-target self)
+                  (goto EchoResponse))])
+             (define-state (EchoResponse) (echo-target)
+               (begin
+                 (send echo-target 1)
+                 (goto EchoResponse))))
+            (goto Always))))
+       (goto Always)))))
+
+  (define child-self-reveal-spec
+    (term
+     (((define-state (Always)
+         [r -> (spawn-spec ((goto Init r)
+                            (define-state (Init r)
+                              [unobs -> (with-outputs ([r self]) (goto EchoResponse))])
+                            (define-state (EchoResponse)
+                              [er -> (with-outputs ([er *]) (goto EchoResponse))]))
+                           (goto Always))]))
+      (goto Always)
+      (addr 0 (Addr (Addr (Addr Nat)))))))
+
+  (test-valid-actor? spawn-self-revealing-echo)
+  (test-valid-instance? child-self-reveal-spec)
+  (test-true "Spawned child can reveal self"
+    (model-check
+     (make-single-actor-config spawn-self-revealing-echo)
+     (make-exclusive-spec child-self-reveal-spec)))
+
   ;;;; Blur Tests
 
   (define spawn-captures-static-address

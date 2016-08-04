@@ -122,8 +122,10 @@
   [(subst/aps# (with-outputs ([u po] ...) e-hat) x v-hat)
    (with-outputs ([(subst/aps#/u u x v-hat) (subst/aps#/po po x v-hat)] ...)
      (subst/aps# e-hat x v-hat))]
-  ;; TODO: write the other clauses
-  )
+  [(subst/aps# (spawn-spec ((goto s u ...) S-hat ...) e-hat) x v-hat)
+   (spawn-spec ((subst/aps# (goto s u ...) x v-hat)
+                (subst/aps#/S-hat S-hat x v-hat) ...)
+               (subst/aps# e-hat x v-hat))])
 
 (define-metafunction aps#
   subst/aps#/u : u x v-hat -> u
@@ -291,7 +293,7 @@
   (term (aps#-eval/mf ,exp)))
 
 (define-metafunction aps#
-  aps#-eval/mf : e-hat -> [(goto s a#ext ...) ([a#ext po] ...) (((S ...) e-hat σ) ...)]
+  aps#-eval/mf : e-hat -> [(goto s a#ext ...) ([a#ext po] ...) (((S-hat ...) e-hat σ) ...)]
   [(aps#-eval/mf (goto s a#ext ...))
    ((goto s a#ext ...) () ())]
   [(aps#-eval/mf (with-outputs ([a#ext_1 po_1] any_rest ...) e-hat))
