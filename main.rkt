@@ -495,17 +495,15 @@
   (test-equal? "check that messages with blurred addresses get merged together"
    (blur-by-relevant-addresses
     (term (()
+           ()
            (((init-addr 2 Nat) (obs-ext 1 Nat) 1)
             ((init-addr 2 Nat) (obs-ext 2 Nat) 1)
-            ((init-addr 2 Nat) (obs-ext 3 Nat) 1))
-           ()
-           ()))
+            ((init-addr 2 Nat) (obs-ext 3 Nat) 1))))
     (term ((,aps#-no-transition-instance) () (((obs-ext 3 Nat))))))
    (list (term (()
-                (((init-addr 2 Nat) (* (Addr Nat)) *)
-                 ((init-addr 2 Nat) (obs-ext 3 Nat) 1))
                 ()
-                ()))
+                (((init-addr 2 Nat) (* (Addr Nat)) *)
+                 ((init-addr 2 Nat) (obs-ext 3 Nat) 1))))
          (term ((,aps#-no-transition-instance) () (((obs-ext 3 Nat))))))))
 
 ;; ---------------------------------------------------------------------------------------------------

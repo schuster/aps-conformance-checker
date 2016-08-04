@@ -1163,7 +1163,7 @@
         (list (term natural) new-number))))
   (match-define (list renamed-impl-config renamed-spec-config)
     (term (rename-external-addresses ,(list aged-impl-config aged-spec-config) ,@substitutions)))
-  (list (csa#-sort-escapes renamed-impl-config)
+  (list renamed-impl-config
         (aps#-sort-receptionists renamed-spec-config)))
 
 (module+ test

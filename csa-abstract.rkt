@@ -19,7 +19,6 @@
 
  ;; Required by APS#; should go into a "common" language instead
  csa#
- csa#-sort-escapes
  csa#-abstract-address
  has-spawn-flag?
  same-internal-address-without-type?
@@ -41,9 +40,11 @@
 
 ;; Abstract-interpretation version of CSA
 (define-extended-language csa# csa-eval
-  (K# (α# μ# ρ# (a#_escaped-addrs ...)))
+  (K# (α# β# μ#))
   (α# (α#n ...))
-  (α#n (a#int ((S# ...) e#)))
+  (β# ()) ; TODO: fill this in for real
+  (α#n (a#int b#))
+  (b# ((S# ...) e#)) ; behavior
   (μ# ((a#int v# multiplicity) ...)) ; message packets
   (multiplicity 1 *)
   (S# (define-state (s [x τ] ...) (x) e#)
@@ -269,16 +270,15 @@
                      (a# ((name state-defs (_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e# any_timeout-clause ...) _ ...)) (in-hole E# (goto s v# ..._n))))
                      any_actors-after)
                     (config-actor-and-rest-by-address impl-config actor-address)]
-                   [(_ any_messages any_receptionists any_externals) impl-config])
+                   [(_ any_blurred any_messages) impl-config])
     ;; TODO: deal with the case where x_m shadows an x_s
     (define initial-config (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...))))
     (define impl-config-context
       (term (,(append (term any_actors-before)
                       (list (term (a# (state-defs hole))))
                       (term any_actors-after))
-             any_messages
-             any_receptionists
-             any_externals)))
+             any_blurred
+             any_messages)))
     (eval-handler initial-config
                   (term (external-receive ,actor-address ,message))
                   actor-address
@@ -302,18 +302,18 @@
             (_ ((name state-defs (_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e# any_timeout-clause ...) _ ...)) (in-hole E# (goto s v# ..._n))))
             any_actors-after)
            (config-actor-and-rest-by-address impl-config (term a#int))]
-          [(_ _ any_receptionists any_externals) impl-config])
+          [(_ any_blurred _) impl-config])
          ;; TODO: deal with the case where x_m shadows an x_s
          (define initial-config (inject/H# (term (csa#-subst-n e# [x_m v#_msg] [x_s v#] ...))))
          (define impl-config-context
            (term (,(append (term any_actors-before)
                            (list (term (a#int (state-defs hole))))
                            (term any_actors-after))
+                  any_blurred
                   ,(append processed-messages
                            (if (redex-match? csa# * (term multiplicity)) (list message) null)
                            messages-to-process)
-                  any_receptionists
-                  any_externals)))
+                  )))
          (define new-transitions
            (eval-handler initial-config
                          (term (internal-receive a#int v#_msg))
@@ -328,7 +328,7 @@
 ;; Evaluates all handlers triggered by a timeout impl-config, returning the list of possible
 ;; results (either csa#-transition or #f if a transition led to an unverifiable state)
 (define (csa#-handle-all-timeouts impl-config)
-  (redex-let csa# ([(any_actors any_messages any_receptionists any_externals) impl-config])
+  (redex-let csa# ([(any_actors any_blurred any_messages) impl-config])
     (let loop ([transitions-so-far null]
                [actors-before null]
                [actors-after (term any_actors)])
@@ -339,9 +339,8 @@
            (csa#-handle-actor-maybe-timeout actors-before
                                             actor
                                             actors-after
-                                            (term any_messages)
-                                            (term any_receptionists)
-                                            (term any_externals)))
+                                            (term any_blurred)
+                                            (term any_messages)))
          (loop (append transitions-so-far new-transitions)
                (append actors-before (list actor))
                actors-after)]))))
@@ -354,9 +353,8 @@
 (define (csa#-handle-actor-maybe-timeout actors-before
                                          actor
                                          actors-after
-                                         messages
-                                         receptionists
-                                         externals)
+                                         blurred-actors
+                                         messages)
   (define matches
     (redex-match csa#
                  (any_address ((name state-defs (_ ... (define-state (s [x_s τ_s] ..._n)  _    _  [(timeout _) e#]) _ ...)) (in-hole E# (goto s v# ..._n))))
@@ -372,9 +370,8 @@
                       [(name state-defs _) (get-binding 'state-defs)])
        (define impl-config-context
          (term (,(append actors-before (term ((any_address (state-defs hole)))) actors-after)
-                ,messages
-                ,receptionists
-                ,externals)))
+                ,blurred-actors
+                ,messages)))
        (eval-handler (inject/H# (term (csa#-subst-n e# [x_s v#] ...)))
                      (term (timeout any_address))
                      (term any_address)
@@ -765,9 +762,8 @@
                                   (((define-state (Always) (long-unused-name) (begin ,exp (goto Always))))
                                    (begin ,exp (goto Always)))])]
                       [α# (term (α#n))]
-                      [μ# (term ())]
-                      [ρ# (term ((init-addr 0 Nat)))])
-                (term (α# μ# ρ# ()))))
+                      [μ# (term ())])
+                (term (α# μ# ()))))
 
   (check-not-false (redex-match csa# K# (csa#-make-simple-test-config (term (* Nat)))))
 
@@ -830,75 +826,75 @@
 ;; queue.
 (define (merge-new-messages config new-message-list)
   (define-values (messages-to-blurred messages-to-precise)
+    ;; TODO: deal with the blurred address stuff here
     (partition (lambda (m) (equal? (first m) 'blurred-internal)) new-message-list))
-  (redex-let csa# ([(any_actors any_messages any_rec any_ext) config]
+  (redex-let csa# ([(any_actors any_blurred any_messages) config]
                    [((a#_prec v#_prec) ...) messages-to-precise]
                    [((_ v#_imprec) ...) messages-to-blurred])
     (if (null? (precise-addrs-in (term (v#_imprec ...))))
         (term (any_actors
+               any_blurred
                ,(merge-duplicate-messages-from-list (append (term any_messages) (term ((a#_prec v#_prec 1) ...))))
-               any_rec
                ;; ,(remove-duplicates (append (term any_ext) (precise-addrs-in (term (v#_imprec ...)))))
-               any_ext))
+               ))
         #f)))
 
 (module+ test
   (check-equal?
-   (merge-new-messages (term (() () () ())) (list (term ((init-addr 0 Nat) (* Nat)))))
-   (term (() (((init-addr 0 Nat) (* Nat) 1)) () ())))
+   (merge-new-messages (term (() () ())) (list (term ((init-addr 0 Nat) (* Nat)))))
+   (term (() () (((init-addr 0 Nat) (* Nat) 1)))))
 
   (check-equal?
-   (merge-new-messages (term (() (((init-addr 0 Nat) (* Nat) 1)) () ()))
+   (merge-new-messages (term (() () (((init-addr 0 Nat) (* Nat) 1))))
                        (list (term ((init-addr 0 Nat) (* Nat)))))
-   (term (() (((init-addr 0 Nat) (* Nat) *)) () ())))
+   (term (() () (((init-addr 0 Nat) (* Nat) *)))))
 
   (check-equal?
-   (merge-new-messages (term (() (((init-addr 0 Nat) (* Nat) 1)) () ()))
+   (merge-new-messages (term (() () (((init-addr 0 Nat) (* Nat) 1))))
                        (list (term ((init-addr 1 Nat) (* Nat)))))
-   (term (() (((init-addr 0 Nat) (* Nat) 1) ((init-addr 1 Nat) (* Nat) 1)) () ())))
+   (term (() () (((init-addr 0 Nat) (* Nat) 1) ((init-addr 1 Nat) (* Nat) 1)))))
 
   (check-equal?
    (merge-new-messages (term (()
-                              (((init-addr 1 Nat) (* (Addr Nat)) 1)
-                               ((init-addr 1 Nat) (obs-ext 0 Nat) 1))
                               ()
-                              ()))
+                              (((init-addr 1 Nat) (* (Addr Nat)) 1)
+                               ((init-addr 1 Nat) (obs-ext 0 Nat) 1))))
                        (term (((init-addr 1 Nat) (* (Addr Nat))))))
    (term (()
-          (((init-addr 1 Nat) (* (Addr Nat)) *)
-           ((init-addr 1 Nat) (obs-ext 0 Nat) 1))
           ()
-          ())))
+          (((init-addr 1 Nat) (* (Addr Nat)) *)
+           ((init-addr 1 Nat) (obs-ext 0 Nat) 1)))))
 
-  (test-equal?
-      ;; "Internal messages have their escapes added to the escape set, including variations on types"
-      "Internal messages with escapes return #f"
-    (merge-new-messages (term (()
-                               ()
-                               ()
-                               ((obs-ext 1 Nat)
-                                (init-addr 0 Nat))))
-                        (term ((blurred-internal (obs-ext 1 (Union)))
-                               (blurred-internal (record [a (init-addr 0 Nat)]
-                                                         [b (init-addr 1 Nat)]
-                                                         [c (obs-ext 2 Nat)])))))
-    #f
-    ;; (term (()
-    ;;        ()
-    ;;        ()
-    ;;        ((obs-ext 1 Nat)
-    ;;         (init-addr 0 Nat)
-    ;;         (obs-ext 1 (Union))
-    ;;         (init-addr 1 Nat)
-    ;;         (obs-ext 2 Nat))))
-    ))
+  ;; TODO: test for messages to blurred guys
+  ;; (test-equal?
+  ;;     ;; "Internal messages have their escapes added to the escape set, including variations on types"
+  ;;     "Internal messages with escapes return #f"
+  ;;   (merge-new-messages (term (()
+  ;;                              ()
+  ;;                              ()
+  ;;                              ((obs-ext 1 Nat)
+  ;;                               (init-addr 0 Nat))))
+  ;;                       (term ((blurred-internal (obs-ext 1 (Union)))
+  ;;                              (blurred-internal (record [a (init-addr 0 Nat)]
+  ;;                                                        [b (init-addr 1 Nat)]
+  ;;                                                        [c (obs-ext 2 Nat)])))))
+  ;;   #f
+  ;;   ;; (term (()
+  ;;   ;;        ()
+  ;;   ;;        ()
+  ;;   ;;        ((obs-ext 1 Nat)
+  ;;   ;;         (init-addr 0 Nat)
+  ;;   ;;         (obs-ext 1 (Union))
+  ;;   ;;         (init-addr 1 Nat)
+  ;;   ;;         (obs-ext 2 Nat))))
+  ;;   )
+  )
 
 (define (merge-new-actors config new-actors)
-  (redex-let csa# ([((any_actors ...) any_messages any_rec any_ext) config])
+  (redex-let csa# ([((any_actors ...) any_blurred any_messages) config])
              (term (,(append (term (any_actors ...)) new-actors)
-                    any_messages
-                    any_rec
-                    any_ext))))
+                    any_blurred
+                    any_messages))))
 
 (module+ test
   (define new-spawn1
@@ -909,7 +905,7 @@
                (merge-new-actors
                 (make-single-actor-abstract-config init-actor1)
                 (list new-spawn1))
-               (term ((,init-actor1 ,new-spawn1) () ((init-addr 0 Nat)) ()))))
+               (term ((,init-actor1 ,new-spawn1) () ()))))
 
 ;; Returns a natural number indicating the maximum number of folds that may be crossed in a path from
 ;; the root of the given AST to a leaf
@@ -1089,12 +1085,12 @@
   abstract-config/mf : K (a_internal ...) natural_recursion-depth -> K#
   [(abstract-config/mf ((αn ...) ; actors
                  () ; messages-in-transit
-                 (a_rec ...) ; receptionists
-                 () ; externals
+                 _ ; receptionists (ignored because the spec config manages these)
+                 _ ; externals (ignored because the spec config manages these)
                  )
                 (a_internal ...)
                 natural_depth)
-   ((α#n ...) () ((abstract-e a_rec (a_internal ...) natural_depth) ...) ())
+   ((α#n ...) () ())
    (where (α#n ...) ((abstract-actor αn (a_internal ...) natural_depth) ...))])
 
 (define-metafunction csa#
@@ -1180,7 +1176,6 @@
   [(abstract-address (addr natural τ) (_ ... (addr natural _) _ ...)) (init-addr natural τ)]
   [(abstract-address (addr natural τ) _) (obs-ext natural τ)])
 
-
 (module+ test
   (check-equal? (term (abstract-e (record [f1 1] [f2 2]) () 1))
                 (term (record [f1 (* Nat)] [f2 (* Nat)])))
@@ -1202,6 +1197,8 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Blurring
 
+;; impl-config spawn-flag (a#ext ...) -> impl-config
+;;
 ;; Blurs out all actors in the configuration with the given spawn flag, and blurs out any external
 ;; address not in relevant-externals. Returns #f if the blurring process causes a precise address to
 ;; escape into the "blurred" section. See the discussion of blurring in main.rkt for more details.
@@ -1213,23 +1210,28 @@
   ;; 2. Do the actual rename/blur for both internals and externals
   (define renamed-config
     (blur-addresses remaining-config (map csa#-actor-address removed-actors) relevant-externals))
+
+  ;; TODO: this part here is my temporary hack
+  (csa#-merge-duplicate-messages renamed-config)
+
+  
   ;; 3. Add escapes to the escape list
   ;; TODO: add escaped internal addresses here, too
   ;; TODO: remove externals that are actually blurred out
-  (define remaining-actor-addresses (map csa#-actor-address (csa#-config-actors renamed-config)))
-  (define newly-escaped-addrs
-    (filter
-     ;; TODO: make this check ignore types on addresses
-     (lambda (a) (member a (append relevant-externals remaining-actor-addresses)))
-     (append* (map precise-addrs-in (list removed-actors removed-messages)))))
-  (if (null? newly-escaped-addrs)
-      (csa#-merge-duplicate-messages
-       (redex-let csa# ([(any_actors any_messages any_receptionists any_escapes) renamed-config])
-         (term (any_actors
-                any_messages
-                any_receptionists
-                ,(remove-duplicates (append (term any_escapes) newly-escaped-addrs))))))
-      #f)
+  ;; (define remaining-actor-addresses (map csa#-actor-address (csa#-config-actors renamed-config)))
+  ;; (define newly-escaped-addrs
+  ;;   (filter
+  ;;    ;; TODO: make this check ignore types on addresses
+  ;;    (lambda (a) (member a (append relevant-externals remaining-actor-addresses)))
+  ;;    (append* (map precise-addrs-in (list removed-actors removed-messages)))))
+  ;; (if (null? newly-escaped-addrs)
+  ;;     (csa#-merge-duplicate-messages
+  ;;      (redex-let csa# ([(any_actors any_messages any_receptionists any_escapes) renamed-config])
+  ;;        (term (any_actors
+  ;;               any_messages
+  ;;               any_receptionists
+  ;;               ,(remove-duplicates (append (term any_escapes) newly-escaped-addrs))))))
+  ;;     #f)
 
 
   ;; TODO (3 Aug):
@@ -1253,7 +1255,7 @@
 ;; with any in-transit message packets sent to them. Returns the resulting config, the list of removed
 ;; actors, and the list of removed messages.
 (define (remove-actors-by-flag config flag)
-  (redex-let csa# ([(α# μ# ρ# any_escaped) config])
+  (redex-let csa# ([(α# any_blurred μ#) config])
 
     ;; TODO: remove the receptionists too: what is the receptionist set now, anyway?
 
@@ -1267,11 +1269,11 @@
        (lambda (packet)
          (has-spawn-flag? (csa#-message-packet-address packet) flag))
        (term μ#)))
-    (list (term (,remaining-actors ,remaining-packets ρ# any_escaped))
+    (list (term (,remaining-actors any_blurred ,remaining-packets))
           removed-actors
           removed-packets)))
 
-;; impl-config (a#int ...) (a#ext ...) -> impl-config
+;; term (a#int ...) (a#ext ...) -> term
 ;;
 ;; Renames internal addresses in internals-to-bour and external addresses *not* in
 ;; relevant-externals to their respective imprecise forms
@@ -1323,7 +1325,7 @@
                                (send (obs-ext 2 Nat) (* Nat))
                                (goto A x y z))))
                           (goto A (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))))]
-                  [K# (term ((α#n) () ((init-addr 0 Nat)) ()))])
+                  [K# (term ((α#n) () ()))])
                  (term K#))
      null
      (term ((obs-ext 1 Nat) (obs-ext 3 Nat))))
@@ -1336,7 +1338,7 @@
                               (send (* (Addr Nat)) (* Nat))
                               (goto A x y z))))
                          (goto A (* (Addr Nat)) (obs-ext 3 Nat) (* (Addr Nat))))))]
-                 [K# (term ((α#n) () ((init-addr 0 Nat)) ()))])
+                 [K# (term ((α#n) () ()))])
                 (term K#)))
 
   ;; Make sure duplicates are removed from vectors, lists, and hashes
@@ -1400,11 +1402,10 @@
 
 ;; TODO: also use this during evaluation
 (define (csa#-merge-duplicate-messages impl-config)
-  (redex-let csa# ([(any_actors any_messages any_rec any_ext) impl-config])
+  (redex-let csa# ([(any_actors any_blurred any_messages) impl-config])
     (term (any_actors
-           ,(merge-duplicate-messages-from-list (term any_messages))
-           any_rec
-           any_ext))))
+           any_blurred
+           ,(merge-duplicate-messages-from-list (term any_messages))))))
 
 (define (merge-duplicate-messages-from-list message-list)
   (let loop ([processed-messages null]
@@ -1456,27 +1457,6 @@
           ((* (Addr Nat)) (* Nat) *)))))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Canonicalization Help
-
-(define (csa#-sort-escapes config)
-  (redex-let csa# ([(any_actors any_messages any_receptionists any_escapes) config])
-    (term (any_actors
-           any_messages
-           any_receptionists
-           ,(sort (term any_escapes) obs-ext<)))))
-
-(define (obs-ext< a b)
-  (< (second a) (second b)))
-
-(module+ test
-  (test-case "Obs-ext address comparison"
-    (define a (term (obs-ext 2 Nat)))
-    (define b (term (obs-ext 4 Nat)))
-    (check-not-false (redex-match csa# a#ext a))
-    (check-not-false (redex-match csa# a#ext b))
-    (check-true (obs-ext< a b))))
-
-;; ---------------------------------------------------------------------------------------------------
 ;; Constructors
 
 (define (make-single-actor-abstract-config actor)
@@ -1485,7 +1465,7 @@
 (define-metafunction csa#
   make-single-actor-abstract-config/mf : α#n -> K#
   [(make-single-actor-abstract-config/mf α#n)
-   ((α#n) () (,(csa#-actor-address (term α#n))) ())])
+   ((α#n) () ())])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
@@ -1496,7 +1476,7 @@
              (term α#)))
 
 (define (csa#-config-messages config)
-  (redex-let csa# ([(_ μ# _ ...) config])
+  (redex-let csa# ([(_ _ μ#) config])
              (term μ#)))
 
 (define (config-actor-and-rest-by-address config addr)
@@ -1504,7 +1484,7 @@
 
 (define-metafunction csa#
   config-actor-and-rest-by-address/mf : K# a#int -> ((α#n ...) α#n (α#n ...))
-  [(config-actor-and-rest-by-address/mf ((any_1 ... (name the-actor (a#int _)) any_2 ...) _ _ _)
+  [(config-actor-and-rest-by-address/mf ((any_1 ... (name the-actor (a#int _)) any_2 ...) _ ...)
                                         a#int_target)
    ((any_1 ...) the-actor (any_2 ...))
    (judgment-holds (same-internal-address-without-type? a#int a#int_target))])
@@ -1626,21 +1606,13 @@
 ;; Debug helpers
 
 (define (impl-config-without-state-defs config)
-  (redex-let csa# ([(((a#int (_ e#)) ...) μ# ρ# any_escapes) config])
-             (term (((a#int e#) ...) μ# ρ# any_escapes))))
+  (redex-let csa# ([(((a#int (_ e#)) ...) any_blurred μ#) config])
+             (term (((a#int e#) ...) any_blurred μ#))))
 
 (define (impl-config-goto config)
   ;; NOTE: only suports single-actor impls for now
-  (redex-let csa# ([(((a#int (_ e#))) μ# ρ# any_escapes) config])
+  (redex-let csa# ([(((a#int (_ e#))) any_blurred μ#) config])
              (term e#)))
-
-;; ---------------------------------------------------------------------------------------------------
-;; Generic Redex helpers
-
-(define-metafunction csa#
-  redex-set-add : (any ...) any -> (any ...)
-  [(redex-set-add (any_1 ... any any_2 ...) any) (any_1 ... any any_2 ...)]
-  [(redex-set-add (any_1 ...) any_2) (any_1 ... any_2)])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Misc.
