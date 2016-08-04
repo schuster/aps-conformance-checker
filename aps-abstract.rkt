@@ -3,8 +3,6 @@
 ;; Abstract semantic domains for APS (specification language), and associated functions
 
 (provide
- ;; TODO: remove the aps# prefix from the unambiguous functions
-
  ;; Required by model checker
  ;; TODO: consider having this one return the address or #f
  aps#-config-only-instance-address
@@ -61,10 +59,6 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
 
-
-
-;; TODO: change the language and conformance so that I don't have to do this little initial
-;; abstraction
 (define (aps#-abstract-config spec-config internal-addresses)
   ;; Doing a redex-let here just to add a codomain contract
   (redex-let aps# ([Σ (term (aps#-abstract-config/mf ,spec-config ,internal-addresses))])
