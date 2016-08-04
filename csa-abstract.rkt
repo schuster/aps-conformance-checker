@@ -699,7 +699,7 @@
     (--> ((in-hole E# (loop-context (in-hole E#_2 (send a# v#)))) any_outputs any_loop-outputs any_spawns)
          ((in-hole E# (loop-context (in-hole E#_2 v#)))
           any_outputs
-          (redex-set-add any_loop-outputs [a# v#])
+          ,(remove-duplicates (append (term any_loop-outputs) (list (term [a# v#]))))
           any_spawns)
          LoopSend)
 
