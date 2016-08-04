@@ -94,16 +94,6 @@
 ;; ∈ sbc(i-step.destination, s-step.destination) are also related pairs in R.
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Constants
-
-;; The maximum number of times to unfold a recursive type while generating an exhaustive set of
-;; abstract values for that type.
-;;
-;; This number is an arbitrary choice for now. Later it may make sense to base it off of the level of
-;; detail in the spec or program.
-(define MAX-RECURSION-DEPTH 1)
-
-;; ---------------------------------------------------------------------------------------------------
 ;; Top-level Algorithm
 
 ;; Given a concrete implementation configuration, a concrete specification configuration, returns #t
@@ -137,7 +127,7 @@
     [(spec-address-in-impl? initial-impl-config initial-spec-config) #f]
     [else
      (define initial-pairs
-       (sbc (abstract-pair initial-impl-config initial-spec-config MAX-RECURSION-DEPTH)))
+       (sbc (abstract-pair initial-impl-config initial-spec-config)))
      (match-define (list rank1-pairs
                          rank1-unrelated-successors
                          incoming-steps
@@ -172,12 +162,11 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
 
-;; Abstracts the given concrete implementation configuration and spec config, with max-depth
-;; indicating the maximum number of times to unroll a recursive type
-(define (abstract-pair impl-config spec-config max-depth)
+;; Abstracts the given concrete implementation configuration and spec config
+(define (abstract-pair impl-config spec-config)
   (define internal-addresses (csa-config-internal-addresses impl-config))
   (config-pair
-   (csa#-abstract-config impl-config internal-addresses max-depth)
+   (csa#-abstract-config impl-config internal-addresses)
    (aps#-abstract-config spec-config internal-addresses)))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -341,7 +330,7 @@
 (define (external-message-transitions impl-config receptionist)
   (display-step-line "Enumerating abstract messages (typed)")
   (append*
-   (for/list ([message (csa#-messages-of-address-type receptionist MAX-RECURSION-DEPTH)])
+   (for/list ([message (csa#-messages-of-address-type receptionist)])
      (display-step-line "Evaluating a handler")
      (csa#-handle-message impl-config receptionist message))))
 
@@ -1315,6 +1304,27 @@
               (model-check (make-single-actor-config record-req-wrong-resp-actor)
                            (make-exclusive-spec record-req-resp-spec)))
 
+  ;;;; Recursive Types
+  (define log-list-type (term (minfixpt LogList (Union [Null] [Cons Nat LogList]))))
+  (define cons-inputs-echo
+    (term
+     ((addr 0 Nat)
+      (((define-state (Always [response-address (Addr Nat)]
+                              [input-log ,log-list-type]) (m)
+          (begin
+            (send response-address (variant Ack 0))
+            (goto Always
+                  response-address
+                  (fold ,log-list-type (variant Cons input-log))))))
+       (goto Always ,static-response-address (folded ,log-list-type (variant Null)))))))
+
+  (test-valid-actor? cons-inputs-echo)
+
+  (test-true "Abstraction can deal with unboundedly large recursively typed values"
+   (model-check
+    (make-single-actor-config cons-inputs-echo)
+    (make-exclusive-spec static-response-spec)))
+
   ;;;; Let
   (define static-response-let-actor
     (term
@@ -1404,7 +1414,7 @@
      ((addr 0 (Addr Nat))
       (((define-state (A) (m)
           (begin
-            (for/fold ([folded 0])
+            (for/fold ([folded-result 0])
                       ([i (list 1 2 3)])
               i)
             (goto A))))
@@ -1414,7 +1424,7 @@
      ((addr 0 (Addr Nat))
       (((define-state (A [r (Addr Nat)]) (m)
           (begin
-            (for/fold ([folded 0])
+            (for/fold ([folded-result 0])
                       ([i (list 1 2 3)])
               (send r i))
             (goto A r))))
@@ -1425,7 +1435,7 @@
       (((define-state (A) (r)
           (begin
             (send r 0)
-            (for/fold ([folded 0])
+            (for/fold ([folded-result 0])
                       ([i (list 1 2 3)])
               i)
             (goto A))))
@@ -1435,7 +1445,7 @@
      ((addr 0 (Addr Nat))
       (((define-state (A) (r)
           (begin
-            (for/fold ([folded 0])
+            (for/fold ([folded-result 0])
                       ([r (list r)])
               (send r 0))
             (goto A))))
@@ -1445,7 +1455,7 @@
      ((addr 0 (Addr Nat))
       (((define-state (A) (r)
           (begin
-            (for/fold ([folded 0])
+            (for/fold ([folded-result 0])
                       ([i (list 1 2 3)])
               i)
             (send r 0)

@@ -37,6 +37,8 @@
      (record [l e] ...)
      (: e l) ; record lookup
      (! e [l e]) ; record (functional) update
+     (fold τ e)
+     (unfold τ e)
      (primop e ...)
      string
      x
@@ -101,10 +103,11 @@
   (m (a <= v))
   ((ρ χ) (a ...))
   (e ....
-     a)
+     v)
   (v n
      (variant t v ...)
      (record [l v] ...)
+     (folded τ v)
      a
      string
      (list v ...)

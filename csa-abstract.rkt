@@ -51,6 +51,7 @@
   (v# a#
       (variant t v# ...)
       (record [l v#] ...)
+      (folded τ v#)
       (* τ)
       (list v# ...)
       (vector v# ...)
@@ -66,6 +67,8 @@
       (record [l e#] ...)
       (: e# l)
       (! e# [l e#])
+      (fold τ e#)
+      (unfold τ e#)
       (primop e# ...)
       (printf string e# ...) ; for debugging only
       (list e# ...)
@@ -104,6 +107,8 @@
       (: E# l)
       (! E# [l e#])
       (! v# [l E#])
+      (fold τ E#)
+      (unfold τ E#)
       (primop v# ... E# e# ...)
       (printf string v# ... E# e# ...)
       (list v# ... E# e# ...)
@@ -116,6 +121,16 @@
             (external-receive a#int v#)))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Constants
+
+;; The maximum number of times to unfold a recursive type while generating an exhaustive set of
+;; abstract values for that type.
+;;
+;; This number is an arbitrary choice for now. Later it may make sense to base it off of the level of
+;; detail in the spec or program.
+(define MAX-RECURSION-DEPTH 1)
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Message generation
 
 ;; TODO: create a second type of "fresh" external address instead (one that gets converted into the
@@ -123,10 +138,9 @@
 ;; addresses
 (define next-generated-address 100)
 
-;; Returns an exhaustive list of abstract messages for the type of the given address, with max-depth
-;; indicating the maximum number of times to unfold recursive types.
-(define (csa#-messages-of-address-type address max-depth)
-  (term (messages-of-type/mf (receptionist-type ,address) ,max-depth)))
+;; Returns an exhaustive list of abstract messages for the type of the given address
+(define (csa#-messages-of-address-type address)
+  (term (messages-of-type/mf (receptionist-type ,address) ,MAX-RECURSION-DEPTH)))
 
 ;; Returns the type of the given internal precise address
 (define-metafunction csa#
@@ -493,6 +507,28 @@
          (* (Record any_1 ... [l τ] any_2 ...))
          RecordWildcardUpdate)
 
+    ;; Recursive Types
+
+    (==> (fold τ (* _))
+         (* τ)
+         FoldWildcard)
+    (==> (fold τ v#)
+         (folded τ v#)
+         (side-condition (not (redex-match? csa# (* _) (term v#))))
+         (side-condition (< (term (fold-depth/mf v#)) MAX-RECURSION-DEPTH))
+         FoldPreMaxDepth)
+    (==> (fold τ v#)
+         (* τ)
+         (side-condition (not (redex-match? csa# (* _) (term v#))))
+         (side-condition (= (term (fold-depth/mf v#)) MAX-RECURSION-DEPTH))
+         FoldAtMaxDepth)
+    (==> (unfold τ (folded τ v#))
+         v#
+         Unfold)
+    (==> (unfold τ (* (minfixpt X τ)))
+         (* (type-subst τ X (minfixpt X τ)))
+         UnfoldWildcard)
+
     ;; Primops
     (==> (primop (* Nat) (* Nat))
          (variant True)
@@ -735,8 +771,12 @@
 
   (check-not-false (redex-match csa# K# (csa#-make-simple-test-config (term (* Nat)))))
 
-  (define-check (csa#-exp-steps-to? e1 e2)
+  (define-check (check-exp-steps-to? e1 e2)
     (define next-steps (apply-reduction-relation handler-step# (inject/H# e1)))
+    (unless (equal? next-steps (list (inject/H# e2)))
+      (fail-check (format "There were ~s next steps: ~s" (length next-steps) next-steps))))
+  (define-check (check-exp-steps*-to? e1 e2)
+    (define next-steps (apply-reduction-relation* handler-step# (inject/H# e1)))
     (unless (equal? next-steps (list (inject/H# e2)))
       (fail-check (format "There were ~s next steps: ~s" (length next-steps) next-steps))))
 
@@ -761,6 +801,18 @@
   ;; (csa#-exp-steps-to? (term (match (* Nat)
   ;;                             [(tuple) (goto S2 (* Nat))]))
   ;;                     (term (match (* Nat))))
+
+  (check-exp-steps*-to? (term (fold   (Union [A]) (variant A)))
+                        (term (folded (Union [A]) (variant A))))
+  (define nat-list-type (term (minfixpt NatList (Union (Null) (Cons Nat NatList)))))
+  (check-exp-steps*-to? (term (fold   ,nat-list-type (variant Null)))
+                        (term (folded ,nat-list-type (variant Null))))
+  (check-exp-steps*-to? (term (fold   ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type))))
+                        (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
+  (check-exp-steps*-to? (term (fold ,nat-list-type (variant Cons (* Nat)
+                               (fold ,nat-list-type (variant Cons (* Nat)
+                                 (fold ,nat-list-type (variant Null)))))))
+                        (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
 
   ;; Check that internal addresses in the transmissions do not change the evaluation (had a problem
   ;; with this before)
@@ -859,6 +911,29 @@
                 (list new-spawn1))
                (term ((,init-actor1 ,new-spawn1) () ((init-addr 0 Nat)) ()))))
 
+;; Returns a natural number indicating the maximum number of folds that may be crossed in a path from
+;; the root of the given AST to a leaf
+(define-metafunction csa#
+  fold-depth/mf : any -> natural
+  [(fold-depth/mf (folded _ any)) ,(add1 (term (fold-depth/mf any)))]
+  [(fold-depth/mf (* _)) 0]
+  [(fold-depth/mf (any ...))
+   ,(apply max 0 (term (natural_result ...)))
+   (where (natural_result ...) ((fold-depth/mf any) ...))]
+  [(fold-depth/mf any) 0])
+
+(module+ test
+  (test-equal? "fold-depth 1" (term (fold-depth/mf (* Nat))) 0)
+  (test-equal? "fold-depth 2"
+    (term (fold-depth/mf (folded Nat (variant A (folded Nat (variant B))))))
+    2)
+  (test-equal? "fold-depth 3"
+    (term
+     (fold-depth/mf (folded Nat (variant A
+                                         (folded Nat (variant B))
+                                         (folded Nat (variant A (folded Nat (variant B))))))))
+    3))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
 
@@ -896,6 +971,9 @@
   [(csa#-subst (: e# l) x v#) (: (csa#-subst e# x v#) l)]
   [(csa#-subst (! e#_1 [l e#_2]) x v#)
    (! (csa#-subst e#_1 x v#) [l (csa#-subst e#_2 x v#)])]
+  [(csa#-subst (fold τ e#) x v#) (fold τ (csa#-subst e# x v#))]
+  [(csa#-subst (folded τ e#) x v#) (folded τ (csa#-subst e# x v#))]
+  [(csa#-subst (unfold τ e#) x v#) (unfold τ (csa#-subst e# x v#))]
   [(csa#-subst (list e# ...) x v#) (list (csa#-subst e# x v#) ...)]
   [(csa#-subst (vector e# ...) x v#) (vector (csa#-subst e# x v#) ...)]
   [(csa#-subst (hash v#_element ...) x v#) (hash (csa#-subst v#_element x v#) ...)]
@@ -1004,8 +1082,8 @@
 ;; Abstracts the given CSA configuration, with a maximum recursion depth for values
 ;;
 ;; NOTE: currently supports only no-messages, no-externals configs
-(define (csa#-abstract-config concrete-config internal-addresses max-depth)
-  (term (abstract-config/mf ,concrete-config ,internal-addresses ,max-depth)))
+(define (csa#-abstract-config concrete-config internal-addresses)
+  (term (abstract-config/mf ,concrete-config ,internal-addresses ,MAX-RECURSION-DEPTH)))
 
 (define-metafunction csa#
   abstract-config/mf : K (a_internal ...) natural_recursion-depth -> K#
@@ -1062,25 +1140,28 @@
    (printf string (abstract-e e (a ...) natural_depth) ...)]
   [(abstract-e (primop e ...) (a ...) natural_depth)
    (primop (abstract-e e (a ...) natural_depth) ...)]
-  ;; TODO: check for the depth=0 case on variants
   [(abstract-e (variant t e ...) (a ...) natural_depth)
-   ;; TODO: take out the "max" issue here
-   (variant t (abstract-e e (a ...) ,(max 0 (- (term natural_depth) 1))) ...)]
-  ;; TODO: check for the depth=0 case on records
+   (variant t (abstract-e e (a ...) natural_depth) ...)]
   [(abstract-e (record [l e] ...) (a ...) natural_depth)
-   ;; TODO: take out the "max" issue here
-   (record [l (abstract-e e (a ...) ,(max 0 (sub1 (term natural_depth))))] ...)]
+   (record [l (abstract-e e (a ...) natural_depth)] ...)]
   [(abstract-e (: e l) (a ...) natural_depth) (: (abstract-e e (a ...) natural_depth) l)]
   [(abstract-e (! e_1 [l e_2]) (a ...) natural_depth)
    (! (abstract-e e_1 (a ...) natural_depth) [l (abstract-e e_2 (a ...) natural_depth)])]
-  ;; TODO: check for the depth=0 case on lists and vectors
+  [(abstract-e (folded τ e) (a ...) 0)
+   (* τ)]
+  [(abstract-e (folded τ e) (a ...) natural_depth)
+   (folded τ (abstract-e e (a ...) ,(sub1 (term natural_depth))))]
+  [(abstract-e (fold τ e) (a ...) natural_depth)
+   (fold τ (abstract-e e (a ...) natural_depth))]
+  [(abstract-e (unfold τ e) (a ...) natural_depth)
+   (unfold τ (abstract-e e (a ...) natural_depth))]
   [(abstract-e (list e ...) (a ...) natural_depth)
    (list e#_unique ...)
-   (where (e# ...) ((abstract-e e (a ...) ,(max 0 (sub1 (term natural_depth)))) ...))
+   (where (e# ...) ((abstract-e e (a ...) natural_depth) ...))
    (where (e#_unique ...) ,(set->list (list->set (term (e# ...)) )))]
   [(abstract-e (vector e ...) (a ...) natural_depth)
    (vector e#_unique ...)
-   (where (e# ...) ((abstract-e e (a ...) ,(max 0 (sub1 (term natural_depth)))) ...))
+   (where (e# ...) ((abstract-e e (a ...) natural_depth) ...))
    (where (e#_unique ...) ,(set->list (list->set (term (e# ...)) )))]
   [(abstract-e (hash) _ _) (hash)]
   [(abstract-e (for/fold ([x_1 e_1]) ([x_2 e_2]) e) (a ...) natural)
