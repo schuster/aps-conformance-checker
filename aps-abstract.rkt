@@ -115,8 +115,6 @@
   [(subst-n/aps# e-hat (x v-hat) any_rest ...)
    (subst-n/aps# (subst/aps# e-hat x v-hat) any_rest ...)])
 
-;; TODO: write tests for this substitution
-
 (define-metafunction aps#
   subst/aps# : e-hat x v-hat -> e-hat
   [(subst/aps# (goto s u ...) x v-hat)
@@ -298,8 +296,6 @@
    ((goto s a#ext ...) () ())]
   [(aps#-eval/mf (with-outputs ([a#ext_1 po_1] any_rest ...) e-hat))
    ((goto s a#ext ...) ([a#ext_1 po_1] any_outputs ...) (any_spawns ...))
-   ;; TODO: this is an example of a where clause I expect to always succeed. I should write a macro on
-   ;; reduction-relation that enforces that
    (where [(goto s a#ext ...) (any_outputs ...) (any_spawns ...)]
           (aps#-eval/mf (with-outputs (any_rest ...) e-hat)))]
   [(aps#-eval/mf (with-outputs () e-hat))
@@ -412,8 +408,6 @@
     (term (((obs-ext 1 Nat) (single *))
            ((obs-ext 3 Nat))
            ((obs-ext 5 Nat)))))))
-
-;; TODO: test the eval function
 
 ;; Adds all addresses matched in the substitution (i.e. the set of bindings) as keys in the output
 ;; commitment map
