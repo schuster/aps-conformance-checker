@@ -322,8 +322,7 @@
           (map (curryr add-observed-flag #f)
                (append
                 unobserved-external-receives
-                (csa#-handle-all-internal-messages impl-config)
-                (csa#-handle-all-timeouts impl-config)))))
+                (csa#-handle-all-internal-actions impl-config)))))
 
 ;; Returns all possible transitions of the given implementation config caused by a received message to
 ;; the given receptionist address
@@ -420,8 +419,7 @@
 ;; Split/Blur/Canonicalize (SBC)
 
 ;; Performs the SBC (split/blur/canonicalize) operation on a config pair, returning its derivative
-;; pairs. Returns #f if sbc was not possible (e.g. because blurring allowed a precise address to
-;; escape into the blurred section). SBC entails the following:
+;; pairs. SBC entails the following:
 ;;
 ;; 1. For each address in the output commitment map that is *not* an argument to the current state,
 ;; split those commitments off into a new specification with a dummy FSM.
@@ -449,14 +447,12 @@
     (for/list ([spec-config-component spec-config-components])
       (display-step-line "Blurring an implementation config")
       (blur-by-relevant-addresses (config-pair-impl-config pair) spec-config-component)))
-  (if (ormap false? blur-results)
-      #f
-      (for/list ([blur-result blur-results])
-        (match-define (list blurred-impl blurred-spec) blur-result)
-        (display-step-line "Canonicalizing the pair, adding to queue")
-        (match-define (list canonicalized-impl canonicalized-spec)
-          (canonicalize-pair blurred-impl blurred-spec))
-        (config-pair canonicalized-impl canonicalized-spec))))
+  (for/list ([blur-result blur-results])
+    (match-define (list blurred-impl blurred-spec) blur-result)
+    (display-step-line "Canonicalizing the pair, adding to queue")
+    (match-define (list canonicalized-impl canonicalized-spec)
+      (canonicalize-pair blurred-impl blurred-spec))
+    (config-pair canonicalized-impl canonicalized-spec)))
 
 ;; Calls sbc on every pair and merges the results into one long list. If sbc returns #f for any pair,
 ;; this function returns #f.
@@ -466,16 +462,15 @@
       #f
       (append* sbc-results)))
 
+;; impl-config spec-config -> (List impl-config spec-config)
+;;
 ;; Blurs the given configurations into only the portions that are relevant to the specification
 ;; configuration, moving the rest of the configurations into the "imprecise" sections of the
-;; abstraction. Returns #f if blurring results in allowing a precise address to escape into the
-;; "blurred" section.
+;; abstraction.
 ;;
 ;; Specifically, this chooses actors with either the NEW or OLD flag to be more likely to match this
-;; specification, then merges all actors with the same spawn location and opposite flag into the
-;; "blurred" section of the impl config, taking any precise addresses known by those actors or in
-;; messages sent to those actors and adding them to special "escaped" sets. Also blurs out external
-;; addresses that are irrelevant to the current spec.
+;; specification, then takes all actors with the same spawn location and opposite flag and merges
+;; their behaviors into the set of behaviors for the "blurred" actors of that location.
 (define (blur-by-relevant-addresses impl-config spec-config)
   (define spec-address (aps#-config-only-instance-address spec-config))
   (define spawn-flag-to-blur
@@ -485,11 +480,9 @@
         'NEW))
   ;; TODO: only remove from the spec those addresses that HAVE to be removed because of overlap
   ;; (should get this info from csa#-blur-config)
-  (define blurred-impl
-    (csa#-blur-config impl-config spawn-flag-to-blur (aps#-relevant-external-addrs spec-config)))
-  (if blurred-impl
-      (list blurred-impl (aps#-blur-config spec-config spawn-flag-to-blur))
-      #f))
+  (list
+   (csa#-blur-config impl-config spawn-flag-to-blur (aps#-relevant-external-addrs spec-config))
+   (aps#-blur-config spec-config spawn-flag-to-blur)))
 
 (module+ test
   (test-equal? "check that messages with blurred addresses get merged together"
@@ -1941,6 +1934,76 @@
      (make-single-actor-config send-to-blurred-internal-actor)
      (make-exclusive-spec static-response-spec)))
 
+
+  ;; Actor that creates a worker to handle each new request, where the worker then sends the result
+  ;; back to another statically-known actor for sending back to the client
+  ;;
+  ;; TODO: do a version of this that sends to the actor instead of closing over the address
+  (define down-and-back-server
+    (term
+     ((addr 0 (Addr Nat))
+      (((define-state (Always [forwarding-server (Addr (Record [result Nat]
+                                                               [dest (Addr Nat)]))]) (dest)
+          (begin
+            (spawn child-loc Nat (goto ChildAlways)
+                   (define-state (ChildAlways) (dummy)
+                     (goto ChildAlways)
+                     [(timeout 0)
+                      (begin
+                        (send forwarding-server (record [result 1] [dest dest]))
+                        (goto Done))])
+                   (define-state (Done) (dummy) (goto Done)))
+            (goto Always forwarding-server))))
+       (goto Always (addr 1 (Record [result Nat] [dest (Addr Nat)])))))))
+
+  (define forwarding-server
+    (term
+     ((addr 1 (Record [result Nat] [dest (Addr Nat)]))
+      (((define-state (ServerAlways) (rec)
+          (begin
+            (send (: rec dest) (: rec result))
+            (goto ServerAlways))))
+       (goto ServerAlways)))))
+
+  (test-valid-actor? down-and-back-server)
+  (test-valid-actor? forwarding-server)
+
+  (test-true "Down-and-back server fulfills the dynamic request/response spec"
+    (model-check
+     (make-empty-queues-config (list down-and-back-server) (list forwarding-server))
+     (make-exclusive-spec request-response-spec)))
+
+  (define create-later-send-children-actor
+    (term
+     ((addr 1 (Addr (Addr Nat)))
+      (((define-state (Always [r (Addr Nat)]) (other-dest)
+          (begin
+            (send other-dest
+                  (spawn child-loc Nat
+                         (goto Child1)
+                         (define-state (Child1) (dummy)
+                           (goto Child2))
+                         (define-state (Child2) (dummy)
+                           (begin
+                             (send r 1)
+                             (goto Child2)))))
+            (goto Always r))))
+       (goto Always (addr 2 Nat))))))
+
+  (define never-send-spec
+    (term
+     (((define-state (Always r)
+         [* -> (goto Always r)]))
+      (goto Always ,(make-static-response-address 'Nat))
+      (addr 0 Nat))))
+
+  (test-valid-actor? create-later-send-children-actor)
+  (test-valid-instance? never-send-spec)
+  (test-false "Child that sends response in second state does not match never-send"
+    ;; tests that all reachable states of a blurred child are executed
+    (model-check
+     (make-single-actor-config create-later-send-children-actor)
+     (make-exclusive-spec never-send-spec)))
 
   ;; (define send-to-blurred-internal-actor
   ;;   (term

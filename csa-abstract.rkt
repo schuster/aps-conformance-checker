@@ -7,8 +7,7 @@
  (struct-out csa#-transition)
  csa#-messages-of-address-type
  csa#-handle-message
- csa#-handle-all-internal-messages
- csa#-handle-all-timeouts
+ csa#-handle-all-internal-actions
  csa#-new-spawn-address?
  csa#-abstract-config
  csa#-blur-config
@@ -42,7 +41,7 @@
 (define-extended-language csa# csa-eval
   (K# (α# β# μ#))
   (α# (α#n ...))
-  (β# ()) ; TODO: fill this in for real
+  (β# ((a#int (b# ...)) ...)) ; blurred actors, represented by a set of abstract behaviors
   (α#n (a#int b#))
   (b# ((S# ...) e#)) ; behavior
   (μ# ((a#int v# multiplicity) ...)) ; message packets
@@ -81,11 +80,11 @@
       v#)
   (a# a#int a#ext) ; internal and external addresses
   (a#int a#int-precise
-         blurred-internal)
+         (blurred-spawn-addr any_location τ))
   (a#int-precise (init-addr natural τ)
-                 ;; OLD means it existed before the current handler was run, NEW means it was spawned
-                 ;; in the current handler (should all be OLD between runs, after blur/canonicalize)
                  (spawn-addr any_location spawn-flag τ))
+  ;; OLD means it is a unique actor that existed before the current handler was run, NEW means it was
+  ;; spawned in the current handler (should all be OLD between runs, after blur/canonicalize)
   (spawn-flag NEW OLD)
   (a#ext
    (* (Addr τ)) ; unobserved address
@@ -286,13 +285,22 @@
 
 ;; impl-config -> (Listof #f or csa#-transition)
 ;;
+;; Evaluates all handlers triggered by a timeout or the receipt of some in-transit message in
+;; impl-config, returning the list of possible results (either csa#-transition or #f if a transition
+;; led to an unverifiable state)
+(define (csa#-handle-all-internal-actions impl-config)
+  (append (csa#-handle-all-internal-messages impl-config)
+          (csa#-handle-all-timeouts impl-config)))
+
+;; impl-config -> (Listof #f or csa#-transition)
+;;
 ;; Evaluates all handlers triggered by the receipt of some in-transit message in impl-config,
 ;; returning the list of possible results (either csa#-transition or #f if a transition led to an
 ;; unverifiable state)
 (define (csa#-handle-all-internal-messages impl-config)
   (let loop ([transitions-so-far null]
              [processed-messages null]
-             [messages-to-process (csa#-config-messages impl-config)])
+             [messages-to-process (csa#-config-message-packets impl-config)])
     (match messages-to-process
       [(list) transitions-so-far]
       [(list message messages-to-process ...)
@@ -406,7 +414,7 @@
     (match-define (list behavior-exp outputs loop-outputs spawns) config)
     ;; TODO: check that there are no internal loop outputs, or refactor that code entirely
     (define new-impl-config
-      (merge-new-messages
+      (merge-messages-into-config
        (merge-new-actors (plug config-context behavior-exp) spawns)
        (filter internal-output? outputs)))
     ;; TODO: find some better way to allow a transition to "fail"
@@ -821,41 +829,35 @@
      (inject/H# (term (begin (spawn L Nat (goto A) (define-state (A) (x) (goto A))) (goto B)))))
    (list (term ((goto B) () () ([(spawn-addr L NEW Nat) [((define-state (A) (x) (goto A))) (goto A)]]))))))
 
-;; Abstractly adds the set of new messages to the existing set. Messages to the blurred-internal
-;; address have their escaped addresses added to the escape set rather than getting added to the
-;; queue.
-(define (merge-new-messages config new-message-list)
-  (define-values (messages-to-blurred messages-to-precise)
-    ;; TODO: deal with the blurred address stuff here
-    (partition (lambda (m) (equal? (first m) 'blurred-internal)) new-message-list))
-  (redex-let csa# ([(any_actors any_blurred any_messages) config]
-                   [((a#_prec v#_prec) ...) messages-to-precise]
-                   [((_ v#_imprec) ...) messages-to-blurred])
-    (if (null? (precise-addrs-in (term (v#_imprec ...))))
-        (term (any_actors
-               any_blurred
-               ,(merge-duplicate-messages-from-list (append (term any_messages) (term ((a#_prec v#_prec 1) ...))))
-               ;; ,(remove-duplicates (append (term any_ext) (precise-addrs-in (term (v#_imprec ...)))))
-               ))
-        #f)))
+;; Abstractly adds the set of new packets to the packet set in the given config.
+(define (merge-messages-into-config config new-message-list)
+  (redex-let csa# ([(any_actors any_blurred any_packets) config])
+    (term (any_actors
+           any_blurred
+           ,(merge-messages-into-packet-set (term any_packets) new-message-list)))))
+
+;; Abstractly adds the set of new packets to the given set.
+(define (merge-messages-into-packet-set packet-set new-message-list)
+  (redex-let csa# ([((a# v#) ...) new-message-list])
+    (term ,(deduplicate-packets (append packet-set (term ((a# v# 1) ...)))))))
 
 (module+ test
   (check-equal?
-   (merge-new-messages (term (() () ())) (list (term ((init-addr 0 Nat) (* Nat)))))
+   (merge-messages-into-config (term (() () ())) (list (term ((init-addr 0 Nat) (* Nat)))))
    (term (() () (((init-addr 0 Nat) (* Nat) 1)))))
 
   (check-equal?
-   (merge-new-messages (term (() () (((init-addr 0 Nat) (* Nat) 1))))
+   (merge-messages-into-config (term (() () (((init-addr 0 Nat) (* Nat) 1))))
                        (list (term ((init-addr 0 Nat) (* Nat)))))
    (term (() () (((init-addr 0 Nat) (* Nat) *)))))
 
   (check-equal?
-   (merge-new-messages (term (() () (((init-addr 0 Nat) (* Nat) 1))))
+   (merge-messages-into-config (term (() () (((init-addr 0 Nat) (* Nat) 1))))
                        (list (term ((init-addr 1 Nat) (* Nat)))))
    (term (() () (((init-addr 0 Nat) (* Nat) 1) ((init-addr 1 Nat) (* Nat) 1)))))
 
   (check-equal?
-   (merge-new-messages (term (()
+   (merge-messages-into-config (term (()
                               ()
                               (((init-addr 1 Nat) (* (Addr Nat)) 1)
                                ((init-addr 1 Nat) (obs-ext 0 Nat) 1))))
@@ -863,32 +865,7 @@
    (term (()
           ()
           (((init-addr 1 Nat) (* (Addr Nat)) *)
-           ((init-addr 1 Nat) (obs-ext 0 Nat) 1)))))
-
-  ;; TODO: test for messages to blurred guys
-  ;; (test-equal?
-  ;;     ;; "Internal messages have their escapes added to the escape set, including variations on types"
-  ;;     "Internal messages with escapes return #f"
-  ;;   (merge-new-messages (term (()
-  ;;                              ()
-  ;;                              ()
-  ;;                              ((obs-ext 1 Nat)
-  ;;                               (init-addr 0 Nat))))
-  ;;                       (term ((blurred-internal (obs-ext 1 (Union)))
-  ;;                              (blurred-internal (record [a (init-addr 0 Nat)]
-  ;;                                                        [b (init-addr 1 Nat)]
-  ;;                                                        [c (obs-ext 2 Nat)])))))
-  ;;   #f
-  ;;   ;; (term (()
-  ;;   ;;        ()
-  ;;   ;;        ()
-  ;;   ;;        ((obs-ext 1 Nat)
-  ;;   ;;         (init-addr 0 Nat)
-  ;;   ;;         (obs-ext 1 (Union))
-  ;;   ;;         (init-addr 1 Nat)
-  ;;   ;;         (obs-ext 2 Nat))))
-  ;;   )
-  )
+           ((init-addr 1 Nat) (obs-ext 0 Nat) 1))))))
 
 (define (merge-new-actors config new-actors)
   (redex-let csa# ([((any_actors ...) any_blurred any_messages) config])
@@ -1199,79 +1176,61 @@
 
 ;; impl-config spawn-flag (a#ext ...) -> impl-config
 ;;
-;; Blurs out all actors in the configuration with the given spawn flag, and blurs out any external
-;; address not in relevant-externals. Returns #f if the blurring process causes a precise address to
-;; escape into the "blurred" section. See the discussion of blurring in main.rkt for more details.
+;; Blurs all actors in the configuration with the given spawn flag, and blurs any external address not
+;; in relevant-externals. See the discussion of blurring in main.rkt for more details.
 (define (csa#-blur-config config spawn-flag-to-blur relevant-externals)
   ;; 1. Remove all blurred addresses and their messages
-  (match-define (list remaining-config removed-actors removed-messages)
+  (match-define (list remaining-config removed-actors)
     ;; TODO: remove an actor only if another actor has same address with different flag
     (remove-actors-by-flag config spawn-flag-to-blur))
-  ;; 2. Do the actual rename/blur for both internals and externals
-  (define renamed-config
-    (blur-addresses remaining-config (map csa#-actor-address removed-actors) relevant-externals))
+  ;; 2. Do the actual rename/blur for both internals and externals (in remaining config, removed
+  ;; actors, and removed messages)
+  (match-define (list renamed-config renamed-removed-actors)
+    (blur-addresses (list remaining-config removed-actors)
+                    (map csa#-actor-address removed-actors)
+                    relevant-externals))
+  ;; 3. Deduplicate message packets in the packet set that now have the same content (the renaming
+  ;; might have caused messages with differing content or address to now be the same)
+  (define deduped-packets (deduplicate-packets (csa#-config-message-packets renamed-config)))
+  ;; 4. Merge blurred behaviors in
+  (define updated-blurred-actors
+    (add-blurred-behaviors (csa#-config-blurred-actors renamed-config) renamed-removed-actors))
+  (term (,(csa#-config-actors renamed-config)
+         ,updated-blurred-actors
+         ,deduped-packets)))
 
-  ;; TODO: this part here is my temporary hack
-  (csa#-merge-duplicate-messages renamed-config)
+(module+ test
+  (test-equal? "check that messages with blurred addresses get merged together"
+    (csa#-blur-config
+     (term (()
+            ()
+            (((init-addr 2 Nat) (obs-ext 1 Nat) 1)
+             ((init-addr 2 Nat) (obs-ext 2 Nat) 1)
+             ((init-addr 2 Nat) (obs-ext 3 Nat) 1))))
+     'NEW
+     (list '(obs-ext 3 Nat)))
+    (term (()
+           ()
+           (((init-addr 2 Nat) (* (Addr Nat)) *)
+            ((init-addr 2 Nat) (obs-ext 3 Nat) 1))))))
 
-  
-  ;; 3. Add escapes to the escape list
-  ;; TODO: add escaped internal addresses here, too
-  ;; TODO: remove externals that are actually blurred out
-  ;; (define remaining-actor-addresses (map csa#-actor-address (csa#-config-actors renamed-config)))
-  ;; (define newly-escaped-addrs
-  ;;   (filter
-  ;;    ;; TODO: make this check ignore types on addresses
-  ;;    (lambda (a) (member a (append relevant-externals remaining-actor-addresses)))
-  ;;    (append* (map precise-addrs-in (list removed-actors removed-messages)))))
-  ;; (if (null? newly-escaped-addrs)
-  ;;     (csa#-merge-duplicate-messages
-  ;;      (redex-let csa# ([(any_actors any_messages any_receptionists any_escapes) renamed-config])
-  ;;        (term (any_actors
-  ;;               any_messages
-  ;;               any_receptionists
-  ;;               ,(remove-duplicates (append (term any_escapes) newly-escaped-addrs))))))
-  ;;     #f)
-
-
-  ;; TODO (3 Aug):
-  ;; order should be: remove actors and messages, get escapes (even bad ones), add escapes, do rename, remove blurs from escape, remove duplicate escapes
-
-
-  ;; 4. Take out any imprecise addresses from escape list
-  ;; TODO: 4.
-
-  ;; TODO: remove the blurry addresses from escape list, maybe receptionists?
-
-  ;; 5. Remove messages that may not be duplicates (some messages that only differed in the choice of
-  ;; addresses may have the same addresses after blurring)
-
-
-     )
-
-;; impl-config spawn-flag -> impl-config (α#n ...) (v# ...)
+;; impl-config spawn-flag -> impl-config (α#n ...)
 ;;
 ;; Removes from the configuration all actors that have the given spawn flag in their address, along
 ;; with any in-transit message packets sent to them. Returns the resulting config, the list of removed
 ;; actors, and the list of removed messages.
 (define (remove-actors-by-flag config flag)
+  ;; TODO: check if this func is still correct (up to removing only for overlaps)
   (redex-let csa# ([(α# any_blurred μ#) config])
-
-    ;; TODO: remove the receptionists too: what is the receptionist set now, anyway?
-
     (define-values (removed-actors remaining-actors)
       (partition
        (lambda (actor)
          (has-spawn-flag? (csa#-actor-address actor) flag))
-       (term α#)))
-    (define-values (removed-packets remaining-packets)
-      (partition
-       (lambda (packet)
-         (has-spawn-flag? (csa#-message-packet-address packet) flag))
-       (term μ#)))
-    (list (term (,remaining-actors any_blurred ,remaining-packets))
-          removed-actors
-          removed-packets)))
+       (csa#-config-actors config)))
+    (list (term (,remaining-actors
+                 ,(csa#-config-blurred-actors config)
+                 ,(csa#-config-message-packets config)))
+          removed-actors)))
 
 ;; term (a#int ...) (a#ext ...) -> term
 ;;
@@ -1279,9 +1238,9 @@
 ;; relevant-externals to their respective imprecise forms
 (define (blur-addresses some-term internals-to-blur relevant-externals)
   (match some-term
-    [(and addr `(spawn-addr ,_ ,_ ,_))
+    [(and addr `(spawn-addr ,loc ,_ ,type))
      (if (member addr internals-to-blur)
-         (term blurred-internal)
+         (term (blurred-spawn-addr ,loc ,type))
          addr)]
     [(and addr `(obs-ext ,_ ,type))
      (if (member addr relevant-externals)
@@ -1306,8 +1265,8 @@
             (spawn-addr quux NEW Nat)))
      (list (term (spawn-addr foo NEW Nat)) (term (spawn-addr bar NEW Nat)))
      (list '(obs-ext 2 Nat)))
-    (term (((spawn-addr foo OLD Nat) blurred-internal)
-           blurred-internal
+    (term (((spawn-addr foo OLD Nat) (blurred-spawn-addr foo Nat))
+           (blurred-spawn-addr bar Nat)
            (* (Addr Nat))
            (obs-ext 2 Nat)
            (spawn-addr bar OLD Nat)
@@ -1385,29 +1344,54 @@
      (equal? addr-flag flag)]
     [_ #f]))
 
-(define (precise-addrs-in some-term)
-  (term (precise-addrs-in/mf ,some-term)))
+;; β# (Listof (List a#int b#)) -> β#
+;;
+;; Adds each address/behavior pair in behaviors-to-add as possible behaviors in blurred-actors.
+(define (add-blurred-behaviors blurred-actors behaviors-to-add)
+  (for/fold ([blurred-actors blurred-actors])
+            ([behavior-to-add behaviors-to-add])
+    (term (add-blurred-behavior/mf ,blurred-actors ,behavior-to-add))))
 
+;; Adds the given address/behavior pair as a possible behavior in the given set of blurred actors.
 (define-metafunction csa#
-  precise-addrs-in/mf : any -> (a# ...)
-  [(precise-addrs-in/mf (obs-ext natural any_type)) ((obs-ext natural any_type))]
-  [(precise-addrs-in/mf a#int-precise) (a#int-precise)]
-  [(precise-addrs-in/mf (any ...))
-   (any_result ... ...)
-   (where ((any_result ...) ...) ((precise-addrs-in/mf any) ...))]
-  [(precise-addrs-in/mf _) ()])
+  add-blurred-behavior/mf : β# (a#int b#) -> β#
+  [(add-blurred-behavior/mf (any_1 ... (a#int (b#_old ...)) any_2 ...) (a#int b#_new))
+   (any_1 ... (a#int ,(remove-duplicates (term (b#_old ... b#_new)))) any_2 ...)]
+  [(add-blurred-behavior/mf (any ...) (a#int b#))
+   (any ... (a#int (b#)))])
+
+(module+ test
+  (define behavior1
+    (term (((define-state (A) (x) (goto A))) (goto A))))
+  (define behavior2
+    (term (((define-state (B) (r) (begin (send r (* Nat)) (goto B)))) (goto B))))
+  (define behavior3
+    (term (((define-state (C) (r) (begin (send r (* Nat)) (goto C)))) (goto C))))
+
+  (test-begin
+    (check-true (redex-match? csa# b# behavior1))
+    (check-true (redex-match? csa# b# behavior2))
+    (check-true (redex-match? csa# b# behavior3)))
+
+  (test-equal? "add-blurred-behaviors"
+    (add-blurred-behaviors (term (((blurred-spawn-addr 1 Nat) (,behavior1 ,behavior2))
+                                  ((blurred-spawn-addr 2 Nat) (,behavior3))))
+                           (list (term ((blurred-spawn-addr 1 Nat) ,behavior3))
+                                 (term ((blurred-spawn-addr 3 Nat) ,behavior3))
+                                 (term ((blurred-spawn-addr 1 Nat) ,behavior1))))
+    (term (((blurred-spawn-addr 1 Nat) (,behavior1 ,behavior2 ,behavior3))
+           ((blurred-spawn-addr 2 Nat) (,behavior3))
+           ((blurred-spawn-addr 3 Nat) (,behavior3))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Duplicate message merging
 
-;; TODO: also use this during evaluation
-(define (csa#-merge-duplicate-messages impl-config)
-  (redex-let csa# ([(any_actors any_blurred any_messages) impl-config])
-    (term (any_actors
-           any_blurred
-           ,(merge-duplicate-messages-from-list (term any_messages))))))
-
-(define (merge-duplicate-messages-from-list message-list)
+;; Merges all message packet entries in the given μ# that have the same address and content into a
+;; single entry with the many-of multiplicity. These kinds of duplicate messages may arise, for
+;; example, during blurring.
+;;
+;; TODO: Do some kind of ordering on the messages to avoid symmetry issues
+(define (deduplicate-packets message-list)
   (let loop ([processed-messages null]
              [remaining-messages message-list])
     (match remaining-messages
@@ -1431,20 +1415,20 @@
 
 (module+ test
   (check-equal?
-   (merge-duplicate-messages-from-list
+   (deduplicate-packets
     (term (((obs-ext 1 Nat) (* Nat) 1)
            ((obs-ext 1 Nat) (* Nat) 1))))
    (term (((obs-ext 1 Nat) (* Nat) *))))
 
     (check-equal?
-   (merge-duplicate-messages-from-list
+   (deduplicate-packets
     (term (((obs-ext 1 Nat) (* Nat) 1)
            ((obs-ext 1 Nat) (* Nat) 1)
            ((obs-ext 1 Nat) (* Nat) 1))))
    (term (((obs-ext 1 Nat) (* Nat) *))))
 
   (check-equal?
-   (merge-duplicate-messages-from-list
+   (deduplicate-packets
     (term (((obs-ext 1 Nat) (* Nat) 1)
            ((obs-ext 2 Nat) (* Nat) 1)
            ((obs-ext 3 Nat) (* Nat) *)
@@ -1475,7 +1459,13 @@
   (redex-let csa# ([(α# _ ...) config])
              (term α#)))
 
-(define (csa#-config-messages config)
+;; Returns the list of blurred actors in the config
+(define (csa#-config-blurred-actors config)
+  (redex-let csa# ([(_ β# _) config])
+    (term β#)))
+
+;; Returns the configuration's set of in-flight message packets
+(define (csa#-config-message-packets config)
   (redex-let csa# ([(_ _ μ#) config])
              (term μ#)))
 
