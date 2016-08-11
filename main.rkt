@@ -486,9 +486,11 @@
         'NEW))
   ;; TODO: only remove from the spec those addresses that HAVE to be removed because of overlap
   ;; (should get this info from csa#-blur-config)
+  (match-define (list blurred-impl-config blurred-internals)
+   (csa#-blur-config impl-config spawn-flag-to-blur (aps#-relevant-external-addrs spec-config)) )
   (list
-   (csa#-blur-config impl-config spawn-flag-to-blur (aps#-relevant-external-addrs spec-config))
-   (aps#-blur-config spec-config spawn-flag-to-blur)))
+   blurred-impl-config
+   (aps#-blur-config spec-config blurred-internals)))
 
 (module+ test
   (test-equal? "check that messages with blurred addresses get merged together"
