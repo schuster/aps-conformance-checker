@@ -1596,8 +1596,8 @@
 ;; Debug helpers
 
 (define (impl-config-without-state-defs config)
-  (redex-let csa# ([(((a#int (_ e#)) ...) any_blurred μ#) config])
-             (term (((a#int e#) ...) any_blurred μ#))))
+  (redex-let csa# ([(((a#int (_ e#)) ...) ((a#int_b ((_ e#_b) ...)) ...) μ#) config])
+             (term (((a#int e#) ...) ((a#int_b (e#_b ...)) ...) μ#))))
 
 (define (impl-config-goto config)
   ;; NOTE: only suports single-actor impls for now
