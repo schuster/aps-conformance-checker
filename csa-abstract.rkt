@@ -151,11 +151,12 @@
 (define (csa#-messages-of-address-type address)
   (term (messages-of-type/mf (receptionist-type ,address) ,MAX-RECURSION-DEPTH)))
 
-;; Returns the type of the given internal precise address
+;; Returns the type of the given internal address
 (define-metafunction csa#
-  receptionist-type : a#int-precise -> τ
+  receptionist-type : a#int -> τ
   [(receptionist-type (init-addr natural τ)) τ]
-  [(receptionist-type (spawn-addr _ _ τ)) τ])
+  [(receptionist-type (spawn-addr _ _ τ)) τ]
+  [(receptionist-type (blurred-spawn-addr _ τ)) τ])
 
 ;; Returns an exhaustive list of abstract messages for the given type with the natural argument
 ;; indicating the maximum number of times to unfold recursive types.
