@@ -200,6 +200,8 @@
 
   ;; Debugging
   (define visited-pairs-count 0)
+  (define visited-impl-configs (mutable-set))
+  (define visited-spec-configs (mutable-set))
   (define log-file (if LOG-PAIRS (open-output-file "related_pair_log.dat" #:exists 'replace) #f))
 
   (let loop ([related-pairs (set)]
@@ -212,8 +214,12 @@
 
        ;; Debugging
        (set! visited-pairs-count (add1 visited-pairs-count))
+       (set-add! visited-impl-configs (config-pair-impl-config pair))
+       (set-add! visited-spec-configs (config-pair-spec-config pair))
        ;; (printf "Current time: ~s\n" (current-seconds))
        ;; (printf "Implementation config #: ~s\n" visited-pairs-count)
+       ;; (printf "Unique impl configs so far: ~s\n" (set-count visited-impl-configs))
+       ;; (printf "Unique spec configs so far: ~s\n" (set-count visited-spec-configs))
        ;; (printf "Queue size: ~s\n" (queue-length to-visit))
        ;; (printf "The impl config: ~s\n"
        ;;         (impl-config-without-state-defs (config-pair-impl-config pair)))
