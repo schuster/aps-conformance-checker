@@ -1106,10 +1106,11 @@
 
 ;; Blurs the given specification configuration by removing all receptionists in the unobserved
 ;; environment interface with the wrong spawn flag
-(define (aps#-blur-config config spawn-flag-to-blur)
+(define (aps#-blur-config config internals-to-blur)
   (redex-let aps# ([[([any_state-defs any_exp any_addr]) any_receptionists any_out-coms] config])
     (term [([any_state-defs any_exp any_addr])
-           ,(filter (negate (curryr has-spawn-flag? spawn-flag-to-blur)) (term any_receptionists))
+           ,(remove-duplicates
+             (csa#-blur-internal-addresses (term any_receptionists) internals-to-blur))
            any_out-coms])))
 
 (module+ test
@@ -1119,12 +1120,15 @@
                               (spawn-addr 1 OLD Nat)
                               (spawn-addr 1 NEW Nat)
                               (spawn-addr 2 NEW Nat)
+                              (blurred-spawn-addr 1 Nat)
                               (spawn-addr 2 OLD Nat))
                              ()))
-                      'NEW)
+                      (list (term (spawn-addr 1 NEW Nat))))
     (term ((,aps#-no-transition-instance)
            ((init-addr  0 Nat)
             (spawn-addr 1 OLD Nat)
+            (blurred-spawn-addr 1 Nat)
+            (spawn-addr 2 NEW Nat)
             (spawn-addr 2 OLD Nat))
            ()))))
 

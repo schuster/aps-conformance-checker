@@ -15,6 +15,7 @@
  ;; Required by APS#
  csa#-output-address
  csa#-output-message
+ csa#-blur-internal-addresses ; needed for blurring in APS#
 
  ;; Required by APS#; should go into a "common" language instead
  csa#
@@ -119,6 +120,14 @@
   (trigger# (timeout a#int)
             (internal-receive a#int v#)
             (external-receive a#int v#)))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Test Data
+
+(module+ test
+  (define test-behavior1
+    (term (((define-state (TestState1) (x) (goto TestState1)))
+           (goto TestState1)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Constants
@@ -1174,20 +1183,21 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Blurring
 
-;; impl-config spawn-flag (a#ext ...) -> impl-config
+;; impl-config spawn-flag (a#ext ...) -> (List impl-config (Listof a#int))
 ;;
 ;; Blurs all actors in the configuration with the given spawn flag, and blurs any external address not
-;; in relevant-externals. See the discussion of blurring in main.rkt for more details.
+;; in relevant-externals. Returns the blurred impl-config as well as the list of internal addresses
+;; that were blurred. See the discussion of blurring in main.rkt for more details.
 (define (csa#-blur-config config spawn-flag-to-blur relevant-externals)
   ;; 1. Remove all blurred addresses and their messages
   (match-define (list remaining-config removed-actors)
-    ;; TODO: remove an actor only if another actor has same address with different flag
     (remove-actors-by-flag config spawn-flag-to-blur))
   ;; 2. Do the actual rename/blur for both internals and externals (in remaining config, removed
   ;; actors, and removed messages)
+  (define removed-actor-addresses (map csa#-actor-address removed-actors))
   (match-define (list renamed-config renamed-removed-actors)
     (blur-addresses (list remaining-config removed-actors)
-                    (map csa#-actor-address removed-actors)
+                    removed-actor-addresses
                     relevant-externals))
   ;; 3. Deduplicate message packets in the packet set that now have the same content (the renaming
   ;; might have caused messages with differing content or address to now be the same)
@@ -1195,9 +1205,11 @@
   ;; 4. Merge blurred behaviors in
   (define updated-blurred-actors
     (add-blurred-behaviors (csa#-config-blurred-actors renamed-config) renamed-removed-actors))
-  (term (,(csa#-config-actors renamed-config)
-         ,updated-blurred-actors
-         ,deduped-packets)))
+  (list
+   (term (,(csa#-config-actors renamed-config)
+          ,updated-blurred-actors
+          ,deduped-packets))
+   removed-actor-addresses))
 
 (module+ test
   (test-equal? "check that messages with blurred addresses get merged together"
@@ -1209,28 +1221,62 @@
              ((init-addr 2 Nat) (obs-ext 3 Nat) 1))))
      'NEW
      (list '(obs-ext 3 Nat)))
-    (term (()
-           ()
-           (((init-addr 2 Nat) (* (Addr Nat)) *)
-            ((init-addr 2 Nat) (obs-ext 3 Nat) 1))))))
+    (list
+     (term (()
+            ()
+            (((init-addr 2 Nat) (* (Addr Nat)) *)
+             ((init-addr 2 Nat) (obs-ext 3 Nat) 1))))
+     null)))
 
 ;; impl-config spawn-flag -> impl-config (α#n ...)
 ;;
 ;; Removes from the configuration all actors that have the given spawn flag in their address, along
-;; with any in-transit message packets sent to them. Returns the resulting config, the list of removed
-;; actors, and the list of removed messages.
+;; with any in-transit message packets sent to them. Returns the resulting config, and the list of
+;; removed actors.
 (define (remove-actors-by-flag config flag)
-  ;; TODO: check if this func is still correct (up to removing only for overlaps)
+  (define (should-be-removed? actor)
+    ;; should be removed if it's a spawn address with the given spawn flag AND the same address with
+    ;; the opposite flag exists
+    (define addr (csa#-actor-address actor))
+    (and (has-spawn-flag? addr flag)
+         (csa#-config-actor-by-address config (term (switch-spawn-flag/mf ,addr)))))
   (redex-let csa# ([(α# any_blurred μ#) config])
     (define-values (removed-actors remaining-actors)
-      (partition
-       (lambda (actor)
-         (has-spawn-flag? (csa#-actor-address actor) flag))
-       (csa#-config-actors config)))
+      (partition should-be-removed? (csa#-config-actors config)))
     (list (term (,remaining-actors
                  ,(csa#-config-blurred-actors config)
                  ,(csa#-config-message-packets config)))
           removed-actors)))
+
+(define-metafunction csa#
+  switch-spawn-flag/mf : a#int -> a#int
+  [(switch-spawn-flag/mf (spawn-addr any_loc NEW any_type)) (spawn-addr any_loc OLD any_type)]
+  [(switch-spawn-flag/mf (spawn-addr any_loc OLD any_type)) (spawn-addr any_loc NEW any_type)])
+
+(module+ test
+  (test-equal? "remove-actors test"
+    (remove-actors-by-flag
+     (term
+      ((((spawn-addr 1 OLD Nat) ,test-behavior1)
+        ((spawn-addr 1 NEW Nat) ,test-behavior1)
+        ((spawn-addr 2 OLD Nat) ,test-behavior1)
+        ((spawn-addr 3 NEW Nat) ,test-behavior1))
+       ()
+       ()))
+     'NEW)
+    (list
+     (term
+      ((((spawn-addr 1 OLD Nat) ,test-behavior1)
+        ((spawn-addr 2 OLD Nat) ,test-behavior1)
+        ((spawn-addr 3 NEW Nat) ,test-behavior1))
+       ()
+       ()))
+     (list (term ((spawn-addr 1 NEW Nat) ,test-behavior1))))))
+
+;; For a term assumed to contain no external addresses, renames the addresses in internals-to-blur as
+;; done in the blurring process.
+(define (csa#-blur-internal-addresses some-term internals-to-blur)
+  (blur-addresses some-term internals-to-blur null))
 
 ;; term (a#int ...) (a#ext ...) -> term
 ;;
@@ -1479,6 +1525,19 @@
    ((any_1 ...) the-actor (any_2 ...))
    (judgment-holds (same-internal-address-without-type? a#int a#int_target))])
 
+;; Returns the given precise actor with the given address, or #f if it's not in the given config
+(define (csa#-config-actor-by-address config addr)
+  (term (actor-by-address/mf ,(csa#-config-actors config) ,addr)))
+
+(define-metafunction csa#
+  actor-by-address/mf : α# a#int -> #f or α#n
+  [(actor-by-address/mf () _) #f]
+  [(actor-by-address/mf ((a#int any_behavior) _ ...) a#int_target)
+   (a#int any_behavior)
+   (judgment-holds (same-internal-address-without-type? a#int a#int_target))]
+  [(actor-by-address/mf (_ any_rest ...) a#int)
+   (actor-by-address/mf (any_rest ...) a#int)])
+
 (define-judgment-form csa#
   #:mode (same-internal-address-without-type? I I)
   #:contract (same-internal-address-without-type? a#int a#int)
@@ -1487,7 +1546,10 @@
   [------
    (same-internal-address-without-type? (spawn-addr any_loc NEW _) (spawn-addr any_loc NEW _))]
   [------
-   (same-internal-address-without-type? (spawn-addr any_loc OLD _) (spawn-addr any_loc OLD _))])
+   (same-internal-address-without-type? (spawn-addr any_loc OLD _) (spawn-addr any_loc OLD _))]
+  [------
+   (same-internal-address-without-type? (blurred-spawn-addr any_loc _)
+                                        (blurred-spawn-addr any_loc _))])
 
 (define-judgment-form csa#
   #:mode (same-external-address-without-type? I I)
@@ -1500,6 +1562,19 @@
                     [(a#int _) (term α#n)])
               (term a#int)))
 
+(define (csa#-blurred-actor-address a)
+  (redex-let csa# ([(a#int _) a])
+    (term a#int)))
+
+(define (csa#-blurred-actor-behaviors a)
+  (redex-let csa# ([(_ (b# ...)) a])
+    (term (b# ...))))
+
+;; (a#int v# multiplicity) -> (a#int v#)
+(define (csa#-packet-entry->packet entry)
+  (redex-let csa# ([(a#int v# _) entry])
+    (term (a#int v#))))
+
 (define (csa#-message-packet-address packet)
   (first packet))
 
@@ -1509,6 +1584,21 @@
 (define csa#-output-address car)
 
 (define csa#-output-message cadr)
+
+;; α#n -> b#
+(define (actor-behavior actor)
+  (second actor))
+
+;; Returns all behaviors assigned to the blurred actor with the given address in the given config
+(define-metafunction csa#
+  blurred-actor-behaviors-by-address/mf : K# a#int -> (b# ...)
+  [(blurred-actor-behaviors-by-address/mf (_ (_ ... (a#int any_behaviors) _ ...) _) a#int_target)
+   any_behaviors
+   (judgment-holds (same-internal-address-without-type? a#int a#int_target))])
+
+;; Returns the state definitions of the given behavior
+(define (behavior-state-defs behavior)
+  (first behavior))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Boolean Logic
@@ -1569,6 +1659,11 @@
 (module+ test
   (check-true (internal-output? (term ((init-addr 1 Nat) (* Nat)))))
   (check-false (internal-output? (term ((obs-ext 2 Nat) (* Nat))))))
+
+;; Returns #t if the address is a precise internal address (meaning it represents a single concrete
+;; address in the concretized configuration), #f otherwise
+(define (precise-internal-address? addr)
+  (redex-match? csa# a#int-precise addr))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Types
