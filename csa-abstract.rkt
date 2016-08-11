@@ -16,6 +16,8 @@
  csa#-output-address
  csa#-output-message
  csa#-blur-internal-addresses ; needed for blurring in APS#
+ internals-in
+ externals-in
 
  ;; Required by APS#; should go into a "common" language instead
  csa#
@@ -1687,6 +1689,50 @@
   (test-equal? "type-join 3"
                (term (type-join (Union [A] [B]) (Union [B])))
                '(Union [A] [B])))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Address containment
+
+;; Returns the list of all external addresses in the given term
+(define (externals-in the-term)
+  (remove-duplicates (term (externals-in/mf ,the-term))))
+
+(define-metafunction csa#
+  externals-in/mf : any -> (a#ext ...)
+  [(externals-in/mf a#ext) (a#ext)]
+  [(externals-in/mf (any ...))
+   (any_addr ... ...)
+   (where ((any_addr ...) ...) ((externals-in/mf any) ...))]
+  [(externals-in/mf _) ()])
+
+(module+ test
+  (check-same-items?
+   (externals-in (term ((obs-ext 1 Nat)
+                      (obs-ext 2 Nat)
+                      (obs-ext 2 Nat)
+                      (foo bar (baz (init-addr 2 Nat) (obs-ext 3 Nat))))))
+   (term ((obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat)))))
+
+;; Returns the list of all internal addresses in the given term
+(define (internals-in the-term)
+  (remove-duplicates (term (internals-in/mf ,the-term))))
+
+(define-metafunction csa#
+  internals-in/mf : any -> (a#int ...)
+  [(internals-in/mf a#int) (a#int)]
+  [(internals-in/mf (any ...))
+   (any_addr ... ...)
+   (where ((any_addr ...) ...) ((internals-in/mf any) ...))]
+  [(internals-in/mf _) ()])
+
+(module+ test
+  (check-same-items?
+   (internals-in (term ((init-addr 1 Nat)
+                        (init-addr 1 Nat)
+                        (obs-ext 2 Nat)
+                        (spawn-addr 3 NEW Nat)
+                      (foo bar (baz (init-addr 2 Nat) (obs-ext 3 Nat))))))
+   (term ((init-addr 1 Nat) (spawn-addr 3 NEW Nat) (init-addr 2 Nat)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debug helpers

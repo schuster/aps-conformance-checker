@@ -301,46 +301,6 @@
    (where [any_goto (any_outputs ...) (any_spawns ...)]
           (aps#-eval/mf e-hat))])
 
-;; Returns the list of all (precise) external addresses in the given term
-(define (externals-in the-term)
-  (remove-duplicates (term (externals-in/mf ,the-term))))
-
-(define-metafunction aps#
-  externals-in/mf : any -> (a#ext ...)
-  [(externals-in/mf a#ext) (a#ext)]
-  [(externals-in/mf (any ...))
-   (any_addr ... ...)
-   (where ((any_addr ...) ...) ((externals-in/mf any) ...))]
-  [(externals-in/mf _) ()])
-
-(module+ test
-  (check-same-items?
-   (externals-in (term ((obs-ext 1 Nat)
-                      (obs-ext 2 Nat)
-                      (obs-ext 2 Nat)
-                      (foo bar (baz (init-addr 2 Nat) (obs-ext 3 Nat))))))
-   (term ((obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat)))))
-
-(define (internals-in the-term)
-  (remove-duplicates (term (internals-in/mf ,the-term))))
-
-(define-metafunction aps#
-  internals-in/mf : any -> (a#int ...)
-  [(internals-in/mf a#int) (a#int)]
-  [(internals-in/mf (any ...))
-   (any_addr ... ...)
-   (where ((any_addr ...) ...) ((internals-in/mf any) ...))]
-  [(internals-in/mf _) ()])
-
-(module+ test
-  (check-same-items?
-   (internals-in (term ((init-addr 1 Nat)
-                        (init-addr 1 Nat)
-                        (obs-ext 2 Nat)
-                        (spawn-addr 3 NEW Nat)
-                      (foo bar (baz (init-addr 2 Nat) (obs-ext 3 Nat))))))
-   (term ((init-addr 1 Nat) (spawn-addr 3 NEW Nat) (init-addr 2 Nat)))))
-
 ;; Σ (((S-hat ...) e-hat σ) ...) -> Σ (Σ ...)
 ;;
 ;; Given the current configuration and the info needed to spawn new configs, splits information from
