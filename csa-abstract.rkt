@@ -6,11 +6,15 @@
  ;; Required by model checker
  (struct-out csa#-transition)
  csa#-messages-of-address-type
- csa#-handle-message
+ csa#-handle-external-message
  csa#-handle-all-internal-actions
- csa#-new-spawn-address?
  csa#-abstract-config
  csa#-blur-config
+
+ ;; Required by model checker to select spawn-flag to blur; likely to change
+ csa#-spawn-address?
+ csa#-spawn-address-flag
+ csa#-flags-that-know-externals
 
  ;; Required by APS#
  csa#-output-address
@@ -22,7 +26,6 @@
  ;; Required by APS#; should go into a "common" language instead
  csa#
  csa#-abstract-address
- has-spawn-flag?
  same-internal-address-without-type?
  same-external-address-without-type?
  type-join
@@ -47,6 +50,8 @@
   (β# ((a#int (b# ...)) ...)) ; blurred actors, represented by a set of abstract behaviors
   (α#n (a#int b#))
   (b# ((S# ...) e#)) ; behavior
+  ;; TODO: refactor the packets to hold *un*typed addresses - will solve most of my address comparison
+  ;; issues
   (μ# ((a#int v# multiplicity) ...)) ; message packets
   (multiplicity 1 *)
   (S# (define-state (s [x τ] ...) (x) e#)
@@ -95,7 +100,7 @@
    ;; here
    (obs-ext natural τ))
   (ρ# (a#int ...))
-  ;; H# = handler config (exp + outputs + loop outputs so far)
+  ;; H# = handler machine state (exp + outputs + loop outputs + spawns so far)
   (H# (e# ([a# v#] ...) ([a# v#] ...) (α#n ...)))
   (E# hole
       (spawning a#int τ E# S# ...)
@@ -272,28 +277,31 @@
    final-config) ; an abstract implementation configuration
   #:transparent)
 
-;; impl-config a#int v# -> (Listof #f or csa#-transition)
+;; impl-config a#int v# -> (Listof csa#-transition)
 ;;
-;; Evaluates the handler triggered by sending message to actor-address, returning the list of possible
-;; results (either csa#-transition or #f if a transition led to an unverifiable state)
-(define (csa#-handle-message impl-config actor-address message)
-  (redex-let csa# ([(any_actors-before
-                     (a# ((name state-defs (_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e# any_timeout-clause ...) _ ...)) (in-hole E# (goto s v# ..._n))))
-                     any_actors-after)
-                    (config-actor-and-rest-by-address impl-config actor-address)]
-                   [(_ any_blurred any_messages) impl-config])
-    ;; TODO: deal with the case where x_m shadows an x_s
-    (define initial-config (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...))))
-    (define impl-config-context
-      (term (,(append (term any_actors-before)
-                      (list (term (a# (state-defs hole))))
-                      (term any_actors-after))
-             any_blurred
-             any_messages)))
-    (eval-handler initial-config
-                  (term (external-receive ,actor-address ,message))
+;; Evaluates the handler triggered by sending message to actor-address in impl-config, returning the
+;; list of possible csa#-transitions.
+(define (csa#-handle-external-message impl-config actor-address message)
+  (handle-message impl-config
                   actor-address
-                  impl-config-context)))
+                  message
+                  (term (external-receive ,actor-address ,message))))
+
+;; Evaluates the handler triggered by the actor corresponding to actor-address receiving message,
+;; returning the list of possible csa#-transitions.
+(define (handle-message impl-config actor-address message trigger)
+  (append*
+   (for/list ([behavior (current-behaviors-for-address impl-config actor-address)])
+     (define init-handler-machine (handler-machine-for-message behavior message))
+     (define update-behavior
+       (if (precise-internal-address? actor-address)
+           update-behavior/precise
+           (make-update-behavior/blurred (behavior-state-defs behavior))))
+     (eval-handler init-handler-machine
+                   trigger
+                   actor-address
+                   impl-config
+                   update-behavior))))
 
 ;; impl-config -> (Listof #f or csa#-transition)
 ;;
@@ -310,151 +318,135 @@
 ;; returning the list of possible results (either csa#-transition or #f if a transition led to an
 ;; unverifiable state)
 (define (csa#-handle-all-internal-messages impl-config)
-  (let loop ([transitions-so-far null]
-             [processed-messages null]
-             [messages-to-process (csa#-config-message-packets impl-config)])
-    (match messages-to-process
-      [(list) transitions-so-far]
-      [(list message messages-to-process ...)
-       (redex-let* csa#
-         ([(a#int v#_msg multiplicity) message]
-          [(any_actors-before
-            (_ ((name state-defs (_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e# any_timeout-clause ...) _ ...)) (in-hole E# (goto s v# ..._n))))
-            any_actors-after)
-           (config-actor-and-rest-by-address impl-config (term a#int))]
-          [(_ any_blurred _) impl-config])
-         ;; TODO: deal with the case where x_m shadows an x_s
-         (define initial-config (inject/H# (term (csa#-subst-n e# [x_m v#_msg] [x_s v#] ...))))
-         (define impl-config-context
-           (term (,(append (term any_actors-before)
-                           (list (term (a#int (state-defs hole))))
-                           (term any_actors-after))
-                  any_blurred
-                  ,(append processed-messages
-                           (if (redex-match? csa# * (term multiplicity)) (list message) null)
-                           messages-to-process)
-                  )))
-         (define new-transitions
-           (eval-handler initial-config
-                         (term (internal-receive a#int v#_msg))
-                         (term a#int)
-                         impl-config-context))
-         (loop (append transitions-so-far new-transitions)
-               (append processed-messages (list message))
-               messages-to-process))])))
+  (append*
+   (for/list ([packet-entry (csa#-config-message-packets impl-config)])
+     (define packet (csa#-packet-entry->packet packet-entry))
+     (define address (csa#-message-packet-address packet))
+     (define message (csa#-message-packet-value packet))
+     (handle-message (term (config-remove-packet/mf ,impl-config ,packet))
+                     address
+                     message
+                     (term (internal-receive ,address ,message))))))
 
-;; impl-config -> (Listof #f or csa#-transition)
+;; Returns a handler machine primed with the handler expression from the given behavior, with all
+;; state arguments and the message substituted for the appropriate variables
+(define (handler-machine-for-message behavior message)
+  (redex-let csa#
+      ([((_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e# any_timeout-clause ...) _ ...)
+         (goto s v# ..._n))
+        behavior])
+    ;; TODO: deal with the case where x_m shadows an x_s
+    (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...)))))
+
+;; Abstractly removes the entry in K# corresponding to the packet (a# v#), which will actually remove
+;; it if its multiplicity is 1, else leave it there if its multiplicity is * (because removing a
+;; message from an abstract list of 0 or more yields a list of 0 or more).
+(define-metafunction csa#
+  config-remove-packet/mf : K# (a# v#) -> K#
+  [(config-remove-packet/mf (any_precise any_blurred (any_pkt1 ... (a# v# 1) any_pkt2 ...)) (a# v#))
+   (any_precise any_blurred (any_pkt1 ... any_pkt2 ...))]
+  ;; Case 2: if the multiplicity is not 1, it must be *, so we just return the original config because
+  ;; nothing is actually removed
+  [(config-remove-packet/mf any_config _) any_config])
+
+;; impl-config -> (Listof csa#-transition)
 ;;
 ;; Evaluates all handlers triggered by a timeout impl-config, returning the list of possible
-;; results (either csa#-transition or #f if a transition led to an unverifiable state)
+;; csa#-transitions
 (define (csa#-handle-all-timeouts impl-config)
-  (redex-let csa# ([(any_actors any_blurred any_messages) impl-config])
-    (let loop ([transitions-so-far null]
-               [actors-before null]
-               [actors-after (term any_actors)])
-      (match actors-after
-        [(list) transitions-so-far]
-        [(list actor actors-after ...)
-         (define new-transitions
-           (csa#-handle-actor-maybe-timeout actors-before
-                                            actor
-                                            actors-after
-                                            (term any_blurred)
-                                            (term any_messages)))
-         (loop (append transitions-so-far new-transitions)
-               (append actors-before (list actor))
-               actors-after)]))))
+  (append
+   ;; transitions for precise actors
+   (append*
+    (for/list ([actor (csa#-config-actors impl-config)])
+      (csa#-handle-maybe-timeout (csa#-actor-address actor)
+                                 (actor-behavior actor)
+                                 impl-config
+                                 update-behavior/precise)))
+   ;; transitions for blurred actors
+   (append*
+    (for/list ([blurred-actor (csa#-config-blurred-actors impl-config)])
+      (append*
+       (for/list ([behavior (csa#-blurred-actor-behaviors blurred-actor)])
+         (define update-behavior (make-update-behavior/blurred (behavior-state-defs behavior)))
+         (csa#-handle-maybe-timeout (csa#-blurred-actor-address blurred-actor)
+                                    behavior
+                                    impl-config
+                                    update-behavior)))))))
 
-;; (α#n ...) α#n (α#n ...) μ ρ χ -> (Listof #f or csa#-transition)
+;; a#int b# K# (K# a#int e# -> K#) -> (Listof csa#-transition)
 ;;
-;; Evaluates the handler triggered by a timeout on actor (if such a timeout exists), returning the
-;; list of possible results (either csa#-transition or #f if a transition led to an unverifiable
-;; state). If no such timeout exists, the empty list is returned.
-(define (csa#-handle-actor-maybe-timeout actors-before
-                                         actor
-                                         actors-after
-                                         blurred-actors
-                                         messages)
-  (define matches
-    (redex-match csa#
-                 (any_address ((name state-defs (_ ... (define-state (s [x_s τ_s] ..._n)  _    _  [(timeout _) e#]) _ ...)) (in-hole E# (goto s v# ..._n))))
-                 actor))
-  (match matches
+;; Returns all possible transitions enabled by taking a timeout on the given behavior for the actor
+;; with the given address (if such a timeout exists). If no such timeout exists, the empty list is
+;; returned.
+(define (csa#-handle-maybe-timeout address behavior config update-behavior)
+  (match (term (get-timeout-handler-exp/mf ,behavior))
     [#f null]
-    [(list the-match)
-     (define (get-binding name) (bind-exp (findf (lambda (binding) (eq? (bind-name binding) name)) (match-bindings the-match))))
-     (redex-let csa# ([(x_s ...) (get-binding 'x_s)]
-                      [(v# ...) (get-binding 'v#)]
-                      [e# (get-binding 'e#)]
-                      [any_address (get-binding 'any_address)]
-                      [(name state-defs _) (get-binding 'state-defs)])
-       (define impl-config-context
-         (term (,(append actors-before (term ((any_address (state-defs hole)))) actors-after)
-                ,blurred-actors
-                ,messages)))
-       (eval-handler (inject/H# (term (csa#-subst-n e# [x_s v#] ...)))
-                     (term (timeout any_address))
-                     (term any_address)
-                     impl-config-context))]
-    [_ (error 'csa#-handle-actor-maybe-timeout "Got multiple matches for actor: ~s\n" actor)]))
+    [handler-exp
+     (eval-handler (inject/H# handler-exp)
+                   (term (timeout ,address))
+                   address
+                   config
+                   update-behavior)]))
 
-;; H# trigger# a#int config-context -> (Listof #f or csa#-transition)
+;; Returns the behavior's current timeout handler expression with all state arguments substituted in
+;; if the current state has a timeout clause, else #f
+(define-metafunction csa#
+  get-timeout-handler-exp/mf : b# -> e# or #f
+  [(get-timeout-handler-exp/mf ((_ ... (define-state (s [x_s τ_s] ..._n) _ _ [(timeout _) e#]) _ ...)
+                                (goto s v# ..._n)))
+   (csa#-subst-n e# [x_s v#] ...)]
+  [(get-timeout-handler-exp/mf _) #f])
+
+;; Returns all behaviors currently available in the given config for the actor with the given address
+;; (will only be a single behavior for precise addresses, one or more for blurred ones).
+(define (current-behaviors-for-address config address)
+  (cond
+    [(precise-internal-address? address)
+     (list (actor-behavior (csa#-config-actor-by-address config address)))]
+    [else
+     (term (blurred-actor-behaviors-by-address/mf ,config ,address))]))
+
+;; H# trigger# a#int impl-config (impl-config a#int e# -> impl-config) -> (Listof csa#-transition)
 ;;
-;; Evaluates the given handler configuration for the given trigger at the given actor address and
-;; inserts the resulting expression into the given configuration context. Returns a list of results,
-;; each of which is either #f (if that particular execution led to an unverifiable state) or a
-;; csa#-transition struct representing the transition.
-(define (eval-handler handler-config trigger address config-context)
-  (define final-configs (apply-reduction-relation* handler-step# handler-config #:cache-all? #t))
-  (define non-abstraction-stuck-final-configs
-    ;; Filter out those stuck because of over-abstraction
-    (filter (compose not stuck-abstraction-handler-config?) final-configs))
-
-  ;; Debugging
-  ;; (printf "The initial config: ~s\n" initial-config)
-  ;; (printf "Number of raw results: ~s\n" (length final-configs))
-  ;; (printf "Number of non-stuck results: ~s\n" (length non-abstraction-stuck-final-configs))
-
-  (unless (andmap complete-handler-config? non-abstraction-stuck-final-configs)
+;; Evaluates the given handler machine for the given trigger at the given actor address, updating the
+;; given configuration with the encoutered effects and using the update-behavior function to update
+;; the actor with its new behavior. Returns a list of csa#-transitions representing each possible
+;; transition.
+(define (eval-handler handler-machine trigger address config update-behavior)
+  (define final-machine-states
+    ;; Remove states stuck as a result of over-abstraction; we can assume these would never happen at
+    ;; run-time
+    (filter (negate stuck-at-empty-list-ref?)
+            (apply-reduction-relation* handler-step# handler-machine #:cache-all? #t)))
+  (unless (andmap complete-handler-config? final-machine-states)
     (error 'eval-handler
-           "Abstract evaluation did not complete\nInitial config: ~s\nFinal stuck configs:~s"
-           handler-config
-           (filter (compose not complete-handler-config?) non-abstraction-stuck-final-configs)))
-  (for/list ([config non-abstraction-stuck-final-configs])
+           "Abstract evaluation did not complete\nInitial state: ~s\nFinal stuck states:~s"
+           handler-machine
+           (filter (negate complete-handler-config?) final-machine-states)))
+  (for/list ([machine-state final-machine-states])
     ;; TODO: rename outputs to something like "transmissions", because some of them stay internal to
     ;; the configuration
-    (match-define (list behavior-exp outputs loop-outputs spawns) config)
+    (match-define (list final-exp outputs loop-outputs spawns) machine-state)
     ;; TODO: check that there are no internal loop outputs, or refactor that code entirely
-    (define new-impl-config
-      (merge-messages-into-config
-       (merge-new-actors (plug config-context behavior-exp) spawns)
-       (filter internal-output? outputs)))
-    ;; TODO: find some better way to allow a transition to "fail"
-    (if new-impl-config
-        (csa#-transition trigger (filter (negate internal-output?) outputs) new-impl-config)
-        #f)))
+    (define new-config (update-config-with-handler-results config address final-exp outputs spawns update-behavior))
+    (csa#-transition trigger (filter (negate internal-output?) outputs) new-config)))
 
-;; Returns #t if the config is one that is unable to step because of an over-approximation in the
-;; abstraction (assumes that there are no empty vector/list/hash references in the actual running
+;; Returns #t if the given handler machine state is unable to step because of an over-approximation in
+;; the abstraction (assumes that there are no empty vector/list/hash references in the actual running
 ;; progrm)
-(define (stuck-abstraction-handler-config? c)
-  (or (redex-match? csa#
-                    ((in-hole E# (list-ref (list) v#)) any_out any_loop any_spawns)
-                    c)
-      (redex-match? csa#
-                    ((in-hole E# (vector-ref (vector) v#)) any_out any_loop any_spawns)
-                    c)
-      (redex-match? csa#
-                    ((in-hole E# (hash-ref (hash) v#)) any_out any_loop any_spawns)
-                    c)))
+(define (stuck-at-empty-list-ref? h)
+  (redex-let csa# ([(e# _ _ _) h])
+    (or (redex-match? csa# (in-hole E# (list-ref   (list)   v#)) (term e#))
+        (redex-match? csa# (in-hole E# (vector-ref (vector) v#)) (term e#))
+        (redex-match? csa# (in-hole E# (hash-ref   (hash)   v#)) (term e#)))))
 
 (module+ test
   (test-true "stuck config 1"
-    (stuck-abstraction-handler-config? (inject/H# (term (vector-ref (vector) (* Nat))))))
+    (stuck-at-empty-list-ref? (inject/H# (term (vector-ref (vector) (* Nat))))))
   (test-true "stuck config 2"
-    (stuck-abstraction-handler-config? (inject/H# (term (list-ref (list) (* Nat))))))
+    (stuck-at-empty-list-ref? (inject/H# (term (list-ref (list) (* Nat))))))
   (test-true "stuck config 3"
-    (stuck-abstraction-handler-config? (inject/H# (term (hash-ref (hash) (* Nat)))))))
+    (stuck-at-empty-list-ref? (inject/H# (term (hash-ref (hash) (* Nat)))))))
 
 (define (complete-handler-config? c)
   (redex-match csa# ((in-hole E# (goto s v#_param ...)) any_output any_loop-output any_spawns) c))
@@ -738,15 +730,6 @@
           (any_spawns ... (a#int ((S# ...) (goto s v# ...)))))
          SpawnFinish)
 
-    ;; Goto context removal
-    (--> ((in-hole E# (goto s v# ...)) (any_outputs ...) any_loop-outputs any_spawns)
-         ((goto s v# ...) (any_outputs ...) any_loop-outputs any_spawns)
-         (side-condition (not (redex-match csa# hole (term E#))))
-         (side-condition (not (redex-match csa# (in-hole E#_2 (spawning _ _ hole _ ...)) (term E#))))
-         ;; (side-condition (printf "running goto rule: ~s\n" (term (in-hole E# (goto s v# ...)))))
-         ;; (side-condition (printf "goto result: ~s\n" (term (goto s v# ...))))
-         GotoRemoveContext)
-
     ;; Debugging
 
     (==> (printf string v# ...)
@@ -834,12 +817,46 @@
   ;; with this before)
   (check-equal?
    (apply-reduction-relation* handler-step# (inject/H# (term (begin (send (init-addr 1 Nat) (* Nat)) (goto A)))))
-   (list (term ((goto A) (((init-addr 1 Nat) (* Nat))) () ()))))
+   (list (term ((begin (goto A)) (((init-addr 1 Nat) (* Nat))) () ()))))
 
   (check-equal?
    (apply-reduction-relation* handler-step#
      (inject/H# (term (begin (spawn L Nat (goto A) (define-state (A) (x) (goto A))) (goto B)))))
-   (list (term ((goto B) () () ([(spawn-addr L NEW Nat) [((define-state (A) (x) (goto A))) (goto A)]]))))))
+   (list (term ((begin (goto B)) () () ([(spawn-addr L NEW Nat) [((define-state (A) (x) (goto A))) (goto A)]]))))))
+
+(define (update-config-with-handler-results config address final-exp outputs spawns update-behavior)
+  ;; 1. update the behavior
+  (define with-updated-behavior
+    (redex-let csa# ([(in-hole E# (goto s v# ...)) final-exp])
+      (update-behavior config address (term (goto s v# ...)))))
+  ;; 2. add spawned actors
+  (define with-spawns (merge-new-actors with-updated-behavior spawns))
+  ;; 3. add sent messages
+  (merge-messages-into-config with-spawns (filter internal-output? outputs)))
+
+;; Sets the behavior for the actor with the given precise address to the given expression
+(define (update-behavior/precise config address goto-exp)
+  (redex-let csa# ([((any_actors1 ...) (a# (any_state-defs _)) (any_actors2 ...))
+                    (config-actor-and-rest-by-address config address)])
+    (term ((any_actors1 ... (a# (any_state-defs ,goto-exp)) any_actors2 ...)
+           ,(csa#-config-blurred-actors config)
+           ,(csa#-config-message-packets config)))))
+
+(define (make-update-behavior/blurred state-defs)
+  (lambda (config address goto-exp)
+    (term (update-behavior/blurred/mf ,config ,address (,state-defs ,goto-exp)))))
+
+(define-metafunction csa#
+  update-behavior/blurred/mf : K# a#int b# -> K#
+  [(update-behavior/blurred/mf
+    (any_precise-actors
+     (any_blurred1 ... (a#int (b#_old ...)) any_blurred2 ...)
+     any_packets)
+    a#int
+    b#_new)
+   (any_precise-actors
+    (any_blurred1 ... (a#int ,(remove-duplicates (term (b#_old ... b#_new)))) any_blurred2 ...)
+    any_packets)])
 
 ;; Abstractly adds the set of new packets to the packet set in the given config.
 (define (merge-messages-into-config config new-message-list)
@@ -1182,6 +1199,53 @@
   (test-equal? "Abstraction on non-matching addresses"
                (term (abstract-e (addr 2 (Union [A])) ((addr 1 (Union [B]))) 0))
                (term (obs-ext 2 (Union [A])))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Selecting the spawn flag to blur
+
+(define (csa#-spawn-address? a)
+  (redex-match? csa# (spawn-addr _ _ _) a))
+
+(module+ test
+  (test-case "New-span-addr? check"
+    (define a (term (spawn-addr 5 NEW Nat)))
+    (define b (term (spawn-addr 6 OLD Nat)))
+    (define c (term (init-addr 7 Nat)))
+    (check-not-false (redex-match csa# a#int a))
+    (check-not-false (redex-match csa# a#int b))
+    (check-not-false (redex-match csa# a#int c))
+    (check-true (csa#-spawn-address? a))
+    (check-true (csa#-spawn-address? b))
+    (check-false (csa#-spawn-address? c))))
+
+(define (csa#-spawn-address-flag a)
+  (redex-let csa# ([(spawn-addr _ spawn-flag _) a])
+    (term spawn-flag)))
+
+;; impl-config (Listof a#ext) -> (Listof spawn-flag)
+;;
+;; Returns the list of all spawn-flags such that at least one actor in the config whose address has
+;; one of those spawn flags "knows" (i.e. syntactically contains in its behavior) at least one of the
+;; addresses in the relevant-externals list
+(define (csa#-flags-that-know-externals config relevant-externals)
+  (define all-spawns
+    (filter (lambda (actor) (csa#-spawn-address? (csa#-actor-address actor)))
+            (csa#-config-actors config)))
+  (define-values (old-spawns new-spawns)
+    (partition
+     (lambda (actor)
+       (equal? (csa#-spawn-address-flag (csa#-actor-address actor)) 'OLD))
+     all-spawns))
+  (append
+   (if (contains-relevant-externals? old-spawns relevant-externals) (list 'OLD) null)
+   (if (contains-relevant-externals? new-spawns relevant-externals) (list 'NEW) null)))
+
+;; Returns true if the given list of actors contains in their behaviors at least one of the given
+;; external addresses
+(define (contains-relevant-externals? actors externals)
+  (not
+   (set-empty?
+    (set-intersect (list->set externals) (list->set (externals-in actors))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Blurring
@@ -1745,18 +1809,3 @@
   ;; NOTE: only suports single-actor impls for now
   (redex-let csa# ([(((a#int (_ e#))) any_blurred μ#) config])
              (term e#)))
-
-;; ---------------------------------------------------------------------------------------------------
-;; Misc.
-
-(define (csa#-new-spawn-address? a)
-  (redex-match? csa# (spawn-addr _ NEW _) a))
-
-(module+ test
-  (test-case "New-span-addr? check"
-    (define a (term (spawn-addr 5 NEW Nat)))
-    (define b (term (spawn-addr 6 OLD Nat)))
-    (check-not-false (redex-match csa# a#int a))
-    (check-not-false (redex-match csa# a#int b))
-    (check-true (csa#-new-spawn-address? a))
-    (check-false (csa#-new-spawn-address? b))))

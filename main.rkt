@@ -337,7 +337,7 @@
   (append*
    (for/list ([message (csa#-messages-of-address-type receptionist)])
      (display-step-line "Evaluating a handler")
-     (csa#-handle-message impl-config receptionist message))))
+     (csa#-handle-external-message impl-config receptionist message))))
 
 ;; Returns a set of the possible spec steps (see the struct above) from the given spec config that
 ;; match the given implementation step
@@ -478,16 +478,10 @@
 ;; specification, then takes all actors with the same spawn location and opposite flag and merges
 ;; their behaviors into the set of behaviors for the "blurred" actors of that location.
 (define (blur-by-relevant-addresses impl-config spec-config)
-  (define spec-address (aps#-config-only-instance-address spec-config))
-  (define spawn-flag-to-blur
-    (if (or (csa#-new-spawn-address? spec-address)
-            (aps#-unknown-address? spec-address))
-        'OLD
-        'NEW))
-  ;; TODO: only remove from the spec those addresses that HAVE to be removed because of overlap
-  ;; (should get this info from csa#-blur-config)
   (match-define (list blurred-impl-config blurred-internals)
-   (csa#-blur-config impl-config spawn-flag-to-blur (aps#-relevant-external-addrs spec-config)) )
+    (csa#-blur-config impl-config
+                      (choose-spawn-flag-to-blur impl-config spec-config)
+                      (aps#-relevant-external-addrs spec-config)))
   (list
    blurred-impl-config
    (aps#-blur-config spec-config blurred-internals)))
@@ -506,6 +500,24 @@
                 (((init-addr 2 Nat) (* (Addr Nat)) *)
                  ((init-addr 2 Nat) (obs-ext 3 Nat) 1))))
          (term ((,aps#-no-transition-instance) () (((obs-ext 3 Nat))))))))
+
+;; Decides whether to blur spawn-addresses with the OLD or NEW flag based on the current impl and spec
+;; configs, returning the flag for addresses that should be blurred.
+(define (choose-spawn-flag-to-blur impl-config spec-config)
+  ;; 1. if the spec address is a spawn-address, return its flag
+  ;;
+  ;; 2. if the spec address is unknown but only init-addr actors and actors with just one of the flags
+  ;; have addresses from the output commitment set, blur the other flag
+  ;;
+  ;; 3. otherwise, just return OLD by default
+  (cond
+    [(csa#-spawn-address? (aps#-config-only-instance-address spec-config))
+     (csa#-spawn-address-flag (aps#-config-only-instance-address spec-config))]
+    [else ; must be the special "unknown" spec address
+     (match (csa#-flags-that-know-externals impl-config (aps#-relevant-external-addrs spec-config))
+       [(list 'OLD) 'NEW]
+       [(list 'NEW) 'OLD]
+       [_ 'OLD])]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pair-removal back-propagation
@@ -1833,7 +1845,7 @@
   (test-valid-actor? spawn-and-retain)
   (test-valid-actor? spawn-and-retain-but-send-new)
 
-  (test-false "Cannot match both old and new version of spawned child to same spec"
+  (test-true "Both an old and new version of spawned echo child match stateless spec"
     (model-check
      (make-single-actor-config spawn-and-retain)
      (make-exclusive-spec echo-spawn-spec)))
@@ -1888,27 +1900,6 @@
 
   ;;;; Blur Tests
 
-  (define spawn-captures-static-address
-    (term
-     ((addr 0 Nat)
-      (((define-state (Always [static-output (Addr (Union [Ack Nat]))]) (m)
-          (begin
-            (send static-output (variant Ack 0))
-            (spawn child-loc
-                   Nat
-                   (goto InternalAlways static-output)
-                   (define-state (InternalAlways [the-addr (Addr (Union [Ack Nat]))]) (m2) (goto InternalAlways the-addr))
-                   )
-            (goto Always static-output))))
-       (goto Always ,static-response-address)))))
-
-  (test-valid-actor? spawn-captures-static-address)
-
-  (test-false "Child capturing static address causes non-conformance"
-    (model-check
-     (make-single-actor-config spawn-captures-static-address)
-     (make-exclusive-spec static-response-spec)))
-
   (define send-to-blurred-internal-actor
     ;; Third time through, send to that actor
     (term
@@ -1922,7 +1913,9 @@
                         (Addr (Union [Ack Nat]))
                         (goto InternalAlways)
                         (define-state (InternalAlways) (m)
-                          (goto InternalAlways)))])
+                          (begin
+                            (send m (variant Ack 1))
+                          (goto InternalAlways))))])
             (begin
               (send static-output (variant Ack 0))
               (case saved-internal
@@ -1937,32 +1930,59 @@
 
   (test-valid-actor? send-to-blurred-internal-actor)
 
-  (test-false "Sending precise address to blurred actor causes non-conformance"
+  (test-false "Sending precise address to blurred sending actor causes non-conformance"
     (model-check
      (make-single-actor-config send-to-blurred-internal-actor)
      (make-exclusive-spec static-response-spec)))
 
+  (define self-send-responder-spawner
+    (term
+     ((addr 0 (Addr Nat))
+      (((define-state (Always) (dest)
+          (begin
+            (spawn child-loc
+                   (Addr Nat)
+                   (begin
+                     (send self 1)
+                     (goto AboutToSend dest))
+                   (define-state (AboutToSend [dest (Addr Nat)]) (m)
+                     (begin
+                       (send dest 1)
+                       (goto Done)))
+                   (define-state (Done) (m) (goto Done)))
+            (goto Always))))
+       (goto Always)))))
+
+  (test-valid-actor? self-send-responder-spawner)
+
+
+  (test-true "Child can wait at least one handler-cycle before sending to destination"
+    (model-check
+     (make-single-actor-config self-send-responder-spawner)
+     (make-exclusive-spec request-response-spec)))
 
   ;; Actor that creates a worker to handle each new request, where the worker then sends the result
   ;; back to another statically-known actor for sending back to the client
   ;;
   ;; TODO: do a version of this that sends to the actor instead of closing over the address
+  (define forwarding-type (term (Record [result Nat] [dest (Addr Nat)])))
   (define down-and-back-server
     (term
      ((addr 0 (Addr Nat))
-      (((define-state (Always [forwarding-server (Addr (Record [result Nat]
-                                                               [dest (Addr Nat)]))]) (dest)
+      (((define-state (Always [forwarding-server (Addr ,forwarding-type)]) (dest)
           (begin
-            (spawn child-loc Nat (goto ChildAlways)
-                   (define-state (ChildAlways) (dummy)
-                     (goto ChildAlways)
+            (spawn child-loc
+                   Nat
+                   (goto AboutToSend forwarding-server)
+                   (define-state (AboutToSend [forwarding-server (Addr ,forwarding-type)]) (dummy)
+                     (goto AboutToSend forwarding-server)
                      [(timeout 0)
                       (begin
                         (send forwarding-server (record [result 1] [dest dest]))
                         (goto Done))])
                    (define-state (Done) (dummy) (goto Done)))
             (goto Always forwarding-server))))
-       (goto Always (addr 1 (Record [result Nat] [dest (Addr Nat)])))))))
+       (goto Always (addr 1 ,forwarding-type))))))
 
   (define forwarding-server
     (term
