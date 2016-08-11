@@ -217,7 +217,7 @@
        (set-add! visited-impl-configs (config-pair-impl-config pair))
        (set-add! visited-spec-configs (config-pair-spec-config pair))
        ;; (printf "Current time: ~s\n" (current-seconds))
-       ;; (printf "Implementation config #: ~s\n" visited-pairs-count)
+       ;; (printf "Pair config #: ~s\n" visited-pairs-count)
        ;; (printf "Unique impl configs so far: ~s\n" (set-count visited-impl-configs))
        ;; (printf "Unique spec configs so far: ~s\n" (set-count visited-spec-configs))
        ;; (printf "Queue size: ~s\n" (queue-length to-visit))
