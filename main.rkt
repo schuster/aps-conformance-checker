@@ -1966,23 +1966,38 @@
   ;;
   ;; TODO: do a version of this that sends to the actor instead of closing over the address
   (define forwarding-type (term (Record [result Nat] [dest (Addr Nat)])))
-  (define down-and-back-server
+  (define (make-down-and-back-server child-behavior)
     (term
      ((addr 0 (Addr Nat))
       (((define-state (Always [forwarding-server (Addr ,forwarding-type)]) (dest)
           (begin
-            (spawn child-loc
-                   Nat
-                   (goto AboutToSend forwarding-server)
-                   (define-state (AboutToSend [forwarding-server (Addr ,forwarding-type)]) (dummy)
-                     (goto AboutToSend forwarding-server)
-                     [(timeout 0)
-                      (begin
-                        (send forwarding-server (record [result 1] [dest dest]))
-                        (goto Done))])
-                   (define-state (Done) (dummy) (goto Done)))
+            (spawn child-loc ,@child-behavior)
             (goto Always forwarding-server))))
        (goto Always (addr 1 ,forwarding-type))))))
+
+  (define timeout-forwarding-child
+    (term
+     (Nat
+      (goto AboutToSend forwarding-server)
+      (define-state (AboutToSend [forwarding-server (Addr ,forwarding-type)]) (dummy)
+        (goto AboutToSend forwarding-server)
+        [(timeout 0)
+         (begin
+           (send forwarding-server (record [result 1] [dest dest]))
+           (goto Done))])
+      (define-state (Done) (dummy) (goto Done)))))
+
+  (define self-send-forwarding-child
+    (term
+     (Nat
+      (begin
+        (send self 1)
+        (goto AboutToSend forwarding-server))
+      (define-state (AboutToSend [forwarding-server (Addr ,forwarding-type)]) (trigger)
+        (begin
+          (send forwarding-server (record [result 1] [dest dest]))
+          (goto Done)))
+      (define-state (Done) (dummy) (goto Done)))))
 
   (define forwarding-server
     (term
@@ -1993,12 +2008,19 @@
             (goto ServerAlways))))
        (goto ServerAlways)))))
 
-  (test-valid-actor? down-and-back-server)
+  (test-valid-actor? (make-down-and-back-server timeout-forwarding-child))
   (test-valid-actor? forwarding-server)
 
-  (test-true "Down-and-back server fulfills the dynamic request/response spec"
+  (test-true "Down-and-back server with timeout child fulfills the dynamic request/response spec"
     (model-check
-     (make-empty-queues-config (list down-and-back-server) (list forwarding-server))
+     (make-empty-queues-config (list (make-down-and-back-server timeout-forwarding-child))
+                               (list forwarding-server))
+     (make-exclusive-spec request-response-spec)))
+
+  (test-true "Down-and-back server with self-send child fulfills the dynamic request/response spec"
+    (model-check
+     (make-empty-queues-config (list (make-down-and-back-server self-send-forwarding-child))
+                               (list forwarding-server))
      (make-exclusive-spec request-response-spec)))
 
   (define create-later-send-children-actor
