@@ -79,7 +79,7 @@
 ;; s-step is a transition from s' that matches i-step, and <i, s> ∈ sbc(i'', s'') where i'' and s''
 ;; are the destination configurations from i-step and s-step, respectively.
 ;;
-;; In remove-unsupported, we use this data structure to determine the set of related pairs and
+;; In prune-unsupported, we use this data structure to determine the set of related pairs and
 ;; transitions that depend on this pair to prove their own membership in a relation.
 
 ;; RelatedSpecStepsDict = (Hash (List config-pair impl-step) (MutableSetof spec-step))
@@ -112,14 +112,14 @@
 ;; implementation up to one step (see find-rank1-simulation). This process also uncovers all edges and
 ;; vertices that related pairs would rely upon to be part of a full simulation relation. By removing
 ;; from the graph all pairs that depend on pairs outside the graph and propagating the results of
-;; those removals backwards until we reach a greatest fixpoint (see remove-unsupported), we end up
-;; with a proof graph whose vertices are all configuration pairs in the simulation.
+;; those removals backwards until we reach a greatest fixpoint (see prune-unsupported), we end up with
+;; a proof graph whose vertices are all configuration pairs in the simulation.
 ;;
 ;; Next, we identify the the vertices in the graph whose implementation configurations are not
 ;; guaranteed to satisfy all of their commitments in every fair execution (see find-unsatisfying-pairs
 ;; below). By removing these nodes and again back-propagating the effects of those removals (with
-;; remove-unsupported again), the resulting graph represents a proof that all of its members are in
-;; the conformance relation.
+;; prune-unsupported again), the resulting graph represents a proof that all of its members are in the
+;; conformance relation.
 (define/contract (model-check initial-impl-config initial-spec-config)
   (-> csa-valid-config? aps-valid-config? boolean?)
 
@@ -134,10 +134,10 @@
                          rank1-related-spec-steps)
        (find-rank1-simulation initial-pairs))
      (match-define (list simulation-pairs simulation-related-spec-steps)
-       (remove-unsupported rank1-pairs
-                           incoming-steps
-                           rank1-related-spec-steps
-                           rank1-unrelated-successors))
+       (prune-unsupported rank1-pairs
+                          incoming-steps
+                          rank1-related-spec-steps
+                          rank1-unrelated-successors))
      (define commitment-satisfying-pairs
        (find-satisfying-pairs simulation-pairs simulation-related-spec-steps))
      (define unsatisfying-pairs
@@ -145,10 +145,10 @@
        ;; intensionally equal sets (https://github.com/racket/racket/issues/1403)
        (set-symmetric-difference simulation-pairs (set-copy commitment-satisfying-pairs)))
      (match-define (list conforming-pairs _)
-       (remove-unsupported commitment-satisfying-pairs
-                           incoming-steps
-                           simulation-related-spec-steps
-                           unsatisfying-pairs))
+       (prune-unsupported commitment-satisfying-pairs
+                          incoming-steps
+                          simulation-related-spec-steps
+                          unsatisfying-pairs))
      (andmap (curry set-member? conforming-pairs) initial-pairs)]))
 
 ;; Returns #t if the self-address for the specification configuration belongs to an actor in the
@@ -553,7 +553,7 @@
 ;; simulation-related-spec-steps: The RelatedSpecStepsDict that is a sub-dictionary of
 ;; init-related-spec-steps (i.e. the sets are subsets of those from init-related-spec-steps). This
 ;; dictionary consitutes a proof that all members of simulation-pairs are in the simulation relation.
-(define (remove-unsupported all-pairs incoming-steps init-related-spec-steps init-unrelated-successors)
+(define (prune-unsupported all-pairs incoming-steps init-related-spec-steps init-unrelated-successors)
   ;; The function implements a worklist algorithm, with init-unrelated-successors forming the initial
   ;; worklist items. The objective is to remove unsupported items from remaining-pairs and
   ;; related-spec-steps so that at the end of the algorithm, they comprise a globally consistent
@@ -596,7 +596,7 @@
 (module+ test
   (require "hash-helpers.rkt")
 
-  ;; Because remove-unsupported does not care about the actual content of the impl or spec
+  ;; Because prune-unsupported does not care about the actual content of the impl or spec
   ;; configurations, we replace them here with letters (A, B, C, etc. for impls and X, Y, Z, etc. for
   ;; specs) for simplification
   (define ax-pair (config-pair 'A 'X))
@@ -613,7 +613,7 @@
   (define yw-step (spec-step 'W null))
 
   (test-equal? "Remove no pairs, because no list"
-    (remove-unsupported
+    (prune-unsupported
      (mutable-set ax-pair)
      ;; incoming-steps
      (mutable-hash [ax-pair (mutable-set (list ax-pair aa-step xx-step))])
@@ -626,7 +626,7 @@
      (mutable-hash [(list ax-pair aa-step) (mutable-set xx-step)])))
 
   (test-equal? "Remove no pairs, because unrelated-matches contained only a redundant support"
-    (remove-unsupported
+    (prune-unsupported
      (set ax-pair bz-pair)
      (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
                    [bz-pair (mutable-set (list ax-pair ab-step xz-step))]
@@ -638,7 +638,7 @@
      (mutable-hash [(list ax-pair ab-step) (mutable-set xz-step)])))
 
   (test-equal? "Remove last remaining pair"
-    (remove-unsupported
+    (prune-unsupported
      (mutable-set ax-pair)
      (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
                    [ax-pair (mutable-set)])
@@ -649,7 +649,7 @@
      (mutable-hash [(list ax-pair ab-step) (mutable-set)])))
 
   (test-equal? "Remove a redundant support"
-    (remove-unsupported
+    (prune-unsupported
      (mutable-set ax-pair bz-pair by-pair)
      ;; incoming-steps
      (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
@@ -667,7 +667,7 @@
                    [(list by-pair bc-step) (mutable-set)])))
 
     (test-equal? "Remove a non-redundant support"
-      (remove-unsupported
+      (prune-unsupported
        (mutable-set ax-pair by-pair)
        ;; incoming-steps
        (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
