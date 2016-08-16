@@ -2,11 +2,18 @@
 
 ;; Nanopass-based desugarer for the bigger language (desugars down to CSA)
 
+;; TODO: report that it would be nice to have "input-language" as a variable for whatever language a
+;; pass takes as input, rather than manually typing it each time (make it a "parameter", so it follows
+;; dynamic scope?)
+
 (provide desugar-single-actor-program)
 
 ;; ---------------------------------------------------------------------------------------------------
 
 (require nanopass)
+
+(module+ test
+  (require rackunit))
 
 (define (name? x)
   (and (symbol? x)
@@ -18,6 +25,9 @@
 (define (ElseKeyword? x)
   (equal? x 'else))
 
+(define (InitActorsKeyword? x)
+  (equal? x 'init-actors))
+
 (define-language csa/surface
   (terminals
    (number (n))
@@ -26,9 +36,10 @@
    (string (string))
    (PrimitiveType (pτ))
    ;; TODO: figure out how to get rid of this
-   (ElseKeyword (else-keyword)))
+   (ElseKeyword (else-keyword))
+   (InitActorsKeyword (init-actors-keyword)))
   (Prog (P)
-        (PI ... e))
+        (([x1 τ1] ...) ([x2 τ2] ...) PI ... (init-actors-keyword [x3 e] ...)))
   (ProgItem (PI)
             ad
             fd
@@ -136,12 +147,12 @@
 
 (module+ test
   ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
-  (check-equal?
-   (unparse-csa/wrapped-calls
-    (wrap-function-calls
-     (with-output-language (csa/surface Prog)
-       `((f (g 1) 2)))))
-   `((app f (app g 1) 2))))
+  (test-equal? "Wrapped calls"
+    (unparse-csa/wrapped-calls
+     (wrap-function-calls
+      (with-output-language (csa/surface Prog)
+        `(() () (init-actors [a (f (g 1) 2)])))))
+    `(() () (init-actors [a (app f (app g 1) 2)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Multi-body shrinking
@@ -208,24 +219,26 @@
 
 (module+ test
   ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
-  (check-equal?
+  (test-equal? "wrap-multi-exp-bodies/remove-extraneous-begins"
    (unparse-csa/single-exp-bodies
     (remove-extraneous-begins
      (wrap-multi-exp-bodies
       (with-output-language (csa/wrapped-calls Prog)
-        `((define-function (f)
-            (case x
-              [(A) 1 2]
-              [(B) 7])
-            (let () 3 4))
-          (let* () 5 6))))))
-   `((define-function (f)
-       (begin
-         (case x
-           [(A) (begin 1 2)]
-           [(B) 7])
-         (let () (begin 3 4))))
-     (let* () (begin 5 6)))))
+        `(() ()
+          (define-function (f)
+                  (case x
+                    [(A) 1 2]
+                    [(B) 7])
+                  (let () 3 4))
+          (init-actors [a (let* () 5 6)]))))))
+   `(() ()
+     (define-function (f)
+             (begin
+               (case x
+                 [(A) (begin 1 2)]
+                 [(B) 7])
+               (let () (begin 3 4))))
+     (init-actors [a (let* () (begin 5 6))]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; for -> for/fold
@@ -251,10 +264,10 @@
   (define desugared-code (unparse-csa/desugared-for
                  (desugar-for
                   (with-output-language (csa/single-exp-bodies Prog)
-                    `((for ([i (list 1 2 3)]) i))))))
-  (check-not-false
+                    `(() () (init-actors [a (for ([i (list 1 2 3)]) i)]))))))
+  (test-not-false "desugar for"
    (redex:redex-match L
-                      ((for/fold ([variable-not-otherwise-mentioned 0]) ([i (list 1 2 3)]) (begin i 0)))
+                      (() () (init-actors [a (for/fold ([variable-not-otherwise-mentioned 0]) ([i (list 1 2 3)]) (begin i 0))]))
                       desugared-code)))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -278,15 +291,17 @@
 
 (module+ test
   ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
-  (check-equal?
+  (test-equal? "desugar cond"
    (unparse-csa/desugared-cond
     (desugar-cond
      (with-output-language (csa/desugared-for Prog)
-       `((cond
-           [(< a b) 0]
-           [(< b c) 1]
-           [else 2])))))
-   `((if (< a b) 0 (if (< b c) 1 2)))))
+       `(() ()
+         (init-actors
+          [a (cond
+               [(< a b) 0]
+               [(< b c) 1]
+               [else 2])])))))
+   `(() () (init-actors [a (if (< a b) 0 (if (< b c) 1 2))]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Desugar if
@@ -307,12 +322,12 @@
 
 (module+ test
   ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
-  (check-equal?
+  (test-equal? "desugar if"
    (unparse-csa/desugared-if
     (desugar-if
      (with-output-language (csa/desugared-cond Prog)
-       `((if (< a b) 1 0)))))
-   `((case (< a b) [(True) 1] [(False) 0]))))
+       `(() () (init-actors [a (if (< a b) 1 0)])))))
+   `(() () (init-actors [a (case (< a b) [(True) 1] [(False) 0])]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Desugar let*
@@ -334,18 +349,20 @@
 
 (module+ test
   ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
-  (check-equal?
+  (test-equal? "desugar let*"
    (unparse-csa/desugared-let*
     (desugar-let*
      (parse-csa/desugared-if
-      `((let* ([a 1]
-               [b (+ a 2)]
-               [c (+ a b)])
-          (+ c 5))))))
-   `((let ([a 1])
-       (let ([b (+ a 2)])
-         (let ([c (+ a b)])
-           (+ c 5)))))))
+      `(() ()
+        (init-actors [a (let* ([a 1]
+                             [b (+ a 2)]
+                             [c (+ a b)])
+                        (+ c 5))])))))
+   `(() ()
+     (init-actors [a (let ([a 1])
+                     (let ([b (+ a 2)])
+                       (let ([c (+ a b)])
+                         (+ c 5))))]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Variant desugaring
@@ -360,7 +377,10 @@
 ;; TODO: consider leaving the multi-arity variants in
 (define-pass desugar-variants : csa/desugared-let* (P) -> csa/desugared-variants ()
   (Prog : Prog (P items-to-add) -> Prog ()
-        [((define-variant ,T (,V [,x ,[τ]] ...) ...) ,PI ... ,e)
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...)
+          (define-variant ,T (,V [,x ,[τ]] ...) ...)
+          ,PI ...
+          (,init-actors-keyword [,x3 ,e3] ...))
          (define constructor-defs
            (map
             (lambda (name field-list types)
@@ -368,35 +388,41 @@
                 ;; TODO: field names must be different...
                 `(define-function (,name [,field-list ,types] ...) (variant ,name ,field-list ...))))
             V x τ))
-         (Prog (with-output-language (csa/desugared-let* Prog) `(,PI ... ,e))
+         (Prog (with-output-language (csa/desugared-let* Prog)
+                 `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,PI ... (,init-actors-keyword [,x3 ,e3] ...)))
                (append items-to-add
                        (append
                         constructor-defs
                         (list
                         (with-output-language (csa/desugared-variants ProgItem)
                           `(define-type ,T (Union [,V ,τ ...] ...)))))))]
-        [(,[PI1] ,PI* ... ,e)
-         (Prog (with-output-language (csa/desugared-let* Prog) `(,PI* ... ,e))
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,[PI1] ,PI* ... (,init-actors-keyword [,x3 ,e3] ...))
+         (Prog (with-output-language (csa/desugared-let* Prog)
+                 `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,PI* ... (,init-actors-keyword [,x3 ,e3] ...)))
                (append items-to-add (list PI1)))]
-        [(,[e]) `(,items-to-add ... ,e)])
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) (,init-actors-keyword [,x3 ,[e3]] ...))
+         `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,items-to-add ... (,init-actors-keyword [,x3 ,e3] ...))])
   (Prog P null))
 
 (module+ test
   ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
-  (check-equal?
+  (test-equal? "desugar variants"
    (unparse-csa/desugared-variants
     (desugar-variants
      (with-output-language (csa/desugared-let* Prog)
-       `((define-variant List (Null) (Cons [element Nat] [list List]))
-         (case (app Null)
-           [(Null) 0]
-           [(Cons element rest) element])))))
-   `((define-function (Null) (variant Null))
+       `(() ()
+         (define-variant List (Null) (Cons [element Nat] [list List]))
+         (init-actors
+          [a (case (app Null)
+               [(Null) 0]
+               [(Cons element rest) element])])))))
+   `(() ()
+     (define-function (Null) (variant Null))
      (define-function (Cons [element Nat] [list List]) (variant Cons element list))
      (define-type List (Union (Null) (Cons Nat List)))
-     (case (app Null)
-       [(Null) 0]
-       [(Cons element rest) element]))))
+     (init-actors [a (case (app Null)
+                     [(Null) 0]
+                     [(Cons element rest) element])]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Record type inlining
@@ -412,10 +438,14 @@
   ;; TODO: I could really use something like syntax-parse's splicing forms so I could look at items
   ;; individually and splice them back in
   (Prog : Prog (P items-to-add) -> Prog ()
-        [((define-record ,T [,x ,[τ]] ...) ,PI ... ,e)
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...)
+          (define-record ,T [,x ,[τ]] ...)
+          ,PI ...
+          (,init-actors-keyword [,x3 ,e3] ...))
          ;; TODO: would be nice if there were a shortcut syntax for saying "create something of the
          ;; source language type
-         (Prog (with-output-language (csa/desugared-variants Prog) `(,PI ... ,e))
+         (Prog (with-output-language (csa/desugared-variants Prog)
+                 `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,PI ... (,init-actors-keyword [,x3 ,e3] ...)))
                (append items-to-add
                        (list ;; TODO: figure out why I need with-output-language here (maybe b/c I'm not parsing the entry point? or the entry point of this processor?
                         (with-output-language (csa/inlined-records ProgItem)
@@ -423,26 +453,30 @@
                         ;; TODO: figure out why I need with-output-language here
                         (with-output-language (csa/inlined-records ProgItem)
                           `(define-function (,T [,x ,τ] ...) (record [,x ,x] ...))))))]
-        [(,[PI1] ,PI* ... ,e)
-         (Prog (with-output-language (csa/desugared-variants Prog) `(,PI* ... ,e))
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,[PI1] ,PI* ... (,init-actors-keyword [,x3 ,e3] ...))
+         (Prog (with-output-language (csa/desugared-variants Prog)
+                 `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,PI* ... (,init-actors-keyword [,x3 ,e3] ...)))
                (append items-to-add (list PI1)))]
-        [(,[e]) `(,items-to-add ... ,e)])
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) (,init-actors-keyword [,x3 ,[e3]] ...))
+         `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,items-to-add ... (,init-actors-keyword [,x3 ,e3] ...))])
   (Prog P null))
 
 (module+ test
-  (check-equal?
-     (unparse-csa/inlined-records
-   (inline-records
-    (with-output-language (csa/desugared-variants Prog)
-      `((define-record A [x Nat] [y Nat])
-        (define-record B [z A])
-        (app B (app A 5 4))))))
+  (test-equal? "inline records"
+   (unparse-csa/inlined-records
+    (inline-records
+     (with-output-language (csa/desugared-variants Prog)
+       `(() ()
+         (define-record A [x Nat] [y Nat])
+         (define-record B [z A])
+         (init-actors [a (app B (app A 5 4))])))))
 
-  `((define-type A (Record [x Nat] [y Nat]))
-    (define-function (A [x Nat] [y Nat]) (record [x x] [y y]))
-    (define-type B (Record [z A]))
-    (define-function (B [z A]) (record [z z]))
-    (app B (app A 5 4)))))
+   `(() ()
+     (define-type A (Record [x Nat] [y Nat]))
+     (define-function (A [x Nat] [y Nat]) (record [x x] [y y]))
+     (define-type B (Record [z A]))
+     (define-function (B [z A]) (record [z z]))
+     (init-actors [a (app B (app A 5 4))]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Inlined Types
@@ -462,33 +496,42 @@
   (definitions
     (define aliases-so-far (make-hash)))
   (Prog : Prog (P items-to-add) -> Prog ()
-        [((define-type ,T ,[τ]) ,PI ... ,e)
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...)
+          (define-type ,T ,[τ])
+          ,PI ...
+          (,init-actors-keyword [,x3 ,e3] ...))
          ;; TODO: do something more defensive for hash overwrites
          (hash-set! aliases-so-far T τ)
-         (Prog (with-output-language (csa/inlined-records Prog) `(,PI ... ,e))
+         (Prog (with-output-language (csa/inlined-records Prog)
+                 `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,PI ... (,init-actors-keyword [,x3 ,e3] ...)))
                items-to-add)]
-        [(,[PI1] ,PI* ... ,e)
-         (Prog (with-output-language (csa/inlined-records Prog) `(,PI* ... ,e))
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,[PI1] ,PI* ... (,init-actors-keyword [,x3 ,e3] ...))
+         (Prog (with-output-language (csa/inlined-records Prog)
+                 `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,PI* ... (,init-actors-keyword [,x3 ,e3] ...)))
                (append items-to-add (list PI1)))]
-        [(,[e])
-         `(,items-to-add ... ,e)])
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) (,init-actors-keyword [,x3 ,[e3]] ...))
+         `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,items-to-add ... (,init-actors-keyword [,x3 ,e3] ...))])
   (Type : Type (τ) -> Type ()
         [,T
-         (hash-ref aliases-so-far T (lambda () (error 'inline-type-aliases "Could not find alias for type ~s" T)))])
+         (hash-ref aliases-so-far
+                   T
+                   (lambda () (error 'inline-type-aliases "Could not find alias for type ~s" T)))])
   (Prog P null))
 
 (module+ test
-  (check-equal?
+  (test-equal? "inline types"
    (unparse-csa/inlined-types
     (inline-type-aliases
      (parse-csa/inlined-records
-      `((define-type MyT Nat)
+      `(() ()
+        (define-type MyT Nat)
         (define-actor MyT (A) ()
           (goto S1))
-        (spawn A)))))
-   `((define-actor Nat (A) ()
-       (goto S1))
-     (spawn A))))
+        (init-actors [a (spawn A)])))))
+   `(() ()
+     (define-actor Nat (A) ()
+             (goto S1))
+     (init-actors [a (spawn A)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Inlined Program Functions
@@ -510,19 +553,28 @@
     (define func-defs (make-hash))
     (define const-defs (make-hash)))
   (Prog : Prog (P items-to-add) -> Prog ()
-        [((define-function (,f [,x ,τ] ...) ,[e]) ,PI ... ,body)
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...)
+          (define-function (,f [,x ,τ] ...) ,[e])
+          ,PI ...
+          (,init-actors-keyword [,x3 ,e3] ...))
          (hash-set! func-defs f (func-record x e))
-         (Prog (with-output-language (csa/inlined-types Prog) `(,PI ... ,body))
+         (Prog (with-output-language (csa/inlined-types Prog)
+                 `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,PI ... (,init-actors-keyword [,x3 ,e3] ...)))
                items-to-add)]
-        [((define-constant ,x ,[e]) ,PI ... ,body)
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...)
+          (define-constant ,x ,[e])
+          ,PI ...
+          (,init-actors-keyword [,x3 ,e3] ...))
          (hash-set! const-defs x e)
-         (Prog (with-output-language (csa/inlined-types Prog) `(,PI ... ,body))
+         (Prog (with-output-language (csa/inlined-types Prog)
+                 `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,PI ... (,init-actors-keyword [,x3 ,e3] ...)))
                items-to-add)]
-        [(,[PI1] ,PI* ... ,e)
-         (Prog (with-output-language (csa/inlined-types Prog) `(,PI* ... ,e))
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,[PI1] ,PI* ... (,init-actors-keyword [,x3 ,e3] ...))
+         (Prog (with-output-language (csa/inlined-types Prog)
+                 `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,PI* ... (,init-actors-keyword [,x3 ,e3] ...)))
                (append items-to-add (list PI1)))]
-        [(,[e])
-         `(,items-to-add ... ,e)])
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) (,init-actors-keyword [,x3 ,[e3]] ...))
+         `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,items-to-add ... (,init-actors-keyword [,x3 ,e3] ...))])
   (Exp : Exp (e) -> Exp ()
        [(app ,f ,[e*] ...)
         (match (hash-ref func-defs f #f)
@@ -538,39 +590,45 @@
   (Prog P null))
 
 (module+ test
-  (check-equal?
+  (test-equal? "inline program defs 1"
    (unparse-csa/inlined-program-definitions
     (inline-program-definitions
      (parse-csa/inlined-types
-      `((define-function (double [x Nat]) (+ x x))
+      `(() ()
+        (define-function (double [x Nat]) (+ x x))
         (define-constant c 5)
-        (app double c)))))
-   `((let ([x 5]) (+ x x))))
+        (init-actors [a (app double c)])))))
+   `(() () (init-actors [a (let ([x 5]) (+ x x))])))
 
-  (check-equal?
+  (test-equal? "inline program defs 2"
    (unparse-csa/inlined-program-definitions
     (inline-program-definitions
      (parse-csa/inlined-types
-      `((define-function (double [x Nat]) (+ x x))
+      `(() ()
+        (define-function (double [x Nat]) (+ x x))
         (define-function (quadruple [x Nat]) (app double (app double x)))
-        (app quadruple 5)))))
-   `((let ([x 5])
-       (let ([x (let ([x x]) (+ x x))]) (+ x x)))))
+        (init-actors [a (app quadruple 5)])))))
+   `(() ()
+     (init-actors [a
+                   (let ([x 5])
+                     (let ([x (let ([x x]) (+ x x))]) (+ x x)))])))
 
-  (check-equal?
+  (test-equal? "inline program defs 3"
    (unparse-csa/inlined-program-definitions
     (inline-program-definitions
      (parse-csa/inlined-types
-      `((define-actor Nat (A)
+      `(() ()
+        (define-actor Nat (A)
           ((define-function (double [x Nat]) (+ x x))
            (define-function (quadruple [x Nat]) (app double (app double x))))
           (app quadruple 5))
-        (spawn A)))))
-   `((define-actor Nat (A)
-       ((define-function (double [x Nat]) (+ x x))
-        (define-function (quadruple [x Nat]) (app double (app double x))))
-       (app quadruple 5))
-     (spawn A))))
+        (init-actors [a (spawn A)])))))
+   `(() ()
+     (define-actor Nat (A)
+             ((define-function (double [x Nat]) (+ x x))
+              (define-function (quadruple [x Nat]) (app double (app double x))))
+             (app quadruple 5))
+     (init-actors [a (spawn A)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Actor func/const definition inlining
@@ -616,41 +674,43 @@
           [e e])]))
 
 (module+ test
-  (require rackunit)
-
-  (check-equal?
+  (test-equal? "inline actor defs 1"
    (unparse-csa/inlined-actor-definitions
     (inline-actor-definitions
      (with-output-language (csa/inlined-program-definitions Prog)
-       `((define-actor Nat (A)
-           ((define-constant z 2)
-            (define-constant w 4)
-            (define-function (foo [x Nat]) (+ x z))
-            (define-function (bar [x Nat] [y Nat]) (- x y)))
+       `(() ()
+         (define-actor Nat (A)
+                 ((define-constant z 2)
+                  (define-constant w 4)
+                  (define-function (foo [x Nat]) (+ x z))
+                  (define-function (bar [x Nat] [y Nat]) (- x y)))
 
-           (app foo (app bar 3 w)))
-         (spawn A)))))
-   `((define-actor Nat (A)
-       (let ([x
-              (let ([x 3]
-                    [y 4])
-                (- x y))])
-         (+ x 2)))
-     (spawn A)))
+                 (app foo (app bar 3 w)))
+         (init-actors [a (spawn A)])))))
+   `(() ()
+     (define-actor Nat (A)
+             (let ([x
+                    (let ([x 3]
+                          [y 4])
+                      (- x y))])
+               (+ x 2)))
+     (init-actors [a (spawn A)])))
 
-  (check-equal?
+  (test-equal? "inline actor defs 2"
    (unparse-csa/inlined-actor-definitions
     (inline-actor-definitions
      (parse-csa/inlined-program-definitions
-      `((define-actor Nat (A)
-          ((define-function (double [x Nat]) (+ x x))
-           (define-function (quadruple [x Nat]) (app double (app double x))))
-          (app quadruple 5))
-        (spawn A)))))
-   `((define-actor Nat (A)
+      `(() ()
+        (define-actor Nat (A)
+                ((define-function (double [x Nat]) (+ x x))
+                 (define-function (quadruple [x Nat]) (app double (app double x))))
+                (app quadruple 5))
+        (init-actors [a (spawn A)])))))
+   `(() ()
+     (define-actor Nat (A)
        (let ([x 5])
          (let ([x (let ([x x]) (+ x x))]) (+ x x))))
-     (spawn A))))
+     (init-actors [a (spawn A)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Inlined Actors
@@ -658,8 +718,8 @@
 (define-language csa/inlined-actors
   (extends csa/inlined-actor-definitions)
   (Prog (P)
-    (- (PI ... e))
-    (+ e))
+    (- (([x1 τ1] ...) ([x2 τ2] ...) PI ... (init-actors-keyword [x3 e] ...)))
+    (+ (([x1 τ1] ...) ([x2 τ2] ...)        (init-actors-keyword [x3 e] ...))))
   (ProgItem (P)
             (- ad))
   (Exp (e)
@@ -671,12 +731,16 @@
 (define-pass inline-actors : csa/inlined-actor-definitions (P) -> csa/inlined-actors ()
   ;; TODO: I think the return "type" is not checked, because I've seen things get through when I had ActorDef instead of Prog
   (Prog : Prog (P defs-so-far) -> Prog ()
-        [(
-          (define-actor ,[τ] (,a [,x ,[τ1]] ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...) ,PI* ... ,e1)
-         (Prog (with-output-language (csa/inlined-actor-definitions Prog) `(,PI* ... ,e1))
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...)
+          (define-actor ,[τ0] (,a [,x ,[τ]] ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...)
+          ,PI* ...
+          (,init-actors-keyword [,x3 ,e3] ...))
+         (Prog (with-output-language (csa/inlined-actor-definitions Prog)
+                 `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) ,PI* ... (,init-actors-keyword [,x3 ,e3] ...)))
                ;; TODO: figure out if hash-set overwrites existing entries or not
-               (hash-set defs-so-far a (actor-record τ x e S)))]
-        [(,[Exp : e0 defs-so-far -> e]) e])
+               (hash-set defs-so-far a (actor-record τ0 x e S)))]
+        [(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) (,init-actors-keyword [,x3 ,[Exp : e0 defs-so-far -> e]] ...))
+         `(([,x1 ,τ1] ...) ([,x2 ,τ2] ...) (,init-actors-keyword [,x3 ,e] ...))])
   (StateDef : StateDef (S defs-so-far) -> StateDef ()
     [(define-state (,s [,x ,[τ]] ...) (,x2) ,[Exp : e0 defs-so-far -> e])
      `(define-state (,s [,x ,τ] ...) (,x2) ,e)])
@@ -746,49 +810,60 @@
   (Prog P (hash)))
 
 (module+ test
-  (check-equal?
+  (test-equal? "inline actors 1"
    (unparse-csa/inlined-actors
     (inline-actors
      (with-output-language (csa/inlined-actor-definitions Prog)
-       `((define-actor Nat (A [x Nat])
-           (goto S1)
-           (define-state (S1) (m)
-             (goto S1)))
-         (spawn A 5)))))
-   `(let ([x 5])
-      (spawn
-       Nat
-       (goto S1)
-       (define-state (S1) (m) (goto S1)))))
+       `(() ()
+         (define-actor Nat (A [x Nat])
+                 (goto S1)
+                 (define-state (S1) (m)
+                   (goto S1)))
+         (init-actors [a (spawn A 5)])))))
+   `(() ()
+     (init-actors [a (let ([x 5])
+                     (spawn
+                      Nat
+                      (goto S1)
+                      (define-state (S1) (m) (goto S1))))])))
 
-  (check-equal?
+  (test-equal? "inline actors 2"
    (unparse-csa/inlined-actors
     (inline-actors
      (with-output-language (csa/inlined-actor-definitions Prog)
-       `((define-actor Nat (A [x Nat])
-           (goto S1)
-           (define-state (S1) (m)
-             (goto S1)))
+       `(() ()
+         (define-actor Nat (A [x Nat])
+                 (goto S1)
+                 (define-state (S1) (m)
+                   (goto S1)))
          (define-actor Nat (B [y Nat])
            (goto S2)
            (define-state (S2) (m)
              (begin
                (spawn A 3)
                (goto S2))))
-         (spawn B 5)))))
-   `(let ([y 5])
-      (spawn
-       Nat
-       (goto S2)
-       (define-state (S2) (m)
-         (begin
-           (let ([x 3])
-             (spawn
-              Nat
-              (goto S1)
-              (define-state (S1) (m)
-                (goto S1))))
-           (goto S2)))))))
+         (init-actors [a (spawn B 5)])))))
+   `(() ()
+     (init-actors [a (let ([y 5])
+                     (spawn
+                      Nat
+                      (goto S2)
+                      (define-state (S2) (m)
+                        (begin
+                          (let ([x 3])
+                            (spawn
+                             Nat
+                             (goto S1)
+                             (define-state (S1) (m)
+                               (goto S1))))
+                          (goto S2)))))])))
+
+  (test-equal? "inline actors with externals"
+    (unparse-csa/inlined-actors
+     (inline-actors
+      (with-output-language (csa/inlined-actor-definitions Prog)
+        `(() ([ext1 Nat]) (init-actors)))))
+    `(() ([ext1 Nat]) (init-actors))))
 
 ;; ---------------------------------------------------------------------------------------------------
 
