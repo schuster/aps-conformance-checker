@@ -6,6 +6,7 @@
  csa-eval
  make-single-actor-config
  make-empty-queues-config
+ csa-valid-program?
  csa-valid-config?
  csa-valid-receptionist-list?
  csa-config-receptionists
@@ -34,7 +35,7 @@
       (receptionists [x_receptionist τ] ...)
       (externals [x_external τ] ...)
       ;; NOTE: ; state args e should be x or v
-      (actors [x (let ([x v] ...) (spawn any_loc τ (goto s e ...)))] ...)))
+      (actors [x (let ([x v] ...) (spawn any_loc τ (goto s e ...) S ...))] ...)))
   (e (spawn any_loc τ e S ...)
      (goto s e ...)
      (send e e)
@@ -378,6 +379,8 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Predicates
+
+(define (csa-valid-program? p) (redex-match csa-eval P p))
 
 (define (csa-valid-config? c)
   (and (redex-match csa-eval K c)

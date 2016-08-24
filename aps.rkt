@@ -4,6 +4,7 @@
 
 (provide
  aps-eval
+ aps-valid-spec?
  aps-valid-config?
  aps-config-only-instance-address
 
@@ -150,6 +151,8 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Predicates
+
+(define (aps-valid-spec? s) (redex-match? aps spec s))
 
 (define (aps-valid-config? c)
   (if (redex-match aps-eval Σ c) #t #f))
@@ -306,4 +309,11 @@
   [(resolve-spec-obs-int/mf UNKNOWN _) UNKNOWN]
   [(resolve-spec-obs-int/mf [x τ] ([x_binding a_binding] ...))
    (addr natural τ)
-   (where (addr natural _) (subst-n x [x_binding a_binding] ...))])
+   (where (addr natural _) (subst-n/aps-eval/u x [x_binding a_binding] ...))])
+
+(module+ test
+  (test-equal? "resolve-spec-obs-int on known address"
+    (term (resolve-spec-obs-int/mf (ping-server (Addr (Union (Pong))))
+                                   ((ping-server (addr 0 (Addr (Union (Pong))))))))
+    (term (addr 0 (Addr (Union (Pong)))))))
+

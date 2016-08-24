@@ -3,7 +3,9 @@
 ;; Implements the top-level function, "model-check", and includes the core of the model-checking
 ;; algorithm
 
-(provide model-check)
+;; TODO: rename model-check/static and model-check: the externally provided one should not have a
+;; qualifier
+(provide model-check/static)
 
 (require
  ;; See README.md for a brief description of these files
@@ -95,6 +97,14 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Top-level Algorithm
+
+;; Returns the result of running the model-check algorithm below on the instantiated program and
+;; specification.
+(define/contract (model-check/static program specification)
+  (-> csa-valid-program? aps-valid-spec? boolean?)
+
+  (match-define (list impl-config spec-config) (instantiate-configs program specification))
+    (model-check impl-config spec-config))
 
 ;; Given a concrete implementation configuration, a concrete specification configuration, returns #t
 ;; if the conformance-check algorithm can prove that the implementation conforms to the specification,
