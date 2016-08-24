@@ -34,8 +34,8 @@
   (P (program
       (receptionists [x_receptionist τ] ...)
       (externals [x_external τ] ...)
-      ;; NOTE: ; state args e should be x or v
-      (actors [x (let ([x v] ...) (spawn any_loc τ (goto s e ...) S ...))] ...)))
+      ;; NOTE: ; let-bound values and state args e should be x or v
+      (actors [x (let ([x e] ...) (spawn any_loc τ (goto s e ...) S ...))] ...)))
   (e (spawn any_loc τ e S ...)
      (goto s e ...)
      (send e e)
@@ -152,7 +152,7 @@
   instantiate-prog-with-bindings/mf : P -> (K ([x a] ...))
   [(instantiate-prog-with-bindings/mf (program (receptionists [x_receptionist _] ...)
                                                (externals     [x_external     τ_external] ...)
-                                               (actors [x_internal (let ([x_let v_let] ...) e)] ...)))
+                                               (actors [x_internal (let ([x_let e_let] ...) e)] ...)))
    (K
     ([x_internal a_internal] ... [x_external a_external] ...))
 
@@ -161,6 +161,7 @@
    (where (a_external ...) (generate-fresh-addresses/mf (τ_external ...) (a_internal ...)))
 
    ;; 2. Do substitutions into spawn to get a behavior
+   (where ((v_let ...) ...) (((subst-n e_let [x_external a_external] ...) ...) ...))
    (where (b ...)
           ((spawn->behavior e
                             ([x_let v_let] ...
