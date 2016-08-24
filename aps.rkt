@@ -112,7 +112,7 @@
    (record [l (subst/aps-eval/po po x v-hat)] ...)])
 
 (define-metafunction aps-eval
-  subst-n/aps-eval/S-hat : S-hat (x v-hat) ... -> e-hat
+  subst-n/aps-eval/S-hat : S-hat (x v-hat) ... -> S-hat
   [(subst-n/aps-eval/S-hat S-hat) S-hat]
   [(subst-n/aps-eval/S-hat S-hat (x v-hat) any_rest ...)
    (subst-n/aps-eval/S-hat (subst/aps-eval/S-hat S-hat x v-hat) any_rest ...)])
