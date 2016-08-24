@@ -6,12 +6,14 @@
  csa-eval
  make-single-actor-config
  make-empty-queues-config
- single-actor-prog->config
  csa-valid-config?
  csa-valid-receptionist-list?
  csa-config-receptionists
  csa-config-internal-addresses
- same-address-without-type?)
+ same-address-without-type?
+ instantiate-prog
+ instantiate-prog-with-bindings
+ )
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -24,6 +26,15 @@
 ;; CSA
 
 (define-language csa
+  ;; A program P is a set of actors declared as spawn expressions (the spawn should be surround by a
+  ;; let), with some declared names for the actors, receptionists, and externals. Instantiating the
+  ;; program will assign addresses for each of these names and turn the program into its initial
+  ;; configuration.
+  (P (program
+      (receptionists [x_receptionist τ] ...)
+      (externals [x_external τ] ...)
+      ;; NOTE: ; state args e should be x or v
+      (actors [x (let ([x v] ...) (spawn any_loc τ (goto s e ...)))] ...)))
   (e (spawn any_loc τ e S ...)
      (goto s e ...)
      (send e e)
@@ -116,13 +127,124 @@
      (hash [v v] ...))
   (a (addr natural τ))) ; only used for the initial receptionist lists for now
 
+;; ---------------------------------------------------------------------------------------------------
+;; Instantiation
+
+;; Instantiates the given program as a configuration by allocating fresh addresses and subsituting
+;; them throughout the program as needed
+(define (instantiate-prog prog)
+  (term (instantiate-prog/mf ,prog)))
+
+(define-metafunction csa-eval
+  instantiate-prog/mf : P -> K
+  [(instantiate-prog/mf P)
+   K
+   (where (K ([x a] ...)) (instantiate-prog-with-bindings/mf P))])
+
+;; Instantiates the given program as a configuration by allocating fresh addresses and subsituting
+;; them throughout the program as needed. Returns both the configuration and the set of bindings for
+;; the allocated addresses.
+(define (instantiate-prog-with-bindings prog)
+  (term (instantiate-prog-with-bindings/mf ,prog)))
+
+(define-metafunction csa-eval
+  instantiate-prog-with-bindings/mf : P -> (K ([x a] ...))
+  [(instantiate-prog-with-bindings/mf (program (receptionists [x_receptionist _] ...)
+                                               (externals     [x_external     τ_external] ...)
+                                               (actors [x_internal (let ([x_let v_let] ...) e)] ...)))
+   (K
+    ([x_internal a_internal] ... [x_external a_external] ...))
+
+   ;; 1. Generate addresses for internal and external actors
+   (where (a_internal ...) (generate-fresh-addresses/mf ((spawn-type/mf e) ...) ()))
+   (where (a_external ...) (generate-fresh-addresses/mf (τ_external ...) (a_internal ...)))
+
+   ;; 2. Do substitutions into spawn to get a behavior
+   (where (b ...)
+          ((spawn->behavior e
+                            ([x_let v_let] ...
+                             [x_internal a_internal] ...
+                             [x_external a_external] ...)
+                            a_internal) ...))
+
+   ;; 3. Construct the configuration
+   (where K
+          [; actors
+           ((a_internal b) ...)
+           ; message store
+           ()
+           ; receptionists
+           ((subst-n x_receptionist [x_internal a_internal] ...) ...)
+           ; externals
+           (a_external ...)])])
+
+(define-metafunction csa-eval
+  spawn->behavior : e ([x v] ...) a -> b
+  [(spawn->behavior e_spawn ([x_binding v_binding] ...) a_self)
+   b
+   ;; 1. Substitute all non-self bindings
+   (where (spawn _ _ e_goto S ...) (subst-n e_spawn [x_binding v_binding] ...))
+   ;; 2. Substitute the self-binding
+   (where b (((subst-n/S S [self a_self]) ...) (subst-n e_goto [self a_self])))])
+
+(module+ test
+  (test-case "Instantiate program"
+    (define the-prog
+      `(program (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Union)])
+                (actors [a (let () (spawn 1 Nat      (goto S1)))]
+                        [b (let () (spawn 2 (Record) (goto S2)))]
+                        [c (let () (spawn 3 Nat      (goto S3)))])))
+    (check-true (redex-match? csa-eval P the-prog))
+    (check-equal?
+     (instantiate-prog-with-bindings the-prog)
+     `(
+       ;; program config
+       (
+        ;; actors
+        (
+         ;; a
+         ((addr 0 Nat) (() (goto S1)))
+         ;; b
+         ((addr 1 (Record)) (() (goto S2)))
+         ;; c
+         ((addr 2 Nat) (() (goto S3)))
+         )
+        ;; messages
+        ()
+        ;; receptionists
+        ((addr 0 Nat) (addr 1 (Record)))
+        ;; externals
+        ((addr 3 String) (addr 4 (Union))))
+       ;; bindings
+       ([a (addr 0 Nat)]
+        [b (addr 1 (Record))]
+        [c (addr 2 Nat)]
+        [d (addr 3 String)]
+        [e (addr 4 (Union))])))))
+
+;; Returns a lsit containing one fresh address of the given type per given type τ, where the given
+;; list of addresses indicates the existing set of allocated addresses.
+(define-metafunction csa-eval
+  generate-fresh-addresses/mf : (τ ...) (a ...) -> (a ...)
+  [(generate-fresh-addresses/mf (τ ...) ((addr natural _) ...))
+   ,(map (lambda (type index) `(addr ,(+ (term natural_next) index) ,type))
+         (term (τ ...))
+         (build-list (length (term (τ ...))) values))
+   (where natural_next ,(add1 (apply max -1 (term (natural ...)))))])
+
+(module+ test
+  (test-equal? "Fresh address generation"
+    (term (generate-fresh-addresses/mf (Nat (Record) Nat) ((addr 1 Nat) (addr 4 Nat) (addr 2 Nat))))
+    `((addr 5 Nat) (addr 6 (Record)) (addr 7 Nat)))
+  (test-equal? "Fresh address generation 2"
+    (term (generate-fresh-addresses/mf (Nat (Record) Nat) ()))
+    `((addr 0 Nat) (addr 1 (Record)) (addr 2 Nat))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Testing helpers
+
 (define (make-single-actor-config actor)
   (term (make-single-actor-config/mf ,actor)))
-
-(define (single-actor-prog->config prog address)
-  (redex-let csa-eval ([(let ([x v] ...) (spawn τ e S ...)) prog])
-             (term (,address (((subst-n/S S [self ,address] [x v] ...) ...)
-                              (subst-n e [self ,address] [x v] ...))))))
 
 (define-metafunction csa-eval
   make-single-actor-config/mf : αn -> K
@@ -141,6 +263,9 @@
     (a_receptionist ...)
     ())
    (where ((a_receptionist _) ...) (αn_receptionist ...))])
+
+;; ---------------------------------------------------------------------------------------------------
+;; Substitution
 
 (define-metafunction csa-eval
   subst-n : e (x v) ... -> e
@@ -270,6 +395,12 @@
 
 (define (csa-config-receptionists config)
   (third config))
+
+;; Returns the type given in a spawn expression
+(define-metafunction csa-eval
+  spawn-type/mf : (spawn any_loc τ e S ...) -> τ
+  [(spawn-type/mf (spawn _ τ _ ...))
+   τ])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Address matching

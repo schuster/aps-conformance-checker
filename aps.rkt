@@ -9,7 +9,8 @@
 
  ;; Testing helpers
  make-spec
- make-exclusive-spec)
+ make-exclusive-spec
+ instantiate-configs)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; APS
@@ -23,6 +24,19 @@
 
 (define-extended-language aps
   csa-eval
+  (spec
+   (specification (receptionists [x_rec τ] ...)
+                  (externals [x_ext τ] ...)
+                  UNKNOWN
+                  ([x τ] ...)
+                  S-hat ...
+                  (goto s x ...))
+   (specification (receptionists [x_rec τ] ...)
+                  (externals [x_ext τ] ...)
+                  [x τ]
+                  ([x τ] ...)
+                  S-hat ...
+                  (goto s x ...)))
   (e-hat (spawn-spec ((goto s u ...) S-hat ...) e-hat)
          (goto s u ...)
          (with-outputs ([u po] ...) e-hat))
@@ -48,6 +62,91 @@
   (σ a UNKNOWN)
   (u .... a)
   (v-hat a))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Substitution
+
+(define-metafunction aps-eval
+  subst-n/aps-eval : e-hat (x v-hat) ... -> e-hat
+  [(subst-n/aps-eval e-hat) e-hat]
+  [(subst-n/aps-eval e-hat (x v-hat) any_rest ...)
+   (subst-n/aps-eval (subst/aps-eval e-hat x v-hat) any_rest ...)])
+
+(define-metafunction aps-eval
+  subst/aps-eval : e-hat x v-hat -> e-hat
+  [(subst/aps-eval (goto s u ...) x v-hat)
+   (goto s (subst/aps-eval/u u x v-hat) ...)]
+  [(subst/aps-eval (with-outputs ([u po] ...) e-hat) x v-hat)
+   (with-outputs ([(subst/aps-eval/u u x v-hat) (subst/aps-eval/po po x v-hat)] ...)
+     (subst/aps-eval e-hat x v-hat))]
+  [(subst/aps-eval (spawn-spec ((goto s u ...) S-hat ...) e-hat) x v-hat)
+   (spawn-spec ((subst/aps-eval (goto s u ...) x v-hat)
+                (subst/aps-eval/S-hat S-hat x v-hat) ...)
+               (subst/aps-eval e-hat x v-hat))])
+
+(define-metafunction aps-eval
+  subst/aps-eval/u : u x v-hat -> u
+  [(subst/aps-eval/u x x v-hat) v-hat]
+  [(subst/aps-eval/u x_2 x v-hat) x_2]
+  [(subst/aps-eval/u a x v-hat) a])
+
+(define-metafunction aps-eval
+  subst-n/aps-eval/u : u [x v-hat] ... -> u
+  [(subst-n/aps-eval/u u) u]
+  [(subst-n/aps-eval/u u [x v-hat] any_rest ...)
+   (subst-n/aps-eval/u (subst/aps-eval/u u x v-hat) any_rest ...)])
+
+(define-metafunction aps-eval
+  subst/aps-eval/po : po x v-hat -> po
+  [(subst/aps-eval/po * x v-hat) *]
+  [(subst/aps-eval/po (spawn-spec any_goto any_s-defs ...) self _)
+   (spawn-spec any_goto any_s-defs ...)]
+  [(subst/aps-eval/po (spawn-spec (goto s u ...) S-hat ...) x v-hat)
+   (spawn-spec (goto s (subst/aps-eval/u u x v-hat) ...)
+               (subst/aps-eval/S-hat S-hat x v-hat) ...)]
+  [(subst/aps-eval/po self self a) a]
+  [(subst/aps-eval/po self _ _) self]
+  [(subst/aps-eval/po (variant t po ...) x v-hat)
+   (variant t (subst/aps-eval/po po x v-hat) ...)]
+  [(subst/aps-eval/po (record t [l po] ...) x v-hat)
+   (record [l (subst/aps-eval/po po x v-hat)] ...)])
+
+(define-metafunction aps-eval
+  subst-n/aps-eval/S-hat : S-hat (x v-hat) ... -> e-hat
+  [(subst-n/aps-eval/S-hat S-hat) S-hat]
+  [(subst-n/aps-eval/S-hat S-hat (x v-hat) any_rest ...)
+   (subst-n/aps-eval/S-hat (subst/aps-eval/S-hat S-hat x v-hat) any_rest ...)])
+
+(define-metafunction aps-eval
+  subst/aps-eval/S-hat : S-hat x v-hat -> S-hat
+  [(subst/aps-eval/S-hat (define-state (s any_1 ... x any_2 ...) any_trans ...) x v-hat)
+   (define-state (s any_1 ... x any_2 ...) any_trans ...)]
+  [(subst/aps-eval/S-hat (define-state (s x_s ...) any_trans ...) x v-hat)
+   (define-state (s x_s ...) (subst/aps-eval/trans any_trans x v-hat) ...)])
+
+(define-metafunction aps-eval
+  subst/aps-eval/trans : (ε -> e-hat) x v-hat -> (ε -> e-hat)
+  [(subst/aps-eval/trans (p -> e-hat) x v-hat)
+   (p -> e-hat)
+   (judgment-holds (pattern-binds-var p x))]
+  [(subst/aps-eval/trans (ε -> e-hat) x v-hat)
+   (ε -> (subst/aps-eval e-hat x v-hat))])
+
+(define-judgment-form aps-eval
+  #:mode (pattern-binds-var I I)
+  #:contract (pattern-binds-var p x)
+  [------------
+   (pattern-binds-var x x)]
+
+  [(side-condition ,(ormap (lambda (p) (judgment-holds (pattern-binds-var ,p x)))
+                           (term (p ...))))
+   ----------
+   (pattern-binds-var (variant t p ...) x)]
+
+  [(side-condition ,(ormap (lambda (p) (judgment-holds (pattern-binds-var ,p x)))
+                           (term (p ...))))
+   ----------
+   (pattern-binds-var (reocrd [l p] ...) x)])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Predicates
@@ -81,3 +180,130 @@
                         [(_ (goto _ a ...) _) (term z)]
                         [Σ (term ((z) (a_rec ...) ((a) ...)))])
               (term Σ)))
+
+;; Instantiates the given program and specification as configurations, allocating fresh addresses for
+;; each actor in the program and substituting them throughout both configurations as needed.
+(define (instantiate-configs prog spec)
+  (term (instantiate-configs/mf ,prog ,spec)))
+
+(define-metafunction aps-eval
+  instantiate-configs/mf : P spec -> (K Σ)
+  [(instantiate-configs/mf P spec)
+   (K Σ)
+   ;; NOTE: the receptionists and externals for the spec (including their declared types) should be
+   ;; subsets of those for the program
+   (where (K ([x a] ...)) ,(instantiate-prog-with-bindings (term P)))
+   (where Σ (instantiate-spec/mf spec ([x a] ...)))])
+
+(module+ test
+  (test-case "Instantiate test"
+    (define the-prog
+      `(program (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Union)])
+                (actors [a (let () (spawn 1 Nat      (goto S1)))]
+                        [b (let () (spawn 2 (Record) (goto S2)))]
+                        [c (let () (spawn 3 Nat      (goto S3)))])))
+    (define the-spec
+      `(specification (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Union)])
+                      UNKNOWN
+                      ()
+                      (goto S1)))
+    (check-true (redex-match? csa-eval P the-prog))
+    (check-true (redex-match? aps spec the-spec))
+    (check-equal?
+     (instantiate-configs the-prog the-spec)
+     `(
+       ;; program config
+       (
+        ;; actors
+        (
+         ;; a
+         ((addr 0 Nat) (() (goto S1)))
+         ;; b
+         ((addr 1 (Record)) (() (goto S2)))
+         ;; c
+         ((addr 2 Nat) (() (goto S3)))
+         )
+        ;; messages
+        ()
+        ;; receptionists
+        ((addr 0 Nat) (addr 1 (Record)))
+        ;; externals
+        ((addr 3 String) (addr 4 (Union))))
+       ;; spec config
+       (;; instances
+        (
+         ;; instance 1
+         (;; state defs
+          ()
+          ;; exp
+          (goto S1)
+          ;; self-address
+          UNKNOWN
+          ))
+        ;; unobserved environment interface
+        ()
+        ;; output commitments
+        ())))))
+
+;; Instantiates the given spec as a specification configuration, using the given bindings as allocated
+;; addresses.
+(define-metafunction aps-eval
+  instantiate-spec/mf : spec ([x a] ...) -> Σ
+  [(instantiate-spec/mf (specification (receptionists [x_rec _] ...)
+                                       (externals [x_cont _] ...)
+                                       any_obs-int
+                                       ([x_unobs τ_unobs] ...)
+                                       S-hat ...
+                                       (goto s x_arg ...))
+                        ([x_binding a_binding] ...))
+   (;; instances
+    (;; instance 1
+     (; states
+      ((subst-n/aps-eval/S-hat S-hat [x_binding a_binding] ...) ...)
+      ; exp
+      (subst-n/aps-eval (goto s x_arg ...) [x_binding a_binding] ...)
+      ; address
+      σ))
+    ;; unobserved environment interface
+    ((addr natural_unobs τ_unobs) ...)
+    ;; output commitment map
+    ())
+   (where ((addr natural_unobs _) ...) ((subst-n/aps-eval/u x_unobs [x_binding a_binding] ...) ...))
+   (where σ (resolve-spec-obs-int/mf any_obs-int ([x_binding a_binding] ...)))])
+
+(module+ test
+  (test-case "instantiate spec"
+      (define the-spec
+      `(specification (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Union)])
+                      UNKNOWN
+                      ()
+                      (goto S1)))
+      (check-true (redex-match? aps spec the-spec))
+      (check-equal?
+       (term (instantiate-spec/mf ,the-spec
+                                  ([a (addr 0 Nat)]
+                                   [b (addr 1 (Record))]
+                                   [c (addr 2 Nat)]
+                                   [d (addr 3 String)]
+                                   [e (addr 4 (Union))])))
+       `(;; instances
+         (;; instance 1
+          (;; state defs
+           ()
+           ;; exp
+           (goto S1)
+           ;; self-address
+           UNKNOWN
+           ))
+          ;; unobserved environment interface
+          ()
+          ;; output commitments
+          ())))
+)
+
+(define-metafunction aps-eval
+  resolve-spec-obs-int/mf : any ([x a] ...) -> σ
+  [(resolve-spec-obs-int/mf UNKNOWN _) UNKNOWN]
+  [(resolve-spec-obs-int/mf [x τ] ([x_binding a_binding] ...))
+   (addr natural τ)
+   (where (addr natural _) (subst-n x [x_binding a_binding] ...))])
