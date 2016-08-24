@@ -57,15 +57,19 @@
 ;; destination: The implementation configuration reached at the end of this transition step
 (struct impl-step (trigger from-observer? outputs destination) #:transparent)
 
-;; A possible (weak) transition step of a specification configuration, representing the actions taken
-;; to match some (handler-level) implementation transition step. Weak transitions correspond to the
-;; general idea of weak simulations; see the dissertation for details. Fields are as follows:
+;; A possible (weak handler-level) transition step of a specification configuration, representing the
+;; actions taken to match some (handler-level) implementation transition step. Weak transitions
+;; correspond to the general idea of weak simulations; see the dissertation for details. Fields are as
+;; follows:
 ;;
 ;; destination: The specification configuration reached at the end of the weak transition.
 ;;
 ;; spawns: The set of specification configurations forked off by this transition step. A conforming
 ;; implementation configuration must conform to all of these configs in addition to destination.
-(struct spec-step (destination spawns) #:transparent)
+;;
+;; satisfied-commitments: The list of output commitments (address/output-pattern pairs) that are
+;; satisfied by taking this step.
+(struct spec-step (destination spawns satisfied-commitments) #:transparent)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; "Type" Definitions
@@ -358,8 +362,8 @@
     (match (aps#-resolve-outputs config (impl-step-outputs i-step))
       [#f (void)]
       [(list stepped-spec-config spawns2 satisfied-commitments)
-       ;; TODO: record the satisfied commitments somehow
-       (set-add! matched-stepped-configs (spec-step stepped-spec-config (append spawns1 spawns2)))]))
+       (set-add! matched-stepped-configs
+                 (spec-step stepped-spec-config (append spawns1 spawns2) satisfied-commitments))]))
   matched-stepped-configs)
 
 (module+ test
@@ -370,7 +374,7 @@
      (matching-spec-steps
       null-spec-config
       (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f null #f))
-     (mutable-set (spec-step null-spec-config null))))
+     (mutable-set (spec-step null-spec-config null null))))
   (test-case "Null transition not okay for observed input"
     (check-equal?
      (matching-spec-steps
@@ -388,7 +392,7 @@
      (matching-spec-steps
       null-spec-config
       (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) #f))
-     (mutable-set (spec-step null-spec-config null))))
+     (mutable-set (spec-step null-spec-config null null))))
   (test-case "No match if outputs do not match"
     (check-equal?
      (matching-spec-steps
@@ -400,7 +404,9 @@
      (matching-spec-steps
       (make-Σ# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat) (single *))))
       (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) #f))
-     (mutable-set (spec-step (make-Σ# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat)))) null))))
+     (mutable-set (spec-step (make-Σ# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat))))
+                             null
+                             (list `[(obs-ext 1 Nat) *])))))
   (test-case "Output can be matched by new commitment"
     (check-equal?
      (matching-spec-steps
@@ -410,7 +416,8 @@
                                       '(goto A)
                                       null
                                       (list '((obs-ext 1 Nat))))
-                             null))))
+                             null
+                             (list `[(obs-ext 1 Nat) *])))))
   (test-case "Multiple copies of same commitment get merged"
     (check-equal?
      (matching-spec-steps
@@ -418,6 +425,7 @@
       (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null #f))
      (mutable-set
       (spec-step (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (many *)]))
+                 null
                  null)))))
 
 ;; Given a hash table whose values are sets, add val to the set in dict corresponding to key (or
@@ -613,12 +621,12 @@
   (define cw-pair (config-pair 'C 'W))
 
   (define aa-step (impl-step '(timeout (init-addr 0 Nat)) #f null 'A))
-  (define xx-step (spec-step 'X null))
+  (define xx-step (spec-step 'X null null))
   (define ab-step (impl-step '(timeout (init-addr 0 Nat)) #f null 'B))
-  (define xy-step (spec-step 'Y null))
-  (define xz-step (spec-step 'Z null))
+  (define xy-step (spec-step 'Y null null))
+  (define xz-step (spec-step 'Z null null))
   (define bc-step (impl-step '(timeout (init-addr 0 Nat)) #f null 'C))
-  (define yw-step (spec-step 'W null))
+  (define yw-step (spec-step 'W null null))
 
   (test-equal? "Remove no pairs, because no list"
     (prune-unsupported
