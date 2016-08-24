@@ -5,15 +5,7 @@
 ;; TODO: refactor this program to use records like those in akka-raft
 
 (require
- rackunit
- redex/reduction-semantics
- "aps.rkt"
- "csa.rkt"
- "desugar.rkt"
- "main.rkt")
-
-;; TODO: put this in a common place so it isn't repeated across files
-(define (single-actor-typed-concrete-addr type) (term (addr 0 ,type)))
+ redex/reduction-semantics)
 
 (define desugared-raft-message-type
   `(Union
@@ -40,6 +32,13 @@
   (term (Config (Record [members (Listof (Addr Nat ;; RaftMessage
                                                ))]))))
 
+(define unobserved-interface-type
+  (term (Union ,cluster-config-variant
+               (ClientMessage (Addr Nat) ; TODO: add the real type here
+                              String)
+               (Timeout Nat)
+               (SendHeartbeatTimeouts Nat))))
+
 (define full-raft-actor-type
   (term
    (Union (PeerMessage ,desugared-raft-message-type)
@@ -52,7 +51,10 @@
 ;; TODO: write a check that alerts for any underscores in the spec (b/c those are invalid)
 (define raft-spec
   (term
-   (((define-state (Init)
+   (specification (receptionists [raft-server ,full-raft-actor-type]) (externals)
+     [raft-server (Union (PeerMessage ,desugared-raft-message-type))] ; obs interface
+     ([raft-server ,unobserved-interface-type]) ; unobs interface
+     (define-state (Init)
        [unobs -> (goto Running)]
        [(variant PeerMessage *) -> (goto Init)])
      (define-state (Running)
@@ -80,12 +82,13 @@
         ;; TODO: should I require that the self address is in this response?
         (with-outputs ([member (variant PeerMessage (variant AppendEntries * * * * * * *))])
           (goto Running))]
-       [(variant PeerMessage (variant AppendSuccessful * * *)) -> (goto Running)]))
-    ;; TODO: switch the order of the init exp and the states
-    (goto Init)
-    ,(single-actor-typed-concrete-addr (term (Union (PeerMessage ,desugared-raft-message-type)))))))
+       [(variant PeerMessage (variant AppendSuccessful * * *)) -> (goto Running)])
+     (goto Init))))
 
-(define raft-actor-surface-prog (term (
+(define raft-actor-surface-prog (term
+(program
+ (receptionists [raft-server ,full-raft-actor-type])
+ (externals [timer-manager TimerMessage] [application String])
 
 (define-type Unit (Record))
 (define-type Duration Nat) ; number of seconds
@@ -1055,41 +1058,16 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; The main program expression
 
-;; TODO: think of a way to not have to give concrete addresses here
-(spawn RaftActor (addr 2 TimerMessage) (addr 3 String)))))
+(actors [raft-server (spawn 1 RaftActor timer-manager application)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing code
 
-;; TODO: write a test that checks the Raft program's grammar (later: and type-checks it)
+(module+ test
+  (require
+   rackunit
+   "desugar.rkt"
+   "main.rkt")
 
-;; 2. Desugar that into the actor definition the verifier needs/translate it into the structural
-;; version, using arbitrary addresses for each initial output address
-(define desugared-raft-program (desugar-single-actor-program raft-actor-surface-prog))
-(check-not-false (redex-match csa-eval (let ([x v] ...) (spawn τ e S ...)) desugared-raft-program))
-
-(define desugared-raft-actor
-  (single-actor-prog->config desugared-raft-program
-                             (single-actor-typed-concrete-addr full-raft-actor-type)))
-
-(check-not-false (redex-match csa-eval αn desugared-raft-actor))
-(check-not-false (redex-match aps-eval z raft-spec))
-
-;; 3. Move the actor definition into a config, with addresses assigned appropriately
-(define raft-config (make-single-actor-config desugared-raft-actor))
-
-(define unobserved-interface-type
-  (term (Union ,cluster-config-variant
-               (ClientMessage (Addr Nat) ; TODO: add the real type here
-                              String)
-               (Timeout Nat)
-               (SendHeartbeatTimeouts Nat))))
-
-(check-not-false
- (redex-match csa-eval τ unobserved-interface-type))
-
-;; 4. Run the verifier
-(test-true "Raft verification"
- (model-check raft-config
-              (make-spec raft-spec
-                         (list (single-actor-typed-concrete-addr unobserved-interface-type)))))
+  (test-true "Raft verification"
+    (model-check/static (desugar raft-actor-surface-prog) raft-spec)))
