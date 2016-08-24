@@ -3,7 +3,7 @@
 ;; Abstract semantic domains for APS (specification language), and associated functions
 
 (provide
- ;; Required by model checker
+ ;; Required by conformance checker
  ;; TODO: consider having this one return the address or #f
  aps#-config-only-instance-address
  aps#-unknown-address?
@@ -15,7 +15,7 @@
  aps#-blur-config
  canonicalize-pair
 
- ;; Required by model checker for blurring
+ ;; Required by conformance checker for blurring
  aps#-relevant-external-addrs
 
  ;; Testing helpers

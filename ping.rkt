@@ -38,6 +38,6 @@
 
   (define desugared-prog (desugar ping-program))
   (test-true "Ping server conformance check"
-    (model-check/static desugared-prog ping-spec))
+    (check-conformance desugared-prog ping-spec))
   (test-false "Ping server does not match no-send spec"
-    (model-check/static desugared-prog no-send-ping-spec)))
+    (check-conformance desugared-prog no-send-ping-spec)))

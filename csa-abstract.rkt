@@ -3,7 +3,7 @@
 ;; Abstract standard semantic domains for CSA#, and associated functions
 
 (provide
- ;; Required by model checker
+ ;; Required by conformance checker
  (struct-out csa#-transition)
  csa#-messages-of-address-type
  csa#-handle-external-message
@@ -11,7 +11,7 @@
  csa#-abstract-config
  csa#-blur-config
 
- ;; Required by model checker to select spawn-flag to blur; likely to change
+ ;; Required by conformance checker to select spawn-flag to blur; likely to change
  csa#-spawn-address?
  csa#-spawn-address-flag
  csa#-flags-that-know-externals

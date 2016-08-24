@@ -1,11 +1,9 @@
 #lang racket
 
-;; Implements the top-level function, "model-check", and includes the core of the model-checking
-;; algorithm
+;; Implements the top-level function, "check-conformance", and includes the core of the
+;; conformance-checking algorithm
 
-;; TODO: rename model-check/static and model-check: the externally provided one should not have a
-;; qualifier
-(provide model-check/static)
+(provide check-conformance)
 
 (require
  ;; See README.md for a brief description of these files
@@ -98,13 +96,13 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Top-level Algorithm
 
-;; Returns the result of running the model-check algorithm below on the instantiated program and
+;; Returns the result of running the conformance-check algorithm below on the instantiated program and
 ;; specification.
-(define/contract (model-check/static program specification)
+(define/contract (check-conformance program specification)
   (-> csa-valid-program? aps-valid-spec? boolean?)
 
   (match-define (list impl-config spec-config) (instantiate-configs program specification))
-    (model-check impl-config spec-config))
+    (check-conformance/config impl-config spec-config))
 
 ;; Given a concrete implementation configuration, a concrete specification configuration, returns #t
 ;; if the conformance-check algorithm can prove that the implementation conforms to the specification,
@@ -130,7 +128,7 @@
 ;; below). By removing these nodes and again back-propagating the effects of those removals (with
 ;; prune-unsupported again), the resulting graph represents a proof that all of its members are in the
 ;; conformance relation.
-(define/contract (model-check initial-impl-config initial-spec-config)
+(define/contract (check-conformance/config initial-impl-config initial-spec-config)
   (-> csa-valid-config? aps-valid-config? boolean?)
 
   (cond
@@ -769,7 +767,7 @@
   (check-not-false (redex-match csa-eval K ignore-all-config))
   (check-not-false (redex-match aps-eval z ignore-all-spec-instance))
 
-  (check-true (model-check ignore-all-config (make-exclusive-spec ignore-all-spec-instance)))
+  (check-true (check-conformance/config ignore-all-config (make-exclusive-spec ignore-all-spec-instance)))
 
   ;;;; Send one message to a statically-known address per request
 
@@ -810,16 +808,16 @@
   (test-valid-instance? ignore-all-with-addr-spec-instance)
 
   (test-true "Static response works"
-             (model-check (make-single-actor-config static-response-actor)
+             (check-conformance/config (make-single-actor-config static-response-actor)
                           (make-exclusive-spec static-response-spec)))
   (test-false "Static response actor, ignore all spec"
-              (model-check (make-single-actor-config static-response-actor)
+              (check-conformance/config (make-single-actor-config static-response-actor)
                            (make-exclusive-spec ignore-all-with-addr-spec-instance)))
   (test-false "static double response actor"
-              (model-check (make-single-actor-config static-double-response-actor)
+              (check-conformance/config (make-single-actor-config static-double-response-actor)
                            (make-exclusive-spec static-response-spec)))
   (test-false "Static response spec, ignore-all config"
-               (model-check ignore-all-config
+               (check-conformance/config ignore-all-config
                             (make-exclusive-spec static-response-spec)))
 
   ;;;; Pattern matching tests, without dynamic channels
@@ -864,12 +862,12 @@
   (check-not-false (redex-match csa-eval αn reverse-pattern-matching-actor))
   (check-not-false (redex-match csa-eval αn partial-pattern-matching-actor))
 
-  (check-true (model-check (make-single-actor-config pattern-matching-actor)
+  (check-true (check-conformance/config (make-single-actor-config pattern-matching-actor)
                            (make-exclusive-spec pattern-match-spec)))
   (test-false "Send on A but not B; should send on both"
-              (model-check (make-single-actor-config partial-pattern-matching-actor)
+              (check-conformance/config (make-single-actor-config partial-pattern-matching-actor)
                            (make-exclusive-spec pattern-match-spec)))
-  (check-false (model-check (make-single-actor-config reverse-pattern-matching-actor)
+  (check-false (check-conformance/config (make-single-actor-config reverse-pattern-matching-actor)
                             (make-exclusive-spec  pattern-match-spec)))
 
   ;;;; Dynamic request/response
@@ -990,36 +988,36 @@
   (check-not-false (redex-match csa-eval αn delayed-send-no-timeout-actor))
   (check-not-false (redex-match csa-eval αn delayed-send-with-timeout-actor))
   (test-true "request/response 1"
-             (model-check (make-single-actor-config request-response-actor)
+             (check-conformance/config (make-single-actor-config request-response-actor)
                           (make-exclusive-spec request-response-spec)))
 
   (test-false "request/response 2"
-              (model-check (make-single-actor-config respond-to-first-addr-actor)
+              (check-conformance/config (make-single-actor-config respond-to-first-addr-actor)
                            (make-exclusive-spec request-response-spec)))
   (test-false "request/response 3"
-               (model-check (make-single-actor-config respond-to-first-addr-actor2)
+               (check-conformance/config (make-single-actor-config respond-to-first-addr-actor2)
                             (make-exclusive-spec request-response-spec)))
   (test-false "request/response 4"
-               (model-check (make-single-actor-config request-response-actor)
+               (check-conformance/config (make-single-actor-config request-response-actor)
                             (make-exclusive-spec request-same-response-addr-spec)))
   (test-false "ignore all actor does not satisfy request/response"
-              (model-check (make-ignore-all-config (term (Addr Nat)))
+              (check-conformance/config (make-ignore-all-config (term (Addr Nat)))
                            (make-exclusive-spec request-response-spec)))
   (test-false "Respond-once actor does not satisfy request/response"
-              (model-check (make-single-actor-config respond-once-actor)
+              (check-conformance/config (make-single-actor-config respond-once-actor)
                            (make-exclusive-spec request-response-spec)))
-  (check-true (model-check (make-single-actor-config respond-to-first-addr-actor)
+  (check-true (check-conformance/config (make-single-actor-config respond-to-first-addr-actor)
                            (make-exclusive-spec request-same-response-addr-spec)))
-  (check-true (model-check (make-single-actor-config respond-to-first-addr-actor2)
+  (check-true (check-conformance/config (make-single-actor-config respond-to-first-addr-actor2)
                            (make-exclusive-spec request-same-response-addr-spec)))
-  (check-false (model-check (make-single-actor-config double-response-actor)
+  (check-false (check-conformance/config (make-single-actor-config double-response-actor)
                             (make-exclusive-spec request-response-spec)))
-  (check-false (model-check (make-single-actor-config delay-saving-address-actor)
+  (check-false (check-conformance/config (make-single-actor-config delay-saving-address-actor)
                             (make-exclusive-spec request-response-spec)))
   (test-false "Send only on next receive does not satisfy request/response"
-               (model-check (make-single-actor-config delayed-send-no-timeout-actor)
+               (check-conformance/config (make-single-actor-config delayed-send-no-timeout-actor)
                             (make-exclusive-spec request-response-spec)))
-  (check-true (model-check (make-single-actor-config delayed-send-with-timeout-actor)
+  (check-true (check-conformance/config (make-single-actor-config delayed-send-with-timeout-actor)
                            (make-exclusive-spec request-response-spec)))
 
   ;; When given two choices to/from same state, have to take the one where the outputs match the
@@ -1045,7 +1043,7 @@
 
   (check-not-false (redex-match csa-eval αn reply-once-actor))
   (check-not-false (redex-match aps-eval z maybe-reply-spec))
-  (check-true (model-check (make-single-actor-config reply-once-actor)
+  (check-true (check-conformance/config (make-single-actor-config reply-once-actor)
                            (make-exclusive-spec maybe-reply-spec)))
 
   ;;;; Non-deterministic branching in spec
@@ -1079,9 +1077,9 @@
   (check-not-false (redex-match aps-eval z zero-spec))
   (check-not-false (redex-match csa-eval αn primitive-branch-actor))
 
-  (check-true (model-check (make-single-actor-config primitive-branch-actor)
+  (check-true (check-conformance/config (make-single-actor-config primitive-branch-actor)
                            (make-exclusive-spec zero-nonzero-spec)))
-  (check-false (model-check (make-single-actor-config primitive-branch-actor)
+  (check-false (check-conformance/config (make-single-actor-config primitive-branch-actor)
                             (make-exclusive-spec zero-spec)))
 
   ;;;; Optional Commitments
@@ -1094,7 +1092,7 @@
       (addr 0 Nat))))
 
   (check-not-false (redex-match aps-eval z optional-commitment-spec))
-  (check-true (model-check ignore-all-config (make-exclusive-spec optional-commitment-spec)))
+  (check-true (check-conformance/config ignore-all-config (make-exclusive-spec optional-commitment-spec)))
 
   ;;;; Stuck states in concrete evaluation
 
@@ -1126,28 +1124,28 @@
   (check-not-false (redex-match csa-eval αn div-by-one-actor))
 
   (test-true "Div by one vs. nat-to-nat spec"
-             (model-check (make-single-actor-config div-by-one-actor)
+             (check-conformance/config (make-single-actor-config div-by-one-actor)
                           (make-exclusive-spec nat-to-nat-spec)))
   (test-true "Div by zero vs. nat-to-nat spec"
-              (model-check (make-single-actor-config div-by-zero-actor)
+              (check-conformance/config (make-single-actor-config div-by-zero-actor)
                            (make-exclusive-spec nat-to-nat-spec)))
 
   ;;;; Unobservable communication
 
   ;; wildcard unobservables are ignored for the purpose of output commitments
   (test-true "request/response actor vs. ignore-all spec"
-             (model-check (make-single-actor-config request-response-actor)
+             (check-conformance/config (make-single-actor-config request-response-actor)
                           (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
 
   ;; 1. In dynamic req/resp, allowing unobserved perspective to send same messages does not affect
   ;; conformance
   (test-true "request response actor and spec, with unobs communication"
-             (model-check (make-single-actor-config request-response-actor)
+             (check-conformance/config (make-single-actor-config request-response-actor)
                           (make-spec request-response-spec (list '(addr 0 (Addr Nat))))))
 
   ;; 2. Allowing same messages from unobs perspective violates conformance for static req/resp.
   (test-false "static response with unobs communication"
-              (model-check (make-single-actor-config static-response-actor)
+              (check-conformance/config (make-single-actor-config static-response-actor)
                            (make-spec static-response-spec (list '(addr 0 Nat)))))
 
   ;; 3. Conformance regained for static req/resp when add an unobs transition
@@ -1161,7 +1159,7 @@
   (check-not-false (redex-match aps-eval z static-response-spec-with-unobs))
 
   (test-true "static response with unobs, incl in spec"
-             (model-check (make-single-actor-config static-response-actor)
+             (check-conformance/config (make-single-actor-config static-response-actor)
                           (make-spec static-response-spec-with-unobs (list '(addr 0 Nat)))))
 
   ;; 4. unobs causes a particular behavior (like connected/error in TCP)
@@ -1275,7 +1273,7 @@
   (check-not-false (redex-match aps-eval αn unobs-toggle-actor-wrong4))
 
   (test-true "Obs/Unobs test"
-             (model-check (make-single-actor-config unobs-toggle-actor)
+             (check-conformance/config (make-single-actor-config unobs-toggle-actor)
                           (make-spec unobs-toggle-spec (list '(addr 0 (Union [FromUnobservedEnvironment]))))))
 
   (for ([actor (list unobs-toggle-actor-wrong1
@@ -1283,7 +1281,7 @@
                      unobs-toggle-actor-wrong3
                      unobs-toggle-actor-wrong4)])
     (test-false "Obs/Unobs bug-finding test(s)"
-                (model-check (make-single-actor-config actor)
+                (check-conformance/config (make-single-actor-config actor)
                              (make-spec unobs-toggle-spec (list '(addr 0 (Union [FromUnobservedEnvironment])))))))
 
   ;;;; Records
@@ -1317,10 +1315,10 @@
   (check-not-false (redex-match csa-eval αn record-req-wrong-resp-actor))
 
   (test-true "record 1"
-             (model-check (make-single-actor-config record-req-resp-actor)
+             (check-conformance/config (make-single-actor-config record-req-resp-actor)
                           (make-exclusive-spec record-req-resp-spec)))
   (test-false "record 2"
-              (model-check (make-single-actor-config record-req-wrong-resp-actor)
+              (check-conformance/config (make-single-actor-config record-req-wrong-resp-actor)
                            (make-exclusive-spec record-req-resp-spec)))
 
   ;;;; Recursive Types
@@ -1340,7 +1338,7 @@
   (test-valid-actor? cons-inputs-echo)
 
   (test-true "Abstraction can deal with unboundedly large recursively typed values"
-   (model-check
+   (check-conformance/config
     (make-single-actor-config cons-inputs-echo)
     (make-exclusive-spec static-response-spec)))
 
@@ -1369,10 +1367,10 @@
   (check-not-false (redex-match csa-eval αn static-double-response-let-actor))
 
   (test-true "Let 1"
-             (model-check (make-single-actor-config static-response-let-actor)
+             (check-conformance/config (make-single-actor-config static-response-let-actor)
                           (make-exclusive-spec static-response-spec)))
   (test-false "Let 2"
-              (model-check (make-single-actor-config static-double-response-let-actor)
+              (check-conformance/config (make-single-actor-config static-double-response-let-actor)
                            (make-exclusive-spec static-response-spec)))
 
   ;; Check that = gives both results
@@ -1418,13 +1416,13 @@
   (check-not-false (redex-match csa-eval αn equal-actor))
 
   (test-false "Equal actor wrong 1"
-   (model-check (make-single-actor-config equal-actor-wrong1)
+   (check-conformance/config (make-single-actor-config equal-actor-wrong1)
             (make-exclusive-spec static-response-spec)))
   (test-false "Equal actor wrong 2"
-   (model-check (make-single-actor-config equal-actor-wrong2)
+   (check-conformance/config (make-single-actor-config equal-actor-wrong2)
             (make-exclusive-spec static-response-spec)))
   (check-true
-   (model-check (make-single-actor-config equal-actor)
+   (check-conformance/config (make-single-actor-config equal-actor)
                 (make-exclusive-spec static-response-spec)))
 
   ;;;; For loops
@@ -1488,20 +1486,20 @@
   (check-not-false (redex-match csa-eval αn send-inside-loop-actor))
   (check-not-false (redex-match csa-eval αn send-after-loop-actor))
 
-  (check-true (model-check (make-single-actor-config loop-do-nothing-actor)
+  (check-true (check-conformance/config (make-single-actor-config loop-do-nothing-actor)
                            (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
-  (check-true (model-check (make-single-actor-config loop-send-unobs-actor)
+  (check-true (check-conformance/config (make-single-actor-config loop-send-unobs-actor)
                            (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
-  (check-true (model-check (make-single-actor-config send-before-loop-actor)
+  (check-true (check-conformance/config (make-single-actor-config send-before-loop-actor)
                            (make-exclusive-spec request-response-spec)))
   ;; TODO: get this test working again (need to at least check that none of the outputs in a loop were
   ;; observed)
   ;;
-  ;; (check-false (model-check (make-single-actor-config send-inside-loop-actor)
+  ;; (check-false (check-conformance/config (make-single-actor-config send-inside-loop-actor)
   ;;                      request-response-spec
   ;;                      (term ((addr 0 (Addr Nat)))) null
   ;;                      (hash 'A 'Always)))
-  (check-true (model-check (make-single-actor-config send-after-loop-actor)
+  (check-true (check-conformance/config (make-single-actor-config send-after-loop-actor)
                            (make-exclusive-spec request-response-spec)))
 
   ;;;; Timeouts
@@ -1539,9 +1537,9 @@
   (check-not-false (redex-match aps-eval z timeout-spec))
   (check-not-false (redex-match aps-eval z got-message-only-spec))
   (check-not-false (redex-match csa-eval αn timeout-and-send-actor))
-  (check-true (model-check (make-single-actor-config timeout-and-send-actor)
+  (check-true (check-conformance/config (make-single-actor-config timeout-and-send-actor)
                            (make-exclusive-spec timeout-spec)))
-  (check-false (model-check (make-single-actor-config timeout-and-send-actor)
+  (check-false (check-conformance/config (make-single-actor-config timeout-and-send-actor)
                        (make-exclusive-spec got-message-only-spec)))
 
   ;; Multiple Disjoint Actors
@@ -1574,15 +1572,15 @@
   (check-not-false (redex-match aps-eval z static-response-with-extra-spec))
 
   (test-false "Multi actor test 1"
-              (model-check
+              (check-conformance/config
                 (make-empty-queues-config (list static-response-actor static-response-actor2) null)
                 (make-spec static-response-spec (list '(addr 1 Nat)))))
   (test-true "Multi actor test 2"
-             (model-check
+             (check-conformance/config
               (make-empty-queues-config (list static-response-actor static-response-actor2) null)
               (make-spec static-response-with-extra-spec (list '(addr 1 Nat)))))
   (test-true "Multi actor test 3"
-             (model-check
+             (check-conformance/config
                (make-empty-queues-config (list static-response-actor other-static-response-actor) null)
                (make-spec static-response-spec (list '(addr 1 Nat)))))
 
@@ -1598,7 +1596,7 @@
 
   ;; TODO: probably get rid of this test
   ;; (test-true "Multi-spec test"
-  ;;            (model-check
+  ;;            (check-conformance/config
   ;;             (make-empty-queues-config (list static-response-actor other-static-response-actor) null)
   ;;             (make-exclusive-spec (list static-response-spec other-static-response-spec))
   ;;             (term ((addr 0 Nat) (addr 1 Nat))) null))
@@ -1626,7 +1624,7 @@
   (check-not-false (redex-match csa-eval αn request-response-actor2))
 
   (test-true "Multiple actors 3"
-             (model-check
+             (check-conformance/config
               (make-empty-queues-config (list request-response-actor2 statically-delegating-responder-actor) null)
               (make-exclusive-spec request-response-spec)))
 
@@ -1705,18 +1703,18 @@
   (check-not-false (redex-match aps-eval z self-reveal-spec))
 
   (test-true "Reveal self works"
-             (model-check
+             (check-conformance/config
               (make-single-actor-config self-reveal-actor)
               (make-exclusive-spec self-reveal-spec)))
   ;; TODO: redo this test later
   ;; (test-false "Catch self-reveal of wrong address"
-  ;;             (model-check
+  ;;             (check-conformance/config
   ;;              (make-single-actor-config reveal-wrong-address-actor)
   ;;              self-reveal-spec
   ;;              (term ((addr 0 (Addr (Addr (Addr Nat)))))) null
   ;;              (hash)))
   (test-false "Catch self-reveal of actor that doesn't follow its behavior"
-              (model-check
+              (check-conformance/config
                (make-single-actor-config reveal-self-double-output-actor)
                (make-exclusive-spec self-reveal-spec)))
 
@@ -1781,16 +1779,16 @@
   (check-not-false (redex-match aps-eval z echo-spawn-spec))
 
   (test-true "Spawned echo matches dynamic response spec"
-             (model-check
+             (check-conformance/config
               (make-single-actor-config echo-spawning-actor)
               (make-exclusive-spec echo-spawn-spec)))
   ;; TODO: also add a sink-spawning actor when commitment satisfaction is working
   (test-false "Spawned double-response actor does not match dynamic response spec"
-              (model-check
+              (check-conformance/config
                (make-single-actor-config double-response-spawning-actor)
                (make-exclusive-spec echo-spawn-spec)))
 
-  ;;;; Initial spec address must have actor in the model checker
+  ;;;; Initial spec address must have actor in the implmentation
   (define no-matching-address-spec
     (term
      (((define-state (DoAnything)
@@ -1800,7 +1798,7 @@
   (test-valid-instance? no-matching-address-spec)
 
   (test-false "Spec config address must have matching actor in implementation configuration"
-   (model-check
+   (check-conformance/config
     (make-single-actor-config static-response-actor)
     (make-exclusive-spec no-matching-address-spec)))
 
@@ -1856,12 +1854,12 @@
   (test-valid-actor? spawn-and-retain-but-send-new)
 
   (test-true "Both an old and new version of spawned echo child match stateless spec"
-    (model-check
+    (check-conformance/config
      (make-single-actor-config spawn-and-retain)
      (make-exclusive-spec echo-spawn-spec)))
 
   (test-true "Always sending new version of child matches echo-spawn"
-    (model-check
+    (check-conformance/config
      (make-single-actor-config spawn-and-retain-but-send-new)
      (make-exclusive-spec echo-spawn-spec)))
 
@@ -1904,7 +1902,7 @@
   (test-valid-actor? spawn-self-revealing-echo)
   (test-valid-instance? child-self-reveal-spec)
   (test-true "Spawned child can reveal self"
-    (model-check
+    (check-conformance/config
      (make-single-actor-config spawn-self-revealing-echo)
      (make-exclusive-spec child-self-reveal-spec)))
 
@@ -1941,7 +1939,7 @@
   (test-valid-actor? send-to-blurred-internal-actor)
 
   (test-false "Sending precise address to blurred sending actor causes non-conformance"
-    (model-check
+    (check-conformance/config
      (make-single-actor-config send-to-blurred-internal-actor)
      (make-exclusive-spec static-response-spec)))
 
@@ -1967,7 +1965,7 @@
 
 
   (test-true "Child can wait at least one handler-cycle before sending to destination"
-    (model-check
+    (check-conformance/config
      (make-single-actor-config self-send-responder-spawner)
      (make-exclusive-spec request-response-spec)))
 
@@ -2022,13 +2020,13 @@
   (test-valid-actor? forwarding-server)
 
   (test-true "Down-and-back server with timeout child fulfills the dynamic request/response spec"
-    (model-check
+    (check-conformance/config
      (make-empty-queues-config (list (make-down-and-back-server timeout-forwarding-child))
                                (list forwarding-server))
      (make-exclusive-spec request-response-spec)))
 
   (test-true "Down-and-back server with self-send child fulfills the dynamic request/response spec"
-    (model-check
+    (check-conformance/config
      (make-empty-queues-config (list (make-down-and-back-server self-send-forwarding-child))
                                (list forwarding-server))
      (make-exclusive-spec request-response-spec)))
@@ -2061,7 +2059,7 @@
   (test-valid-instance? never-send-spec)
   (test-false "Child that sends response in second state does not match never-send"
     ;; tests that all reachable states of a blurred child are executed
-    (model-check
+    (check-conformance/config
      (make-single-actor-config create-later-send-children-actor)
      (make-exclusive-spec never-send-spec)))
 
@@ -2127,11 +2125,11 @@
   ;; send message with internal/external to blurred
 
   ;; (test-true "Sending message to blurred-internal matches send-whenever spec"
-  ;;   (model-check
+  ;;   (check-conformance/config
   ;;    (make-single-actor-config send-to-blurred-internal-actor)
   ;;    (make-exclusive-spec send-whenever-spec)))
   ;; (test-false "Sending message to blurred-internal does not match never-send spec"
-  ;;   (model-check
+  ;;   (check-conformance/config
   ;;    (make-single-actor-config send-to-blurred-internal-actor)
   ;;    (make-exclusive-spec never-send-spec)))
 
@@ -2166,7 +2164,7 @@
   ;;      (goto Always (variant None))))))
 
   ;; (test-true "Only spawned actors with conflicts are blurred out"
-  ;;   (model-check
+  ;;   (check-conformance/config
   ;;    (make-single-actor-config conflicts-only-test-actor)
   ;;    (make-exclusive-spec echo-spawn-spec)))
 

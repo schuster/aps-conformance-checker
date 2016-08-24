@@ -1,7 +1,7 @@
-Here are the important files in the model checker:
+Here are the important files in the conformance checker:
 
-main.rkt:           Implements the top-level function, "model-check", and includes the
-                    core of the model-checking algorithm
+main.rkt:           Implements the top-level function, "check-conformance", and includes the core of the
+                    conformance-checking algorithm
 
 csa.rkt: 		    Concrete standard semantic domains for CSA, and associated functions
 csa-abstract.rkt	Abstract standard semantic domains for CSA#, and associated functions
@@ -11,7 +11,7 @@ aps-abstract.rkt    Abstract semantic domains for APS (specification language), 
 
 desugar.rkt			Nanopass-based desugarer for the bigger language (desugars down to CSA)
 
-raft.rkt			A larger test of the model-checker, for an implementation of Raft
+raft.rkt			A larger test of the conformance-checker, for an implementation of Raft
 
 Naming Conventions
 ==================

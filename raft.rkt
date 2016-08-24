@@ -1070,4 +1070,4 @@
    "main.rkt")
 
   (test-true "Raft verification"
-    (model-check/static (desugar raft-actor-surface-prog) raft-spec)))
+    (check-conformance (desugar raft-actor-surface-prog) raft-spec)))
