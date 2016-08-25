@@ -857,6 +857,33 @@
 (define (aps#-config-commitment-map config)
   (term (config-commitment-map/mf ,config)))
 
+;; Returns all singleton commitments in the config as a list of address/pattern pairs
+(define (aps#-config-singleton-commitments config)
+  (term (config-commitments/mf ,config)))
+
+(define-metafunction aps#
+  config-commitments/mf : Σ -> ([a#ext po] ...)
+  [(config-commitments/mf (_ _ ((a#ext (m po) ...) ...)))
+   ,(append*
+     (for/list ([address (term (a#ext ...))]
+                [pattern-list (term ((po_single ...) ...))])
+       (for/list ([pattern pattern-list]) (list address pattern))))
+   (where (((_ po_single) ...) ...)
+          ,(map (lambda (com-list)
+                  (filter (lambda (com) (equal? (first com) 'single)) com-list))
+                (term (((m po) ...) ...))))])
+
+(module+ test
+  (test-equal? "config-commitments"
+    (aps#-config-singleton-commitments
+     `(() () ([(obs-ext 1 Nat) (single *) (many (record))]
+              [(obs-ext 2 Nat)]
+              [(obs-ext 3 Nat) (single *) (single (variant A)) (single (record [a *]))])))
+    (list `[(obs-ext 1 Nat) *]
+          `[(obs-ext 3 Nat) *]
+          `[(obs-ext 3 Nat) (variant A)]
+          `[(obs-ext 3 Nat) (record [a *])])))
+
 (define (aps#-config-only-instance-address config)
   (match (aps#-config-instances config)
     [(list instance) (aps#-instance-address instance)]

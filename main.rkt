@@ -12,6 +12,7 @@
  "aps-abstract.rkt"
  "csa.rkt"
  "csa-abstract.rkt"
+ "graph.rkt"
  "queue-helpers.rkt"
  "set-helpers.rkt")
 
@@ -74,7 +75,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; "Type" Definitions
 
-;; IncomingStepsDict = (Hash config-pair (List (MutableSetof (List config-pair impl-step spec-step)))
+;; IncomingStepsDict = (Hash config-pair (MutableSetof (List config-pair impl-step spec-step)))
 ;;
 ;; Records all implementation and specification transitions that led to some pair discovered during
 ;; the initial construction of the rank-1 simulation. Formally, for all pairs <i, s> in either the
@@ -150,12 +151,8 @@
                           incoming-steps
                           rank1-related-spec-steps
                           rank1-unrelated-successors))
-     (define commitment-satisfying-pairs
-       (find-satisfying-pairs simulation-pairs simulation-related-spec-steps))
-     (define unsatisfying-pairs
-       ;; have to make a copy here because set-symmetric-difference has a bug when called with
-       ;; intensionally equal sets (https://github.com/racket/racket/issues/1403)
-       (set-symmetric-difference simulation-pairs (set-copy commitment-satisfying-pairs)))
+     (match-define (commitment-satisfying-pairs unsatisfying-pairs)
+       (partition-by-satisfation simulation-pairs simulation-related-spec-steps))
      (match-define (list conforming-pairs _)
        (prune-unsupported commitment-satisfying-pairs
                           incoming-steps
@@ -702,12 +699,221 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Commitment Satisfaction
 
-;; TODO: when walking the edges, take care of edges that do an address rename (because the commitment
+;; (Listof related-pair) (other params?) -> (List (Listof related-pair) (Listof related-pair)
+;;
+;; Partitions simulation pairs into the set in which every fair execution of the impl-config satisfies
+;; all commitments in the spec-config, and the set in which that is unable to be determined (the set
+;; of satisfying pairs is the first element of the returned list).
+;;
+;; TODO: list preconditions here (particularly on related-spec-steps/incoming)
+(define (partition-by-satisfaction simulation-pairs related-spec-steps)
+  ;; TODO: get a more efficient representation of the outgoing edges, from incoming or
+  ;; related-spec-steps
+
+  (define satisfied-config-commitments mutable-set)
+  (define unsatisfied-config-commitments mutable-set)
+
+  (define-values (satisfying-pairs unsatisfying-pairs)
+    (for/fold ([satisfying-pairs (set)]
+              [unsatisfying-pairs (set)])
+             ([pair simulation-pairs])
+     (define all-commitments-satisfied?
+       (for/and ([commitment (aps#-config-commitments (config-pair-spec-config pair))])
+         (define config-commitment-pair (list pair commitment))
+         (cond
+           [(set-member?   satisfied-config-commitments config-commitment-pair) #t]
+           [(set-member? unsatisfied-config-commitments config-commitment-pair) #f]
+           [else
+            (match-define (list new-satisfied-config-commitments new-unsatisfied-config-commitments)
+              (check-commitment-satisfaction config-commitment-pair ?other-params?))
+            (set-union! satisfied-config-commitments   (list->set new-satisfied-config-commitments))
+            (set-union! unsatisfied-config-commitments (list->set new-unsatisfied-config-commitments))
+            (member config-commitment-pair new-satisfied-config-commitments)])))
+     (if all-commitments-satisfied?
+         (values (set-add satisfying-pairs pair) unsatisfying-pairs)
+         (values satisfying-pairs (set-add unsatisfying-pairs pair)))))
+
+  (list satisfying-pairs unsatisfying-pairs))
+
+(module+ test
+  (define (sat-test-node name commitment-address-number commitment-patterns)
+    (define mult-patterns (map (lambda (pat) `(single (variant ,pat))) commitment-patterns))
+    (list name
+          `(() () ([(obs-ext ,commitment-address-number (Union [W] [X] [Y] [Z])) ,@mult-patterns]))))
+  (define (sat-other-derivative-node name)
+    (list name `(() () ())))
+  (define (sat-impl-step trigger) (impl-step trigger #f null #f))
+  (define (sat-spec-step . satisfied-commitments) (spec-step #f #f satisfied-commitments))
+  (define (sat-alt-spec-step . satisfied-commitments) (spec-step #t #f satisfied-commitments))
+
+  ;; These are the structures used for most of the tests for commitment satisfaction
+  (define a-node (sat-test-node 'A 1 (list 'W 'X 'Y 'Z)))
+  (define b-node (sat-test-node 'B 1 (list 'Y 'Z)))
+  (define c-node (sat-test-node 'C 1 (list 'Y 'Z)))
+  (define d-node (sat-test-node 'D 1 (list 'Y 'Z)))
+  (define e-node (sat-test-node 'E 1 (list 'Z)))
+  (define f-node (sat-test-node 'F 1 (list 'Z)))
+  (define g-node (sat-test-node 'G 2 (list 'W 'Z)))
+  (define h-node (sat-test-node 'H 2 (list 'W 'Z)))
+  (define i-node (sat-test-node 'I 3 (list 'X 'Z)))
+  (define j-node (sat-test-node 'J 3 (list 'X 'Z)))
+  (define k-node (sat-test-node 'K 4 (list 'X 'Z)))
+  (define l-node (sat-test-node 'L 5 (list 'W 'Z)))
+  (define m-node (sat-other-derivative-node 'M))
+
+  ;; ne stands for "necessarily enabled", others use 'ue' for unnecessarily enabled
+  (define sat-ne-trigger1 `(timeout/empty-queue (init-addr 1 Nat)))
+  (define sat-ne-trigger2 `(internal-receive (init-addr 2 Nat) (* Nat)))
+  (define sat-ne-trigger3 `(internal-receive (init-addr 3 Nat) (* Nat)))
+  (define sat-ne-trigger4 `(internal-receive (init-addr 4 Nat) (* Nat)))
+
+  (define sat-ue-trigger1 `(external-receive (init-addr 1 Nat) (* Nat)))
+
+  (define ag-impl-step (sat-impl-step sat-ne-trigger1))
+  (define ai-impl-step (sat-impl-step sat-ne-trigger2))
+  (define akm-impl-step (sat-impl-step sat-ne-trigger3))
+  (define al-impl-step (sat-impl-step sat-ne-trigger4))
+  (define ba-impl-step (sat-impl-step sat-ne-trigger1))
+  (define b-cd-impl-step (sat-impl-step sat-ne-trigger2))
+  (define b-ef-impl-step (sat-impl-step sat-ne-trigger3))
+  (define gh-impl-step (sat-impl-step sat-ne-trigger1))
+  (define hg-impl-step (sat-impl-step sat-ne-trigger1))
+  (define ij-impl-step (sat-impl-step sat-ne-trigger1))
+  (define ia-impl-step (sat-impl-step sat-ne-trigger2))
+  (define ji-impl-step (sat-impl-step sat-ne-trigger1))
+  (define ja-impl-step (sat-impl-step sat-ne-trigger2))
+  (define la-impl-step (sat-impl-step sat-ue-trigger1))
+
+  (define ag-spec-step (sat-spec-step 'X 'Y))
+  (define ai-spec-step (sat-spec-step 'W 'Y))
+  (define akm-spec-step (sat-spec-step 'W 'Y))
+  (define al-spec-step (sat-spec-step 'X 'Y))
+  (define ba-spec-step (sat-spec-step))
+  (define bc-spec-step (sat-spec-step))
+  (define bd-spec-step (sat-alt-spec-step))
+  (define be-spec-step (sat-spec-step 'Y))
+  (define bf-spec-step (sat-alt-spec-step 'Y))
+  (define gh-spec-step (sat-spec-step))
+  (define hg-spec-step (sat-spec-step))
+  (define ij-spec-step (sat-spec-step))
+  (define ia-spec-step (sat-spec-step 'X))
+  (define ji-spec-step (sat-spec-step))
+  (define ja-spec-step (sat-spec-step 'X))
+  (define la-spec-step (sat-spec-step))
+
+  (define com-sat-incoming
+    (mutable-hash
+     [a-node (mutable-set (list b-node ba-impl-step ba-spec-step)
+                          (list i-node ia-impl-step ia-spec-step)
+                          (list j-node ja-impl-step ja-spec-step)
+                          (list l-node la-impl-step la-spec-step))]
+     [b-node (mutable-set)]
+     [c-node (mutable-set (list b-node b-cd-impl-step bc-spec-step))]
+     [d-node (mutable-set (list b-node b-cd-impl-step bd-spec-step))]
+     [e-node (mutable-set (list b-node b-ef-impl-step be-spec-step))]
+     [f-node (mutable-set (list b-node b-ef-impl-step bf-spec-step))]
+     [g-node (mutable-set (list a-node ag-impl-step ag-spec-step)
+                          (list h-node hg-impl-step hg-spec-step))]
+     [h-node (mutable-set (list g-node gh-impl-step gh-spec-step))]
+     [i-node (mutable-set (list a-node ai-impl-step ai-spec-step)
+                          (list j-node ji-impl-step ji-spec-step))]
+     [j-node (mutable-set (list i-node ij-impl-step ij-spec-step))]
+     [k-node (mutable-set (list a-node akm-impl-step akm-spec-step))]
+     [m-node (mutable-set (list a-node akm-impl-step akm-spec-step))]
+     [l-node (mutable-set (list a-node al-impl-step al-spec-step))]))
+
+  (define com-sat-related-steps
+    (mutable-hash
+     [(list a-node ag-impl-step) (mutable-set ag-spec-step)]
+     [(list a-node ai-impl-step) (mutable-set ai-spec-step)]
+     [(list a-node akm-impl-step) (mutable-set akm-spec-step)]
+     [(list a-node al-impl-step) (mutable-set al-spec-step)]
+     [(list b-node ba-impl-step) (mutable-set ba-spec-step)]
+     [(list b-node b-cd-impl-step) (mutable-set bc-spec-step bd-spec-step)]
+     [(list b-node b-ef-impl-step) (mutable-set be-spec-step bf-spec-step)]
+     [(list g-node gh-impl-step) (mutable-set gh-spec-step)]
+     [(list h-node hg-impl-step) (mutable-set hg-spec-step)]
+     [(list i-node ia-impl-step) (mutable-set ia-spec-step)]
+     [(list i-node ij-impl-step) (mutable-set ij-spec-step)]
+     [(list j-node ja-impl-step) (mutable-set ja-spec-step)]
+     [(list j-node ji-impl-step) (mutable-set ji-spec-step)]
+     [(list l-node la-impl-step) (mutable-set la-spec-step)]))
+
+  ;; TODO: Tests needed for partition-by-satisfaction:
+  ;; * no satisfying pairs
+  ;; * pair satisfies one commitment but not another
+  ;; * pair satisfies all of its commitments
+  ;; * pair satisfies none of its commitments
+  ;; * graph has one node always satisfied, another sometimes (depending on choice of spec step),
+  ;;   another never
+  )
+
+;; Type:
+;;
+;; (List (List impl-config spec-config) (List Address Pattern))
+;; TODO: more parameters?
+;; ->
+;; (List
+;;   (Listof (List (List impl-config spec-config) (List Address Pattern))
+;;   (Listof (List (List impl-config spec-config) (List Address Pattern))
+;;
+;; Given a pair of a related configuration pair and a commitment (i.e. a pair of an address and a
+;; pattern), returns two lists of the same kinds of pairs: the first is pairs such that all fair
+;; executions of the impl config satisfy the commitment; the second is pairs in which the algorithm
+;; could not determine commitment satisfatcion. The two lists are disjoint, and the given pair will be
+;; in one of the lists.
+;;
+;; Intuitively, this is checking for commitment satisfaction of the given pair, but because the
+;; algorithm also checks satisfaction for other relevant pairs as part of its process, we return those
+;; results as well.
+(define (check-commitment-satisfaction config-commitment-pair ?other-params?)
+    ;; TODO: implement this
+
+  ;; 1. create the graph of non-satisfying steps from the given pair
+  (define unsat-graph (build-unsatisfying-graph config-commitment-pair ?even-other-params?))
+  ;; 2. find all quiescent configurations
+  ;; 3. find all fair SCCs
+  ;; 4. Determine for each node whether it can reach either a dead-end state or a fair SCC (DFS/BFS on
+  ;;    transpose of the graph?
+  )
+
+
+  ;; TODO: when walking the edges, take care of edges that do an address rename (because the commitment
 ;; will also need to be renamed)
 
-(define (find-satisfying-pairs simulation-pairs related-spec-steps)
-  ;; TODO: implement this for real
-  simulation-pairs)
+  )
+
+(module+ test
+  ;; Tests needed for check-commitment-satisfaction:
+  ;; * all reachable pairs satisfy
+  ;; * no reachable pair satisfies (because of dead end)
+  ;; * no reachable pair satisfies (because of fair unsatisfying loops)
+  ;; * some satisfied, some not (do both dead ends and fair unsatisfying loops)
+  )
+
+;; Builds a graph whose vertices are pairs of configuation pairs and commitments such that there is an
+;; edge from v1 to v2 iff there is a step of v1's impl-config to v2's impl-config that does not
+;; satisfy the commitment in v1, and v2's commitment is the possibly renamed version of v1's
+;; commitment.
+;;
+;; TODO: maybe list the preconditions
+(define (build-unsatisfying-graph init-config-commitment-pair ?more??)
+  (define G make-graph)
+
+  ;; TODO: implement this
+
+  ;; TODO: decide if the graph (and other various structures) should include the pattern in each
+  ;; vertex or not
+
+  ;; TODO: should do both forward and backward walk from the given pair
+  )
+
+(module+ test
+  ;; Tests for graph: I think just something that tests a little of everything: only do the non-sat
+  ;; edges, record triggers in edges, backwards and forwards, multiple spec steps, etc.
+  )
+
+
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debugging

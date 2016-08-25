@@ -11,6 +11,8 @@ aps-abstract.rkt    Abstract semantic domains for APS (specification language), 
 
 desugar.rkt			Nanopass-based desugarer for the bigger language (desugars down to CSA)
 
+graph.rkt           A simple graph implementation
+
 raft.rkt			A larger test of the conformance-checker, for an implementation of Raft
 
 Naming Conventions
