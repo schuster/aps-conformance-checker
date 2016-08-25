@@ -5,7 +5,8 @@
 ;; sparse.
 
 (provide
- make-graph ; need this object to easily get all edges for backwards walk
+ make-graph
+ graph-literal
  graph-vertices
  graph-edges
  graph-find-vertex ; takes a graph and a vertex value, plus an optional is-equal? predicate
@@ -20,6 +21,9 @@
  edge-value
  edge-source
  edge-destination)
+
+(require
+ (for-syntax syntax/parse))
 
 (module+ test
   (require rackunit))
@@ -143,3 +147,20 @@
   (test-false "edge-equal? 4"
     (edge-equal? (edge 'x (vertex 'a #f #f) (vertex 'b #f #f))
                  (edge 'x (vertex 'a #f #f) (vertex 'd #f #f)))))
+
+(define-syntax (graph-literal stx)
+  (syntax-parse stx
+    #:datum-literals (vertices edges)
+    [(_ (vertices [v:id vertex-val] ...)
+        (edges [edge-val v1:id v2:id] ...))
+     #`(let ()
+         (define g (make-graph))
+         (define v (graph-add-vertex! g vertex-val)) ...
+         (void (graph-add-edge! g edge-val v1 v2)) ...
+         g)]))
+
+(module+ test
+  (test-true "graph-literal"
+    (graph-equal? g1
+                  (graph-literal [vertices [a 'a] [b 'b]]
+                                 [edges ['x a b]]))))
