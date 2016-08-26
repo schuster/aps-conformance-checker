@@ -8,12 +8,14 @@
  aps#-config-only-instance-address
  aps#-unknown-address?
  aps#-config-receptionists
+ aps#-config-singleton-commitments
  aps#-matching-steps
  aps#-resolve-outputs
  aps#-abstract-config
  split-spec
  aps#-blur-config
  canonicalize-pair
+ try-rename-address
 
  ;; Required by conformance checker for blurring
  aps#-relevant-external-addrs
@@ -1132,7 +1134,7 @@
 ;; Canonicalization (i.e. renaming)
 
 ;; Given an impl config/spec config pair, transforms it into an equivalent (for the purpose of
-;; conformance), canonical form. Specifically:
+;; conformance), canonical form. Also returns the address rename map. Specifically:
 ;;
 ;; 1. Changes all spawn address new/old flags to OLD (assumes that these configs have already been
 ;; blurred so that either an OLD or a NEW version of an address exists, but not both)
@@ -1155,7 +1157,8 @@
   (match-define (list renamed-impl-config renamed-spec-config)
     (term (rename-external-addresses ,(list aged-impl-config aged-spec-config) ,@substitutions)))
   (list renamed-impl-config
-        (aps#-sort-receptionists renamed-spec-config)))
+        (aps#-sort-receptionists renamed-spec-config)
+        substitutions))
 
 (module+ test
   (test-equal? "canonicalize 1"
@@ -1179,7 +1182,8 @@
          (goto A (obs-ext 0 Nat) (obs-ext 1 Nat) (obs-ext 2 Nat))
          (init-addr 0 Nat)))
        ()
-       (((obs-ext 0 Nat)) ((obs-ext 1 Nat)) ((obs-ext 2 Nat)))))))
+       (((obs-ext 0 Nat)) ((obs-ext 1 Nat)) ((obs-ext 2 Nat))))
+      ([25 0] [42 1] [10 2]))))
 
   (test-equal? "canonicalize 2"
     (canonicalize-pair
@@ -1202,7 +1206,8 @@
          (goto A (obs-ext 0 Nat) (obs-ext 1 Nat) (obs-ext 2 Nat))
          (spawn-addr 0 OLD Nat)))
        ()
-       (((obs-ext 0 Nat)) ((obs-ext 1 Nat)) ((obs-ext 2 Nat)))))))
+       (((obs-ext 0 Nat)) ((obs-ext 1 Nat)) ((obs-ext 2 Nat))))
+      ([25 0] [42 1] [10 2]))))
 
   (test-equal? "canonicalize 3"
     (canonicalize-pair
@@ -1217,7 +1222,8 @@
         (term ((spawn-addr 0 OLD Nat)
                (((define-state (A) (m) (goto A)))
                 (goto A)))))
-      (() () (((obs-ext 0 Nat) (single *))))))))
+      (() () (((obs-ext 0 Nat) (single *))))
+      ([101 0])))))
 
 ;; Given a term, changes all spawn addresses of the form (spawn-addr _ NEW _) to (spawn-addr _ OLD _),
 ;; to ensure that spawned addresses in the next handler are fresh.
@@ -1267,6 +1273,19 @@
   (check-true (sexp<? 'a 'b))
   (check-false (sexp<? 'b 'a))
   (check-false (sexp<? 'a null)))
+
+(define (try-rename-address rename-map addr)
+  (redex-let aps# ([(obs-ext natural any_type) addr])
+    (match (findf (lambda (entry) (equal? (first entry) (term natural))) rename-map)
+      [#f #f]
+      [(list _ new) (term (obs-ext ,new any_type))])))
+
+(module+ test
+  (test-equal? "try-rename-address success"
+    (try-rename-address (term ([1 3] [2 4])) (term (obs-ext 2 Nat)))
+    (term (obs-ext 4 Nat)))
+  (test-false "try-rename-address failure"
+    (try-rename-address (term ([1 3] [2 4])) (term (obs-ext 5 Nat)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Misc.

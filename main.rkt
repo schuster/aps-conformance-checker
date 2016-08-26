@@ -75,14 +75,16 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; "Type" Definitions
 
-;; IncomingStepsDict = (Hash config-pair (MutableSetof (List config-pair impl-step spec-step)))
+;; IncomingStepsDict = (Hash config-pair
+;;                          (MutableSetof (List config-pair impl-step spec-step (Hash Addr Addr))))
 ;;
 ;; Records all implementation and specification transitions that led to some pair discovered during
 ;; the initial construction of the rank-1 simulation. Formally, for all pairs <i, s> in either the
 ;; related pairs or unrelated successors returned by find-rank1-simulation, incoming-steps(i, s) = a
-;; set of tuples of the form (<i', s'>, i-step, s-step), where i-step is some transition from i',
-;; s-step is a transition from s' that matches i-step, and <i, s> ∈ sbc(i'', s'') where i'' and s''
-;; are the destination configurations from i-step and s-step, respectively.
+;; set of tuples of the form (<i', s'>, i-step, s-step, address-map), where i-step is some transition
+;; from i', s-step is a transition from s' that matches i-step, and <i, s> ∈ sbc(i'', s'') where i''
+;; and s'' are the destination configurations from i-step and s-step, respectively, and address-map
+;; maps the addresses in <i', s'> to those in <i, s>.
 ;;
 ;; In prune-unsupported, we use this data structure to determine the set of related pairs and
 ;; transitions that depend on this pair to prove their own membership in a relation.
@@ -139,8 +141,7 @@
   (cond
     [(spec-address-in-impl? initial-impl-config initial-spec-config) #f]
     [else
-     (define initial-pairs
-       (sbc (abstract-pair initial-impl-config initial-spec-config)))
+     (define initial-pairs (map first (sbc (abstract-pair initial-impl-config initial-spec-config))))
      (match-define (list rank1-pairs
                          rank1-unrelated-successors
                          incoming-steps
@@ -151,8 +152,8 @@
                           incoming-steps
                           rank1-related-spec-steps
                           rank1-unrelated-successors))
-     (match-define (commitment-satisfying-pairs unsatisfying-pairs)
-       (partition-by-satisfation simulation-pairs simulation-related-spec-steps))
+     (match-define (list commitment-satisfying-pairs unsatisfying-pairs)
+       (partition-by-satisfaction simulation-pairs simulation-related-spec-steps))
      (match-define (list conforming-pairs _)
        (prune-unsupported commitment-satisfying-pairs
                           incoming-steps
@@ -301,8 +302,11 @@
               ;; (for ([successor-pair successor-pairs])
               ;;   (printf "pre-sbc: ~s\n" successor-pair)
               ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
-              (for ([sbc-pair (hash-ref saved-derivatives (config-pair i-step s-step))])
-                (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step))
+              (for ([sbc-result (hash-ref saved-derivatives (config-pair i-step s-step))])
+                ;; TODO: add the address binding here, too, and adjust other uses of incoming (e.g. in
+                ;; prune-unsupported) to take that structure into account
+                (match-define (list sbc-pair rename-map) sbc-result)
+                (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step rename-map))
                 (unless (or (member sbc-pair (queue->list to-visit))
                             (set-member? related-pairs sbc-pair)
                             (set-member? unrelated-successors sbc-pair)
@@ -438,7 +442,7 @@
 ;; Split/Blur/Canonicalize (SBC)
 
 ;; Performs the SBC (split/blur/canonicalize) operation on a config pair, returning its derivative
-;; pairs. SBC entails the following:
+;; pairs along with an address-rename map with each pair. SBC entails the following:
 ;;
 ;; 1. For each address in the output commitment map that is *not* an argument to the current state,
 ;; split those commitments off into a new specification with a dummy FSM.
@@ -469,9 +473,9 @@
   (for/list ([blur-result blur-results])
     (match-define (list blurred-impl blurred-spec) blur-result)
     (display-step-line "Canonicalizing the pair, adding to queue")
-    (match-define (list canonicalized-impl canonicalized-spec)
+    (match-define (list canonicalized-impl canonicalized-spec rename-map)
       (canonicalize-pair blurred-impl blurred-spec))
-    (config-pair canonicalized-impl canonicalized-spec)))
+    (list (config-pair canonicalized-impl canonicalized-spec) rename-map)))
 
 ;; Calls sbc on every pair and merges the results into one long list. If sbc returns #f for any pair,
 ;; this function returns #f.
@@ -699,6 +703,42 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Commitment Satisfaction
 
+;; Data Structures for Commitment Satisfaction
+
+;; OutgoingStepsDict : (Hash ConfigPair (MutableSetof OutgoingImplStep)
+;; For each config pair, gives the set of outgoing implementation steps from that pair.
+
+;; An outgoing-impl-step represents a possible implementation step from a given configuration, and
+;; contains the impl-step itself as well as a set of outgoing-spec-steps that represent the impl
+;; step's matching spec steps.
+(struct outgoing-impl-step (the-step matching-spec-steps)
+  #:transparent
+  ;; NOTE: implementing custom equality here to work around Racket bug
+  ;; http://bugs.racket-lang.org/query/?cmd=view&pr=15342
+  #:methods gen:equal+hash
+  [(define (equal-proc s1 s2 rec?)
+     (and (rec? (outgoing-impl-step-the-step s1)
+                  (outgoing-impl-step-the-step s2))
+          (rec? (list->set (set->list (outgoing-impl-step-matching-spec-steps s1)))
+                (list->set (set->list (outgoing-impl-step-matching-spec-steps s2))))))
+   (define (hash-proc s rec)
+     (+ (rec (outgoing-impl-step-the-step s))
+        (rec (list->set (set->list (outgoing-impl-step-matching-spec-steps s))))))
+   (define (hash2-proc s rec)
+     (+ (rec (outgoing-impl-step-the-step s))
+        (rec (list->set (set->list (outgoing-impl-step-matching-spec-steps s))))))])
+
+;; An outgoing-spec-step represents a possible spec-step from some configuration and contains the step
+;; itself as well as a set of outgoing-derivatives representing the possible sbc-derivatives after
+;; taking this step.
+(struct outgoing-spec-step (the-step derivatives) #:transparent)
+
+;; An outgoing-derivative represents a possible sbc-derivative of some impl-step/spec-step pair. It
+;; contains the new configuration itself as well as a hash table from addresses to addresses
+;; representing the address-substitution done during the canonicalization phase.
+(struct outgoing-derivative (config-pair address-map) #:transparent)
+
+
 ;; (Listof related-pair) (other params?) -> (List (Listof related-pair) (Listof related-pair)
 ;;
 ;; Partitions simulation pairs into the set in which every fair execution of the impl-config satisfies
@@ -710,36 +750,46 @@
   ;; TODO: get a more efficient representation of the outgoing edges, from incoming or
   ;; related-spec-steps
 
-  (define satisfied-config-commitments mutable-set)
-  (define unsatisfied-config-commitments mutable-set)
+  ;; TODO: when I check SCCs for fairness, I should have some kind of dictionary I can use across runs
+  ;; that gives the necessarily enabled triggers for each config, so I don't have to recompute them
+  ;; every time
 
-  (define-values (satisfying-pairs unsatisfying-pairs)
-    (for/fold ([satisfying-pairs (set)]
-              [unsatisfying-pairs (set)])
-             ([pair simulation-pairs])
-     (define all-commitments-satisfied?
-       (for/and ([commitment (aps#-config-commitments (config-pair-spec-config pair))])
-         (define config-commitment-pair (list pair commitment))
-         (cond
-           [(set-member?   satisfied-config-commitments config-commitment-pair) #t]
-           [(set-member? unsatisfied-config-commitments config-commitment-pair) #f]
-           [else
-            (match-define (list new-satisfied-config-commitments new-unsatisfied-config-commitments)
-              (check-commitment-satisfaction config-commitment-pair ?other-params?))
-            (set-union! satisfied-config-commitments   (list->set new-satisfied-config-commitments))
-            (set-union! unsatisfied-config-commitments (list->set new-unsatisfied-config-commitments))
-            (member config-commitment-pair new-satisfied-config-commitments)])))
-     (if all-commitments-satisfied?
-         (values (set-add satisfying-pairs pair) unsatisfying-pairs)
-         (values satisfying-pairs (set-add unsatisfying-pairs pair)))))
+  ;; (define satisfied-config-commitments mutable-set)
+  ;; (define unsatisfied-config-commitments mutable-set)
 
-  (list satisfying-pairs unsatisfying-pairs))
+  ;; (define-values (satisfying-pairs unsatisfying-pairs)
+  ;;   (for/fold ([satisfying-pairs (set)]
+  ;;             [unsatisfying-pairs (set)])
+  ;;            ([pair simulation-pairs])
+  ;;    (define all-commitments-satisfied?
+  ;;      (for/and ([commitment (aps#-config-commitments (config-pair-spec-config pair))])
+  ;;        (define config-commitment-pair (list pair commitment))
+  ;;        (cond
+  ;;          [(set-member?   satisfied-config-commitments config-commitment-pair) #t]
+  ;;          [(set-member? unsatisfied-config-commitments config-commitment-pair) #f]
+  ;;          [else
+  ;;           (match-define (list new-satisfied-config-commitments new-unsatisfied-config-commitments)
+  ;;             (check-commitment-satisfaction config-commitment-pair ?other-params?))
+  ;;           (set-union! satisfied-config-commitments   (list->set new-satisfied-config-commitments))
+  ;;           (set-union! unsatisfied-config-commitments (list->set new-unsatisfied-config-commitments))
+  ;;           (member config-commitment-pair new-satisfied-config-commitments)])))
+  ;;    (if all-commitments-satisfied?
+  ;;        (values (set-add satisfying-pairs pair) unsatisfying-pairs)
+  ;;        (values satisfying-pairs (set-add unsatisfying-pairs pair)))))
+
+  ;; (list satisfying-pairs unsatisfying-pairs)
+
+  ;; TODO: remove this old code
+  (list simulation-pairs null)
+  )
 
 (module+ test
+  (define com-sat-ext-type `(Union [W] [X] [Y] [Z]))
+  (define (make-com-sat-ext-address number) `(obs-ext ,number ,com-sat-ext-type))
   (define (sat-test-node name commitment-address-number commitment-patterns)
     (define mult-patterns (map (lambda (pat) `(single (variant ,pat))) commitment-patterns))
     (list name
-          `(() () ([(obs-ext ,commitment-address-number (Union [W] [X] [Y] [Z])) ,@mult-patterns]))))
+          `(() () ([,(make-com-sat-ext-address commitment-address-number) ,@mult-patterns]))))
   (define (sat-other-derivative-node name)
     (list name `(() () ())))
   (define (sat-impl-step trigger) (impl-step trigger #f null #f))
@@ -748,9 +798,9 @@
 
   ;; These are the structures used for most of the tests for commitment satisfaction
   (define a-node (sat-test-node 'A 1 (list 'W 'X 'Y 'Z)))
-  (define b-node (sat-test-node 'B 1 (list 'Y 'Z)))
-  (define c-node (sat-test-node 'C 1 (list 'Y 'Z)))
-  (define d-node (sat-test-node 'D 1 (list 'Y 'Z)))
+  (define b-node (sat-test-node 'B 1 (list 'X 'Z)))
+  (define c-node (sat-test-node 'C 1 (list 'X 'Z)))
+  (define d-node (sat-test-node 'D 1 (list 'X 'Z)))
   (define e-node (sat-test-node 'E 1 (list 'Z)))
   (define f-node (sat-test-node 'F 1 (list 'Z)))
   (define g-node (sat-test-node 'G 2 (list 'W 'Z)))
@@ -778,10 +828,10 @@
   (define b-ef-impl-step (sat-impl-step sat-ne-trigger3))
   (define gh-impl-step (sat-impl-step sat-ne-trigger1))
   (define hg-impl-step (sat-impl-step sat-ne-trigger1))
-  (define ij-impl-step (sat-impl-step sat-ne-trigger1))
   (define ia-impl-step (sat-impl-step sat-ne-trigger2))
-  (define ji-impl-step (sat-impl-step sat-ne-trigger1))
+  (define ij-impl-step (sat-impl-step sat-ne-trigger1))
   (define ja-impl-step (sat-impl-step sat-ne-trigger2))
+  (define ji-impl-step (sat-impl-step sat-ne-trigger1))
   (define la-impl-step (sat-impl-step sat-ue-trigger1))
 
   (define ag-spec-step (sat-spec-step 'X 'Y))
@@ -791,36 +841,39 @@
   (define ba-spec-step (sat-spec-step))
   (define bc-spec-step (sat-spec-step))
   (define bd-spec-step (sat-alt-spec-step))
-  (define be-spec-step (sat-spec-step 'Y))
-  (define bf-spec-step (sat-alt-spec-step 'Y))
+  (define be-spec-step (sat-spec-step 'X))
+  (define bf-spec-step (sat-alt-spec-step 'X))
   (define gh-spec-step (sat-spec-step))
   (define hg-spec-step (sat-spec-step))
-  (define ij-spec-step (sat-spec-step))
   (define ia-spec-step (sat-spec-step 'X))
-  (define ji-spec-step (sat-spec-step))
+  (define ij-spec-step (sat-spec-step))
   (define ja-spec-step (sat-spec-step 'X))
+  (define ji-spec-step (sat-spec-step))
   (define la-spec-step (sat-spec-step))
+
+  (define (make-com-sat-map old new)
+    (list (list old new)))
 
   (define com-sat-incoming
     (mutable-hash
-     [a-node (mutable-set (list b-node ba-impl-step ba-spec-step)
-                          (list i-node ia-impl-step ia-spec-step)
-                          (list j-node ja-impl-step ja-spec-step)
-                          (list l-node la-impl-step la-spec-step))]
+     [a-node (mutable-set (list b-node ba-impl-step ba-spec-step (make-com-sat-map 1 1))
+                          (list i-node ia-impl-step ia-spec-step (make-com-sat-map 3 1))
+                          (list j-node ja-impl-step ja-spec-step (make-com-sat-map 3 1))
+                          (list l-node la-impl-step la-spec-step (make-com-sat-map 5 1)))]
      [b-node (mutable-set)]
-     [c-node (mutable-set (list b-node b-cd-impl-step bc-spec-step))]
-     [d-node (mutable-set (list b-node b-cd-impl-step bd-spec-step))]
-     [e-node (mutable-set (list b-node b-ef-impl-step be-spec-step))]
-     [f-node (mutable-set (list b-node b-ef-impl-step bf-spec-step))]
-     [g-node (mutable-set (list a-node ag-impl-step ag-spec-step)
-                          (list h-node hg-impl-step hg-spec-step))]
-     [h-node (mutable-set (list g-node gh-impl-step gh-spec-step))]
-     [i-node (mutable-set (list a-node ai-impl-step ai-spec-step)
-                          (list j-node ji-impl-step ji-spec-step))]
-     [j-node (mutable-set (list i-node ij-impl-step ij-spec-step))]
-     [k-node (mutable-set (list a-node akm-impl-step akm-spec-step))]
-     [m-node (mutable-set (list a-node akm-impl-step akm-spec-step))]
-     [l-node (mutable-set (list a-node al-impl-step al-spec-step))]))
+     [c-node (mutable-set (list b-node b-cd-impl-step bc-spec-step (make-com-sat-map 1 1)))]
+     [d-node (mutable-set (list b-node b-cd-impl-step bd-spec-step (make-com-sat-map 1 1)))]
+     [e-node (mutable-set (list b-node b-ef-impl-step be-spec-step (make-com-sat-map 1 1)))]
+     [f-node (mutable-set (list b-node b-ef-impl-step bf-spec-step (make-com-sat-map 1 1)))]
+     [g-node (mutable-set (list a-node ag-impl-step ag-spec-step (make-com-sat-map 1 2))
+                          (list h-node hg-impl-step hg-spec-step (make-com-sat-map 2 2)))]
+     [h-node (mutable-set (list g-node gh-impl-step gh-spec-step (make-com-sat-map 2 2)))]
+     [i-node (mutable-set (list a-node ai-impl-step ai-spec-step (make-com-sat-map 1 3))
+                          (list j-node ji-impl-step ji-spec-step (make-com-sat-map 3 3)))]
+     [j-node (mutable-set (list i-node ij-impl-step ij-spec-step (make-com-sat-map 3 3)))]
+     [k-node (mutable-set (list a-node akm-impl-step akm-spec-step (make-com-sat-map 1 4)))]
+     [m-node (mutable-set (list a-node akm-impl-step akm-spec-step null))]
+     [l-node (mutable-set (list a-node al-impl-step al-spec-step (make-com-sat-map 1 5)))]))
 
   (define com-sat-related-steps
     (mutable-hash
@@ -839,6 +892,68 @@
      [(list j-node ji-impl-step) (mutable-set ji-spec-step)]
      [(list l-node la-impl-step) (mutable-set la-spec-step)]))
 
+  (define (single-match-step i-step s-step derivative addr-map)
+    (outgoing-impl-step
+     i-step
+     (mutable-set
+      (outgoing-spec-step
+       s-step
+       (mutable-set (outgoing-derivative derivative addr-map))))))
+
+  (define com-sat-outgoing
+    (mutable-hash
+     [a-node
+      (mutable-set
+       (single-match-step ag-impl-step ag-spec-step g-node (make-com-sat-map 1 2))
+       (single-match-step ai-impl-step ai-spec-step i-node (make-com-sat-map 1 3))
+       (outgoing-impl-step
+        akm-impl-step
+        (mutable-set
+         (outgoing-spec-step
+          akm-spec-step
+          (mutable-set
+           (outgoing-derivative k-node (make-com-sat-map 1 4))
+           (outgoing-derivative m-node null)))))
+       (single-match-step al-impl-step al-spec-step l-node (make-com-sat-map 1 5)))]
+     [b-node
+      (mutable-set
+       (single-match-step ba-impl-step ba-spec-step a-node (make-com-sat-map 1 1))
+       (outgoing-impl-step
+        b-cd-impl-step
+        (mutable-set
+         (outgoing-spec-step
+          bc-spec-step
+          (mutable-set c-node (make-com-sat-map 1 1)))
+         (outgoing-spec-step
+          bd-spec-step
+          (mutable-set d-node (make-com-sat-map 1 1)))))
+       (outgoing-impl-step
+        b-ef-impl-step
+        (mutable-set
+         (outgoing-spec-step
+          be-spec-step
+          (mutable-set e-node (make-com-sat-map 1 1)))
+         (outgoing-spec-step
+          bf-spec-step
+          (mutable-set f-node (make-com-sat-map 1 1))))))]
+     [c-node (mutable-set)]
+     [d-node (mutable-set)]
+     [e-node (mutable-set)]
+     [f-node (mutable-set)]
+     [g-node
+      (mutable-set (single-match-step gh-impl-step gh-spec-step h-node (make-com-sat-map 2 2)))]
+     [h-node
+      (mutable-set (single-match-step hg-impl-step hg-spec-step g-node (make-com-sat-map 2 2)))]
+     [i-node
+      (mutable-set (single-match-step ia-impl-step ia-spec-step a-node (make-com-sat-map 3 1))
+                   (single-match-step ij-impl-step ij-spec-step j-node (make-com-sat-map 3 3)))]
+     [j-node
+      (mutable-set (single-match-step ja-impl-step ja-spec-step a-node (make-com-sat-map 3 1))
+                   (single-match-step ji-impl-step ji-spec-step i-node (make-com-sat-map 3 3)))]
+     [k-node (mutable-set)]
+     [l-node
+      (mutable-set (single-match-step la-impl-step la-spec-step a-node (make-com-sat-map 5 1)))]))
+
   ;; TODO: Tests needed for partition-by-satisfaction:
   ;; * no satisfying pairs
   ;; * pair satisfies one commitment but not another
@@ -847,6 +962,91 @@
   ;; * graph has one node always satisfied, another sometimes (depending on choice of spec step),
   ;;   another never
   )
+
+;; Builds an OutgoingStepsDict from the given dictionaries
+(define (build-outgoing-dict incoming related-spec-steps)
+  (define outgoing (make-hash))
+
+  (for ([(config-pair this-pair-incoming-steps) incoming])
+    ;; 1. add entry for current config pair if it doesn't exist yet
+    (unless (hash-has-key? outgoing config-pair)
+      (hash-set! outgoing config-pair (mutable-set)))
+
+    (for ([incoming-step this-pair-incoming-steps])
+      (match-define (list pred-pair impl-step spec-step address-map) incoming-step)
+      ;; 2. add entry for predecessor config pair if it doesn't exist yet
+      (define outgoing-impl-steps
+        (match (hash-ref outgoing pred-pair #f)
+          [#f
+           (define steps (mutable-set))
+           (hash-set! outgoing pred-pair steps)
+           steps]
+          [steps steps]))
+      ;; 3. add this impl step if it doesn't exist yet
+      (define outgoing-impl
+        (match (set-findf (lambda (s) (equal? (outgoing-impl-step-the-step s) impl-step))
+                          outgoing-impl-steps)
+          [#f
+           (define outgoing-i-step (outgoing-impl-step impl-step (mutable-set)))
+           (set-add! outgoing-impl-steps outgoing-i-step)
+           outgoing-i-step]
+          [the-step the-step]))
+      ;; 4. add this spec step if it's related and doesn't exist yet
+      (define spec-steps (outgoing-impl-step-matching-spec-steps outgoing-impl))
+      (when (set-member? (hash-ref related-spec-steps (list pred-pair impl-step)) spec-step)
+        (define outgoing-spec
+          (match (set-findf (lambda (s) (equal? (outgoing-spec-step-the-step s) spec-step))
+                            spec-steps)
+            [#f
+             (define outgoing-s-step (outgoing-spec-step spec-step (mutable-set)))
+             (set-add! spec-steps outgoing-s-step)
+             outgoing-s-step]
+            [the-step the-step]))
+        ;; 5. add this derivative of the spec step
+        (set-add! (outgoing-spec-step-derivatives outgoing-spec)
+                  (outgoing-derivative config-pair address-map)))))
+  outgoing)
+
+(module+ test
+  (test-hash-of-msets-equal? "super-simple build-outgoing test 1"
+    (build-outgoing-dict (immutable-hash [(list 'a 'x) (mutable-set)])
+                         (immutable-hash))
+    (mutable-hash [(list 'a 'x) (mutable-set)]))
+
+  (test-hash-of-msets-equal? "super-simple build-outgoing test 2"
+    (build-outgoing-dict
+     (immutable-hash [(list 'a 'x) (mutable-set)]
+                     [(list 'b 'y) (mutable-set (list (list 'a 'x) 'impl1 'spec1 null))])
+     (immutable-hash [(list (list 'a 'x) 'impl1) (mutable-set 'spec1)]))
+    (mutable-hash [(list 'a 'x) (mutable-set
+                                 (outgoing-impl-step
+                                  'impl1
+                                  (mutable-set
+                                   (outgoing-spec-step
+                                    'spec1
+                                    (mutable-set
+                                     (outgoing-derivative (list 'b 'y) null))))))]
+                  [(list 'b 'y) (mutable-set)]))
+
+  (test-hash-of-msets-equal? "build-outgoing test with unrelated spec step"
+    (build-outgoing-dict
+     (immutable-hash [(list 'a 'x) (mutable-set)]
+                     [(list 'b 'y) (mutable-set (list (list 'a 'x) 'impl1 'spec1 null)
+                                                (list (list 'a 'x) 'impl1 'spec2 null))])
+     (immutable-hash [(list (list 'a 'x) 'impl1) (mutable-set 'spec1)]))
+    (mutable-hash [(list 'a 'x) (mutable-set
+                                 (outgoing-impl-step
+                                  'impl1
+                                  (mutable-set
+                                   (outgoing-spec-step
+                                    'spec1
+                                    (mutable-set
+                                     (outgoing-derivative (list 'b 'y) null))))))]
+                  [(list 'b 'y) (mutable-set)]))
+
+  (test-hash-of-msets-equal? "build-outgoing-dict"
+    (build-outgoing-dict com-sat-incoming com-sat-related-steps)
+    com-sat-outgoing))
 
 ;; Type:
 ;;
@@ -870,16 +1070,19 @@
     ;; TODO: implement this
 
   ;; 1. create the graph of non-satisfying steps from the given pair
-  (define unsat-graph (build-unsatisfying-graph config-commitment-pair ?even-other-params?))
+  ;; (define unsat-graph (build-unsatisfying-graph config-commitment-pair ?even-other-params?))
   ;; 2. find all quiescent configurations
   ;; 3. find all fair SCCs
   ;; 4. Determine for each node whether it can reach either a dead-end state or a fair SCC (DFS/BFS on
-  ;;    transpose of the graph?
-  )
+  ;;    transpose of the graph?)
+
 
 
   ;; TODO: when walking the edges, take care of edges that do an address rename (because the commitment
 ;; will also need to be renamed)
+
+
+(error "not yet implemented")
 
   )
 
@@ -897,23 +1100,146 @@
 ;; commitment.
 ;;
 ;; TODO: maybe list the preconditions
-(define (build-unsatisfying-graph init-config-commitment-pair ?more??)
-  (define G make-graph)
+(define (build-unsatisfying-graph init-config-commitment-pair incoming outgoing related-spec-steps)
+  (define G (make-graph))
+  ;; TODO: generalize the below func so it works for forward and backward walks
+  ;;
+  ;; TODO: figure out how to ensure I add each edge only once, not once per walk (some edges would
+  ;; explored in both)
 
-  ;; TODO: implement this
+  (define init-vertex (graph-add-vertex! G init-config-commitment-pair))
+  (define worklist (queue init-vertex))
 
-  ;; TODO: decide if the graph (and other various structures) should include the pattern in each
-  ;; vertex or not
+  ;; Loop invariant: at the top of the loop, every pair in the worklist has a corresponding vertex in G, but has only had its outgoing edges added if ... (TODO: update this invariant)
+  (let loop ([visited (set)])
+    (match (dequeue-if-non-empty! worklist)
+      [#f (void)]
+      [vertex
+       (define pair (vertex-value vertex))
+       ;; 1. check if this pair has already been visited
+       (cond
+         [(set-member? visited pair)
+          (loop visited)]
+         [else
+          ;; New idea: for each pair we visit, add the backward edges (b/c these are easiest to
+          ;; access), and also add its successors to worklist and graph if they have non-sat edge to there
 
-  ;; TODO: should do both forward and backward walk from the given pair
-  )
+          ;; 2. For each impl-step from this node that does not satisfy the commitment, add its edges
+          ;; that do not satisfy the commitment
+          (define config-pair (first pair))
+          (define commitment (second pair))
+          (define commitment-address (first commitment))
+          (define pattern (second commitment))
+
+          ;; TODO: update the dissertation document: I think instead of picking an arbitrary spec
+          ;; step, I should take all of them. Doing both backwards and forward walks will probably
+          ;; force me to do that anyway
+
+          ;; Ideal code here, for now:
+          ;; (for ([incoming-step (hash-ref some-incoming-steps config-pair)])
+          ;;   ;; TODO: incoming step needs:
+          ;;   ;; * rename map
+          ;;   ;; * list of satisfied commitments
+          ;;   ;; * config pair
+          ;;   ;; * the spec step
+
+          ;;   (define predecessor-commitment
+          ;;     (list (reverse-rename-address (incoming-step-address-mapping incoming-step) commitment-address)
+          ;;           pattern))
+          ;;   (when (spec-step-satisfies-commitment? (incoming-step-spec-step incoming-step) predecessor-commitment)
+          ;;     (define pred-vertex (graph-find-or-add-vertex! G (list incoming-step-predecessor predecessor-commitment)))
+          ;;     (graph-add-edge-if-new! G incoming-step-spec-step pred-vertex vertex)
+          ;;     (enqueue! worklist pred-vertex)))
+
+          (for ([impl-step (hash-ref outgoing config-pair)])
+            (define the-impl-step (outgoing-impl-step-the-step impl-step))
+            (for ([spec-step (outgoing-impl-step-matching-spec-steps impl-step)])
+              ;; TODO: come up with new names for the kinds of spec and impl steps
+              (define the-spec-step (outgoing-spec-step-the-step spec-step))
+              (unless (member commitment (spec-step-satisfied-commitments the-spec-step))
+                (match-define (list derivative successor-commitment)
+                  (find-carrying-derivative spec-step commitment))
+                (define successor-vertex
+                  (graph-find-or-add-vertex! G (list derivative successor-commitment)))
+                (graph-add-edge-if-new! G (list the-impl-step the-spec-step) vertex successor-vertex)
+                (enqueue! worklist successor-vertex))))])]))
+  G)
 
 (module+ test
   ;; Tests for graph: I think just something that tests a little of everything: only do the non-sat
   ;; edges, record triggers in edges, backwards and forwards, multiple spec steps, etc.
-  )
 
+  (define (make-graph-value configs address-number variant-tag)
+    (list configs (list (make-com-sat-ext-address address-number) `(variant ,variant-tag))))
 
+  (test-true "build-unsatisfying-graph: A with pattern W"
+    (graph-equal?
+     (build-unsatisfying-graph (make-graph-value a-node 1 'W)
+                               com-sat-incoming
+                               com-sat-outgoing
+                               com-sat-related-steps)
+     (graph-literal (vertices [a (make-graph-value a-node 1 'W)]
+                              [g (make-graph-value g-node 2 'W)]
+                              [h (make-graph-value h-node 2 'W)]
+                              [l (make-graph-value l-node 5 'W)])
+                    (edges [(list ag-impl-step ag-spec-step) a g]
+                           [(list gh-impl-step gh-spec-step) g h]
+                           [(list hg-impl-step hg-spec-step) h g]
+                           [(list al-impl-step al-spec-step) a l]
+                           [(list la-impl-step la-spec-step) l a]))))
+
+  (define com-sat-x-on-a-graph
+    (graph-literal
+     (vertices [a (make-graph-value a-node 1 'X)]
+               [b (make-graph-value b-node 1 'X)]
+               [c (make-graph-value c-node 1 'X)]
+               [d (make-graph-value d-node 1 'X)]
+               [i (make-graph-value i-node 3 'X)]
+               [j (make-graph-value j-node 3 'X)]
+               [k (make-graph-value k-node 4 'X)])
+     (edges [(list ai-impl-step ai-spec-step) a i]
+            [(list akm-impl-step akm-spec-step) a k]
+            [(list b-cd-impl-step bc-spec-step) b c]
+            [(list b-cd-impl-step bd-spec-step) b c]
+            [(list ij-impl-step ij-spec-step) i j]
+            [(list ji-impl-step ji-spec-step) j i])))
+
+  (test-true "build-unsatisfying-graph 2"
+    (graph-equal?
+     (build-unsatisfying-graph (make-graph-value a-node 1 'X)
+                               com-sat-incoming
+                               com-sat-outgoing
+                               com-sat-related-steps)
+     com-sat-x-on-a-graph)))
+
+;; outgoing-spec-step (List address pattern) -> (List config-pair (List address pattern))
+;;
+;; Finds the derivative of the given spec step that carries the commitment, returning both the
+;; derivative config pair as well as the new commitment (i.e. the commitment that has the address
+;; renamed to match the new config)
+(define (find-carrying-derivative spec-step commitment)
+
+  ;; TODO:
+  (error "not yet implemented"))
+
+;; Returns the vertex with the given value in the graph, or adds such a vertex if none exists and
+;; returns it
+(define (graph-find-or-add-vertex! g val)
+  (match (graph-find-vertex g val)
+    [#f (graph-add-vertex! g val)]
+    [v v]))
+
+;; Adds an edge with the given value, source, and destination to the given graph if such an edge does
+;; not already exist
+(define (graph-add-edge-if-new! g val src dest)
+  (define (target-edge? e)
+     (and (equal? (edge-value e) val)
+          (equal? (edge-source e) src)
+          (equal? (edge-destination e) dest)))
+  (unless (findf target-edge? (vertex-outgoing src))
+    (graph-add-edge! g val src dest)))
+
+(module+ test (error "stop"))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debugging
