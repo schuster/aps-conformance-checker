@@ -1141,22 +1141,19 @@
           ;; step, I should take all of them. Doing both backwards and forward walks will probably
           ;; force me to do that anyway
 
-          ;; Ideal code here, for now:
-          ;; (for ([incoming-step (hash-ref some-incoming-steps config-pair)])
-          ;;   ;; TODO: incoming step needs:
-          ;;   ;; * rename map
-          ;;   ;; * list of satisfied commitments
-          ;;   ;; * config pair
-          ;;   ;; * the spec step
+          ;; Add vertices and edges from walking backwards
+          (for ([incoming-entry (hash-ref incoming config-pair)])
+            (match-define (list prev-config-pair i-step s-step addr-map) incoming-entry)
+            (define prev-address (reverse-rename-address addr-map commitment-address))
+            (define prev-commitment (list prev-address pattern))
+            (when (and (aps#-config-has-commitment? (second prev-config-pair) prev-address pattern)
+                       (not (member prev-commitment (spec-step-satisfied-commitments s-step))))
+              (define pred-vertex
+                (graph-find-or-add-vertex! G (list prev-config-pair prev-commitment)))
+              (graph-add-edge-if-new! G (list i-step s-step) pred-vertex vertex)
+              (enqueue! worklist pred-vertex)))
 
-          ;;   (define predecessor-commitment
-          ;;     (list (reverse-rename-address (incoming-step-address-mapping incoming-step) commitment-address)
-          ;;           pattern))
-          ;;   (when (spec-step-satisfies-commitment? (incoming-step-spec-step incoming-step) predecessor-commitment)
-          ;;     (define pred-vertex (graph-find-or-add-vertex! G (list incoming-step-predecessor predecessor-commitment)))
-          ;;     (graph-add-edge-if-new! G incoming-step-spec-step pred-vertex vertex)
-          ;;     (enqueue! worklist pred-vertex)))
-
+          ;; ;; Add vertices and edges from walking forwards
           (for ([impl-step (hash-ref outgoing config-pair)])
             (define the-impl-step (outgoing-impl-step-the-step impl-step))
             (for ([spec-step (outgoing-impl-step-matching-spec-steps impl-step)])
@@ -1229,8 +1226,9 @@
                [k (make-graph-value k-node 4 'X)])
      (edges [(list ai-impl-step ai-spec-step) a i]
             [(list akm-impl-step akm-spec-step) a k]
+            [(list ba-impl-step ba-spec-step) b a]
             [(list b-cd-impl-step bc-spec-step) b c]
-            [(list b-cd-impl-step bd-spec-step) b c]
+            [(list b-cd-impl-step bd-spec-step) b d]
             [(list ij-impl-step ij-spec-step) i j]
             [(list ji-impl-step ji-spec-step) j i])))
 
@@ -1280,9 +1278,9 @@
 ;; not already exist
 (define (graph-add-edge-if-new! g val src dest)
   (define (target-edge? e)
-     (and (equal? (edge-value e) val)
-          (equal? (edge-source e) src)
-          (equal? (edge-destination e) dest)))
+    (and (equal? (edge-value e) val)
+         (equal? (vertex-value (edge-source e)) (vertex-value src))
+         (equal? (vertex-value (edge-destination e)) (vertex-value dest))))
   (unless (findf target-edge? (vertex-outgoing src))
     (graph-add-edge! g val src dest)))
 
@@ -1294,7 +1292,8 @@
       (displayln g)
       g)
     (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b])))
-    (test-graph-equal? "graph-add-edge-if-new! 2"
+
+  (test-graph-equal? "graph-add-edge-if-new! 2"
     (let ()
       (define g (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b])))
       (graph-add-edge-if-new! g 2 (graph-find-vertex g 'a) (graph-find-vertex g 'b))
