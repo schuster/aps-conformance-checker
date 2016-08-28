@@ -1286,7 +1286,22 @@
   (unless (findf target-edge? (vertex-outgoing src))
     (graph-add-edge! g val src dest)))
 
-(module+ test (error "stop"))
+(module+ test
+  (test-graph-equal? "graph-add-edge-if-new!"
+    (let ()
+      (define g (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b])))
+      (graph-add-edge-if-new! g 1 (graph-find-vertex g 'a) (graph-find-vertex g 'b))
+      (displayln g)
+      g)
+    (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b])))
+    (test-graph-equal? "graph-add-edge-if-new! 2"
+    (let ()
+      (define g (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b])))
+      (graph-add-edge-if-new! g 2 (graph-find-vertex g 'a) (graph-find-vertex g 'b))
+      g)
+    (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b] [2 a b])))
+
+  (error "stop"))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debugging
