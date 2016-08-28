@@ -20,7 +20,9 @@
 
  edge-value
  edge-source
- edge-destination)
+ edge-destination
+
+ print-graph)
 
 (require
  (for-syntax syntax/parse))
@@ -165,3 +167,12 @@
     (graph-equal? g1
                   (graph-literal [vertices [a 'a] [b 'b]]
                                  [edges ['x a b]]))))
+
+(define (print-graph g)
+  (for ([v (graph-vertices g)])
+    (printf "Vertex: ~s\n" (vertex-value v))
+    (for ([e (vertex-outgoing v)])
+      (printf "  Edge:\n" )
+      (printf "    Value: ~s\n" (edge-value e))
+      (printf "    Source: ~s\n" (vertex-value (edge-source e)))
+      (printf "    Dest: ~s\n" (vertex-value (edge-destination e))))))
