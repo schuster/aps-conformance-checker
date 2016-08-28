@@ -923,19 +923,19 @@
         (mutable-set
          (outgoing-spec-step
           bc-spec-step
-          (mutable-set c-node (make-com-sat-map 1 1)))
+          (mutable-set (outgoing-derivative c-node (make-com-sat-map 1 1))))
          (outgoing-spec-step
           bd-spec-step
-          (mutable-set d-node (make-com-sat-map 1 1)))))
+          (mutable-set (outgoing-derivative d-node (make-com-sat-map 1 1))))))
        (outgoing-impl-step
         b-ef-impl-step
         (mutable-set
          (outgoing-spec-step
           be-spec-step
-          (mutable-set e-node (make-com-sat-map 1 1)))
+          (mutable-set (outgoing-derivative e-node (make-com-sat-map 1 1))))
          (outgoing-spec-step
           bf-spec-step
-          (mutable-set f-node (make-com-sat-map 1 1))))))]
+          (mutable-set (outgoing-derivative f-node (make-com-sat-map 1 1)))))))]
      [c-node (mutable-set)]
      [d-node (mutable-set)]
      [e-node (mutable-set)]
@@ -952,7 +952,8 @@
                    (single-match-step ji-impl-step ji-spec-step i-node (make-com-sat-map 3 3)))]
      [k-node (mutable-set)]
      [l-node
-      (mutable-set (single-match-step la-impl-step la-spec-step a-node (make-com-sat-map 5 1)))]))
+      (mutable-set (single-match-step la-impl-step la-spec-step a-node (make-com-sat-map 5 1)))]
+     [m-node (mutable-set)]))
 
   ;; TODO: Tests needed for partition-by-satisfaction:
   ;; * no satisfying pairs
@@ -1044,7 +1045,7 @@
                                      (outgoing-derivative (list 'b 'y) null))))))]
                   [(list 'b 'y) (mutable-set)]))
 
-  (test-hash-of-msets-equal? "build-outgoing-dict"
+  (test-hash-of-msets-equal? "build-outgoing-dict: big test"
     (build-outgoing-dict com-sat-incoming com-sat-related-steps)
     com-sat-outgoing))
 
