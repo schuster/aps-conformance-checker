@@ -1192,10 +1192,16 @@
                               com-sat-incoming
                               com-sat-outgoing
                               com-sat-related-steps)
-    (graph-literal (vertices [g (make-graph-value g-node 2 'W)]
-                             [h (make-graph-value h-node 2 'W)])
-                   (edges [(list gh-impl-step gh-spec-step) g h]
-                          [(list hg-impl-step hg-spec-step) h g])))
+    (graph-literal (vertices [a (make-graph-value a-node 1 'W)]
+                             [g (make-graph-value g-node 2 'W)]
+                             [h (make-graph-value h-node 2 'W)]
+                             [l (make-graph-value l-node 5 'W)])
+                   (edges [(list ag-impl-step ag-spec-step) a g]
+                          [(list gh-impl-step gh-spec-step) g h]
+                          [(list hg-impl-step hg-spec-step) h g]
+                          [(list al-impl-step al-spec-step) a l]
+                          [(list la-impl-step la-spec-step) l a])))
+
 
   (test-graph-equal? "build-unsatisfying-graph: A with pattern W"
     (build-unsatisfying-graph (make-graph-value a-node 1 'W)
