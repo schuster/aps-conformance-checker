@@ -78,7 +78,8 @@
 ;; every edge has a label distinct from that of all other edges going to and from the same vertex.
 (define (graph-equal? g1 g2)
   (and
-   (equal? (list->set (graph-vertices g1)) (list->set (graph-vertices g2)))
+   (equal? (list->set (map vertex-value (graph-vertices g1)))
+           (list->set (map vertex-value (graph-vertices g2))))
    ;; For each vertex, check that the other graph has a matching vertex and their outgoing edges are
    ;; the same
    (for/and ([v1 (graph-vertices g1)])
