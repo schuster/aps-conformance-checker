@@ -1159,7 +1159,7 @@
               (define the-spec-step (outgoing-spec-step-the-step spec-step))
               (unless (member commitment (spec-step-satisfied-commitments the-spec-step))
                 (match-define (list derivative successor-commitment)
-                  (find-carrying-derivative spec-step commitment))
+                  (find-carrying-derivative (outgoing-spec-step-derivatives spec-step) commitment))
                 (define successor-vertex
                   (graph-find-or-add-vertex! G (list derivative successor-commitment)))
                 (graph-add-edge-if-new! G (list the-impl-step the-spec-step) vertex successor-vertex)
@@ -1215,13 +1215,31 @@
 
 ;; outgoing-spec-step (List address pattern) -> (List config-pair (List address pattern))
 ;;
-;; Finds the derivative of the given spec step that carries the commitment, returning both the
-;; derivative config pair as well as the new commitment (i.e. the commitment that has the address
-;; renamed to match the new config)
-(define (find-carrying-derivative spec-step commitment)
+;; Finds the derivative within the given list that carries the given commitment from the previous
+;; configuration pair, returning both the derivative config pair as well as the new commitment
+;; (i.e. the commitment that has the address renamed to match the new config)
+(define (find-carrying-derivative derivatives commitment)
+  (define com-address (first commitment))
+  (let loop ([derivatives derivatives])
+    (match derivatives
+      [(list derivative derivatives ...)
+       (match (try-rename-address (outgoing-derivative-address-map derivative) com-address)
+         [#f (loop derivatives)]
+         [new-address (list (outgoing-derivative-config-pair derivative)
+                            (list new-address (second commitment)))])]
+      [(list) (error 'find-carrying-derivative
+                     "Unable to find carrying derivative for ~s in ~s"
+                     commitment
+                     derivatives)])))
 
-  ;; TODO:
-  (error "not yet implemented"))
+(module+ test
+  (check-equal?
+   (find-carrying-derivative (list (outgoing-derivative 'A null)
+                                   (outgoing-derivative 'B (list `[2 3]))
+                                   (outgoing-derivative 'C (list `[1 4] `[5 2]))
+                                   (outgoing-derivative 'D (list `[6 1]`[3 2])))
+                             `((obs-ext 3 Nat) *))
+   (list 'D `((obs-ext 2 Nat) *))))
 
 ;; Returns the vertex with the given value in the graph, or adds such a vertex if none exists and
 ;; returns it
