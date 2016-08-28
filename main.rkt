@@ -793,8 +793,13 @@
   (define (sat-other-derivative-node name)
     (list name `(() () ())))
   (define (sat-impl-step trigger) (impl-step trigger #f null #f))
-  (define (sat-spec-step . satisfied-commitments) (spec-step #f #f satisfied-commitments))
-  (define (sat-alt-spec-step . satisfied-commitments) (spec-step #t #f satisfied-commitments))
+  (define (letters->sat-list addr sat-letters)
+    (map (lambda (letter) `((obs-ext ,addr ,com-sat-ext-type) (variant ,letter)))
+         sat-letters))
+  (define (sat-spec-step com-addr-number . satisfied-commitment-letters)
+    (spec-step #f #f (letters->sat-list com-addr-number satisfied-commitment-letters)))
+  (define (sat-alt-spec-step com-addr-number . satisfied-commitment-letters)
+    (spec-step #t #f (letters->sat-list com-addr-number satisfied-commitment-letters)))
 
   ;; These are the structures used for most of the tests for commitment satisfaction
   (define a-node (sat-test-node 'A 1 (list 'W 'X 'Y 'Z)))
@@ -834,22 +839,22 @@
   (define ji-impl-step (sat-impl-step sat-ne-trigger1))
   (define la-impl-step (sat-impl-step sat-ue-trigger1))
 
-  (define ag-spec-step (sat-spec-step 'X 'Y))
-  (define ai-spec-step (sat-spec-step 'W 'Y))
-  (define akm-spec-step (sat-spec-step 'W 'Y))
-  (define al-spec-step (sat-spec-step 'X 'Y))
-  (define ba-spec-step (sat-spec-step))
-  (define bc-spec-step (sat-spec-step))
-  (define bd-spec-step (sat-alt-spec-step))
-  (define be-spec-step (sat-spec-step 'X))
-  (define bf-spec-step (sat-alt-spec-step 'X))
-  (define gh-spec-step (sat-spec-step))
-  (define hg-spec-step (sat-spec-step))
-  (define ia-spec-step (sat-spec-step 'X))
-  (define ij-spec-step (sat-spec-step))
-  (define ja-spec-step (sat-spec-step 'X))
-  (define ji-spec-step (sat-spec-step))
-  (define la-spec-step (sat-spec-step))
+  (define ag-spec-step (sat-spec-step 1 'X 'Y))
+  (define ai-spec-step (sat-spec-step 1 'W 'Y))
+  (define akm-spec-step (sat-spec-step 1 'W 'Y))
+  (define al-spec-step (sat-spec-step 1 'X 'Y))
+  (define ba-spec-step (sat-spec-step 1))
+  (define bc-spec-step (sat-spec-step 1))
+  (define bd-spec-step (sat-alt-spec-step 1))
+  (define be-spec-step (sat-spec-step 1 'X))
+  (define bf-spec-step (sat-alt-spec-step 1 'X))
+  (define gh-spec-step (sat-spec-step 2))
+  (define hg-spec-step (sat-spec-step 2))
+  (define ia-spec-step (sat-spec-step 3 'X))
+  (define ij-spec-step (sat-spec-step 3))
+  (define ja-spec-step (sat-spec-step 3 'X))
+  (define ji-spec-step (sat-spec-step 3))
+  (define la-spec-step (sat-spec-step 5))
 
   (define (make-com-sat-map old new)
     (list (list old new)))
@@ -1163,7 +1168,8 @@
                 (define successor-vertex
                   (graph-find-or-add-vertex! G (list derivative successor-commitment)))
                 (graph-add-edge-if-new! G (list the-impl-step the-spec-step) vertex successor-vertex)
-                (enqueue! worklist successor-vertex))))])]))
+                (enqueue! worklist successor-vertex))))
+          (loop (set-add visited pair))])]))
   G)
 
 (module+ test
@@ -1173,21 +1179,38 @@
   (define (make-graph-value configs address-number variant-tag)
     (list configs (list (make-com-sat-ext-address address-number) `(variant ,variant-tag))))
 
-  (test-true "build-unsatisfying-graph: A with pattern W"
-    (graph-equal?
-     (build-unsatisfying-graph (make-graph-value a-node 1 'W)
-                               com-sat-incoming
-                               com-sat-outgoing
-                               com-sat-related-steps)
-     (graph-literal (vertices [a (make-graph-value a-node 1 'W)]
-                              [g (make-graph-value g-node 2 'W)]
-                              [h (make-graph-value h-node 2 'W)]
-                              [l (make-graph-value l-node 5 'W)])
-                    (edges [(list ag-impl-step ag-spec-step) a g]
-                           [(list gh-impl-step gh-spec-step) g h]
-                           [(list hg-impl-step hg-spec-step) h g]
-                           [(list al-impl-step al-spec-step) a l]
-                           [(list la-impl-step la-spec-step) l a]))))
+  (define-binary-check (check-graph-equal? graph-equal? actual expected))
+
+  (define-syntax (test-graph-equal? stx)
+    (syntax-parse stx
+      [(_  name actual expected)
+       #`(test-case name
+           #,(syntax/loc stx (check-graph-equal? actual expected)))]))
+
+  (test-graph-equal? "build-unsatisfying-graph: G with pattern W"
+    (build-unsatisfying-graph (make-graph-value g-node 2 'W)
+                              com-sat-incoming
+                              com-sat-outgoing
+                              com-sat-related-steps)
+    (graph-literal (vertices [g (make-graph-value g-node 2 'W)]
+                             [h (make-graph-value h-node 2 'W)])
+                   (edges [(list gh-impl-step gh-spec-step) g h]
+                          [(list hg-impl-step hg-spec-step) h g])))
+
+  (test-graph-equal? "build-unsatisfying-graph: A with pattern W"
+    (build-unsatisfying-graph (make-graph-value a-node 1 'W)
+                              com-sat-incoming
+                              com-sat-outgoing
+                              com-sat-related-steps)
+    (graph-literal (vertices [a (make-graph-value a-node 1 'W)]
+                             [g (make-graph-value g-node 2 'W)]
+                             [h (make-graph-value h-node 2 'W)]
+                             [l (make-graph-value l-node 5 'W)])
+                   (edges [(list ag-impl-step ag-spec-step) a g]
+                          [(list gh-impl-step gh-spec-step) g h]
+                          [(list hg-impl-step hg-spec-step) h g]
+                          [(list al-impl-step al-spec-step) a l]
+                          [(list la-impl-step la-spec-step) l a])))
 
   (define com-sat-x-on-a-graph
     (graph-literal
@@ -1205,13 +1228,12 @@
             [(list ij-impl-step ij-spec-step) i j]
             [(list ji-impl-step ji-spec-step) j i])))
 
-  (test-true "build-unsatisfying-graph 2"
-    (graph-equal?
-     (build-unsatisfying-graph (make-graph-value a-node 1 'X)
-                               com-sat-incoming
-                               com-sat-outgoing
-                               com-sat-related-steps)
-     com-sat-x-on-a-graph)))
+  (test-graph-equal? "build-unsatisfying-graph: A with pattern X"
+    (build-unsatisfying-graph (make-graph-value a-node 1 'X)
+                              com-sat-incoming
+                              com-sat-outgoing
+                              com-sat-related-steps)
+    com-sat-x-on-a-graph))
 
 ;; outgoing-spec-step (List address pattern) -> (List config-pair (List address pattern))
 ;;
@@ -1220,7 +1242,7 @@
 ;; (i.e. the commitment that has the address renamed to match the new config)
 (define (find-carrying-derivative derivatives commitment)
   (define com-address (first commitment))
-  (let loop ([derivatives derivatives])
+  (let loop ([derivatives (set->list derivatives)])
     (match derivatives
       [(list derivative derivatives ...)
        (match (try-rename-address (outgoing-derivative-address-map derivative) com-address)
