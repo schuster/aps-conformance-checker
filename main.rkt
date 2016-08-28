@@ -1289,7 +1289,6 @@
     (let ()
       (define g (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b])))
       (graph-add-edge-if-new! g 1 (graph-find-vertex g 'a) (graph-find-vertex g 'b))
-      (displayln g)
       g)
     (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b])))
 
