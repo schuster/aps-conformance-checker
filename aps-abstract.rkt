@@ -890,11 +890,11 @@
 
 ;; Returns all singleton commitments in the config as a list of address/pattern pairs
 (define (aps#-config-singleton-commitments config)
-  (term (config-commitments/mf ,config)))
+  (term (config-singleton-commitments/mf ,config)))
 
 (define-metafunction aps#
-  config-commitments/mf : Σ -> ([a#ext po] ...)
-  [(config-commitments/mf (_ _ ((a#ext (m po) ...) ...)))
+  config-singleton-commitments/mf : Σ -> ([a#ext po] ...)
+  [(config-singleton-commitments/mf (_ _ ((a#ext (m po) ...) ...)))
    ,(append*
      (for/list ([address (term (a#ext ...))]
                 [pattern-list (term ((po_single ...) ...))])
@@ -905,7 +905,7 @@
                 (term (((m po) ...) ...))))])
 
 (module+ test
-  (test-equal? "config-commitments"
+  (test-equal? "config-singleton-commitments"
     (aps#-config-singleton-commitments
      `(() () ([(obs-ext 1 Nat) (single *) (many (record))]
               [(obs-ext 2 Nat)]
