@@ -1054,6 +1054,49 @@
     (build-outgoing-dict com-sat-incoming com-sat-related-steps)
     com-sat-outgoing))
 
+;; OutgoingDict -> (Hash impl-config (Setof Trigger))
+;;
+;; Returns a hash table that gives the necessarily enabled actions for each implementation config in
+;; outgoing.
+(define (catalog-necessarily-enabled-actions outgoing)
+  (for/hash ([(config-pair outgoing-impl-steps) outgoing])
+    (define all-actions
+      (for/list ([out-i-step outgoing-impl-steps])
+        (impl-step-trigger (outgoing-impl-step-the-step out-i-step))))
+    (values (first config-pair) (list->set (filter necessarily-enabled? all-actions)))))
+
+(module+ test
+  (define com-sat-ne-actions
+    (immutable-hash ['A (set sat-ne-trigger1 sat-ne-trigger2 sat-ne-trigger3 sat-ne-trigger4)]
+                    ['B (set sat-ne-trigger1 sat-ne-trigger2 sat-ne-trigger3)]
+                    ['C (set)]
+                    ['D (set)]
+                    ['E (set)]
+                    ['F (set)]
+                    ['G (set sat-ne-trigger1)]
+                    ['H (set sat-ne-trigger1)]
+                    ['I (set sat-ne-trigger1 sat-ne-trigger2)]
+                    ['J (set sat-ne-trigger1 sat-ne-trigger2)]
+                    ['K (set)]
+                    ['L (set)]
+                    ['M (set)]))
+  (test-equal? "catalog-necessarily-enabled-actions"
+    (catalog-necessarily-enabled-actions com-sat-outgoing) com-sat-ne-actions))
+
+;; impl-config (Hash impl-config (Listof trigger#)) -> boolean
+;;
+;; Determines whether the given implementation configuration is quiescent based on
+;; necessarily-enabled-actions, which gives for each implementation configuration the list of actions
+;; that are necessarily enabled in that configuration.
+(define (quiescent-impl-config? impl-config necessarily-enabled-actions)
+  (set-empty? (hash-ref necessarily-enabled-actions impl-config)))
+
+(module+ test
+  (test-true "quiescent 1"
+    (quiescent-impl-config? 'C com-sat-ne-actions))
+  (test-false "quiescent 2"
+    (quiescent-impl-config? 'A com-sat-ne-actions)))
+
 ;; Type:
 ;;
 ;; (List (List impl-config spec-config) (List Address Pattern))
