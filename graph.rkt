@@ -13,6 +13,7 @@
  graph-add-edge! ; takes graph, edge value, source vertex, dest vertex
  graph-add-vertex! ; takes a graph and the vertex value; adds it as an unconnected vertex; returns the new vertex
  graph-equal?
+ graph-transpose
 
  vertex-value
  vertex-incoming
@@ -189,3 +190,39 @@
       (printf "    Value: ~s\n" (edge-value e))
       (printf "    Source: ~s\n" (vertex-value (edge-source e)))
       (printf "    Dest: ~s\n" (vertex-value (edge-destination e))))))
+
+;; Transposes the given graph by returning a new graph that is like g but reverses the direction of
+;; all arrows
+(define (graph-transpose g)
+  (define g-transpose (make-graph))
+  (for ([v (graph-vertices g)])
+    (graph-add-vertex! g-transpose (vertex-value v)))
+  (for ([v (graph-vertices g)])
+    (define v-transpose (graph-find-vertex g-transpose (vertex-value v)))
+    (for ([e (vertex-outgoing v)])
+      (graph-add-edge! g-transpose
+                       (edge-value e)
+                       (graph-find-vertex g-transpose (vertex-value (edge-destination e)))
+                       v-transpose)))
+  g-transpose)
+
+(module+ test
+  ;; TODO: tests
+  (test-graph-equal? "graph-transpose"
+    (graph-transpose
+     (graph-literal
+      [vertices [a 'a] [b 'b] [c 'c] [d 'd] [e 'e]]
+      [edges ['ac a c]
+             ['ae a e]
+             ['ba b a]
+             ['cb c b]
+             ['cd c d]
+             ['de d e]]))
+    (graph-literal
+     [vertices [a 'a] [b 'b] [c 'c] [d 'd] [e 'e]]
+     [edges ['ac c a]
+            ['ae e a]
+            ['ba a b]
+            ['cb b c]
+            ['cd d c]
+            ['de e d]])))
