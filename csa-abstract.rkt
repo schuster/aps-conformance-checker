@@ -124,7 +124,8 @@
       (for/fold ([x E#]) ([x e#]) e#)
       (for/fold ([x v#]) ([x E#]) e#)
       (loop-context E#))
-  (trigger# (timeout a#int)
+  (trigger# (timeout/empty-queue a#int)
+            (timeout/non-empty-queue a#int)
             (internal-receive a#int v#)
             (external-receive a#int v#)))
 
@@ -383,7 +384,9 @@
     [#f null]
     [handler-exp
      (eval-handler (inject/H# handler-exp)
-                   (term (timeout ,address))
+                   (if (any-messages-for? config address)
+                       (term (timeout/non-empty-queue ,address))
+                       (term (timeout/empty-queue ,address)))
                    address
                    config
                    update-behavior)]))
@@ -396,6 +399,21 @@
                                 (goto s v# ..._n)))
    (csa#-subst-n e# [x_s v#] ...)]
   [(get-timeout-handler-exp/mf _) #f])
+
+;; Returns #t if the configuration has any in-transit messages for the given internal address; #f
+;; otherwise.
+(define (any-messages-for? config address)
+  (redex-let csa# ([(_ _ ((a#int _ _) ...)) config])
+    ;; member does not return #t, so we normalize that result
+    (if (member address (term (a#int ...))) #t #f)))
+
+(module+ test
+  (test-true "any-messages-for? 1"
+    (any-messages-for? (term (() () ([(init-addr 1 Nat) (* Nat) 1]))) (term (init-addr 1 Nat))))
+  (test-false "any-messages-for? 2"
+    (any-messages-for? (term (() () ([(init-addr 2 Nat) (* Nat) 1]))) (term (init-addr 1 Nat))))
+  (test-false "any-messages-for? 1"
+    (any-messages-for? (term (() () ())) (term (init-addr 1 Nat)))))
 
 ;; Returns all behaviors currently available in the given config for the actor with the given address
 ;; (will only be a single behavior for precise addresses, one or more for blurred ones).

@@ -16,6 +16,8 @@
  aps#-blur-config
  canonicalize-pair
  try-rename-address
+ reverse-rename-address
+ aps#-config-has-commitment?
 
  ;; Required by conformance checker for blurring
  aps#-relevant-external-addrs
@@ -229,7 +231,7 @@
                          (term ())
                          (term ()))
                 #f
-                (term (timeout ,(single-instance-address 'Nat))))
+                (term (timeout/empty-queue ,(single-instance-address 'Nat))))
                (list
                 (list (make-Σ# (term ((define-state (A))))
                          (term (goto A))
@@ -418,8 +420,11 @@
   #:mode (match-trigger/j I I I I O)
   #:contract (match-trigger/j boolean trigger# σ ε ([x v#] ...))
 
+  [-------------------------------------------------------
+   (match-trigger/j _ (timeout/empty-queue _) _ unobs ())]
+
   [-----------------------------------------------------------
-   (match-trigger/j _ (timeout _) _ unobs ())]
+   (match-trigger/j _ (timeout/non-empty-queue _) _ unobs ())]
 
   [----------------------------------------------------------------------
    (match-trigger/j _ (internal-receive _ _) _ unobs ())]
@@ -434,7 +439,11 @@
 
 (module+ test
   (check-equal?
-   (match-trigger #f '(timeout (init-addr 0 Nat)) '(init-addr 0 Nat) 'unobs)
+   (match-trigger #f '(timeout/empty-queue (init-addr 0 Nat)) '(init-addr 0 Nat) 'unobs)
+   null)
+
+  (check-equal?
+   (match-trigger #f '(timeout/non-empty-queue (init-addr 0 Nat)) '(init-addr 0 Nat) 'unobs)
    null)
 
   (check-equal?
@@ -838,6 +847,26 @@
       (spawn-addr 2 NEW (Union [B] [A]))
       (init-addr 2 (Union [C] [D]))
       (spawn-addr 3 OLD Nat)))))
+
+(define (aps#-config-has-commitment? config address pattern)
+  (judgment-holds (aps#-config-has-commitment?/j ,config ,address ,pattern)))
+
+(define-judgment-form aps#
+  #:mode (aps#-config-has-commitment?/j I I I)
+  #:contract (aps#-config-has-commitment?/j Σ a# po)
+  [-----
+   (aps#-config-has-commitment?/j (_ _ (_ ... [a# _ ... (_ po) _ ...] _ ...)) a# po)])
+
+(module+ test
+  (define has-commitment-test-config
+    (term (() () (((obs-ext 1 Nat) (single *))
+                  ((obs-ext 2 Nat) (single *) (single (record)))))))
+  (test-false "aps#-config-has-commitment? 1"
+    (aps#-config-has-commitment? has-commitment-test-config (term (obs-ext 3 Nat)) (term *)))
+  (test-false "aps#-config-has-commitment? 2"
+    (aps#-config-has-commitment? has-commitment-test-config (term (obs-ext 1 Nat)) (term (record))))
+  (test-true "aps#-config-has-commitment? 1"
+    (aps#-config-has-commitment? has-commitment-test-config (term (obs-ext 2 Nat)) (term (record)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
@@ -1286,6 +1315,18 @@
     (term (obs-ext 4 Nat)))
   (test-false "try-rename-address failure"
     (try-rename-address (term ([1 3] [2 4])) (term (obs-ext 5 Nat)))))
+
+;; Performs the reverse of the mapping indicated by the given address rename map on the given address
+(define (reverse-rename-address rename-map addr)
+    (redex-let aps# ([(obs-ext natural any_type) addr])
+    (match (findf (lambda (entry) (equal? (second entry) (term natural))) rename-map)
+      [#f (error 'reverse-rename-address "Unable to find entry for ~s in ~s" addr rename-map)]
+      [(list prev _) (term (obs-ext ,prev any_type))])))
+
+(module+ test
+  (test-equal? "try-rename-address success"
+    (reverse-rename-address (term ([1 3] [2 4])) (term (obs-ext 4 Nat)))
+    (term (obs-ext 2 Nat))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Misc.
