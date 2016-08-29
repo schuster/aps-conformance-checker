@@ -22,6 +22,8 @@
  edge-source
  edge-destination
 
+ check-graph-equal?
+ test-graph-equal?
  print-graph)
 
 (require
@@ -37,6 +39,9 @@
 (struct edge (value source destination) #:transparent)
 
 ;; ---------------------------------------------------------------------------------------------------
+
+(require
+ rackunit)
 
 (define (make-graph) (graph null null))
 
@@ -167,6 +172,14 @@
     (graph-equal? g1
                   (graph-literal [vertices [a 'a] [b 'b]]
                                  [edges ['x a b]]))))
+
+(define-binary-check (check-graph-equal? graph-equal? actual expected))
+
+(define-syntax (test-graph-equal? stx)
+  (syntax-parse stx
+    [(_  name actual expected)
+     #`(test-case name
+         #,(syntax/loc stx (check-graph-equal? actual expected)))]))
 
 (define (print-graph g)
   (for ([v (graph-vertices g)])

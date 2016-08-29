@@ -1218,15 +1218,6 @@
 
   (define (make-graph-value configs address-number variant-tag)
     (list configs (list (make-com-sat-ext-address address-number) `(variant ,variant-tag))))
-
-  (define-binary-check (check-graph-equal? graph-equal? actual expected))
-
-  (define-syntax (test-graph-equal? stx)
-    (syntax-parse stx
-      [(_  name actual expected)
-       #`(test-case name
-           #,(syntax/loc stx (check-graph-equal? actual expected)))]))
-
   (test-graph-equal? "build-unsatisfying-graph: G with pattern W"
     (build-unsatisfying-graph (make-graph-value g-node 2 'W)
                               com-sat-incoming
