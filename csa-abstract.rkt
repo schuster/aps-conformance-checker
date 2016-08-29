@@ -10,6 +10,7 @@
  csa#-handle-all-internal-actions
  csa#-abstract-config
  csa#-blur-config
+ necessarily-enabled?
 
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
  csa#-spawn-address?
@@ -1749,6 +1750,29 @@
 ;; address in the concretized configuration), #f otherwise
 (define (precise-internal-address? addr)
   (redex-match? csa# a#int-precise addr))
+
+(define (necessarily-enabled? trigger)
+  (judgment-holds (necessarily-enabled?/j ,trigger)))
+
+(define-judgment-form csa#
+  #:mode (necessarily-enabled?/j I)
+  #:contract (necessarily-enabled?/j trigger#)
+
+  [-----------------------------------------------------
+   (necessarily-enabled?/j (timeout/empty-queue a#int))]
+
+  [-----------------------------------------------------
+   (necessarily-enabled?/j (internal-receive a#int v#))])
+
+(module+ test
+  (test-true "necessarily-enabled 1"
+    (necessarily-enabled? (term (timeout/empty-queue (init-addr 1 Nat)))))
+  (test-false "necessarily-enabled 2"
+    (necessarily-enabled? (term (timeout/non-empty-queue (init-addr 1 Nat)))))
+  (test-true "necessarily-enabled 3"
+    (necessarily-enabled? (term (internal-receive (init-addr 1 Nat) (* Nat)))))
+  (test-false "necessarily-enabled 4"
+    (necessarily-enabled? (term (external-receive (init-addr 1 Nat) (* Nat))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Types
