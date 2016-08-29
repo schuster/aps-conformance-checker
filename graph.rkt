@@ -12,8 +12,6 @@
  graph-find-vertex ; takes a graph and a vertex value, plus an optional is-equal? predicate
  graph-add-edge! ; takes graph, edge value, source vertex, dest vertex
  graph-add-vertex! ; takes a graph and the vertex value; adds it as an unconnected vertex; returns the new vertex
- graph-equal?
- graph-transpose
 
  vertex-value
  vertex-incoming
@@ -23,6 +21,12 @@
  edge-source
  edge-destination
 
+ ;; Misc. graph algorithms
+ graph-transpose
+ graph-find-sccs
+
+ ;; testing helpers
+ graph-equal?
  check-graph-equal?
  test-graph-equal?
  print-graph)
@@ -226,3 +230,75 @@
             ['cb b c]
             ['cd d c]
             ['de e d]])))
+
+
+;; Graph -> (Setof (Setof Vertex))
+;;
+;; Returns sets of vertices that represent the strongly connected components of g.
+(define (graph-find-sccs g)
+  ;; Implements Kosaraju's algorithm (https://en.wikipedia.org/wiki/Kosaraju%27s_algorithm)
+
+  ;; Visits the vertex u as in the Wikipedia description linked above; returns the updated visited and
+  ;; L as multiple values
+  (define (visit u visited L)
+    (cond
+      [(set-member? visited u) (values visited L)]
+      [else
+       (define-values (new-visited new-L)
+         ;; recursively visit each out-neighbor
+         (for/fold ([visited (set-add visited u)]
+                    [L L])
+                   ([out-edge (vertex-outgoing u)])
+           (visit (edge-destination out-edge) visited L)))
+       (values new-visited (cons u new-L))]))
+
+  ;; Assigns u and its in-neighbors to an SCC in SCCs if u has not already been assigned, as in the
+  ;; algorithm described in the above Wikipedia link. Returns the updated this-scc.
+  (define (assign u this-scc other-sccs)
+    (cond
+      [(ormap (curryr set-member? u) (cons this-scc other-sccs))
+       this-scc]
+      [else
+       ;; has not been assigned
+       (for/fold ([this-scc (set-add this-scc u)])
+                 ([in-edge (vertex-incoming u)])
+         (assign (edge-source in-edge) this-scc other-sccs))]))
+
+  (define-values (visited L)
+    (for/fold ([visited (set)]
+               [L null])
+              ([u (graph-vertices g)])
+      (visit u visited L)))
+
+  (list->set
+   (for/fold ([sccs null])
+             ([u L])
+     (define new-scc (set))
+     (match (assign u new-scc sccs)
+       ;; Throw out empty SCCs, since they're meaningless
+       [(? set-empty?) sccs]
+       [new-scc (set-add sccs new-scc)]))))
+
+(module+ test
+  (let ()
+    (define scc-test-graph
+      (graph-literal
+       [vertices [a 'a] [b 'b] [c 'c] [d 'd] [e 'e] [f 'f] [g 'g]]
+       [edges ['ac a c]
+              ['ae a e]
+              ['ba b a]
+              ['cb c b]
+              ['cd c d]
+              ['de d e]
+              ['fe f e]
+              ['gf g f]
+              ['fg f g]]))
+    (test-equal? "graph-find-sccs"
+      (graph-find-sccs scc-test-graph)
+      (set (set (graph-find-vertex scc-test-graph 'a)
+                (graph-find-vertex scc-test-graph 'b)
+                (graph-find-vertex scc-test-graph 'c))
+           (set (graph-find-vertex scc-test-graph 'd))
+           (set (graph-find-vertex scc-test-graph 'e))
+           (set (graph-find-vertex scc-test-graph 'f)
+                (graph-find-vertex scc-test-graph 'g))))))
