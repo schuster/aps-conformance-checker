@@ -739,59 +739,64 @@
 (struct outgoing-derivative (config-pair address-map) #:transparent)
 
 
-;; (Listof related-pair) (other params?) -> (List (Listof related-pair) (Listof related-pair)
+;; (Setof config-pair) IncomingDict RelatedSpecStepsDict
+;; -> (List (Setof related-pair) (Setof related-pair)
 ;;
 ;; Partitions simulation pairs into the set in which every fair execution of the impl-config satisfies
 ;; all commitments in the spec-config, and the set in which that is unable to be determined (the set
 ;; of satisfying pairs is the first element of the returned list).
 ;;
 ;; TODO: list preconditions here (particularly on related-spec-steps/incoming)
-(define (partition-by-satisfaction simulation-pairs related-spec-steps)
-  ;; TODO: get a more efficient representation of the outgoing edges, from incoming or
-  ;; related-spec-steps
+(define (partition-by-satisfaction simulation-pairs incoming related-spec-steps)
+  ;; Sets of pairs of configuration-pairs and commitments (address/pattern pairs), where the
+  ;; implementation configurations in the first set always satisfy their associated commitment, while
+  ;; the algorithm was not able to determine satisfaction for those in the second (so we
+  ;; conservatively say they were unsatisfied). These two sets should be disjoint.
+  (define satisfied-config-commitments (mutable-set))
+  (define unsatisfied-config-commitments (mutable-set))
 
-  ;; TODO: when I check SCCs for fairness, I should have some kind of dictionary I can use across runs
-  ;; that gives the necessarily enabled triggers for each config, so I don't have to recompute them
-  ;; every time
+  (define outgoing (build-outgoing-dict incoming related-spec-steps))
+  (define necessarily-enabled-actions (catalog-necessarily-enabled-actions outgoing))
 
-  ;; (define satisfied-config-commitments mutable-set)
-  ;; (define unsatisfied-config-commitments mutable-set)
+  (define-values (satisfying-pairs unsatisfying-pairs)
+    (for/fold ([satisfying-pairs (set)]
+               [unsatisfying-pairs (set)])
+              ([pair simulation-pairs])
+     (define all-commitments-satisfied?
+       (for/and ([commitment (aps#-config-singleton-commitments (config-pair-spec-config pair))])
+         ;; Within a configuration pair, each commitment is checked individually. The checking process
+         ;; by necessity checks other commitments as well, so we add all of those results to
+         ;; satisfied-config-commitments/unsatisfied-config-commitments so we may reuse the results
+         ;; later rather than rebuilding and reanalyzing the graph every time.
+         (define configs-commitment-pair (list pair commitment))
+         (cond
+           [(set-member?   satisfied-config-commitments configs-commitment-pair) #t]
+           [(set-member? unsatisfied-config-commitments configs-commitment-pair) #f]
+           [else
+            (match-define (list new-satisfied-config-commitments new-unsatisfied-config-commitments)
+              (check-commitment-satisfaction configs-commitment-pair
+                                             incoming
+                                             outgoing
+                                             related-spec-steps
+                                             necessarily-enabled-actions))
+            (set-union! satisfied-config-commitments   new-satisfied-config-commitments)
+            (set-union! unsatisfied-config-commitments new-unsatisfied-config-commitments)
+            (set-member? new-satisfied-config-commitments configs-commitment-pair)])))
+     (if all-commitments-satisfied?
+         (values (set-add satisfying-pairs pair) unsatisfying-pairs)
+         (values satisfying-pairs (set-add unsatisfying-pairs pair)))))
 
-  ;; (define-values (satisfying-pairs unsatisfying-pairs)
-  ;;   (for/fold ([satisfying-pairs (set)]
-  ;;             [unsatisfying-pairs (set)])
-  ;;            ([pair simulation-pairs])
-  ;;    (define all-commitments-satisfied?
-  ;;      (for/and ([commitment (aps#-config-commitments (config-pair-spec-config pair))])
-  ;;        (define config-commitment-pair (list pair commitment))
-  ;;        (cond
-  ;;          [(set-member?   satisfied-config-commitments config-commitment-pair) #t]
-  ;;          [(set-member? unsatisfied-config-commitments config-commitment-pair) #f]
-  ;;          [else
-  ;;           (match-define (list new-satisfied-config-commitments new-unsatisfied-config-commitments)
-  ;;             (check-commitment-satisfaction config-commitment-pair ?other-params?))
-  ;;           (set-union! satisfied-config-commitments   (list->set new-satisfied-config-commitments))
-  ;;           (set-union! unsatisfied-config-commitments (list->set new-unsatisfied-config-commitments))
-  ;;           (member config-commitment-pair new-satisfied-config-commitments)])))
-  ;;    (if all-commitments-satisfied?
-  ;;        (values (set-add satisfying-pairs pair) unsatisfying-pairs)
-  ;;        (values satisfying-pairs (set-add unsatisfying-pairs pair)))))
-
-  ;; (list satisfying-pairs unsatisfying-pairs)
-
-  ;; TODO: remove this old code
-  (list simulation-pairs null)
-  )
+  (list satisfying-pairs unsatisfying-pairs))
 
 (module+ test
   (define com-sat-ext-type `(Union [W] [X] [Y] [Z]))
   (define (make-com-sat-ext-address number) `(obs-ext ,number ,com-sat-ext-type))
   (define (sat-test-node name commitment-address-number commitment-patterns)
     (define mult-patterns (map (lambda (pat) `(single (variant ,pat))) commitment-patterns))
-    (list name
-          `(() () ([,(make-com-sat-ext-address commitment-address-number) ,@mult-patterns]))))
+    (config-pair name
+                 `(() () ([,(make-com-sat-ext-address commitment-address-number) ,@mult-patterns]))))
   (define (sat-other-derivative-node name)
-    (list name `(() () ())))
+    (config-pair name `(() () ())))
   (define (sat-impl-step trigger) (impl-step trigger #f null #f))
   (define (letters->sat-list addr sat-letters)
     (map (lambda (letter) `((obs-ext ,addr ,com-sat-ext-type) (variant ,letter)))
@@ -960,6 +965,36 @@
       (mutable-set (single-match-step la-impl-step la-spec-step a-node (make-com-sat-map 5 1)))]
      [m-node (mutable-set)]))
 
+  (test-equal? "partition-by-satisfaction"
+    (partition-by-satisfaction (set a-node
+                                    b-node
+                                    c-node
+                                    d-node
+                                    e-node
+                                    f-node
+                                    g-node
+                                    h-node
+                                    i-node
+                                    j-node
+                                    k-node
+                                    l-node
+                                    m-node)
+                               com-sat-incoming
+                               com-sat-related-steps)
+    (list (set m-node)
+          (set a-node
+               b-node
+               c-node
+               d-node
+               e-node
+               f-node
+               g-node
+               h-node
+               i-node
+               j-node
+               k-node
+               l-node)))
+
   ;; TODO: Tests needed for partition-by-satisfaction:
   ;; * no satisfying pairs
   ;; * pair satisfies one commitment but not another
@@ -1063,7 +1098,8 @@
     (define all-actions
       (for/list ([out-i-step outgoing-impl-steps])
         (impl-step-trigger (outgoing-impl-step-the-step out-i-step))))
-    (values (first config-pair) (list->set (filter necessarily-enabled? all-actions)))))
+    (values (config-pair-impl-config config-pair)
+            (list->set (filter necessarily-enabled? all-actions)))))
 
 (module+ test
   (define com-sat-ne-actions
@@ -1193,6 +1229,9 @@
                (make-config-commitment-pair h-node 2 'W)
                (make-config-commitment-pair l-node 5 'W)))))
 
+;; (List config-pair (List address pattern)) IncomingDict OutgoingDict RelatedSpecStepsDict
+;; -> Graph
+;;
 ;; Builds a graph whose vertices are pairs of configuation pairs and commitments such that there is an
 ;; edge from v1 to v2 iff there is a step of v1's impl-config to v2's impl-config that does not
 ;; satisfy the commitment in v1, and v2's commitment is the possibly renamed version of v1's
@@ -1220,9 +1259,6 @@
          [(set-member? visited pair)
           (loop visited)]
          [else
-          ;; New idea: for each pair we visit, add the backward edges (b/c these are easiest to
-          ;; access), and also add its successors to worklist and graph if they have non-sat edge to there
-
           ;; 2. For each impl-step from this node that does not satisfy the commitment, add its edges
           ;; that do not satisfy the commitment
           (define config-pair (first pair))
@@ -1230,16 +1266,12 @@
           (define commitment-address (first commitment))
           (define pattern (second commitment))
 
-          ;; TODO: update the dissertation document: I think instead of picking an arbitrary spec
-          ;; step, I should take all of them. Doing both backwards and forward walks will probably
-          ;; force me to do that anyway
-
           ;; Add vertices and edges from walking backwards
           (for ([incoming-entry (hash-ref incoming config-pair)])
             (match-define (list prev-config-pair i-step s-step addr-map) incoming-entry)
             (define prev-address (reverse-rename-address addr-map commitment-address))
             (define prev-commitment (list prev-address pattern))
-            (when (and (aps#-config-has-commitment? (second prev-config-pair) prev-address pattern)
+            (when (and (aps#-config-has-commitment? (config-pair-spec-config prev-config-pair) prev-address pattern)
                        (not (member prev-commitment (spec-step-satisfied-commitments s-step))))
               (define pred-vertex
                 (graph-find-or-add-vertex! G (list prev-config-pair prev-commitment)))
@@ -1364,7 +1396,7 @@
 ;; Small helper; returns the implementation configuration associated with the given vertex of an
 ;; unsat-graph
 (define (vertex-impl-config v)
-  (first (first (vertex-value v))))
+  (config-pair-impl-config (first (vertex-value v))))
 
 ;; outgoing-spec-step (List address pattern) -> (List config-pair (List address pattern))
 ;;
