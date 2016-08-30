@@ -3,6 +3,10 @@ Here are the important files in the conformance checker:
 main.rkt:           Implements the top-level function, "check-conformance", and includes the core of the
                     conformance-checking algorithm
 
+commitment-satisfaction.rkt: Defines the commitment-satisfaction-check algorithm
+
+checker-data-structures.rkt: Defines various data structures needed by different parts of the conformance checker
+
 csa.rkt: 		    Concrete standard semantic domains for CSA, and associated functions
 csa-abstract.rkt	Abstract standard semantic domains for CSA#, and associated functions
 
@@ -11,7 +15,7 @@ aps-abstract.rkt    Abstract semantic domains for APS (specification language), 
 
 desugar.rkt			Nanopass-based desugarer for the bigger language (desugars down to CSA)
 
-graph.rkt           A simple graph implementation
+graph.rkt           A simple graph implementation and related algorithms
 
 raft.rkt			A larger test of the conformance-checker, for an implementation of Raft
 
