@@ -66,7 +66,15 @@
 ;; all commitments in the spec-config, and the set in which that is unable to be determined (the set
 ;; of satisfying pairs is the first element of the returned list).
 ;;
-;; TODO: list preconditions here (particularly on related-spec-steps/incoming)
+;; Preconditions:
+;;
+;; * simulation-pairs should consist only of pairs in the conformance simulation, with incoming and
+;; related-spec-steps acting as a proof of their membership, similar to the preconditions for
+;; prune-unsupported.
+;;
+;; * the address-map in each entry in incoming should give the mapping such that one of the split and
+;; assimilated derivatives of the entry's result-config can be canonicalized to the entry's key by
+;; using the mapping as the rename-map for the external addresses.
 (define (partition-by-satisfaction simulation-pairs incoming related-spec-steps)
   ;; Sets of pairs of configuration-pairs and commitments (address/pattern pairs), where the
   ;; implementation configurations in the first set always satisfy their associated commitment, while
@@ -94,11 +102,11 @@
            [(set-member? unsatisfied-config-commitments configs-commitment-pair) #f]
            [else
             (match-define (list new-satisfied-config-commitments new-unsatisfied-config-commitments)
-              (check-commitment-satisfaction configs-commitment-pair
-                                             incoming
-                                             outgoing
-                                             related-spec-steps
-                                             necessarily-enabled-actions))
+              (find-sat/unsat-pairs configs-commitment-pair
+                                    incoming
+                                    outgoing
+                                    related-spec-steps
+                                    necessarily-enabled-actions))
             (set-union! satisfied-config-commitments   new-satisfied-config-commitments)
             (set-union! unsatisfied-config-commitments new-unsatisfied-config-commitments)
             (set-member? new-satisfied-config-commitments configs-commitment-pair)])))
@@ -442,40 +450,37 @@
 ;;   (Setof (List (List impl-config spec-config) (List Address Pattern))
 ;;   (Setof (List (List impl-config spec-config) (List Address Pattern))
 ;;
-;; Given a pair of a related configuration pair and a commitment (i.e. a pair of an address and a
-;; pattern), returns two lists of the same kinds of pairs: the first is pairs such that all fair
-;; executions of the impl config satisfy the commitment; the second is pairs in which the algorithm
-;; could not determine commitment satisfatcion. The two lists are disjoint, and the given pair will be
-;; in one of the lists.
-;;
-;; Intuitively, this is checking for commitment satisfaction of the given pair, but because the
-;; algorithm also checks satisfaction for other relevant pairs as part of its process, we return those
-;; results as well.
-;;
-;; TODO: rename this, since it returns stuff
-(define (check-commitment-satisfaction config-commitment-pair
-                                       incoming
-                                       outgoing
-                                       related-spec-steps
-                                       necessarily-enabled-actions)
+;; For all pairs in the graph implied by by incoming and related-spec-steps that have some path to or
+;; from the given pair (including the pair itself) that have the same commitment but do not satisfy it
+;; on that path, partitions them into two lists: those that satisfy the commitment in all fair
+;; executions (the first returned list), and those that do not (the second returned list).
+(define (find-sat/unsat-pairs config-commitment-pair
+                              incoming
+                              outgoing
+                              related-spec-steps
+                              necessarily-enabled-actions)
 
-  ;; TODO: explain the idea of the algorithm
+  ;; The algorithm first builds the graph of all execution paths through the given configuration pair
+  ;; in which every configuration has the commitment, and no edge (i.e. step) in the graph satisfies
+  ;; it (this is a subgraph of the full execution graph). It then computes the strongly connected
+  ;; components of this graph and finds those that are fair (a fair SCC is an SCC in which for every
+  ;; necessarily enabled action in each of its vertices, either there exists a vertex in the SCC where
+  ;; the action is disabled, or there is an edge between two vertices in the SCC that takes that
+  ;; action). Every fair SCC either represents a fair cycle or contains a quiescent configuration (or
+  ;; both). The configurations that can reach a vertex in a fair SCC, then, are those that have some
+  ;; fair execution that does not satisfy the given commitment; all other vertices in the graph do
+  ;; satisfy the commitment in every execution.
 
   ;; 1. create the graph of unsatisfying steps from the given pair
   (define unsat-graph
     (build-unsatisfying-graph config-commitment-pair incoming outgoing related-spec-steps))
-  ;; 2. find all vertices in fair strongly-connected components (a fair SCC is an SCC in which for
-  ;; every necessarily enabled action in each of its vertices, either there exists a vertex in the SCC
-  ;; where the action is disabled, or there is an edge between two vertices in the SCC that takes that
-  ;; action). Every fair SCC either represents a fair cycle or contains a quiescent configuration (or
-  ;; both).
+  ;; 2. find all vertices in fair strongly-connected components
   (define sccs (graph-find-sccs unsat-graph))
   (define fair-scc-vertices
     (for/fold ([fair-scc-vertices (set)])
               ([scc sccs] #:when (fair-scc? scc necessarily-enabled-actions))
       (set-union fair-scc-vertices scc)))
-  ;; 3. Find all vertices that can reach a vertex in a fair SCC. These are the
-  ;; configuration/commitment pairs that do not always satisfy the commitment.
+  ;; 3. Find all vertices that can reach a vertex in a fair SCC
   (define unsat-vertices-set (vertices-reaching unsat-graph fair-scc-vertices))
   (define unsat-pairs-set (list->set (set-map unsat-vertices-set vertex-value)))
   (list
@@ -487,20 +492,20 @@
     (list configs (list (make-com-sat-ext-address address-number) `(variant ,variant-tag))))
 
   (test-equal? "all reachable pairs satisfy the commitment"
-    (check-commitment-satisfaction (make-config-commitment-pair a-node 1 'Y)
-                                   com-sat-incoming
-                                   com-sat-outgoing
-                                   com-sat-related-steps
-                                   com-sat-ne-actions)
+    (find-sat/unsat-pairs (make-config-commitment-pair a-node 1 'Y)
+                          com-sat-incoming
+                          com-sat-outgoing
+                          com-sat-related-steps
+                          com-sat-ne-actions)
     (list (set (make-config-commitment-pair a-node 1 'Y))
           (set)))
 
   (test-equal? "no reachable pair satisfies"
-    (check-commitment-satisfaction (make-config-commitment-pair a-node 1 'Z)
-                                   com-sat-incoming
-                                   com-sat-outgoing
-                                   com-sat-related-steps
-                                   com-sat-ne-actions)
+    (find-sat/unsat-pairs (make-config-commitment-pair a-node 1 'Z)
+                          com-sat-incoming
+                          com-sat-outgoing
+                          com-sat-related-steps
+                          com-sat-ne-actions)
     (list (set)
           (set (make-config-commitment-pair a-node 1 'Z)
                (make-config-commitment-pair b-node 1 'Z)
@@ -516,11 +521,11 @@
                (make-config-commitment-pair l-node 5 'Z))))
 
   (test-equal? "some satisfied, some not"
-    (check-commitment-satisfaction (make-config-commitment-pair a-node 1 'X)
-                                   com-sat-incoming
-                                   com-sat-outgoing
-                                   com-sat-related-steps
-                                   com-sat-ne-actions)
+    (find-sat/unsat-pairs (make-config-commitment-pair a-node 1 'X)
+                          com-sat-incoming
+                          com-sat-outgoing
+                          com-sat-related-steps
+                          com-sat-ne-actions)
     (list (set
            (make-config-commitment-pair i-node 3 'X)
            (make-config-commitment-pair j-node 3 'X))
@@ -531,11 +536,11 @@
                (make-config-commitment-pair k-node 4 'X))))
 
   (test-equal? "check satisfaction: A with W"
-    (check-commitment-satisfaction (make-config-commitment-pair a-node 1 'W)
-                                   com-sat-incoming
-                                   com-sat-outgoing
-                                   com-sat-related-steps
-                                   com-sat-ne-actions)
+    (find-sat/unsat-pairs (make-config-commitment-pair a-node 1 'W)
+                          com-sat-incoming
+                          com-sat-outgoing
+                          com-sat-related-steps
+                          com-sat-ne-actions)
     (list (set)
           (set (make-config-commitment-pair a-node 1 'W)
                (make-config-commitment-pair g-node 2 'W)
@@ -552,15 +557,8 @@
 ;; edge from v1 to v2 iff there is a step of v1's impl-config to v2's impl-config that does not
 ;; satisfy the commitment in v1, and v2's commitment is the possibly renamed version of v1's
 ;; commitment.
-;;
-;; TODO: maybe list the preconditions
 (define (build-unsatisfying-graph init-config-commitment-pair incoming outgoing related-spec-steps)
   (define G (make-graph))
-  ;; TODO: generalize the below func so it works for forward and backward walks
-  ;;
-  ;; TODO: figure out how to ensure I add each edge only once, not once per walk (some edges would
-  ;; explored in both)
-
   (define init-vertex (graph-add-vertex! G init-config-commitment-pair))
   (define worklist (queue init-vertex))
 
@@ -594,7 +592,7 @@
               (graph-add-edge-if-new! G (list i-step s-step) pred-vertex vertex)
               (enqueue! worklist pred-vertex)))
 
-          ;; ;; Add vertices and edges from walking forwards
+          ;; Add vertices and edges from walking forwards
           (for ([impl-step (hash-ref outgoing config-pair)])
             (define the-impl-step (outgoing-impl-step-the-step impl-step))
             (for ([spec-step (outgoing-impl-step-matching-spec-steps impl-step)])
