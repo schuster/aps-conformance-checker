@@ -195,7 +195,7 @@
    (K Σ)
    ;; NOTE: the receptionists and externals for the spec (including their declared types) should be
    ;; subsets of those for the program
-   (where (K ([x a] ...)) ,(instantiate-prog-with-bindings (term P)))
+   (where (K ([x a] ...)) ,(instantiate-prog+bindings (term P)))
    (where Σ (instantiate-spec/mf spec ([x a] ...)))])
 
 (module+ test

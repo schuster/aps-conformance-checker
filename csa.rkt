@@ -13,7 +13,7 @@
  csa-config-internal-addresses
  same-address-without-type?
  instantiate-prog
- instantiate-prog-with-bindings
+ instantiate-prog+bindings
  )
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -140,17 +140,17 @@
   instantiate-prog/mf : P -> K
   [(instantiate-prog/mf P)
    K
-   (where (K ([x a] ...)) (instantiate-prog-with-bindings/mf P))])
+   (where (K ([x a] ...)) (instantiate-prog+bindings/mf P))])
 
 ;; Instantiates the given program as a configuration by allocating fresh addresses and subsituting
 ;; them throughout the program as needed. Returns both the configuration and the set of bindings for
 ;; the allocated addresses.
-(define (instantiate-prog-with-bindings prog)
-  (term (instantiate-prog-with-bindings/mf ,prog)))
+(define (instantiate-prog+bindings prog)
+  (term (instantiate-prog+bindings/mf ,prog)))
 
 (define-metafunction csa-eval
-  instantiate-prog-with-bindings/mf : P -> (K ([x a] ...))
-  [(instantiate-prog-with-bindings/mf (program (receptionists [x_receptionist _] ...)
+  instantiate-prog+bindings/mf : P -> (K ([x a] ...))
+  [(instantiate-prog+bindings/mf (program (receptionists [x_receptionist _] ...)
                                                (externals     [x_external     τ_external] ...)
                                                (actors [x_internal (let ([x_let e_let] ...) e)] ...)))
    (K
@@ -200,7 +200,7 @@
                         [c (let () (spawn 3 Nat      (goto S3)))])))
     (check-true (redex-match? csa-eval P the-prog))
     (check-equal?
-     (instantiate-prog-with-bindings the-prog)
+     (instantiate-prog+bindings the-prog)
      `(
        ;; program config
        (
