@@ -64,7 +64,7 @@
   (-> csa-valid-config? aps-valid-config? boolean?)
 
   (cond
-    [(spec-address-in-impl? initial-impl-config initial-spec-config) #f]
+    [(spec-address-is-receptionist? initial-impl-config initial-spec-config) #f]
     [else
      (define initial-pairs (map first (sbc (abstract-pair initial-impl-config initial-spec-config))))
      (match-define (list rank1-pairs
@@ -86,9 +86,9 @@
                           unsatisfying-pairs))
      (andmap (curry set-member? conforming-pairs) initial-pairs)]))
 
-;; Returns #t if the self-address for the specification configuration belongs to an actor in the
+;; Returns #t if the self-address for the specification configuration is a receptionist in the
 ;; implementation configuration (an initial requirement for conformance), #f otherwise.
-(define (spec-address-in-impl? impl-config spec-config)
+(define (spec-address-is-receptionist? impl-config spec-config)
   (define spec-address (aps-config-only-instance-address spec-config))
   (and (not (aps#-unknown-address? spec-address))
        (andmap (lambda (a) (not (same-address-without-type? a spec-address)))
