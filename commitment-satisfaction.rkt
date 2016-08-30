@@ -313,16 +313,7 @@
                i-node
                j-node
                k-node
-               l-node)))
-
-  ;; TODO: Tests needed for partition-by-satisfaction:
-  ;; * no satisfying pairs
-  ;; * pair satisfies one commitment but not another
-  ;; * pair satisfies all of its commitments
-  ;; * pair satisfies none of its commitments
-  ;; * graph has one node always satisfied, another sometimes (depending on choice of spec step),
-  ;;   another never
-  )
+               l-node))))
 
 ;; Builds an OutgoingStepsDict from the given dictionaries
 (define (build-outgoing-dict incoming related-spec-steps)
