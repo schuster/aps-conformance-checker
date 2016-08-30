@@ -1122,6 +1122,7 @@
                                        incoming
                                        outgoing
                                        related-spec-steps
+                                       necessarily-enabled-actions
                                        quiescent-impl-configs)
 
   ;; TODO: explain the idea of the algorithm
@@ -1130,7 +1131,6 @@
   (define unsat-graph
     (build-unsatisfying-graph config-commitment-pair incoming outgoing related-spec-steps))
   ;; 2. find all quiescent configurations
-  (define (vertex-impl-config v) (first (first (vertex-value v))))
   (define quiescent-unsat-vertices
     (filter (lambda (v) (set-member? quiescent-impl-configs (vertex-impl-config v)))
             (graph-vertices unsat-graph)))
@@ -1138,13 +1138,16 @@
   ;; every necessarily enabled action in each of its vertices, either there exists a vertex in the SCC
   ;; where the action is disabled, or there is an edge between two vertices in the SCC that takes that
   ;; action)
-  ;;
-  ;; TODO: define this part
-  (define fair-scc-vertices null)
+  (define sccs (graph-find-sccs unsat-graph))
+  (define fair-scc-vertices
+    (for/fold ([fair-scc-vertices (set)])
+              ([scc sccs] #:when (fair-scc? scc necessarily-enabled-actions))
+      (set-union fair-scc-vertices scc)))
   ;; 4. Find all vertices that can reach either a quiescent vertex or a vertex in a fair SCC. These
   ;; are the configuration/commitment pairs that do not always satisfy the commitment.
   (define unsat-vertices-set
-    (vertices-that-reach unsat-graph (append quiescent-unsat-vertices fair-scc-vertices)))
+    (vertices-reaching unsat-graph
+                         (set-union (list->set quiescent-unsat-vertices) fair-scc-vertices)))
   (define unsat-pairs-set (list->set (set-map unsat-vertices-set vertex-value)))
   (list
    (set-subtract (list->set (map vertex-value (graph-vertices unsat-graph))) unsat-pairs-set)
@@ -1161,6 +1164,7 @@
                                    com-sat-incoming
                                    com-sat-outgoing
                                    com-sat-related-steps
+                                   com-sat-ne-actions
                                    com-sat-quiescent-configs)
     (list (set (make-config-commitment-pair a-node 1 'Y))
           (set)))
@@ -1170,6 +1174,7 @@
                                    com-sat-incoming
                                    com-sat-outgoing
                                    com-sat-related-steps
+                                   com-sat-ne-actions
                                    com-sat-quiescent-configs)
     (list (set)
           (set (make-config-commitment-pair a-node 1 'Z)
@@ -1190,6 +1195,7 @@
                                    com-sat-incoming
                                    com-sat-outgoing
                                    com-sat-related-steps
+                                   com-sat-ne-actions
                                    com-sat-quiescent-configs)
     (list (set
            (make-config-commitment-pair i-node 3 'X)
@@ -1205,6 +1211,7 @@
                                    com-sat-incoming
                                    com-sat-outgoing
                                    com-sat-related-steps
+                                   com-sat-ne-actions
                                    com-sat-quiescent-configs)
     (list (set)
           (set (make-config-commitment-pair a-node 1 'W)
@@ -1300,12 +1307,7 @@
                           [(list al-impl-step al-spec-step) a l]
                           [(list la-impl-step la-spec-step) l a])))
 
-
-  (test-graph-equal? "build-unsatisfying-graph: A with pattern W"
-    (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'W)
-                              com-sat-incoming
-                              com-sat-outgoing
-                              com-sat-related-steps)
+  (define com-sat-w-on-a-graph
     (graph-literal (vertices [a (make-config-commitment-pair a-node 1 'W)]
                              [g (make-config-commitment-pair g-node 2 'W)]
                              [h (make-config-commitment-pair h-node 2 'W)]
@@ -1315,6 +1317,13 @@
                           [(list hg-impl-step hg-spec-step) h g]
                           [(list al-impl-step al-spec-step) a l]
                           [(list la-impl-step la-spec-step) l a])))
+
+  (test-graph-equal? "build-unsatisfying-graph: A with pattern W"
+    (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'W)
+                              com-sat-incoming
+                              com-sat-outgoing
+                              com-sat-related-steps)
+    com-sat-w-on-a-graph)
 
   (define com-sat-x-on-a-graph
     (graph-literal
@@ -1338,7 +1347,50 @@
                               com-sat-incoming
                               com-sat-outgoing
                               com-sat-related-steps)
-    com-sat-x-on-a-graph))
+    com-sat-x-on-a-graph)
+
+  (define com-sat-z-on-a-graph
+    (graph-literal
+     (vertices [a (make-config-commitment-pair a-node 1 'Z)]
+               [b (make-config-commitment-pair b-node 1 'Z)]
+               [c (make-config-commitment-pair c-node 1 'Z)]
+               [d (make-config-commitment-pair d-node 1 'Z)]
+               [e (make-config-commitment-pair e-node 1 'Z)]
+               [f (make-config-commitment-pair f-node 1 'Z)]
+               [g (make-config-commitment-pair g-node 2 'Z)]
+               [h (make-config-commitment-pair h-node 2 'Z)]
+               [i (make-config-commitment-pair i-node 3 'Z)]
+               [j (make-config-commitment-pair j-node 3 'Z)]
+               [k (make-config-commitment-pair k-node 4 'Z)]
+               [l (make-config-commitment-pair l-node 5 'Z)])
+     (edges [(list ag-impl-step ag-spec-step) a g]
+            [(list ai-impl-step ai-spec-step) a i]
+            [(list akm-impl-step akm-spec-step) a k]
+            [(list al-impl-step al-spec-step) a l]
+            [(list ba-impl-step ba-spec-step) b a]
+            [(list b-cd-impl-step bc-spec-step) b c]
+            [(list b-cd-impl-step bd-spec-step) b d]
+            [(list b-ef-impl-step be-spec-step) b e]
+            [(list b-ef-impl-step bf-spec-step) b f]
+            [(list gh-impl-step gh-spec-step) g h]
+            [(list hg-impl-step hg-spec-step) h g]
+            [(list ia-impl-step ia-spec-step) i a]
+            [(list ij-impl-step ij-spec-step) i j]
+            [(list ja-impl-step ja-spec-step) j a]
+            [(list ji-impl-step ji-spec-step) j i]
+            [(list la-impl-step la-spec-step) l a])))
+
+    (test-graph-equal? "build-unsatisfying-graph: A with pattern Z"
+    (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'Z)
+                              com-sat-incoming
+                              com-sat-outgoing
+                              com-sat-related-steps)
+    com-sat-z-on-a-graph))
+
+;; Small helper; returns the implementation configuration associated with the given vertex of an
+;; unsat-graph
+(define (vertex-impl-config v)
+  (first (first (vertex-value v))))
 
 ;; outgoing-spec-step (List address pattern) -> (List config-pair (List address pattern))
 ;;
@@ -1402,33 +1454,26 @@
 
 ;; Graph (Listof Vertex) -> (Setof Vertex)
 ;;
-;; Returns the set of vertices in g that can reach target-vertices (including target-vertices
-;; themselves). Assumes that target-vertices are all vertices of g.
-(define (vertices-that-reach g target-vertices)
-  (vertices-reachable-from (graph-transpose g) target-vertices))
-
-;; Graph (Listof Vertex) -> (Setof Vertex)
-;;
-;; Returns the set of vertices in g that are reachable from start-vertices (including start-vertices
-;; themselves). Assumes that start-vertices are all vertices of g.
-(define (vertices-reachable-from g start-vertices)
-  ;; Returns the given reachable set updated with the vertices reachable from start
-  (define (dfs start reachable)
+;; Returns the set of vertices in g that can reach a vertex in target-vertices (including
+;; target-vertices themselves). Assumes that target-vertices are all vertices of g.
+(define (vertices-reaching g target-vertices)
+  ;; Returns the given reaching set updated with the vertices reaching start
+  (define (dfs start reaching)
     (cond
-      [(set-member? reachable start) reachable]
+      [(set-member? reaching start) reaching]
       [else
-       (for/fold ([reachable (set-add reachable start)])
-                 ([out-edge (vertex-outgoing start)])
-         (dfs (edge-destination out-edge) reachable))]))
+       (for/fold ([reaching (set-add reaching start)])
+                 ([in-edge (vertex-incoming start)])
+         (dfs (edge-source in-edge) reaching))]))
 
-  ;; Does a DFS from each given vertex to compute the reachable vertices
-  (for/fold ([reachable (set)])
-            ([start start-vertices])
-    (dfs start reachable)))
+  ;; Does a DFS from each given vertex to compute the reaching vertices
+  (for/fold ([reaching (set)])
+            ([start target-vertices])
+    (dfs start reaching)))
 
 (module+ test
   (let ()
-    (define reachable-test-graph
+    (define reaching-test-graph
       (graph-literal
        [vertices [a 'a] [b 'b] [c 'c] [d 'd] [e 'e] [f 'f] [g 'g]]
        [edges ['ac a c]
@@ -1439,25 +1484,85 @@
               ['de d e]
               ['fe f e]
               ['gf g f]]))
-    (define a-vert (graph-find-vertex reachable-test-graph 'a))
-    (define b-vert (graph-find-vertex reachable-test-graph 'b))
-    (define c-vert (graph-find-vertex reachable-test-graph 'c))
-    (define d-vert (graph-find-vertex reachable-test-graph 'd))
-    (define e-vert (graph-find-vertex reachable-test-graph 'e))
-    (define f-vert (graph-find-vertex reachable-test-graph 'f))
-    (define g-vert (graph-find-vertex reachable-test-graph 'g))
+    (define a-vert (graph-find-vertex reaching-test-graph 'a))
+    (define b-vert (graph-find-vertex reaching-test-graph 'b))
+    (define c-vert (graph-find-vertex reaching-test-graph 'c))
+    (define d-vert (graph-find-vertex reaching-test-graph 'd))
+    (define e-vert (graph-find-vertex reaching-test-graph 'e))
+    (define f-vert (graph-find-vertex reaching-test-graph 'f))
+    (define g-vert (graph-find-vertex reaching-test-graph 'g))
 
-    (test-equal? "vertices-reachable-from 1"
-      (vertices-reachable-from reachable-test-graph (list d-vert))
-      (set d-vert e-vert))
+    (test-equal? "vertices-reaching 1"
+      (vertices-reaching reaching-test-graph (list c-vert))
+      (set a-vert b-vert c-vert))
 
-    (test-equal? "vertices-reachable-from 2"
-      (vertices-reachable-from reachable-test-graph (list a-vert g-vert))
+    (test-equal? "vertices-reaching 2"
+      (vertices-reaching reaching-test-graph (list f-vert))
+      (set f-vert g-vert))
+
+    (test-equal? "vertices-reaching 3"
+      (vertices-reaching reaching-test-graph (list e-vert g-vert))
       (set a-vert b-vert c-vert d-vert e-vert f-vert g-vert))
+    (error "stop")
 
-    (test-equal? "vertices-reachable-from 3"
-      (vertices-reachable-from reachable-test-graph (list a-vert b-vert))
-      (set a-vert b-vert c-vert d-vert e-vert))))
+    (test-equal? "vertices-reaching 4"
+      (vertices-reaching reaching-test-graph (list f-vert c-vert))
+      (set a-vert b-vert c-vert f-vert g-vert))
+
+    (test-equal? "vertices-reaching 5"
+      (vertices-reaching reaching-test-graph (list))
+      (set))
+
+    (test-equal? "vertices-reaching 6"
+      (vertices-reaching reaching-test-graph (list g-vert))
+      (set g-vert))))
+
+;; Returns #t if the given strongly-connected component of the given graph is fair; #f otherwise.
+;; A fair SCC is an SCC in which for every necessarily enabled action in each of its vertices, either
+;; there exists a vertex in the SCC where the action is disabled, or there is an edge between two
+;; vertices in the SCC that takes that action).
+(define (fair-scc? scc necessarily-enabled-actions)
+  (define all-enabled-necessary-actions
+    (for/fold ([all-en-actions (set)])
+              ([vertex scc])
+      (set-union all-en-actions
+                 (list->set (hash-ref necessarily-enabled-actions (vertex-impl-config vertex))))))
+  (for/and ([action all-enabled-necessary-actions])
+    ;; action is disabled or taken in some state
+    (or
+     ;; action is disabled in some vertex
+     (for/or ([v scc])
+       (not (set-member? (hash-ref necessarily-enabled-actions (vertex-impl-config v)) action)))
+     ;; there exists an edge between two vertices of the SCC that takes the action
+     (for/or ([v scc])
+       (for/or ([out-edge (vertex-outgoing v)])
+         (define edge-impl-step (first (edge-value out-edge)))
+         (and (equal? (impl-step-trigger edge-impl-step) action)
+              (set-member? scc (edge-destination out-edge))))))))
+
+(module+ test
+  (define (make-com-sat-scc g . vals)
+    (apply set (map (lambda (val) (graph-find-vertex g val)) vals)))
+
+  (test-false "fair-scc? 1"
+    (fair-scc? (make-com-sat-scc com-sat-x-on-a-graph
+                                 (make-config-commitment-pair i-node 3 'X)
+                                 (make-config-commitment-pair j-node 3 'X))
+               com-sat-ne-actions))
+
+  (test-true "fair-scc? 2"
+    (fair-scc? (make-com-sat-scc com-sat-w-on-a-graph
+                                 (make-config-commitment-pair g-node 2 'W)
+                                 (make-config-commitment-pair h-node 2 'W))
+               com-sat-ne-actions))
+
+  (test-true "fair-scc? 3"
+    (fair-scc? (make-com-sat-scc com-sat-z-on-a-graph
+                                 (make-config-commitment-pair a-node 1 'Z)
+                                 (make-config-commitment-pair i-node 3 'Z)
+                                 (make-config-commitment-pair j-node 3 'Z)
+                                 (make-config-commitment-pair l-node 5 'Z))
+               com-sat-ne-actions)))
 
 (module+ test
   (error "stop"))
