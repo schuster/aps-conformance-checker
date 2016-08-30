@@ -89,7 +89,7 @@
   (define unsatisfied-config-commitments (mutable-set))
 
   (define outgoing (build-outgoing-dict incoming related-spec-steps))
-  (define necessarily-enabled-actions (catalog-necessarily-enabled-actions outgoing))
+  (define enabled-necessary-actions (catalog-enabled-necessary-actions outgoing))
 
   (define-values (satisfying-pairs unsatisfying-pairs)
     (for/fold ([satisfying-pairs (set)]
@@ -111,7 +111,7 @@
                                     incoming
                                     outgoing
                                     related-spec-steps
-                                    necessarily-enabled-actions))
+                                    enabled-necessary-actions))
             (set-union! satisfied-config-commitments   new-satisfied-config-commitments)
             (set-union! unsatisfied-config-commitments new-unsatisfied-config-commitments)
             (set-member? new-satisfied-config-commitments configs-commitment-pair)])))
@@ -154,28 +154,28 @@
   (define l-node (sat-test-node 'L 5 (list 'W 'Z)))
   (define m-node (sat-other-derivative-node 'M))
 
-  ;; ne stands for "necessarily enabled", others use 'ue' for unnecessarily enabled
-  (define sat-ne-trigger1 `(timeout/empty-queue (init-addr 1 Nat)))
-  (define sat-ne-trigger2 `(internal-receive (init-addr 2 Nat) (* Nat)))
-  (define sat-ne-trigger3 `(internal-receive (init-addr 3 Nat) (* Nat)))
-  (define sat-ne-trigger4 `(internal-receive (init-addr 4 Nat) (* Nat)))
+  ;; en stands for "enabled necessary", others use 'ue' for enabled unnecessary
+  (define sat-en-trigger1 `(timeout/empty-queue (init-addr 1 Nat)))
+  (define sat-en-trigger2 `(internal-receive (init-addr 2 Nat) (* Nat)))
+  (define sat-en-trigger3 `(internal-receive (init-addr 3 Nat) (* Nat)))
+  (define sat-en-trigger4 `(internal-receive (init-addr 4 Nat) (* Nat)))
 
-  (define sat-ue-trigger1 `(external-receive (init-addr 1 Nat) (* Nat)))
+  (define sat-eu-trigger1 `(external-receive (init-addr 1 Nat) (* Nat)))
 
-  (define ag-impl-step (sat-impl-step sat-ne-trigger1))
-  (define ai-impl-step (sat-impl-step sat-ne-trigger2))
-  (define akm-impl-step (sat-impl-step sat-ne-trigger3))
-  (define al-impl-step (sat-impl-step sat-ne-trigger4))
-  (define ba-impl-step (sat-impl-step sat-ne-trigger1))
-  (define b-cd-impl-step (sat-impl-step sat-ne-trigger2))
-  (define b-ef-impl-step (sat-impl-step sat-ne-trigger3))
-  (define gh-impl-step (sat-impl-step sat-ne-trigger1))
-  (define hg-impl-step (sat-impl-step sat-ne-trigger1))
-  (define ia-impl-step (sat-impl-step sat-ne-trigger2))
-  (define ij-impl-step (sat-impl-step sat-ne-trigger1))
-  (define ja-impl-step (sat-impl-step sat-ne-trigger2))
-  (define ji-impl-step (sat-impl-step sat-ne-trigger1))
-  (define la-impl-step (sat-impl-step sat-ue-trigger1))
+  (define ag-impl-step (sat-impl-step sat-en-trigger1))
+  (define ai-impl-step (sat-impl-step sat-en-trigger2))
+  (define akm-impl-step (sat-impl-step sat-en-trigger3))
+  (define al-impl-step (sat-impl-step sat-en-trigger4))
+  (define ba-impl-step (sat-impl-step sat-en-trigger1))
+  (define b-cd-impl-step (sat-impl-step sat-en-trigger2))
+  (define b-ef-impl-step (sat-impl-step sat-en-trigger3))
+  (define gh-impl-step (sat-impl-step sat-en-trigger1))
+  (define hg-impl-step (sat-impl-step sat-en-trigger1))
+  (define ia-impl-step (sat-impl-step sat-en-trigger2))
+  (define ij-impl-step (sat-impl-step sat-en-trigger1))
+  (define ja-impl-step (sat-impl-step sat-en-trigger2))
+  (define ji-impl-step (sat-impl-step sat-en-trigger1))
+  (define la-impl-step (sat-impl-step sat-eu-trigger1))
 
   (define ag-spec-step (sat-spec-step 1 'X 'Y))
   (define ai-spec-step (sat-spec-step 1 'W 'Y))
@@ -394,33 +394,33 @@
 
 ;; OutgoingDict -> (Hash impl-config (Setof Trigger))
 ;;
-;; Returns a hash table that gives the necessarily enabled actions for each implementation config in
+;; Returns a hash table that gives the enabled necessary actions for each implementation config in
 ;; outgoing.
-(define (catalog-necessarily-enabled-actions outgoing)
+(define (catalog-enabled-necessary-actions outgoing)
   (for/hash ([(config-pair full-steps) outgoing])
     (define all-actions
       (for/list ([full-step full-steps])
         (impl-step-trigger (full-step-impl-step full-step))))
     (values (config-pair-impl-config config-pair)
-            (list->set (filter necessarily-enabled? all-actions)))))
+            (list->set (filter necessary-action? all-actions)))))
 
 (module+ test
-  (define com-sat-ne-actions
-    (immutable-hash ['A (set sat-ne-trigger1 sat-ne-trigger2 sat-ne-trigger3 sat-ne-trigger4)]
-                    ['B (set sat-ne-trigger1 sat-ne-trigger2 sat-ne-trigger3)]
+  (define com-sat-en-actions
+    (immutable-hash ['A (set sat-en-trigger1 sat-en-trigger2 sat-en-trigger3 sat-en-trigger4)]
+                    ['B (set sat-en-trigger1 sat-en-trigger2 sat-en-trigger3)]
                     ['C (set)]
                     ['D (set)]
                     ['E (set)]
                     ['F (set)]
-                    ['G (set sat-ne-trigger1)]
-                    ['H (set sat-ne-trigger1)]
-                    ['I (set sat-ne-trigger1 sat-ne-trigger2)]
-                    ['J (set sat-ne-trigger1 sat-ne-trigger2)]
+                    ['G (set sat-en-trigger1)]
+                    ['H (set sat-en-trigger1)]
+                    ['I (set sat-en-trigger1 sat-en-trigger2)]
+                    ['J (set sat-en-trigger1 sat-en-trigger2)]
                     ['K (set)]
                     ['L (set)]
                     ['M (set)]))
-  (test-equal? "catalog-necessarily-enabled-actions"
-    (catalog-necessarily-enabled-actions com-sat-outgoing) com-sat-ne-actions))
+  (test-equal? "catalog-enabled-necessary-actions"
+    (catalog-enabled-necessary-actions com-sat-outgoing) com-sat-en-actions))
 
 ;; Type:
 ;;
@@ -442,13 +442,13 @@
                               incoming
                               outgoing
                               related-spec-steps
-                              necessarily-enabled-actions)
+                              enabled-necessary-actions)
 
   ;; The algorithm first builds the graph of all execution paths through the given configuration pair
   ;; in which every configuration has the commitment, and no edge (i.e. step) in the graph satisfies
   ;; it (this is a subgraph of the full execution graph). It then computes the strongly connected
   ;; components of this graph and finds those that are fair (a fair SCC is an SCC in which for every
-  ;; necessarily enabled action in each of its vertices, either there exists a vertex in the SCC where
+  ;; enabled necessary action in each of its vertices, either there exists a vertex in the SCC where
   ;; the action is disabled, or there is an edge between two vertices in the SCC that takes that
   ;; action). Every fair SCC either represents a fair cycle or contains a quiescent configuration (or
   ;; both). The configurations that can reach a vertex in a fair SCC, then, are those that have some
@@ -462,7 +462,7 @@
   (define sccs (graph-find-sccs unsat-graph))
   (define fair-scc-vertices
     (for/fold ([fair-scc-vertices (set)])
-              ([scc sccs] #:when (fair-scc? scc necessarily-enabled-actions))
+              ([scc sccs] #:when (fair-scc? scc enabled-necessary-actions))
       (set-union fair-scc-vertices scc)))
   ;; 3. Find all vertices that can reach a vertex in a fair SCC
   (define unsat-vertices-set (vertices-reaching unsat-graph fair-scc-vertices))
@@ -480,7 +480,7 @@
                           com-sat-incoming
                           com-sat-outgoing
                           com-sat-related-steps
-                          com-sat-ne-actions)
+                          com-sat-en-actions)
     (list (set (make-config-commitment-pair a-node 1 'Y))
           (set)))
 
@@ -489,7 +489,7 @@
                           com-sat-incoming
                           com-sat-outgoing
                           com-sat-related-steps
-                          com-sat-ne-actions)
+                          com-sat-en-actions)
     (list (set)
           (set (make-config-commitment-pair a-node 1 'Z)
                (make-config-commitment-pair b-node 1 'Z)
@@ -509,7 +509,7 @@
                           com-sat-incoming
                           com-sat-outgoing
                           com-sat-related-steps
-                          com-sat-ne-actions)
+                          com-sat-en-actions)
     (list (set
            (make-config-commitment-pair i-node 3 'X)
            (make-config-commitment-pair j-node 3 'X))
@@ -524,7 +524,7 @@
                           com-sat-incoming
                           com-sat-outgoing
                           com-sat-related-steps
-                          com-sat-ne-actions)
+                          com-sat-en-actions)
     (list (set)
           (set (make-config-commitment-pair a-node 1 'W)
                (make-config-commitment-pair g-node 2 'W)
@@ -820,22 +820,22 @@
       (vertices-reaching reaching-test-graph (list g-vert))
       (set g-vert))))
 
-;; Returns #t if the given strongly-connected component of the given graph is fair; #f otherwise.
-;; A fair SCC is an SCC in which for every necessarily enabled action in each of its vertices, either
+;; Returns #t if the given strongly-connected component of the given graph is fair; #f otherwise.  A
+;; fair SCC is an SCC in which for every enabled necessary action in each of its vertices, either
 ;; there exists a vertex in the SCC where the action is disabled, or there is an edge between two
 ;; vertices in the SCC that takes that action).
-(define (fair-scc? scc necessarily-enabled-actions)
+(define (fair-scc? scc enabled-necessary-actions)
   (define all-enabled-necessary-actions
     (for/fold ([all-en-actions (set)])
               ([vertex scc])
       (set-union all-en-actions
-                 (list->set (hash-ref necessarily-enabled-actions (vertex-impl-config vertex))))))
+                 (list->set (hash-ref enabled-necessary-actions (vertex-impl-config vertex))))))
   (for/and ([action all-enabled-necessary-actions])
     ;; action is disabled or taken in some state
     (or
      ;; action is disabled in some vertex
      (for/or ([v scc])
-       (not (set-member? (hash-ref necessarily-enabled-actions (vertex-impl-config v)) action)))
+       (not (set-member? (hash-ref enabled-necessary-actions (vertex-impl-config v)) action)))
      ;; there exists an edge between two vertices of the SCC that takes the action
      (for/or ([v scc])
        (for/or ([out-edge (vertex-outgoing v)])
@@ -851,13 +851,13 @@
     (fair-scc? (make-com-sat-scc com-sat-x-on-a-graph
                                  (make-config-commitment-pair i-node 3 'X)
                                  (make-config-commitment-pair j-node 3 'X))
-               com-sat-ne-actions))
+               com-sat-en-actions))
 
   (test-true "fair-scc? 2"
     (fair-scc? (make-com-sat-scc com-sat-w-on-a-graph
                                  (make-config-commitment-pair g-node 2 'W)
                                  (make-config-commitment-pair h-node 2 'W))
-               com-sat-ne-actions))
+               com-sat-en-actions))
 
   (test-true "fair-scc? 3"
     (fair-scc? (make-com-sat-scc com-sat-z-on-a-graph
@@ -865,7 +865,7 @@
                                  (make-config-commitment-pair i-node 3 'Z)
                                  (make-config-commitment-pair j-node 3 'Z)
                                  (make-config-commitment-pair l-node 5 'Z))
-               com-sat-ne-actions)))
+               com-sat-en-actions)))
 
 ;; Small helper; returns the implementation configuration associated with the given vertex of an
 ;; unsat-graph

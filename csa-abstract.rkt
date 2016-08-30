@@ -10,7 +10,7 @@
  csa#-handle-all-internal-actions
  csa#-abstract-config
  csa#-blur-config
- necessarily-enabled?
+ necessary-action?
 
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
  csa#-spawn-address?
@@ -1752,28 +1752,28 @@
 (define (precise-internal-address? addr)
   (redex-match? csa# a#int-precise addr))
 
-(define (necessarily-enabled? trigger)
-  (judgment-holds (necessarily-enabled?/j ,trigger)))
+(define (necessary-action? trigger)
+  (judgment-holds (necessary-action?/j ,trigger)))
 
 (define-judgment-form csa#
-  #:mode (necessarily-enabled?/j I)
-  #:contract (necessarily-enabled?/j trigger#)
+  #:mode (necessary-action?/j I)
+  #:contract (necessary-action?/j trigger#)
 
   [-----------------------------------------------------
-   (necessarily-enabled?/j (timeout/empty-queue a#int))]
+   (necessary-action?/j (timeout/empty-queue a#int))]
 
   [-----------------------------------------------------
-   (necessarily-enabled?/j (internal-receive a#int v#))])
+   (necessary-action?/j (internal-receive a#int v#))])
 
 (module+ test
-  (test-true "necessarily-enabled 1"
-    (necessarily-enabled? (term (timeout/empty-queue (init-addr 1 Nat)))))
-  (test-false "necessarily-enabled 2"
-    (necessarily-enabled? (term (timeout/non-empty-queue (init-addr 1 Nat)))))
-  (test-true "necessarily-enabled 3"
-    (necessarily-enabled? (term (internal-receive (init-addr 1 Nat) (* Nat)))))
-  (test-false "necessarily-enabled 4"
-    (necessarily-enabled? (term (external-receive (init-addr 1 Nat) (* Nat))))))
+  (test-true "necessary-action? 1"
+    (necessary-action? (term (timeout/empty-queue (init-addr 1 Nat)))))
+  (test-false "necessary-action? 2"
+    (necessary-action? (term (timeout/non-empty-queue (init-addr 1 Nat)))))
+  (test-true "necessary-action? 3"
+    (necessary-action? (term (internal-receive (init-addr 1 Nat) (* Nat)))))
+  (test-false "necessary-action? 4"
+    (necessary-action? (term (external-receive (init-addr 1 Nat) (* Nat))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Types
