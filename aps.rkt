@@ -301,9 +301,10 @@
           ;; unobserved environment interface
           ()
           ;; output commitments
-          ())))
-)
+          ()))))
 
+;; Resolves the observed environment interface address of a specification (either UNKNOWN or [x τ]) to
+;; either UNKNOWN or an address, using the given name/address bindings as necessary
 (define-metafunction aps-eval
   resolve-spec-obs-int/mf : any ([x a] ...) -> σ
   [(resolve-spec-obs-int/mf UNKNOWN _) UNKNOWN]

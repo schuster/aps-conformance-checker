@@ -161,7 +161,9 @@
    (where (a_external ...) (generate-fresh-addresses/mf (τ_external ...) (a_internal ...)))
 
    ;; 2. Do substitutions into spawn to get a behavior
-   (where ((v_let ...) ...) (((subst-n e_let [x_external a_external] ...) ...) ...))
+   (where ((v_let ...) ...) (((subst-n e_let
+                                       [x_external a_external] ...
+                                       [x_internal a_internal] ...) ...) ...))
    (where (b ...)
           ((spawn->behavior e
                             ([x_let v_let] ...
