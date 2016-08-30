@@ -23,38 +23,43 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Data Structures for Commitment Satisfaction
 
-;; OutgoingStepsDict : (Hash ConfigPair (MutableSetof OutgoingImplStep)
-;; For each config pair, gives the set of outgoing implementation steps from that pair.
+;; OutgoingStepsDict : (Hash ConfigPair (MutableSetof FullStep)
+;;
+;; For each config pair, gives the set of outgoing steps from that pair, where each step has an
+;; impl-step, a matching spec-step, and all the derivatives of that pair. Intuitively, this is the
+;; IncomingStepsDict in the reverse direction - we construct it because we want to traverse forward
+;; edges more efficiently that doing backwards lookups through an IncomingSpecStepsDict.
 
-;; An outgoing-impl-step represents a possible implementation step from a given configuration, and
-;; contains the impl-step itself as well as a set of outgoing-spec-steps that represent the impl
-;; step's matching spec steps.
-(struct outgoing-impl-step (the-step matching-spec-steps)
+;; A full-step represents a possible implementation step and matching specification step from a given
+;; configuration, and also contains all mapped-derivatives of the pair of destination configurations
+;; of those steps.
+;;
+;; derivatives : (MutableSetof mapped-derivative)
+(struct full-step (impl-step spec-step derivatives)
   #:transparent
   ;; NOTE: implementing custom equality here to work around Racket bug
   ;; http://bugs.racket-lang.org/query/?cmd=view&pr=15342
   #:methods gen:equal+hash
   [(define (equal-proc s1 s2 rec?)
-     (and (rec? (outgoing-impl-step-the-step s1)
-                  (outgoing-impl-step-the-step s2))
-          (rec? (list->set (set->list (outgoing-impl-step-matching-spec-steps s1)))
-                (list->set (set->list (outgoing-impl-step-matching-spec-steps s2))))))
+     (and (rec? (full-step-impl-step s1)
+                (full-step-impl-step s2))
+          (rec? (full-step-spec-step s1)
+                (full-step-spec-step s2))
+          (rec? (list->set (set->list (full-step-derivatives s1)))
+                (list->set (set->list (full-step-derivatives s2))))))
    (define (hash-proc s rec)
-     (+ (rec (outgoing-impl-step-the-step s))
-        (rec (list->set (set->list (outgoing-impl-step-matching-spec-steps s))))))
+     (+ (rec (full-step-impl-step s))
+        (rec (full-step-spec-step s))
+        (rec (list->set (set->list (full-step-derivatives s))))))
    (define (hash2-proc s rec)
-     (+ (rec (outgoing-impl-step-the-step s))
-        (rec (list->set (set->list (outgoing-impl-step-matching-spec-steps s))))))])
+     (+ (rec (full-step-impl-step s))
+        (rec (full-step-spec-step s))
+        (rec (list->set (set->list (full-step-derivatives s))))))])
 
-;; An outgoing-spec-step represents a possible spec-step from some configuration and contains the step
-;; itself as well as a set of outgoing-derivatives representing the possible sbc-derivatives after
-;; taking this step.
-(struct outgoing-spec-step (the-step derivatives) #:transparent)
-
-;; An outgoing-derivative represents a possible sbc-derivative of some impl-step/spec-step pair. It
-;; contains the new configuration itself as well as a hash table from addresses to addresses
+;; A mapped-derivative represents a possible sbc-derivative of some impl-step/spec-step pair. It
+;; contains the new configuration pair itself as well as a hash table from addresses to addresses
 ;; representing the address-substitution done during the canonicalization phase.
-(struct outgoing-derivative (config-pair address-map) #:transparent)
+(struct mapped-derivative (config-pair address-map) #:transparent)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Algorithm
@@ -231,12 +236,10 @@
      [(list l-node la-impl-step) (mutable-set la-spec-step)]))
 
   (define (single-match-step i-step s-step derivative addr-map)
-    (outgoing-impl-step
+    (full-step
      i-step
-     (mutable-set
-      (outgoing-spec-step
-       s-step
-       (mutable-set (outgoing-derivative derivative addr-map))))))
+     s-step
+     (mutable-set (mapped-derivative derivative addr-map))))
 
   (define com-sat-outgoing
     (mutable-hash
@@ -244,36 +247,32 @@
       (mutable-set
        (single-match-step ag-impl-step ag-spec-step g-node (make-com-sat-map 1 2))
        (single-match-step ai-impl-step ai-spec-step i-node (make-com-sat-map 1 3))
-       (outgoing-impl-step
+       (full-step
         akm-impl-step
+        akm-spec-step
         (mutable-set
-         (outgoing-spec-step
-          akm-spec-step
-          (mutable-set
-           (outgoing-derivative k-node (make-com-sat-map 1 4))
-           (outgoing-derivative m-node null)))))
+         (mapped-derivative k-node (make-com-sat-map 1 4))
+         (mapped-derivative m-node null)))
        (single-match-step al-impl-step al-spec-step l-node (make-com-sat-map 1 5)))]
      [b-node
       (mutable-set
        (single-match-step ba-impl-step ba-spec-step a-node (make-com-sat-map 1 1))
-       (outgoing-impl-step
+       (full-step
         b-cd-impl-step
-        (mutable-set
-         (outgoing-spec-step
-          bc-spec-step
-          (mutable-set (outgoing-derivative c-node (make-com-sat-map 1 1))))
-         (outgoing-spec-step
-          bd-spec-step
-          (mutable-set (outgoing-derivative d-node (make-com-sat-map 1 1))))))
-       (outgoing-impl-step
+        bc-spec-step
+        (mutable-set (mapped-derivative c-node (make-com-sat-map 1 1))))
+       (full-step
+        b-cd-impl-step
+        bd-spec-step
+        (mutable-set (mapped-derivative d-node (make-com-sat-map 1 1))))
+       (full-step
         b-ef-impl-step
-        (mutable-set
-         (outgoing-spec-step
-          be-spec-step
-          (mutable-set (outgoing-derivative e-node (make-com-sat-map 1 1))))
-         (outgoing-spec-step
-          bf-spec-step
-          (mutable-set (outgoing-derivative f-node (make-com-sat-map 1 1)))))))]
+        be-spec-step
+        (mutable-set (mapped-derivative e-node (make-com-sat-map 1 1))))
+       (full-step
+        b-ef-impl-step
+        bf-spec-step
+        (mutable-set (mapped-derivative f-node (make-com-sat-map 1 1)))))]
      [c-node (mutable-set)]
      [d-node (mutable-set)]
      [e-node (mutable-set)]
@@ -335,36 +334,27 @@
     (for ([incoming-step this-pair-incoming-steps])
       (match-define (list pred-pair impl-step spec-step address-map) incoming-step)
       ;; 2. add entry for predecessor config pair if it doesn't exist yet
-      (define outgoing-impl-steps
+      (define full-steps
         (match (hash-ref outgoing pred-pair #f)
           [#f
            (define steps (mutable-set))
            (hash-set! outgoing pred-pair steps)
            steps]
           [steps steps]))
-      ;; 3. add this impl step if it doesn't exist yet
-      (define outgoing-impl
-        (match (set-findf (lambda (s) (equal? (outgoing-impl-step-the-step s) impl-step))
-                          outgoing-impl-steps)
-          [#f
-           (define outgoing-i-step (outgoing-impl-step impl-step (mutable-set)))
-           (set-add! outgoing-impl-steps outgoing-i-step)
-           outgoing-i-step]
-          [the-step the-step]))
-      ;; 4. add this spec step if it's related and doesn't exist yet
-      (define spec-steps (outgoing-impl-step-matching-spec-steps outgoing-impl))
       (when (set-member? (hash-ref related-spec-steps (list pred-pair impl-step)) spec-step)
-        (define outgoing-spec
-          (match (set-findf (lambda (s) (equal? (outgoing-spec-step-the-step s) spec-step))
-                            spec-steps)
+        ;; 3. add this full step if it doesn't exist yet
+        (define the-full-step
+          (match (set-findf (lambda (s) (and (equal? (full-step-impl-step s) impl-step)
+                                             (equal? (full-step-spec-step s) spec-step)))
+                            full-steps)
             [#f
-             (define outgoing-s-step (outgoing-spec-step spec-step (mutable-set)))
-             (set-add! spec-steps outgoing-s-step)
-             outgoing-s-step]
+             (define the-full-step (full-step impl-step spec-step (mutable-set)))
+             (set-add! full-steps the-full-step)
+             the-full-step]
             [the-step the-step]))
         ;; 5. add this derivative of the spec step
-        (set-add! (outgoing-spec-step-derivatives outgoing-spec)
-                  (outgoing-derivative config-pair address-map)))))
+        (set-add! (full-step-derivatives the-full-step)
+                  (mapped-derivative config-pair address-map)))))
   outgoing)
 
 (module+ test
@@ -379,13 +369,10 @@
                      [(list 'b 'y) (mutable-set (list (list 'a 'x) 'impl1 'spec1 null))])
      (immutable-hash [(list (list 'a 'x) 'impl1) (mutable-set 'spec1)]))
     (mutable-hash [(list 'a 'x) (mutable-set
-                                 (outgoing-impl-step
+                                 (full-step
                                   'impl1
-                                  (mutable-set
-                                   (outgoing-spec-step
-                                    'spec1
-                                    (mutable-set
-                                     (outgoing-derivative (list 'b 'y) null))))))]
+                                  'spec1
+                                  (mutable-set (mapped-derivative (list 'b 'y) null))))]
                   [(list 'b 'y) (mutable-set)]))
 
   (test-hash-of-msets-equal? "build-outgoing test with unrelated spec step"
@@ -395,13 +382,10 @@
                                                 (list (list 'a 'x) 'impl1 'spec2 null))])
      (immutable-hash [(list (list 'a 'x) 'impl1) (mutable-set 'spec1)]))
     (mutable-hash [(list 'a 'x) (mutable-set
-                                 (outgoing-impl-step
+                                 (full-step
                                   'impl1
-                                  (mutable-set
-                                   (outgoing-spec-step
-                                    'spec1
-                                    (mutable-set
-                                     (outgoing-derivative (list 'b 'y) null))))))]
+                                  'spec1
+                                  (mutable-set (mapped-derivative (list 'b 'y) null))))]
                   [(list 'b 'y) (mutable-set)]))
 
   (test-hash-of-msets-equal? "build-outgoing-dict: big test"
@@ -413,10 +397,10 @@
 ;; Returns a hash table that gives the necessarily enabled actions for each implementation config in
 ;; outgoing.
 (define (catalog-necessarily-enabled-actions outgoing)
-  (for/hash ([(config-pair outgoing-impl-steps) outgoing])
+  (for/hash ([(config-pair full-steps) outgoing])
     (define all-actions
-      (for/list ([out-i-step outgoing-impl-steps])
-        (impl-step-trigger (outgoing-impl-step-the-step out-i-step))))
+      (for/list ([full-step full-steps])
+        (impl-step-trigger (full-step-impl-step full-step))))
     (values (config-pair-impl-config config-pair)
             (list->set (filter necessarily-enabled? all-actions)))))
 
@@ -589,7 +573,8 @@
             (match-define (list prev-config-pair i-step s-step addr-map) incoming-entry)
             (define prev-address (reverse-rename-address addr-map commitment-address))
             (define prev-commitment (list prev-address pattern))
-            (when (and (aps#-config-has-commitment? (config-pair-spec-config prev-config-pair) prev-address pattern)
+            (when (and (aps#-config-has-commitment? (config-pair-spec-config prev-config-pair)
+                                                    prev-address pattern)
                        (not (member prev-commitment (spec-step-satisfied-commitments s-step))))
               (define pred-vertex
                 (graph-find-or-add-vertex! G (list prev-config-pair prev-commitment)))
@@ -597,18 +582,15 @@
               (enqueue! worklist pred-vertex)))
 
           ;; Add vertices and edges from walking forwards
-          (for ([impl-step (hash-ref outgoing config-pair)])
-            (define the-impl-step (outgoing-impl-step-the-step impl-step))
-            (for ([spec-step (outgoing-impl-step-matching-spec-steps impl-step)])
-              ;; TODO: come up with new names for the kinds of spec and impl steps
-              (define the-spec-step (outgoing-spec-step-the-step spec-step))
-              (unless (member commitment (spec-step-satisfied-commitments the-spec-step))
-                (match-define (list derivative successor-commitment)
-                  (find-carrying-derivative (outgoing-spec-step-derivatives spec-step) commitment))
-                (define successor-vertex
-                  (graph-find-or-add-vertex! G (list derivative successor-commitment)))
-                (graph-add-edge-if-new! G (list the-impl-step the-spec-step) vertex successor-vertex)
-                (enqueue! worklist successor-vertex))))
+          (for ([the-full-step (hash-ref outgoing config-pair)])
+            (match-define (full-step impl-step spec-step derivatives) the-full-step)
+            (unless (member commitment (spec-step-satisfied-commitments spec-step))
+              (match-define (list derivative successor-commitment)
+                (find-carrying-derivative derivatives commitment))
+              (define successor-vertex
+                (graph-find-or-add-vertex! G (list derivative successor-commitment)))
+              (graph-add-edge-if-new! G (list impl-step spec-step) vertex successor-vertex)
+              (enqueue! worklist successor-vertex)))
           (loop (set-add visited pair))])]))
   G)
 
@@ -711,7 +693,7 @@
                               com-sat-related-steps)
     com-sat-z-on-a-graph))
 
-;; outgoing-spec-step (List address pattern) -> (List config-pair (List address pattern))
+;; mapped-derivative (List address pattern) -> (List config-pair (List address pattern))
 ;;
 ;; Finds the derivative within the given list that carries the given commitment from the previous
 ;; configuration pair, returning both the derivative config pair as well as the new commitment
@@ -721,9 +703,9 @@
   (let loop ([derivatives (set->list derivatives)])
     (match derivatives
       [(list derivative derivatives ...)
-       (match (try-rename-address (outgoing-derivative-address-map derivative) com-address)
+       (match (try-rename-address (mapped-derivative-address-map derivative) com-address)
          [#f (loop derivatives)]
-         [new-address (list (outgoing-derivative-config-pair derivative)
+         [new-address (list (mapped-derivative-config-pair derivative)
                             (list new-address (second commitment)))])]
       [(list) (error 'find-carrying-derivative
                      "Unable to find carrying derivative for ~s in ~s"
@@ -732,10 +714,10 @@
 
 (module+ test
   (check-equal?
-   (find-carrying-derivative (list (outgoing-derivative 'A null)
-                                   (outgoing-derivative 'B (list `[2 3]))
-                                   (outgoing-derivative 'C (list `[1 4] `[5 2]))
-                                   (outgoing-derivative 'D (list `[6 1]`[3 2])))
+   (find-carrying-derivative (list (mapped-derivative 'A null)
+                                   (mapped-derivative 'B (list `[2 3]))
+                                   (mapped-derivative 'C (list `[1 4] `[5 2]))
+                                   (mapped-derivative 'D (list `[6 1]`[3 2])))
                              `((obs-ext 3 Nat) *))
    (list 'D `((obs-ext 2 Nat) *))))
 
