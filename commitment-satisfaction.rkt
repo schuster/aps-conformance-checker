@@ -562,7 +562,11 @@
   (define init-vertex (graph-add-vertex! G init-config-commitment-pair))
   (define worklist (queue init-vertex))
 
-  ;; Loop invariant: at the top of the loop, every pair in the worklist has a corresponding vertex in G, but has only had its outgoing edges added if ... (TODO: update this invariant)
+  ;; Loop invariants:
+  ;; * every pair in the worklist has a corresponding vertex in G
+  ;;
+  ;; * every pair in G but not in the worklist has an edge in G for every possible step to or from the
+  ;; pair that does not satisfy its commitment. This is exactly the visited set.
   (let loop ([visited (set)])
     (match (dequeue-if-non-empty! worklist)
       [#f (void)]
