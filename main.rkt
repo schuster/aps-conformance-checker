@@ -1083,20 +1083,6 @@
   (test-equal? "catalog-necessarily-enabled-actions"
     (catalog-necessarily-enabled-actions com-sat-outgoing) com-sat-ne-actions))
 
-;; impl-config (Hash impl-config (Listof trigger#)) -> boolean
-;;
-;; Determines whether the given implementation configuration is quiescent based on
-;; necessarily-enabled-actions, which gives for each implementation configuration the list of actions
-;; that are necessarily enabled in that configuration.
-(define (quiescent-impl-config? impl-config necessarily-enabled-actions)
-  (set-empty? (hash-ref necessarily-enabled-actions impl-config)))
-
-(module+ test
-  (test-true "quiescent 1"
-    (quiescent-impl-config? 'C com-sat-ne-actions))
-  (test-false "quiescent 2"
-    (quiescent-impl-config? 'A com-sat-ne-actions)))
-
 ;; Type:
 ;;
 ;; (List (List impl-config spec-config) (List Address Pattern))
@@ -1122,32 +1108,26 @@
                                        incoming
                                        outgoing
                                        related-spec-steps
-                                       necessarily-enabled-actions
-                                       quiescent-impl-configs)
+                                       necessarily-enabled-actions)
 
   ;; TODO: explain the idea of the algorithm
 
   ;; 1. create the graph of unsatisfying steps from the given pair
   (define unsat-graph
     (build-unsatisfying-graph config-commitment-pair incoming outgoing related-spec-steps))
-  ;; 2. find all quiescent configurations
-  (define quiescent-unsat-vertices
-    (filter (lambda (v) (set-member? quiescent-impl-configs (vertex-impl-config v)))
-            (graph-vertices unsat-graph)))
-  ;; 3. find all vertices in fair strongly-connected components (a fair SCC is an SCC in which for
+  ;; 2. find all vertices in fair strongly-connected components (a fair SCC is an SCC in which for
   ;; every necessarily enabled action in each of its vertices, either there exists a vertex in the SCC
   ;; where the action is disabled, or there is an edge between two vertices in the SCC that takes that
-  ;; action)
+  ;; action). Every fair SCC either represents a fair cycle or contains a quiescent configuration (or
+  ;; both).
   (define sccs (graph-find-sccs unsat-graph))
   (define fair-scc-vertices
     (for/fold ([fair-scc-vertices (set)])
               ([scc sccs] #:when (fair-scc? scc necessarily-enabled-actions))
       (set-union fair-scc-vertices scc)))
-  ;; 4. Find all vertices that can reach either a quiescent vertex or a vertex in a fair SCC. These
-  ;; are the configuration/commitment pairs that do not always satisfy the commitment.
-  (define unsat-vertices-set
-    (vertices-reaching unsat-graph
-                         (set-union (list->set quiescent-unsat-vertices) fair-scc-vertices)))
+  ;; 3. Find all vertices that can reach a vertex in a fair SCC. These are the
+  ;; configuration/commitment pairs that do not always satisfy the commitment.
+  (define unsat-vertices-set (vertices-reaching unsat-graph fair-scc-vertices))
   (define unsat-pairs-set (list->set (set-map unsat-vertices-set vertex-value)))
   (list
    (set-subtract (list->set (map vertex-value (graph-vertices unsat-graph))) unsat-pairs-set)
@@ -1157,15 +1137,12 @@
   (define (make-config-commitment-pair configs address-number variant-tag)
     (list configs (list (make-com-sat-ext-address address-number) `(variant ,variant-tag))))
 
-  (define com-sat-quiescent-configs (set 'C 'D 'E 'F 'K 'L 'M))
-
   (test-equal? "all reachable pairs satisfy the commitment"
     (check-commitment-satisfaction (make-config-commitment-pair a-node 1 'Y)
                                    com-sat-incoming
                                    com-sat-outgoing
                                    com-sat-related-steps
-                                   com-sat-ne-actions
-                                   com-sat-quiescent-configs)
+                                   com-sat-ne-actions)
     (list (set (make-config-commitment-pair a-node 1 'Y))
           (set)))
 
@@ -1174,8 +1151,7 @@
                                    com-sat-incoming
                                    com-sat-outgoing
                                    com-sat-related-steps
-                                   com-sat-ne-actions
-                                   com-sat-quiescent-configs)
+                                   com-sat-ne-actions)
     (list (set)
           (set (make-config-commitment-pair a-node 1 'Z)
                (make-config-commitment-pair b-node 1 'Z)
@@ -1195,8 +1171,7 @@
                                    com-sat-incoming
                                    com-sat-outgoing
                                    com-sat-related-steps
-                                   com-sat-ne-actions
-                                   com-sat-quiescent-configs)
+                                   com-sat-ne-actions)
     (list (set
            (make-config-commitment-pair i-node 3 'X)
            (make-config-commitment-pair j-node 3 'X))
@@ -1211,8 +1186,7 @@
                                    com-sat-incoming
                                    com-sat-outgoing
                                    com-sat-related-steps
-                                   com-sat-ne-actions
-                                   com-sat-quiescent-configs)
+                                   com-sat-ne-actions)
     (list (set)
           (set (make-config-commitment-pair a-node 1 'W)
                (make-config-commitment-pair g-node 2 'W)
