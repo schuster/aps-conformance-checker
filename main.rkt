@@ -182,6 +182,7 @@
        (define found-unmatchable-step? #f)
        (for ([i-step i-steps])
          (match i-step
+           ;; TODO: get rid of this clause; I think it doesn't happen anymore
            [#f (set! found-unmatchable-step? #t)]
            [_
             ;; Debugging:
@@ -200,6 +201,7 @@
                 (for/list ([config (cons (spec-step-destination s-step) (spec-step-spawns s-step))])
                   (config-pair (impl-step-destination i-step) config)))
               (match (sbc* successor-pairs)
+                ;; TODO: check if sbc ever returns #f anymore; I don't think it does
                 [#f (set! found-unmatchable-step? #t)]
                 [sbc-pairs (hash-set! saved-derivatives (config-pair i-step s-step) sbc-pairs)]))]))
 
