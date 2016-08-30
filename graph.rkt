@@ -73,18 +73,34 @@
   (define e (edge val src dest))
   (set-graph-edges! g (cons e (graph-edges g)))
   (set-vertex-outgoing! src (cons e (vertex-outgoing src)))
-  (set-vertex-incoming! dest (cons e (vertex-incoming src)))
+  (set-vertex-incoming! dest (cons e (vertex-incoming dest)))
   e)
 
 (module+ test
-  ;; TODO: what's the test here?
   ;; check that adding an edge puts edge in in/out, and the src/dest are correct
   (define e1 (graph-add-edge! g0 "foo" v1 v2))
   (check-equal? (edge-source e1) v1)
   (check-equal? (edge-destination e1) v2)
   (check-equal? (edge-value e1) "foo")
   (check-equal? (vertex-outgoing v1) (list e1))
-  (check-equal? (vertex-incoming v2) (list e1)))
+  (check-equal? (vertex-incoming v2) (list e1))
+
+  (test-case "graph-add-edge!"
+    (define g
+      (graph-literal [vertices [a 'a] [b 'b] [c 'c]]
+                     [edges ['ab a b] ['bc b c]]))
+    (check-equal? (map edge-value (vertex-incoming (graph-find-vertex g 'c)))
+                  (map edge-value (vertex-outgoing (graph-find-vertex g 'b)))))
+
+  (test-case "graph-add-edge! 2"
+    (define g (make-graph))
+    (define a (graph-add-vertex! g 'a))
+    (define b (graph-add-vertex! g 'b))
+    (define c (graph-add-vertex! g 'c))
+    (graph-add-edge! g 'ab a b)
+    (graph-add-edge! g 'bc b c)
+    (check-equal? (map edge-value (vertex-incoming c))
+                  (map edge-value (vertex-outgoing b)))))
 
 ;; Returns #t if the graphs are isomorphic; #f otherwise. Assumes every vertex has a unique label, and
 ;; every edge has a label distinct from that of all other edges going to and from the same vertex.
