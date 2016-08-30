@@ -53,8 +53,8 @@
   (b# ((S# ...) e#)) ; behavior
   ;; TODO: refactor the packets to hold *un*typed addresses - will solve most of my address comparison
   ;; issues
-  (μ# ((a#int v# multiplicity) ...)) ; message packets
-  (multiplicity 1 *)
+  (μ# ((a#int v# m) ...)) ; message packets
+  (m single many) ; m for "multiplicity"
   (S# (define-state (s [x τ] ...) (x) e#)
       (define-state (s [x τ] ...) (x) e# [(timeout v#) e#]))
   (v# a#
@@ -341,14 +341,15 @@
     (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...)))))
 
 ;; Abstractly removes the entry in K# corresponding to the packet (a# v#), which will actually remove
-;; it if its multiplicity is 1, else leave it there if its multiplicity is * (because removing a
-;; message from an abstract list of 0 or more yields a list of 0 or more).
+;; it if its multiplicity is single, else leave it there if its multiplicity is many (because removing
+;; a message from an abstract list of 0 or more yields a list of 0 or more).
 (define-metafunction csa#
   config-remove-packet/mf : K# (a# v#) -> K#
-  [(config-remove-packet/mf (any_precise any_blurred (any_pkt1 ... (a# v# 1) any_pkt2 ...)) (a# v#))
+  [(config-remove-packet/mf (any_precise any_blurred (any_pkt1 ... (a# v# single) any_pkt2 ...))
+                            (a# v#))
    (any_precise any_blurred (any_pkt1 ... any_pkt2 ...))]
-  ;; Case 2: if the multiplicity is not 1, it must be *, so we just return the original config because
-  ;; nothing is actually removed
+  ;; Case 2: if the multiplicity is not single, it must be many, so we just return the original config
+  ;; because nothing is actually removed
   [(config-remove-packet/mf any_config _) any_config])
 
 ;; impl-config -> (Listof csa#-transition)
@@ -887,33 +888,33 @@
 ;; Abstractly adds the set of new packets to the given set.
 (define (merge-messages-into-packet-set packet-set new-message-list)
   (redex-let csa# ([((a# v#) ...) new-message-list])
-    (term ,(deduplicate-packets (append packet-set (term ((a# v# 1) ...)))))))
+    (term ,(deduplicate-packets (append packet-set (term ((a# v# single) ...)))))))
 
 (module+ test
   (check-equal?
    (merge-messages-into-config (term (() () ())) (list (term ((init-addr 0 Nat) (* Nat)))))
-   (term (() () (((init-addr 0 Nat) (* Nat) 1)))))
+   (term (() () (((init-addr 0 Nat) (* Nat) single)))))
 
   (check-equal?
-   (merge-messages-into-config (term (() () (((init-addr 0 Nat) (* Nat) 1))))
+   (merge-messages-into-config (term (() () (((init-addr 0 Nat) (* Nat) single))))
                        (list (term ((init-addr 0 Nat) (* Nat)))))
-   (term (() () (((init-addr 0 Nat) (* Nat) *)))))
+   (term (() () (((init-addr 0 Nat) (* Nat) many)))))
 
   (check-equal?
-   (merge-messages-into-config (term (() () (((init-addr 0 Nat) (* Nat) 1))))
+   (merge-messages-into-config (term (() () (((init-addr 0 Nat) (* Nat) single))))
                        (list (term ((init-addr 1 Nat) (* Nat)))))
-   (term (() () (((init-addr 0 Nat) (* Nat) 1) ((init-addr 1 Nat) (* Nat) 1)))))
+   (term (() () (((init-addr 0 Nat) (* Nat) single) ((init-addr 1 Nat) (* Nat) single)))))
 
   (check-equal?
    (merge-messages-into-config (term (()
                               ()
-                              (((init-addr 1 Nat) (* (Addr Nat)) 1)
-                               ((init-addr 1 Nat) (obs-ext 0 Nat) 1))))
+                              (((init-addr 1 Nat) (* (Addr Nat)) single)
+                               ((init-addr 1 Nat) (obs-ext 0 Nat) single))))
                        (term (((init-addr 1 Nat) (* (Addr Nat))))))
    (term (()
           ()
-          (((init-addr 1 Nat) (* (Addr Nat)) *)
-           ((init-addr 1 Nat) (obs-ext 0 Nat) 1))))))
+          (((init-addr 1 Nat) (* (Addr Nat)) many)
+           ((init-addr 1 Nat) (obs-ext 0 Nat) single))))))
 
 (define (merge-new-actors config new-actors)
   (redex-let csa# ([((any_actors ...) any_blurred any_messages) config])
@@ -1302,16 +1303,16 @@
     (csa#-blur-config
      (term (()
             ()
-            (((init-addr 2 Nat) (obs-ext 1 Nat) 1)
-             ((init-addr 2 Nat) (obs-ext 2 Nat) 1)
-             ((init-addr 2 Nat) (obs-ext 3 Nat) 1))))
+            (((init-addr 2 Nat) (obs-ext 1 Nat) single)
+             ((init-addr 2 Nat) (obs-ext 2 Nat) single)
+             ((init-addr 2 Nat) (obs-ext 3 Nat) single))))
      'NEW
      (list '(obs-ext 3 Nat)))
     (list
      (term (()
             ()
-            (((init-addr 2 Nat) (* (Addr Nat)) *)
-             ((init-addr 2 Nat) (obs-ext 3 Nat) 1))))
+            (((init-addr 2 Nat) (* (Addr Nat)) many)
+             ((init-addr 2 Nat) (obs-ext 3 Nat) single))))
      null)))
 
 ;; impl-config spawn-flag -> impl-config (α#n ...)
@@ -1534,7 +1535,7 @@
          ;; message stays same if nothing was duplicated, else have to change multiplicity
          (if (equal? remaining-without-duplicates remaining-messages)
              message
-             (redex-let csa# ([(any_addr any_value _) message]) (term (any_addr any_value *)))))
+             (redex-let csa# ([(any_addr any_value _) message]) (term (any_addr any_value many)))))
        (loop (append processed-messages (list new-message))
              remaining-without-duplicates)])))
 
@@ -1548,29 +1549,29 @@
 (module+ test
   (check-equal?
    (deduplicate-packets
-    (term (((obs-ext 1 Nat) (* Nat) 1)
-           ((obs-ext 1 Nat) (* Nat) 1))))
-   (term (((obs-ext 1 Nat) (* Nat) *))))
+    (term (((obs-ext 1 Nat) (* Nat) single)
+           ((obs-ext 1 Nat) (* Nat) single))))
+   (term (((obs-ext 1 Nat) (* Nat) many))))
 
     (check-equal?
    (deduplicate-packets
-    (term (((obs-ext 1 Nat) (* Nat) 1)
-           ((obs-ext 1 Nat) (* Nat) 1)
-           ((obs-ext 1 Nat) (* Nat) 1))))
-   (term (((obs-ext 1 Nat) (* Nat) *))))
+    (term (((obs-ext 1 Nat) (* Nat) single)
+           ((obs-ext 1 Nat) (* Nat) single)
+           ((obs-ext 1 Nat) (* Nat) single))))
+   (term (((obs-ext 1 Nat) (* Nat) many))))
 
   (check-equal?
    (deduplicate-packets
-    (term (((obs-ext 1 Nat) (* Nat) 1)
-           ((obs-ext 2 Nat) (* Nat) 1)
-           ((obs-ext 3 Nat) (* Nat) *)
-           ((* (Addr Nat)) (* Nat) *)
-           ((obs-ext 1 Nat) (* Nat) 1)
-           ((* (Addr Nat)) (* Nat) 1))))
-   (term (((obs-ext 1 Nat) (* Nat) *)
-          ((obs-ext 2 Nat) (* Nat) 1)
-          ((obs-ext 3 Nat) (* Nat) *)
-          ((* (Addr Nat)) (* Nat) *)))))
+    (term (((obs-ext 1 Nat) (* Nat) single)
+           ((obs-ext 2 Nat) (* Nat) single)
+           ((obs-ext 3 Nat) (* Nat) many)
+           ((* (Addr Nat)) (* Nat) many)
+           ((obs-ext 1 Nat) (* Nat) single)
+           ((* (Addr Nat)) (* Nat) single))))
+   (term (((obs-ext 1 Nat) (* Nat) many)
+          ((obs-ext 2 Nat) (* Nat) single)
+          ((obs-ext 3 Nat) (* Nat) many)
+          ((* (Addr Nat)) (* Nat) many)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Constructors

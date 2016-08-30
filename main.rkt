@@ -433,14 +433,14 @@
    (blur-by-relevant-addresses
     (term (()
            ()
-           (((init-addr 2 Nat) (obs-ext 1 Nat) 1)
-            ((init-addr 2 Nat) (obs-ext 2 Nat) 1)
-            ((init-addr 2 Nat) (obs-ext 3 Nat) 1))))
+           (((init-addr 2 Nat) (obs-ext 1 Nat) single)
+            ((init-addr 2 Nat) (obs-ext 2 Nat) single)
+            ((init-addr 2 Nat) (obs-ext 3 Nat) single))))
     (term ((,aps#-no-transition-instance) () (((obs-ext 3 Nat))))))
    (list (term (()
                 ()
-                (((init-addr 2 Nat) (* (Addr Nat)) *)
-                 ((init-addr 2 Nat) (obs-ext 3 Nat) 1))))
+                (((init-addr 2 Nat) (* (Addr Nat)) many)
+                 ((init-addr 2 Nat) (obs-ext 3 Nat) single))))
          (term ((,aps#-no-transition-instance) () (((obs-ext 3 Nat))))))))
 
 ;; Decides whether to blur spawn-addresses with the OLD or NEW flag based on the current impl and spec
