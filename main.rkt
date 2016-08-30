@@ -519,7 +519,7 @@
       [#f (list (set-immutable-copy remaining-pairs) related-spec-steps)]
       [unrelated-pair
        (for ([transition (hash-ref incoming-steps unrelated-pair)])
-         (match-define (list predecessor i-step s-step) transition)
+         (match-define (list predecessor i-step s-step _) transition)
          ;; Only check for lack of support for pairs still in remaining pairs
          (when (set-member? remaining-pairs predecessor)
            (define spec-steps (hash-ref related-spec-steps (list predecessor i-step)))
@@ -558,7 +558,7 @@
     (prune-unsupported
      (mutable-set ax-pair)
      ;; incoming-steps
-     (mutable-hash [ax-pair (mutable-set (list ax-pair aa-step xx-step))])
+     (mutable-hash [ax-pair (mutable-set (list ax-pair aa-step xx-step (hash)))])
      ;; related spec steps
      (mutable-hash [(list ax-pair aa-step) (mutable-set xx-step)])
      ;; unrelated sucessors
@@ -570,8 +570,8 @@
   (test-equal? "Remove no pairs, because unrelated-matches contained only a redundant support"
     (prune-unsupported
      (set ax-pair bz-pair)
-     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
-                   [bz-pair (mutable-set (list ax-pair ab-step xz-step))]
+     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
+                   [bz-pair (mutable-set (list ax-pair ab-step xz-step (hash)))]
                    [ax-pair (mutable-set)])
      (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step xz-step)])
      (list by-pair))
@@ -582,7 +582,7 @@
   (test-equal? "Remove last remaining pair"
     (prune-unsupported
      (mutable-set ax-pair)
-     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
+     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
                    [ax-pair (mutable-set)])
      (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step)])
      (list by-pair))
@@ -594,10 +594,10 @@
     (prune-unsupported
      (mutable-set ax-pair bz-pair by-pair)
      ;; incoming-steps
-     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
-                   [bz-pair (mutable-set (list ax-pair ab-step xz-step))]
+     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
+                   [bz-pair (mutable-set (list ax-pair ab-step xz-step (hash)))]
                    [ax-pair (mutable-set)]
-                   [cw-pair (mutable-set (list by-pair bc-step yw-step))])
+                   [cw-pair (mutable-set (list by-pair bc-step yw-step (hash)))])
      ;; matching spec steps
      (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step xz-step)]
                    [(list by-pair bc-step) (mutable-set yw-step)])
@@ -612,9 +612,9 @@
       (prune-unsupported
        (mutable-set ax-pair by-pair)
        ;; incoming-steps
-       (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step))]
+       (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
                      [ax-pair (mutable-set)]
-                     [cw-pair (mutable-set (list by-pair bc-step yw-step))])
+                     [cw-pair (mutable-set (list by-pair bc-step yw-step (hash)))])
        ;; matching spec steps
        (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step)]
                      [(list by-pair bc-step) (mutable-set yw-step)])
@@ -739,10 +739,10 @@
                            (make-exclusive-spec ignore-all-with-addr-spec-instance)))
   (test-false "static double response actor"
               (check-conformance/config (make-single-actor-config static-double-response-actor)
-                           (make-exclusive-spec static-response-spec)))
+                                        (make-exclusive-spec static-response-spec)))
   (test-false "Static response spec, ignore-all config"
                (check-conformance/config ignore-all-config
-                            (make-exclusive-spec static-response-spec)))
+                                         (make-exclusive-spec static-response-spec)))
 
   ;;;; Pattern matching tests, without dynamic channels
 
