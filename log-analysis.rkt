@@ -17,7 +17,7 @@
 ;; Analysis body
 
 (define tuples
-  (call-with-input-file "/home/schu/research/model_checker/filtered_tuple_log_24_july_2016.dat"
+  (call-with-input-file "/home/schu/research/conformance_checker/filtered_tuple_log_24_july_2016.dat"
     (lambda (file)
       (let loop ([reversed-tuples null])
         (match (read file)
