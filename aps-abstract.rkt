@@ -9,6 +9,7 @@
  aps#-unknown-address?
  aps#-config-receptionists
  aps#-config-singleton-commitments
+ aps#-config-many-of-commitments
  aps#-matching-steps
  aps#-resolve-outputs
  aps#-abstract-config
@@ -888,19 +889,23 @@
 
 ;; Returns all singleton commitments in the config as a list of address/pattern pairs
 (define (aps#-config-singleton-commitments config)
-  (term (config-singleton-commitments/mf ,config)))
+  (term (config-commitments-by-multiplicity/mf ,config single)))
+
+;; Returns all many-of commitments in the config as a list of address/pattern pairs
+(define (aps#-config-many-of-commitments config)
+  (term (config-commitments-by-multiplicity/mf ,config many)))
 
 (define-metafunction aps#
-  config-singleton-commitments/mf : Σ -> ([a#ext po] ...)
-  [(config-singleton-commitments/mf (_ _ ((a#ext (m po) ...) ...)))
+  config-commitments-by-multiplicity/mf : Σ m -> ([a#ext po] ...)
+  [(config-commitments-by-multiplicity/mf (_ _ ((a#ext (m_any po) ...) ...)) m_target)
    ,(append*
      (for/list ([address (term (a#ext ...))]
-                [pattern-list (term ((po_single ...) ...))])
+                [pattern-list (term ((po_result ...) ...))])
        (for/list ([pattern pattern-list]) (list address pattern))))
-   (where (((_ po_single) ...) ...)
+   (where (((_ po_result) ...) ...)
           ,(map (lambda (com-list)
-                  (filter (lambda (com) (equal? (first com) 'single)) com-list))
-                (term (((m po) ...) ...))))])
+                  (filter (lambda (com) (equal? (first com) (term m_target))) com-list))
+                (term (((m_any po) ...) ...))))])
 
 (module+ test
   (test-equal? "config-singleton-commitments"
@@ -911,7 +916,17 @@
     (list `[(obs-ext 1 Nat) *]
           `[(obs-ext 3 Nat) *]
           `[(obs-ext 3 Nat) (variant A)]
-          `[(obs-ext 3 Nat) (record [a *])])))
+          `[(obs-ext 3 Nat) (record [a *])]))
+
+  (test-equal? "config-many-of-commitments"
+    (aps#-config-many-of-commitments
+     `(() () ([(obs-ext 1 Nat) (single *) (many (record))]
+              [(obs-ext 2 Nat)]
+              [(obs-ext 3 Nat) (single *) (single (variant A)) (single (record [a *]))]
+              [(obs-ext 4 Nat) (many *) (many (variant A)) (single (record [a *]))])))
+    (list `[(obs-ext 1 Nat) (record)]
+          `[(obs-ext 4 Nat) *]
+          `[(obs-ext 4 Nat) (variant A)])))
 
 (define (aps#-config-only-instance-address config)
   (match (aps#-config-instances config)

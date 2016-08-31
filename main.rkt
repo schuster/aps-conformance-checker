@@ -727,11 +727,20 @@
      (((define-state (Always response-dest) [* -> (goto Always response-dest)]))
       (goto Always ,static-response-address)
       (addr 0 Nat))))
+  (define static-double-response-spec
+    (term
+     (((define-state (Always response-dest)
+         [* -> (with-outputs ([response-dest *]
+                              [response-dest *])
+                 (goto Always response-dest))]))
+      (goto Always ,static-response-address)
+      (addr 0 Nat))))
 
   (test-valid-actor? static-response-actor)
   (test-valid-actor? static-double-response-actor)
   (test-valid-instance? static-response-spec)
   (test-valid-instance? ignore-all-with-addr-spec-instance)
+  (test-valid-instance? static-double-response-spec)
 
   (test-true "Static response works"
              (check-conformance/config (make-single-actor-config static-response-actor)
@@ -745,6 +754,10 @@
   (test-false "Static response spec, ignore-all config"
                (check-conformance/config ignore-all-config
                                          (make-exclusive-spec static-response-spec)))
+  ;; tests for non-conformance to spec configurations with many-of commitments
+  (test-false "Static double response spec, ignore-all config"
+    (check-conformance/config ignore-all-config
+                              (make-exclusive-spec static-double-response-spec)))
 
   ;;;; Pattern matching tests, without dynamic channels
 
