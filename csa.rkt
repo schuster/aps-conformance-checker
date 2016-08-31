@@ -14,7 +14,7 @@
  same-address-without-type?
  instantiate-prog
  instantiate-prog+bindings
- )
+ csa-contains-address?)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -391,6 +391,26 @@
 
 (define (csa-valid-receptionist-list? l)
   (redex-match csa-eval (a ...) l))
+
+(define (csa-contains-address? e)
+  (term (csa-contains-address?/mf ,e)))
+
+(define-metafunction csa
+  csa-contains-address?/mf : any -> boolean
+  [(csa-contains-address?/mf (addr _ _)) #t]
+  [(csa-contains-address?/mf (any ...))
+   ,(ormap csa-contains-address? (term (any ...)))]
+  [(csa-contains-address?/mf _) #f])
+
+(module+ test
+  (test-true "csa-contains-address?"
+    (csa-contains-address? (term ((addr 1 Nat) (addr 2 Nat)))))
+
+  (test-false "csa-contains-address?"
+    (csa-contains-address? (term ((abc 1 Nat) (def 2 Nat)))))
+
+  (test-true "csa-contains-address?"
+    (csa-contains-address? (term (((abc) (addr 1 Nat)) ())))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors

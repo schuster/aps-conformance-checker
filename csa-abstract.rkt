@@ -1101,11 +1101,19 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
 
-;; Abstracts the given CSA configuration, with a maximum recursion depth for values
+;; Abstracts the given CSA configuration, with a maximum recursion depth for values. Returns #f if
+;; abstraction was not possible for some reason (e.g. an address was under a folded past the max fold
+;; depth).
 ;;
 ;; NOTE: currently supports only no-messages, no-externals configs
 (define (csa#-abstract-config concrete-config internal-addresses)
-  (term (abstract-config/mf ,concrete-config ,internal-addresses ,MAX-RECURSION-DEPTH)))
+  (let/cc result-kont
+   (parameterize ([abstract-config-result-continuation result-kont])
+     (term (abstract-config/mf ,concrete-config ,internal-addresses ,MAX-RECURSION-DEPTH)))))
+
+(define abstract-config-result-continuation (make-parameter #f))
+(define (cancel-abstraction)
+  ((abstract-config-result-continuation) #f))
 
 (define-metafunction csa#
   abstract-config/mf : K (a_internal ...) natural_recursion-depth -> K#
@@ -1170,7 +1178,11 @@
   [(abstract-e (! e_1 [l e_2]) (a ...) natural_depth)
    (! (abstract-e e_1 (a ...) natural_depth) [l (abstract-e e_2 (a ...) natural_depth)])]
   [(abstract-e (folded τ e) (a ...) 0)
-   (* τ)]
+   (* τ)
+   ;; We're currently not able to give any addresses in a "folded" past our maximum fold-depth a sound
+   ;; abstraction if the address is an internal address or an external address observed by the spec,
+   ;; so we take the easy way out here and just bail out if the expression contains *any* address
+   (side-condition (when (csa-contains-address? (term e)) (cancel-abstraction)))]
   [(abstract-e (folded τ e) (a ...) natural_depth)
    (folded τ (abstract-e e (a ...) ,(sub1 (term natural_depth))))]
   [(abstract-e (fold τ e) (a ...) natural_depth)
@@ -1218,7 +1230,20 @@
                (term (init-addr 1 (Union [A]))))
   (test-equal? "Abstraction on non-matching addresses"
                (term (abstract-e (addr 2 (Union [A])) ((addr 1 (Union [B]))) 0))
-               (term (obs-ext 2 (Union [A])))))
+               (term (obs-ext 2 (Union [A]))))
+  (test-case "Unable to abstract addresses past max fold depth"
+    (define nat-addr-list-type `(minfixpt NatAddrList (Union [Nil] [Cons (Addr Nat) NatAddrList])))
+    (check-false
+     (csa#-abstract-config
+      `((((addr 1 Nat)
+          (() (folded ,nat-addr-list-type
+                      (variant Cons (addr 1 Nat)
+                               (folded ,nat-addr-list-type
+                                       (variant Cons (addr 2 Nat)
+                                                (folded ,nat-addr-list-type
+                                                        (variant Nil)))))))))
+        () () ())
+      null))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selecting the spawn flag to blur

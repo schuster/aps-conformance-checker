@@ -66,25 +66,27 @@
   (cond
     [(spec-address-is-receptionist? initial-impl-config initial-spec-config) #f]
     [else
-     (define initial-pairs (map first (sbc (abstract-pair initial-impl-config initial-spec-config))))
-     (match-define (list rank1-pairs
-                         rank1-unrelated-successors
-                         incoming-steps
-                         rank1-related-spec-steps)
-       (find-rank1-simulation initial-pairs))
-     (match-define (list simulation-pairs simulation-related-spec-steps)
-       (prune-unsupported rank1-pairs
-                          incoming-steps
-                          rank1-related-spec-steps
-                          rank1-unrelated-successors))
-     (match-define (list commitment-satisfying-pairs unsatisfying-pairs)
-       (partition-by-satisfaction simulation-pairs incoming-steps simulation-related-spec-steps))
-     (match-define (list conforming-pairs _)
-       (prune-unsupported commitment-satisfying-pairs
-                          incoming-steps
-                          simulation-related-spec-steps
-                          unsatisfying-pairs))
-     (andmap (curry set-member? conforming-pairs) initial-pairs)]))
+     (match (get-initial-abstract-pairs initial-impl-config initial-spec-config)
+       [#f #f]
+       [initial-pairs
+        (match-define (list rank1-pairs
+                            rank1-unrelated-successors
+                            incoming-steps
+                            rank1-related-spec-steps)
+          (find-rank1-simulation initial-pairs))
+        (match-define (list simulation-pairs simulation-related-spec-steps)
+          (prune-unsupported rank1-pairs
+                             incoming-steps
+                             rank1-related-spec-steps
+                             rank1-unrelated-successors))
+        (match-define (list commitment-satisfying-pairs unsatisfying-pairs)
+          (partition-by-satisfaction simulation-pairs incoming-steps simulation-related-spec-steps))
+        (match-define (list conforming-pairs _)
+          (prune-unsupported commitment-satisfying-pairs
+                             incoming-steps
+                             simulation-related-spec-steps
+                             unsatisfying-pairs))
+        (andmap (curry set-member? conforming-pairs) initial-pairs)])]))
 
 ;; Returns #t if the self-address for the specification configuration is a receptionist in the
 ;; implementation configuration (an initial requirement for conformance), #f otherwise.
@@ -94,15 +96,15 @@
        (andmap (lambda (a) (not (same-address-without-type? a spec-address)))
                (csa-config-receptionists impl-config))))
 
-;; ---------------------------------------------------------------------------------------------------
-;; Abstraction
-
-;; Abstracts the given concrete implementation configuration and spec config
-(define (abstract-pair impl-config spec-config)
+;; Abstracts and sbc's the initial pair, returning the list of initial abstract pairs, or #f if the
+;; abstraction was not possible for some reason
+(define (get-initial-abstract-pairs impl-config spec-config)
   (define internal-addresses (csa-config-internal-addresses impl-config))
-  (config-pair
-   (csa#-abstract-config impl-config internal-addresses)
-   (aps#-abstract-config spec-config internal-addresses)))
+  (match (csa#-abstract-config impl-config internal-addresses)
+    [#f #f]
+    [abstract-impl-config
+     (map first (sbc (config-pair abstract-impl-config
+                                  (aps#-abstract-config spec-config internal-addresses))))]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Simulation
@@ -2125,4 +2127,18 @@
   ;; blur out only the *conflicting* actors
 
   ;; merge messages to blurred actors, too
-  )
+
+  ;;;; Abstraction past max fold depth
+  (test-case "Cannot test conformance if address found below max fold depth"
+    (define nat-addr-list-type `(minfixpt NatAddrList (Union [Nil] [Cons (Addr Nat) NatAddrList])))
+    (check-false
+     (check-conformance/config
+      `((((addr 0 Nat)
+          (() (folded ,nat-addr-list-type
+                      (variant Cons (addr 1 Nat)
+                               (folded ,nat-addr-list-type
+                                       (variant Cons (addr 2 Nat)
+                                                (folded ,nat-addr-list-type
+                                                        (variant Nil)))))))))
+        () ((addr 0 Nat)) ())
+      (make-exclusive-spec static-response-spec)))))
