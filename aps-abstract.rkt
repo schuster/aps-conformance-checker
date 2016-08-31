@@ -718,8 +718,6 @@
                    self-address
                    (append spawn-infos new-spawn-infos)
                    (append added-unobs-receptionists new-receptionists)
-                   ;; TODO: decide what "satisfied commitments" really means in the presence of
-                   ;; many-of commitments
                    (append satisfied-commitments (list (term (,address ,pat))))
                    remaining-outputs)])])])))
 
