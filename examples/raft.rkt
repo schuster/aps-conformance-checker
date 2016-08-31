@@ -1066,8 +1066,8 @@
 (module+ test
   (require
    rackunit
-   "desugar.rkt"
-   "main.rkt")
+   "../desugar.rkt"
+   "../main.rkt")
 
   (test-true "Raft verification"
     (check-conformance (desugar raft-actor-surface-prog) raft-spec)))

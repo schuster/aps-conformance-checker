@@ -33,8 +33,8 @@
 (module+ test
   (require
    rackunit
-   "main.rkt"
-   "desugar.rkt")
+   "../main.rkt"
+   "../desugar.rkt")
 
   (define desugared-prog (desugar ping-program))
   (test-true "Ping server conformance check"

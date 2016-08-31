@@ -271,12 +271,12 @@
 (module+ test
   (require
    rackunit
-   "desugar.rkt"
-   "main.rkt"
+   "../desugar.rkt"
+   "../main.rkt"
 
    ;; just to check that the desugared type is correct
    redex/reduction-semantics
-   "csa.rkt")
+   "../csa.rkt")
 
   (test-true "Valid type for server input"
     (redex-match? csa-eval τ desugared-server-input-type))
