@@ -173,20 +173,23 @@
 
        (define i (config-pair-impl-config pair))
        (define s (config-pair-spec-config pair))
-       (define i-steps (impl-steps-from i s))
 
-       ; hash from a pair (i, s) to its sbc-derivatives. We save these derivatives because we first
-       ; need to check that they exist (because the blur step might fail), then add them to our
-       ; worklist
-       (define saved-derivatives (make-hash))
+       (match (impl-steps-from i s)
+         [#f
+          ;; Evaluation led to an unverifiable configuration, so we deem this pair unrelated, add it
+          ;; to the unrelated-successors list, and move on to explore the next pair in our worklist.
+          (loop related-pairs (set-add unrelated-successors pair))]
+         [i-steps
+          ;; TODO: is is really still the case that blur might fail?
+          ;;
+          ; hash from a pair (i, s) to its sbc-derivatives. We save these derivatives because we first
+          ; need to check that they exist (because the blur step might fail), then add them to our
+          ; worklist
+          (define saved-derivatives (make-hash))
 
-       ;; Find the matching s-steps
-       (define found-unmatchable-step? #f)
-       (for ([i-step i-steps])
-         (match i-step
-           ;; TODO: get rid of this clause; I think it doesn't happen anymore
-           [#f (set! found-unmatchable-step? #t)]
-           [_
+          ;; Find the matching s-steps
+          (define found-unmatchable-step? #f)
+          (for ([i-step i-steps])
             ;; Debugging:
             ;; (printf "Impl step: ~s\n" (debug-impl-step i-step))
 
@@ -205,81 +208,92 @@
               (match (sbc* successor-pairs)
                 ;; TODO: check if sbc ever returns #f anymore; I don't think it does
                 [#f (set! found-unmatchable-step? #t)]
-                [sbc-pairs (hash-set! saved-derivatives (config-pair i-step s-step) sbc-pairs)]))]))
+                [sbc-pairs (hash-set! saved-derivatives (config-pair i-step s-step) sbc-pairs)])))
 
-       ;; Add this pair to either related or unrelated set; add new worklist items
-       (cond
-         [found-unmatchable-step?
-          ;; Some impl step has no matching spec step (or an impl step goes to a known unverifiable
-          ;; configuration), so this pair is unrelated. Therefore we add it to the
-          ;; unrelated-successors list and do not further explore transitions from this pair.
+          ;; Add this pair to either related or unrelated set; add new worklist items
+          (cond
+            [found-unmatchable-step?
+             ;; Some impl step has no matching spec step, so this pair is unrelated. Therefore we add
+             ;; it to the unrelated-successors list and do not further explore transitions from this
+             ;; pair.
 
-          ;; Debugging
-          ;; (displayln "Unrelated pair")
-          (loop related-pairs (set-add unrelated-successors pair))]
-         [else
-          ;; This pair is in the rank-1 simulation (because all of its impl steps have matching spec
-          ;; steps). We have to add it to the related-pairs set, sbc each of the matching destination
-          ;; pairs and add them to the work-list so that we explore this pair's successors, and add
-          ;; the incoming transitions for those destination pairs to incoming-steps.
+             ;; Debugging
+             ;; (displayln "Unrelated pair")
+             (loop related-pairs (set-add unrelated-successors pair))]
+            [else
+             ;; This pair is in the rank-1 simulation (because all of its impl steps have matching
+             ;; spec steps). We have to add it to the related-pairs set, sbc each of the matching
+             ;; destination pairs and add them to the work-list so that we explore this pair's
+             ;; successors, and add the incoming transitions for those destination pairs to
+             ;; incoming-steps.
 
-          ;; Debugging
-          ;; (displayln "Related pair")
-          (for ([i-step i-steps])
-            (for ([s-step (hash-ref related-spec-steps (list pair i-step))])
-              ;; Debugging only
-              ;; (for ([successor-pair successor-pairs])
-              ;;   (printf "pre-sbc: ~s\n" successor-pair)
-              ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
-              (for ([sbc-result (hash-ref saved-derivatives (config-pair i-step s-step))])
-                ;; TODO: add the address binding here, too, and adjust other uses of incoming (e.g. in
-                ;; prune-unsupported) to take that structure into account
-                (match-define (list sbc-pair rename-map) sbc-result)
-                (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step rename-map))
-                (unless (or (member sbc-pair (queue->list to-visit))
-                            (set-member? related-pairs sbc-pair)
-                            (set-member? unrelated-successors sbc-pair)
-                            (equal? sbc-pair pair))
-                  (enqueue! to-visit sbc-pair)))))
-          (loop (set-add related-pairs pair) unrelated-successors)])])))
+             ;; Debugging
+             ;; (displayln "Related pair")
+             (for ([i-step i-steps])
+               (for ([s-step (hash-ref related-spec-steps (list pair i-step))])
+                 ;; Debugging only
+                 ;; (for ([successor-pair successor-pairs])
+                 ;;   (printf "pre-sbc: ~s\n" successor-pair)
+                 ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
+                 (for ([sbc-result (hash-ref saved-derivatives (config-pair i-step s-step))])
+                   ;; TODO: add the address binding here, too, and adjust other uses of incoming
+                   ;; (e.g. in prune-unsupported) to take that structure into account
+                   (match-define (list sbc-pair rename-map) sbc-result)
+                   (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step rename-map))
+                   (unless (or (member sbc-pair (queue->list to-visit))
+                               (set-member? related-pairs sbc-pair)
+                               (set-member? unrelated-successors sbc-pair)
+                               (equal? sbc-pair pair))
+                     (enqueue! to-visit sbc-pair)))))
+             (loop (set-add related-pairs pair) unrelated-successors)])])])))
 
-;; Returns all implementation steps possible from the given impl-config/spec-config pair. The spec
-;; config is used to determine whether sending a message to a given receptionist in the implementation
-;; config can be observed, unobserved, or both.
+;; Returns all implementation steps possible from the given impl-config/spec-config pair, or #f if
+;; some step leads to an unverifiable configuration. The spec config is used to determine whether
+;; sending a message to a given receptionist in the implementation config can be observed, unobserved,
+;; or both.
 (define (impl-steps-from impl-config spec-config)
-  (define (add-observed-flag transition observed?)
-    (match transition
-      [#f #f]
-      [_
-       (impl-step (csa#-transition-trigger transition)
-                  observed?
-                  (csa#-transition-outputs transition)
-                  (csa#-transition-final-config transition))]))
+  (let/cc return-continuation
+    ;; Certain evaluation steps can lead to an unverifiable configuration. When that happens, rather
+    ;; than continuing to evaluate other possible steps from this configuration, we call this
+    ;; continuation to abort the whole evaluation step.
+    (define (abort) (return-continuation #f))
+
+    (define (add-observed-flag transition observed?)
+      (match transition
+        [#f #f]
+        [_
+         (impl-step (csa#-transition-trigger transition)
+                    observed?
+                    (csa#-transition-outputs transition)
+                    (csa#-transition-final-config transition))]))
 
   (define addr (aps#-config-only-instance-address spec-config))
+  ;; TODO: (perf. improvement) share the results between the observed and unobserved external
+  ;; receives, because often many of the results will be the same (because the same address might
+  ;; receive messages from both the observed and unobserved environments)
   (define observed-external-receives
     (if (aps#-unknown-address? addr)
         null
-        (external-message-transitions impl-config addr)))
+        (external-message-transitions impl-config addr abort)))
   (define unobserved-external-receives
     (append*
      (for/list ([receptionist (aps#-config-receptionists spec-config)])
-       (external-message-transitions impl-config receptionist))))
+       (external-message-transitions impl-config receptionist abort))))
 
   (append (map (curryr add-observed-flag #t) observed-external-receives)
           (map (curryr add-observed-flag #f)
                (append
                 unobserved-external-receives
-                (csa#-handle-all-internal-actions impl-config)))))
+                (csa#-handle-all-internal-actions impl-config abort))))))
 
 ;; Returns all possible transitions of the given implementation config caused by a received message to
 ;; the given receptionist address
-(define (external-message-transitions impl-config receptionist)
+(define (external-message-transitions impl-config receptionist abort)
   (display-step-line "Enumerating abstract messages (typed)")
   (append*
    (for/list ([message (csa#-messages-of-address-type receptionist)])
      (display-step-line "Evaluating a handler")
-     (csa#-handle-external-message impl-config receptionist message))))
+     (csa#-handle-external-message impl-config receptionist message abort))))
 
 ;; Returns a set of the possible spec steps (see the struct above) from the given spec config that
 ;; match the given implementation step
@@ -2141,4 +2155,35 @@
                                                 (folded ,nat-addr-list-type
                                                         (variant Nil)))))))))
         () ((addr 0 Nat)) ())
-      (make-exclusive-spec static-response-spec)))))
+      (make-exclusive-spec static-response-spec))))
+
+  (test-case "Cannot test conformance if address is folded into a wildcard during handler evaluation"
+    (define nat-addr-list-type `(minfixpt NatAddrList (Union [Nil] [ConsIt (Addr Nat) NatAddrList])))
+    (define addr-list-actor
+      ;; Idea: send to the received address, then add it to the address list, then send to the second
+      ;; ddress in the list (should be below the max unfold depth) if it exists. This does not conform
+      ;; to the request/response spec because of the extra send, but would only be caught by checking
+      ;; for addresses getting folded into wildcard values.
+      (term
+       ((addr 0 Nat)
+        (((define-state (Always [addrs ,nat-addr-list-type]) (new-addr)
+            (let ([addrs (fold ,nat-addr-list-type (variant ConsIt new-addr addrs))])
+              (begin
+                (send new-addr 0)
+                (case (unfold ,nat-addr-list-type addrs)
+                  [(Nil) 0]
+                  [(ConsIt the-addr addrs)
+                   (case (unfold ,nat-addr-list-type addrs)
+                     [(Nil) 0]
+                     [(ConsIt the-addr addrs)
+                      (begin
+                        (send the-addr 1)
+                        0)])])
+                (goto Always addrs)))))
+         (goto Always (folded ,nat-addr-list-type (variant Nil)))))))
+
+    (check-valid-actor? addr-list-actor)
+    (check-false
+     (check-conformance/config
+      (make-single-actor-config addr-list-actor)
+      (make-exclusive-spec request-response-spec)))))

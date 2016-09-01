@@ -282,16 +282,19 @@
 ;; impl-config a#int v# -> (Listof csa#-transition)
 ;;
 ;; Evaluates the handler triggered by sending message to actor-address in impl-config, returning the
-;; list of possible csa#-transitions.
-(define (csa#-handle-external-message impl-config actor-address message)
+;; list of possible csa#-transitions. Calls the abort continuation instead if a transition leads to an
+;; unverifiable state.
+(define (csa#-handle-external-message impl-config actor-address message abort)
   (handle-message impl-config
                   actor-address
                   message
-                  (term (external-receive ,actor-address ,message))))
+                  (term (external-receive ,actor-address ,message))
+                  abort))
 
 ;; Evaluates the handler triggered by the actor corresponding to actor-address receiving message,
-;; returning the list of possible csa#-transitions.
-(define (handle-message impl-config actor-address message trigger)
+;; returning the list of possible csa#-transitions. Calls the abort continuation instead if a
+;; transition leads to an unverifiable state.
+(define (handle-message impl-config actor-address message trigger abort)
   (append*
    (for/list ([behavior (current-behaviors-for-address impl-config actor-address)])
      (define init-handler-machine (handler-machine-for-message behavior message))
@@ -299,27 +302,23 @@
        (if (precise-internal-address? actor-address)
            update-behavior/precise
            (make-update-behavior/blurred (behavior-state-defs behavior))))
-     (eval-handler init-handler-machine
-                   trigger
-                   actor-address
-                   impl-config
-                   update-behavior))))
+     (eval-handler init-handler-machine trigger actor-address impl-config update-behavior abort))))
 
 ;; impl-config -> (Listof #f or csa#-transition)
 ;;
 ;; Evaluates all handlers triggered by a timeout or the receipt of some in-transit message in
-;; impl-config, returning the list of possible results (either csa#-transition or #f if a transition
-;; led to an unverifiable state)
-(define (csa#-handle-all-internal-actions impl-config)
-  (append (csa#-handle-all-internal-messages impl-config)
-          (csa#-handle-all-timeouts impl-config)))
+;; impl-config, returning the list of possible csa#-transitions. Calls the abort continuation instead
+;; if a transition leads to an unverifiable state.
+(define (csa#-handle-all-internal-actions impl-config abort)
+  (append (csa#-handle-all-internal-messages impl-config abort)
+          (csa#-handle-all-timeouts impl-config abort)))
 
 ;; impl-config -> (Listof #f or csa#-transition)
 ;;
 ;; Evaluates all handlers triggered by the receipt of some in-transit message in impl-config,
-;; returning the list of possible results (either csa#-transition or #f if a transition led to an
-;; unverifiable state)
-(define (csa#-handle-all-internal-messages impl-config)
+;; returning the list of possible csa#-transitions. Calls the abort continuation instead
+;; if a transition leads to an unverifiable state.
+(define (csa#-handle-all-internal-messages impl-config abort)
   (append*
    (for/list ([packet-entry (csa#-config-message-packets impl-config)])
      (define packet (csa#-packet-entry->packet packet-entry))
@@ -328,7 +327,8 @@
      (handle-message (term (config-remove-packet/mf ,impl-config ,packet))
                      address
                      message
-                     (term (internal-receive ,address ,message))))))
+                     (term (internal-receive ,address ,message))
+                     abort))))
 
 ;; Returns a handler machine primed with the handler expression from the given behavior, with all
 ;; state arguments and the message substituted for the appropriate variables
@@ -355,8 +355,9 @@
 ;; impl-config -> (Listof csa#-transition)
 ;;
 ;; Evaluates all handlers triggered by a timeout impl-config, returning the list of possible
-;; csa#-transitions
-(define (csa#-handle-all-timeouts impl-config)
+;; csa#-transitions. Calls the abort continuation instead if a transition leads to an unverifiable
+;; state.
+(define (csa#-handle-all-timeouts impl-config abort)
   (append
    ;; transitions for precise actors
    (append*
@@ -364,7 +365,8 @@
       (csa#-handle-maybe-timeout (csa#-actor-address actor)
                                  (actor-behavior actor)
                                  impl-config
-                                 update-behavior/precise)))
+                                 update-behavior/precise
+                                 abort)))
    ;; transitions for blurred actors
    (append*
     (for/list ([blurred-actor (csa#-config-blurred-actors impl-config)])
@@ -374,14 +376,15 @@
          (csa#-handle-maybe-timeout (csa#-blurred-actor-address blurred-actor)
                                     behavior
                                     impl-config
-                                    update-behavior)))))))
+                                    update-behavior
+                                    abort)))))))
 
 ;; a#int b# K# (K# a#int e# -> K#) -> (Listof csa#-transition)
 ;;
 ;; Returns all possible transitions enabled by taking a timeout on the given behavior for the actor
 ;; with the given address (if such a timeout exists). If no such timeout exists, the empty list is
-;; returned.
-(define (csa#-handle-maybe-timeout address behavior config update-behavior)
+;; returned. Calls the abort continuation instead if a transition leads to an unverifiable state.
+(define (csa#-handle-maybe-timeout address behavior config update-behavior abort)
   (match (term (get-timeout-handler-exp/mf ,behavior))
     [#f null]
     [handler-exp
@@ -391,7 +394,8 @@
                        (term (timeout/empty-queue ,address)))
                    address
                    config
-                   update-behavior)]))
+                   update-behavior
+                   abort)]))
 
 ;; Returns the behavior's current timeout handler expression with all state arguments substituted in
 ;; if the current state has a timeout clause, else #f
@@ -431,25 +435,27 @@
 ;; Evaluates the given handler machine for the given trigger at the given actor address, updating the
 ;; given configuration with the encoutered effects and using the update-behavior function to update
 ;; the actor with its new behavior. Returns a list of csa#-transitions representing each possible
-;; transition.
-(define (eval-handler handler-machine trigger address config update-behavior)
-  (define final-machine-states
-    ;; Remove states stuck as a result of over-abstraction; we can assume these would never happen at
-    ;; run-time
-    (filter (negate stuck-at-empty-list-ref?)
-            (apply-reduction-relation* handler-step# handler-machine #:cache-all? #t)))
-  (unless (andmap complete-handler-config? final-machine-states)
-    (error 'eval-handler
-           "Abstract evaluation did not complete\nInitial state: ~s\nFinal stuck states:~s"
-           handler-machine
-           (filter (negate complete-handler-config?) final-machine-states)))
-  (for/list ([machine-state final-machine-states])
-    ;; TODO: rename outputs to something like "transmissions", because some of them stay internal to
-    ;; the configuration
-    (match-define (list final-exp outputs loop-outputs spawns) machine-state)
-    ;; TODO: check that there are no internal loop outputs, or refactor that code entirely
-    (define new-config (update-config-with-handler-results config address final-exp outputs spawns update-behavior))
-    (csa#-transition trigger (filter (negate internal-output?) outputs) new-config)))
+;; transition. Calls the abort continuation instead if a transition leads to an unverifiable state.
+(define (eval-handler handler-machine trigger address config update-behavior abort)
+  (parameterize ([abort-evaluation-param abort])
+    (define final-machine-states
+      ;; Remove states stuck as a result of over-abstraction; we can assume these would never happen
+      ;; at run-time
+      (filter (negate stuck-at-empty-list-ref?)
+              (apply-reduction-relation* handler-step# handler-machine #:cache-all? #t)))
+    (unless (andmap complete-handler-config? final-machine-states)
+      (error 'eval-handler
+             "Abstract evaluation did not complete\nInitial state: ~s\nFinal stuck states:~s"
+             handler-machine
+             (filter (negate complete-handler-config?) final-machine-states)))
+    (for/list ([machine-state final-machine-states])
+      ;; TODO: rename outputs to something like "transmissions", because some of them stay internal
+      ;; to the configuration
+      (match-define (list final-exp outputs loop-outputs spawns) machine-state)
+      ;; TODO: check that there are no internal loop outputs, or refactor that code entirely
+      (define new-config
+        (update-config-with-handler-results config address final-exp outputs spawns update-behavior))
+      (csa#-transition trigger (filter (negate internal-output?) outputs) new-config))))
 
 ;; Returns #t if the given handler machine state is unable to step because of an over-approximation in
 ;; the abstraction (assumes that there are no empty vector/list/hash references in the actual running
@@ -476,6 +482,8 @@
              ([e# exp]
               [H# (term (,exp () () ()))])
              (term H#)))
+
+(define abort-evaluation-param (make-parameter #f))
 
 (define handler-step#
   (reduction-relation csa#
@@ -550,6 +558,12 @@
          (* τ)
          (side-condition (not (redex-match? csa# (* _) (term v#))))
          (side-condition (= (term (fold-depth/mf v#)) MAX-RECURSION-DEPTH))
+         ;; We're currently not able to give any addresses in a "folded" past our maximum fold-depth a
+         ;; sound abstraction if the address is an internal address or an external address observed by
+         ;; the spec, so we take the easy way out here and just bail out if the value to be folded
+         ;; contains *any* address.
+         (side-condition
+          (when (term (csa#-contains-address?/mf (term v#))) ((abort-evaluation-param))))
          FoldAtMaxDepth)
     (==> (unfold τ (folded τ v#))
          v#
@@ -1799,6 +1813,26 @@
     (necessary-action? (term (internal-receive (init-addr 1 Nat) (* Nat)))))
   (test-false "necessary-action? 4"
     (necessary-action? (term (external-receive (init-addr 1 Nat) (* Nat))))))
+
+(define (csa#-contains-address? e)
+  (term (csa#-contains-address?/mf ,e)))
+
+(define-metafunction csa#
+  csa#-contains-address?/mf : any -> boolean
+  [(csa#-contains-address?/mf a#) #t]
+  [(csa#-contains-address?/mf (any ...))
+   ,(ormap csa#-contains-address? (term (any ...)))]
+  [(csa#-contains-address?/mf _) #f])
+
+(module+ test
+  (test-true "csa#-contains-address?"
+    (csa#-contains-address? (term ((init-addr 1 Nat) (obs-ext 2 Nat)))))
+
+  (test-false "csa#-contains-address?"
+    (csa#-contains-address? (term ((abc 1 Nat) (def 2 Nat)))))
+
+  (test-true "csa#-contains-address?"
+    (csa#-contains-address? (term (((abc) (spawn-addr 3 OLD Nat)) ())))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Types
