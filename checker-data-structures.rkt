@@ -24,7 +24,7 @@
 ;;
 ;; We use this general technique for multiple relations, each of which is a subset of the previous
 ;; one, eventually leading to the spec conformance relation.
-(struct config-pair (impl-config spec-config) #:transparent)
+(struct config-pair (impl-config spec-config) #:prefab)
 
 ;; A possible transition step of an implementation configuration, representing the computation of a
 ;; single message/timeout handler. Fields are as follows:
@@ -40,7 +40,7 @@
 ;; environment during the computation.
 ;;
 ;; destination: The implementation configuration reached at the end of this transition step
-(struct impl-step (trigger from-observer? outputs destination) #:transparent)
+(struct impl-step (trigger from-observer? outputs destination) #:prefab)
 
 ;; A possible (weak handler-level) transition step of a specification configuration, representing the
 ;; actions taken to match some (handler-level) implementation transition step. Weak transitions
@@ -54,7 +54,7 @@
 ;;
 ;; satisfied-commitments: The list of output commitments (address/output-pattern pairs) that are
 ;; satisfied by taking this step.
-(struct spec-step (destination spawns satisfied-commitments) #:transparent)
+(struct spec-step (destination spawns satisfied-commitments) #:prefab)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; "Type" Definitions

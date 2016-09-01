@@ -3,7 +3,14 @@
 ;; Implements the top-level function, "check-conformance", and includes the core of the
 ;; conformance-checking algorithm
 
-(provide check-conformance)
+(provide
+ check-conformance
+
+ ;; Needed only for debugging in other files
+ ;; check-conformance/config
+ ;; prune-unsupported
+ ;; partition-by-satisfaction
+ )
 
 (require
  ;; See README.md for a brief description of these files
@@ -139,13 +146,14 @@
   (define visited-pairs-count 0)
   (define visited-impl-configs (mutable-set))
   (define visited-spec-configs (mutable-set))
-  (define log-file (if LOG-PAIRS (open-output-file "related_pair_log.dat" #:exists 'replace) #f))
+  (define log-file (open-log))
+  (log-initial-pairs log-file initial-pairs)
 
   (let loop ([related-pairs (set)]
              [unrelated-successors (set)])
     (match (dequeue-if-non-empty! to-visit)
       [#f
-       (when LOG-PAIRS (close-output-port log-file))
+       (close-log log-file)
        (list related-pairs unrelated-successors incoming-steps related-spec-steps)]
       [pair
 
@@ -165,11 +173,7 @@
        ;;         (spec-config-without-state-defs (config-pair-spec-config pair)))
        ;; (printf "Incoming so far: ~s\n" (hash-ref incoming-steps pair))
 
-       (when LOG-PAIRS
-         (fprintf log-file
-                  "PAIR ~s (~s). ~s\n"
-                  visited-pairs-count (current-seconds) (pair->debug-pair pair))
-         (flush-output log-file))
+       (log-exploring log-file pair)
 
        (define i (config-pair-impl-config pair))
        (define s (config-pair-spec-config pair))
@@ -190,6 +194,7 @@
             ;; Debugging:
             ;; (printf "Matching spec steps: ~s\n" matching-s-steps)
 
+            (log-related-spec-steps log-file (list pair i-step) matching-s-steps)
             (hash-set! related-spec-steps (list pair i-step) matching-s-steps)
             (when (set-empty? matching-s-steps)
               (set! found-unmatchable-step? #t)))
@@ -203,6 +208,7 @@
 
              ;; Debugging
              ;; (displayln "Unrelated pair")
+             (log-unrelated log-file pair)
              (loop related-pairs (set-add unrelated-successors pair))]
             [else
              ;; This pair is in the rank-1 simulation (because all of its impl steps have matching
@@ -227,12 +233,14 @@
                    ;; TODO: add the address binding here, too, and adjust other uses of incoming
                    ;; (e.g. in prune-unsupported) to take that structure into account
                    (match-define (list sbc-pair rename-map) sbc-result)
+                   (log-incoming log-file sbc-pair (list pair i-step s-step rename-map))
                    (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step rename-map))
                    (unless (or (member sbc-pair (queue->list to-visit))
                                (set-member? related-pairs sbc-pair)
                                (set-member? unrelated-successors sbc-pair)
                                (equal? sbc-pair pair))
                      (enqueue! to-visit sbc-pair)))))
+             (log-related log-file pair)
              (loop (set-add related-pairs pair) unrelated-successors)])])])))
 
 ;; Returns all implementation steps possible from the given impl-config/spec-config pair, or #f if
@@ -632,8 +640,6 @@
 
 (define DISPLAY-STEPS #f)
 
-(define LOG-PAIRS #f)
-
 (define (display-step-line msg)
   (when DISPLAY-STEPS (displayln msg)))
 
@@ -645,6 +651,54 @@
   (list (impl-step-from-observer? step)
         (impl-step-trigger step)
         (impl-step-outputs step)))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Logging
+
+;; Change LOG-RUN to #t to write relevant checking data to a file so that the process of the check can
+;; be recreated after the fact without creating the simulation graph all over again.
+(define LOG-RUN #f)
+(define LOG-FILE-PATH "checker_run_log.dat")
+
+(define (open-log)
+  (if LOG-RUN (open-output-file LOG-FILE-PATH #:exists 'replace) #f))
+
+(define (close-log log-file)
+  (when LOG-RUN (close-output-port log-file)))
+
+;; NOTE: we flush the output after every entry so that there's something in the log even if the
+;; checker crashes in mid-run.
+
+(define (log-initial-pairs log-file initial-pairs)
+  (when LOG-RUN
+    (for ([pair initial-pairs])
+      (fprintf log-file "~s\n" `(initial-pair ,pair)))
+    (flush-output log-file)))
+
+(define (log-exploring log-file pair)
+  (when LOG-RUN
+    (fprintf log-file "~s\n" `(exploring ,pair))
+    (flush-output log-file)))
+
+(define (log-related-spec-steps log-file config-and-i-step related-steps)
+  (when LOG-RUN
+    (fprintf log-file "~s\n" `(related-spec-step ,config-and-i-step ,(set->list related-steps)))
+    (flush-output log-file)))
+
+(define (log-unrelated log-file pair)
+  (when LOG-RUN
+    (fprintf log-file "~s\n" `(unrelated ,pair))
+    (flush-output log-file)))
+
+(define (log-incoming log-file pair step)
+  (when LOG-RUN
+    (fprintf log-file "~s\n" `(incoming ,pair ,step))
+    (flush-output log-file)))
+
+(define (log-related log-file pair)
+  (when LOG-RUN
+    (fprintf log-file "~s\n" `(related ,pair))
+    (flush-output log-file)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Top-level tests
