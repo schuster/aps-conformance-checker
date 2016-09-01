@@ -28,6 +28,8 @@
   (quasiquote
 
 (program (receptionists [guard GetSessionType]) (externals)
+            ;; alternative receptionists/externals for testing just one worker
+            ;; (receptionists [worker AuthenticateType]) (externals [reply-to GetSessionResult])
   (define-variant SessionResponse
     (Pong))
 
@@ -38,10 +40,11 @@
     (ActiveNewSession [auth-token Nat] [service (Addr SessionCommand)])
     (FailedSession))
 
-  (define-record Authenticate
-    [username String]
-    [password String]
-    [reply-to (Addr AuthenticateResult)])
+  (define-variant AuthenticateType
+    (Authenticate
+     [username String]
+     [password String]
+     [reply-to (Addr AuthenticateResult)]))
 
   (define-variant GetSessionResultInternal
     (SuccessInternal)
@@ -52,7 +55,7 @@
 
   (define-variant GetSessionResult
     (ActiveOldSession [service (Addr SessionCommand)])
-    (NewSession [auth (Addr Authenticate)]))
+    (NewSession [auth (Addr AuthenticateType)]))
 
   (define-variant GetSessionType
     (GetSession [auth-token Nat] [reply-to (Addr GetSessionResult)]))
@@ -68,6 +71,11 @@
            (FailureInternal)
            (NewSessionInternal
             Nat ; auth-token
+            )
+           (Authenticate
+            String ; username
+            String ; password
+            (Addr AuthenticateResult) ; reply-to
             )))
 
   (define-type ServerInput
@@ -93,6 +101,7 @@
                      [password-table (Hash String String)])
     ()
     ;; init:
+    ;; (goto WaitingForCredentials)
     (let ()
       ;; Hmm... this is a case where actors aren't a great choice, and you want something more
       ;; lightweight like sessions that more directly expresses the protocol/usage: just want to
@@ -184,7 +193,10 @@
     (hash))
 
   (actors [server (spawn 1 Server)]
-          [guard (spawn 2 ServiceGuard server pw-table)]))))
+          [guard (spawn 2 ServiceGuard server pw-table)]
+          ;; Add this to do the worker test instead
+          ;; [worker (spawn 3 HandshakeWorker 1 reply-to server pw-table)]
+          ))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Specification
@@ -204,8 +216,8 @@
   `(Union (ActiveNewSession Nat (Addr ,desugared-SessionCommand))
           (FailedSession)))
 
-(define desugared-Authenticate
-  `(Record [username String] [password String] [reply-to (Addr ,desugared-AuthenticateResult)]))
+(define desugared-AuthenticateType
+  `(Union [Authenticate String String (Addr ,desugared-AuthenticateResult)]))
 
 (define desugared-GetSessionResultInternal
   `(Union (SuccessInternal) (FailureInternal)))
@@ -215,7 +227,7 @@
 
 (define desugared-GetSessionResultType
   `(Union (ActiveOldSession (Addr ,desugared-SessionCommand))
-          (NewSession (Addr ,desugared-Authenticate))))
+          (NewSession (Addr ,desugared-AuthenticateType))))
 
 (define desugared-GetSessionType
   `(Union (GetSession Nat (Addr ,desugared-GetSessionResultType))))
@@ -240,13 +252,29 @@
   (quasiquote
     (spawn-spec (goto WaitingForCredentials)
                 (define-state (WaitingForCredentials)
-                  [(record Authenticate [username *] [password *] [reply-to reply-to]) ->
+                  [(variant Authenticate * * reply-to) ->
                    (with-outputs ([reply-to (variant FailedSession)]) (goto Done))]
-                  [(record Authenticate [username *] [password *] [reply-to reply-to]) ->
+                  [(variant Authenticate * * reply-to) ->
                    (with-outputs ([reply-to (variant ActiveNewSession * ,spawn-server-specification)])
                      (goto Done))])
                 (define-state (Done)
-                  [(record Authenticate [username *] [password *] [reply-to reply-to]) -> (goto Done)]))))
+                  [(variant Authenticate * * reply-to) -> (goto Done)]))))
+
+;; (define worker-specification
+;;   (quasiquote
+;;    (specification (receptionists [worker ,desugared-AuthenticateType])
+;;                   (externals [reply-to ,desugared-GetSessionResultType])
+;;      [worker ,desugared-AuthenticateType]
+;;      ()
+;;      (define-state (WaitingForCredentials)
+;;        [(variant Authenticate * * reply-to) ->
+;;         (with-outputs ([reply-to (variant FailedSession)]) (goto Done))]
+;;        [(variant Authenticate * * reply-to) ->
+;;         (with-outputs ([reply-to (variant ActiveNewSession * ,spawn-server-specification)])
+;;           (goto Done))])
+;;      (define-state (Done)
+;;        [(variant Authenticate * * reply-to) -> (goto Done)])
+;;      (goto WaitingForCredentials))))
 
 (define authN-specification
   (quasiquote
@@ -255,14 +283,11 @@
      () ; unobserved environment interface
      (define-state (Ready)
        [(variant GetSession * reply-to) ->
-        (with-outputs ([reply-to (variant ActiveOldSession ,spawn-server-specification
-                                          )])
+        (with-outputs ([reply-to (variant ActiveOldSession ,spawn-server-specification)])
           (goto Ready))]
        [(variant GetSession * reply-to) ->
-        (with-outputs ([reply-to (variant NewSession *;; ,spawn-auth-specification
-                                             )])
-          (goto Ready))]
-       )
+        (with-outputs ([reply-to (variant NewSession * ,spawn-auth-specification)])
+          (goto Ready))])
      (goto Ready))))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -282,7 +307,10 @@
     (redex-match? csa-eval τ desugared-server-input-type))
 
   (test-true "Authenticated session verification"
-    (check-conformance (desugar authN-program) authN-specification)))
+    (check-conformance (desugar authN-program) authN-specification)
+    ;; Use this to test just the worker
+    ;; (check-conformance (desugar authN-program) worker-specification)
+    ))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Dynamic tests needed:
