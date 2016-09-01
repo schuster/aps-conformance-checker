@@ -48,7 +48,7 @@
    (((define-state (Always)
        [response-target -> (with-outputs ([response-target *]) (goto Always))]))
     (goto Always)
-    (addr 0 (Addr Nat)))))-
+    (addr 0 (Addr Nat)))))
 
 (check-conformance/config
  (make-empty-queues-config (list (make-down-and-back-server self-send-forwarding-child))
