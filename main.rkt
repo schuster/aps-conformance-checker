@@ -180,13 +180,6 @@
           ;; to the unrelated-successors list, and move on to explore the next pair in our worklist.
           (loop related-pairs (set-add unrelated-successors pair))]
          [i-steps
-          ;; TODO: is is really still the case that blur might fail?
-          ;;
-          ; hash from a pair (i, s) to its sbc-derivatives. We save these derivatives because we first
-          ; need to check that they exist (because the blur step might fail), then add them to our
-          ; worklist
-          (define saved-derivatives (make-hash))
-
           ;; Find the matching s-steps
           (define found-unmatchable-step? #f)
           (for ([i-step i-steps])
@@ -199,16 +192,7 @@
 
             (hash-set! related-spec-steps (list pair i-step) matching-s-steps)
             (when (set-empty? matching-s-steps)
-              (set! found-unmatchable-step? #t))
-            ;; Get all derivatives. If sbc ever fails, that step is an unmatchable step
-            (for ([s-step matching-s-steps])
-              (define successor-pairs
-                (for/list ([config (cons (spec-step-destination s-step) (spec-step-spawns s-step))])
-                  (config-pair (impl-step-destination i-step) config)))
-              (match (sbc* successor-pairs)
-                ;; TODO: check if sbc ever returns #f anymore; I don't think it does
-                [#f (set! found-unmatchable-step? #t)]
-                [sbc-pairs (hash-set! saved-derivatives (config-pair i-step s-step) sbc-pairs)])))
+              (set! found-unmatchable-step? #t)))
 
           ;; Add this pair to either related or unrelated set; add new worklist items
           (cond
@@ -231,11 +215,15 @@
              ;; (displayln "Related pair")
              (for ([i-step i-steps])
                (for ([s-step (hash-ref related-spec-steps (list pair i-step))])
+                 (define successor-pairs
+                   (for/list ([config (cons (spec-step-destination s-step) (spec-step-spawns s-step))])
+                     (config-pair (impl-step-destination i-step) config)))
+
                  ;; Debugging only
                  ;; (for ([successor-pair successor-pairs])
                  ;;   (printf "pre-sbc: ~s\n" successor-pair)
                  ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
-                 (for ([sbc-result (hash-ref saved-derivatives (config-pair i-step s-step))])
+                 (for ([sbc-result (sbc* successor-pairs)])
                    ;; TODO: add the address binding here, too, and adjust other uses of incoming
                    ;; (e.g. in prune-unsupported) to take that structure into account
                    (match-define (list sbc-pair rename-map) sbc-result)
@@ -420,13 +408,9 @@
       (canonicalize-pair blurred-impl blurred-spec))
     (list (config-pair canonicalized-impl canonicalized-spec) rename-map)))
 
-;; Calls sbc on every pair and merges the results into one long list. If sbc returns #f for any pair,
-;; this function returns #f.
+;; Calls sbc on every pair and merges the results into one long list.
 (define (sbc* pairs)
-  (define sbc-results (map sbc pairs))
-  (if (ormap false? sbc-results)
-      #f
-      (append* sbc-results)))
+  (append* (map sbc pairs)))
 
 ;; impl-config spec-config -> (List impl-config spec-config)
 ;;
