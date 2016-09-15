@@ -1,6 +1,7 @@
 #lang racket
 
 (require
+ racket/fasl
  "checker-data-structures.rkt"
  "main.rkt")
 
@@ -17,7 +18,7 @@
 (call-with-input-file "checker_run_log.dat"
   (lambda (file)
     (let loop ()
-      (match (read file)
+      (match (fasl->s-exp file)
         [(? eof-object?) (void)]
         [(list 'initial-pair pair)
          (set-add! initial-pairs-set pair)

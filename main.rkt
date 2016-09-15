@@ -14,6 +14,7 @@
 
 (require
  ;; See README.md for a brief description of these files
+ racket/fasl
  data/queue
  "aps.rkt"
  "aps-abstract.rkt"
@@ -672,32 +673,32 @@
 (define (log-initial-pairs log-file initial-pairs)
   (when LOG-RUN
     (for ([pair initial-pairs])
-      (fprintf log-file "~s\n" `(initial-pair ,pair)))
+      (s-exp->fasl `(initial-pair ,pair) log-file))
     (flush-output log-file)))
 
 (define (log-exploring log-file pair)
   (when LOG-RUN
-    (fprintf log-file "~s\n" `(exploring ,pair))
+    (s-exp->fasl `(exploring ,pair) log-file)
     (flush-output log-file)))
 
 (define (log-related-spec-steps log-file config-and-i-step related-steps)
   (when LOG-RUN
-    (fprintf log-file "~s\n" `(related-spec-step ,config-and-i-step ,(set->list related-steps)))
+    (s-exp->fasl `(related-spec-step ,config-and-i-step ,(set->list related-steps)) log-file)
     (flush-output log-file)))
 
 (define (log-unrelated log-file pair)
   (when LOG-RUN
-    (fprintf log-file "~s\n" `(unrelated ,pair))
+    (s-exp->fasl `(unrelated ,pair) log-file)
     (flush-output log-file)))
 
 (define (log-incoming log-file pair step)
   (when LOG-RUN
-    (fprintf log-file "~s\n" `(incoming ,pair ,step))
+    (s-exp->fasl `(incoming ,pair ,step) log-file)
     (flush-output log-file)))
 
 (define (log-related log-file pair)
   (when LOG-RUN
-    (fprintf log-file "~s\n" `(related ,pair))
+    (s-exp->fasl `(related ,pair) log-file)
     (flush-output log-file)))
 
 ;; ---------------------------------------------------------------------------------------------------
