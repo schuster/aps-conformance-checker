@@ -15,6 +15,7 @@
 (require
  ;; See README.md for a brief description of these files
  racket/fasl
+ racket/date ; for debugging
  data/queue
  "aps.rkt"
  "aps-abstract.rkt"
@@ -162,7 +163,7 @@
        (set! visited-pairs-count (add1 visited-pairs-count))
        (set-add! visited-impl-configs (config-pair-impl-config pair))
        (set-add! visited-spec-configs (config-pair-spec-config pair))
-       ;; (printf "Current time: ~s\n" (current-seconds))
+       ;; (printf "Current time: ~a\n" (date->string (seconds->date (current-seconds)) #t))
        ;; (printf "Pair config #: ~s\n" visited-pairs-count)
        ;; (printf "Unique impl configs so far: ~s\n" (set-count visited-impl-configs))
        ;; (printf "Unique spec configs so far: ~s\n" (set-count visited-spec-configs))
@@ -173,6 +174,7 @@
        ;; (printf "The spec config: ~s\n"
        ;;         (spec-config-without-state-defs (config-pair-spec-config pair)))
        ;; (printf "Incoming so far: ~s\n" (hash-ref incoming-steps pair))
+       (flush-output)
 
        (log-exploring log-file pair)
 
