@@ -36,7 +36,8 @@
  redex/reduction-semantics
  "aps.rkt"
  "csa.rkt"
- "csa-abstract.rkt")
+ "csa-abstract.rkt"
+ "sexp-helpers.rkt")
 
 (module+ test
   (require
@@ -1299,20 +1300,6 @@
 (define (aps#-sort-receptionists config)
   (redex-let aps# ([(any_instances any_receptionists any_com) config])
     (term (any_instances ,(sort (term any_receptionists) sexp<?) any_com))))
-
-(define (sexp<? a b)
-  (string<? (sexp->string a) (sexp->string b)))
-
-(define (sexp->string s)
-  (define port (open-output-string))
-  (fprintf port "~s" s)
-  (get-output-string port))
-
-(module+ test
-  (check-true (sexp<? null 'a))
-  (check-true (sexp<? 'a 'b))
-  (check-false (sexp<? 'b 'a))
-  (check-false (sexp<? 'a null)))
 
 (define (try-rename-address rename-map addr)
   (redex-let aps# ([(obs-ext natural any_type) addr])
