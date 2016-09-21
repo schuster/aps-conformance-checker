@@ -1,6 +1,7 @@
 #lang racket
 
 (require
+ racket/date
  racket/fasl
  "checker-data-structures.rkt"
  "main.rkt")
@@ -13,9 +14,12 @@
 (define incoming (make-hash))
 (define related-spec-steps (make-hash))
 
+(define (display-current-time)
+  (printf "Current time: ~s\n" (date->string (seconds->date (current-seconds)) #t)))
+
 (displayln "Reading the file")
 
-(printf "Time 1: ~s\n" (current-seconds))
+(display-current-time)
 
 (define most-recent-pair #f)
 (define pairs-so-far 0)
@@ -43,7 +47,7 @@
          (set-add! exploring (config-pair (get-config i) (get-config s)))
          (set! pairs-so-far (add1 pairs-so-far))
          (printf "read number ~s\n" pairs-so-far)
-         (set! most-recent-pair pair)
+         ;; (set! most-recent-pair pair)
          (loop)]
         [(list 'related-spec-step (list i (impl-step trigger from out dest)) related-steps)
          (define new-steps (mutable-set))
@@ -78,7 +82,7 @@
             (set-add! the-set step)])
          (loop)]))))
 
-(printf "Time 2: ~s\n" (current-seconds))
+(display-current-time)
 (displayln "Read the whole file")
 
 ;; This is a copy of the remaining section of check-conformance/config, so that I can re-run the rest
@@ -88,7 +92,7 @@
                rank1-unrelated-successors
                incoming-steps
                rank1-related-spec-steps)
-  (printf "Current time: ~s\n" (current-seconds))
+  (display-current-time)
   (printf "Num initial pairs: ~s\n" (length initial-pairs))
   (printf "Num related r1: ~s\n" (set-count rank1-pairs))
   (printf "Num unrelated r1: ~s\n" (set-count rank1-unrelated-successors))
@@ -98,12 +102,12 @@
                        incoming-steps
                        rank1-related-spec-steps
                        rank1-unrelated-successors))
-  (printf "Current time: ~s\n" (current-seconds))
+  (display-current-time)
   (printf "Num related simulation: ~s\n" (set-count simulation-pairs))
   (printf "All in simulation: ~s\n" (andmap (curry set-member? simulation-pairs) initial-pairs))
   (match-define (list commitment-satisfying-pairs unsatisfying-pairs)
     (partition-by-satisfaction simulation-pairs incoming-steps simulation-related-spec-steps))
-  (printf "Current time: ~s\n" (current-seconds))
+  (display-current-time)
   (printf "Num com-sat: ~s\n" (set-count commitment-satisfying-pairs))
   (printf "Num com-unsat: ~s\n" (set-count unsatisfying-pairs))
   (printf "All in com-sat: ~s\n" (andmap (curry set-member? commitment-satisfying-pairs) initial-pairs))
@@ -112,7 +116,7 @@
                        incoming-steps
                        simulation-related-spec-steps
                        unsatisfying-pairs))
-  (printf "Current time: ~s\n" (current-seconds))
+  (display-current-time)
   (printf "Num conforming: ~s\n" (set-count conforming-pairs))
   (printf "All in conforming: ~s\n" (andmap (curry set-member? conforming-pairs) initial-pairs))
   (andmap (curry set-member? conforming-pairs) initial-pairs))
