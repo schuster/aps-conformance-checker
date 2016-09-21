@@ -7,6 +7,9 @@
  check-conformance
 
  ;; Needed only for debugging in other files
+ ;; impl-steps-from
+ ;; matching-spec-steps
+ ;; debug-impl-step
  ;; check-conformance/config
  ;; prune-unsupported
  ;; partition-by-satisfaction
