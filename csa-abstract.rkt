@@ -430,6 +430,11 @@
     [else
      (term (blurred-actor-behaviors-by-address/mf ,config ,address))]))
 
+
+;; A cache of handler evaluation results, represented as a hash table from (initial) handler machines
+;; to a list of (final) handler machines
+(define eval-cache (make-hash))
+
 ;; H# trigger# a#int impl-config (impl-config a#int e# -> impl-config) -> (Listof csa#-transition)
 ;;
 ;; Evaluates the given handler machine for the given trigger at the given actor address, updating the
@@ -439,15 +444,24 @@
 (define (eval-handler handler-machine trigger address config update-behavior abort)
   (parameterize ([abort-evaluation-param abort])
     (define final-machine-states
-      ;; Remove states stuck as a result of over-abstraction; we can assume these would never happen
-      ;; at run-time
-      (filter (negate stuck-at-empty-list-ref?)
-              (apply-reduction-relation* handler-step# handler-machine #:cache-all? #t)))
-    (unless (andmap complete-handler-config? final-machine-states)
-      (error 'eval-handler
-             "Abstract evaluation did not complete\nInitial state: ~s\nFinal stuck states:~s"
-             handler-machine
-             (filter (negate complete-handler-config?) final-machine-states)))
+      (match (hash-ref eval-cache handler-machine #f)
+        [#f
+         (define all-final-states
+           ;; Remove states stuck as a result of over-abstraction; we can assume these would never
+           ;; happen at run-time
+           (filter (negate stuck-at-empty-list-ref?)
+                   (apply-reduction-relation* handler-step# handler-machine #:cache-all? #t)))
+         (unless (andmap complete-handler-config? all-final-states)
+           (error 'eval-handler
+                  "Abstract evaluation did not complete\nInitial state: ~s\nFinal stuck states:~s"
+                  handler-machine
+                  (filter (negate complete-handler-config?) final-machine-states)))
+         (hash-set! eval-cache handler-machine all-final-states)
+         all-final-states]
+        [cached-results
+         (displayln "found cached results")
+         cached-results]))
+
     (for/list ([machine-state final-machine-states])
       ;; TODO: rename outputs to something like "transmissions", because some of them stay internal
       ;; to the configuration
