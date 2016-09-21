@@ -319,9 +319,17 @@
         (match-define (list remaining-map spawned-map)
           (fork-commitment-map current-commitment-map (externals-in (list state-defs goto))))
         (define new-instance (term (,state-defs ,goto ,address)))
+        ;; TODO: figure out what to do with this old receptionist code
+        ;; (define new-receptionists
+        ;;   (remove-duplicates (append (term any_receptionists)
+        ;;                              (if (equal? (aps#-config-only-instance-address current-config) 'UNKNOWN)
+        ;;                                  '()
+        ;;                                  (list (aps#-config-only-instance-address current-config))))))
         (values remaining-map
+                ;; TODO: add parent to this receptionist list
                 (cons (term ((,new-instance) any_receptionists ,spawned-map))
                       spawned-configs))))
+    ;; TODO: add all forked addresses to this receptionist list
     (list (term ((z) any_receptionists ,commitment-map)) spawned-configs)))
 
 (module+ test
