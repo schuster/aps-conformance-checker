@@ -625,8 +625,7 @@
     ;; TODO: keep the elements in a canonical order, so that equivalent abstract values are equal?
 
     (==> (cons v#_new (list v# ...))
-         (list v#_all ...)
-         (where (v#_all ...) ,(set->list (set-add (list->set (term (v# ...))) (term v#_new))))
+         (list ,@(sort (remove-duplicates (term (v#_new v# ...))) sexp<?))
          Cons)
     (==> (cons v# (* (Listof τ)))
          (* (Listof τ))
@@ -669,7 +668,7 @@
          VectorWildcardCopy)
     ;; TODO: figure out if the type is ever *not* big enough to also cover the other vector
     (==> (vector-append (vector v#_1 ...) (vector v#_2 ...))
-         ,(cons 'vector (set->list (list->set (term (v#_1 ... v#_2 ...)))))
+         (vector ,@(sort (remove-duplicates (term (v#_1 ... v#_2 ...))) sexp<?))
          VectorAppend)
     (==> (vector-append (* (Vectorof τ)) _)
          (* (Vectorof τ))
@@ -693,7 +692,7 @@
          (hash v#_1 ... v#_value v#_2 ...)
          HashSetExists)
     (==> (hash-set (hash v#_current ...) v#_key v#_value)
-         (hash v#_current ... v#_value)
+         (hash ,@(sort (term (v#_current ... v#_value))  sexp<?))
          (side-condition (not (member (term v#_value) (term (v#_current ...)))))
          HashSetNewItem)
     (==> (hash-set (* Hash τ_1 τ_2) v#_key v#_value)
@@ -825,28 +824,6 @@
     (unless (equal? next-steps (list (inject/H# e2)))
       (fail-check (format "There were ~s next steps: ~s" (length next-steps) next-steps))))
 
-  ;; TODO: rewrite all of these tests with case statements
-  ;; (csa#-exp-steps-to? (term (match (tuple 'a 'b)
-  ;;                             ['c (* Nat)]
-  ;;                             [(tuple 'a item) item]))
-  ;;                     (term (match (tuple 'a 'b)
-  ;;                             [(tuple 'a item) item])))
-  ;; (csa#-exp-steps-to? (term (match (tuple 'a 'b)
-  ;;                             [(tuple 'a item) item]))
-  ;;                     (term 'b))
-
-  ;; (csa#-exp-steps-to? (term (match (* Nat)
-  ;;                             [(tuple) (goto S1 (* Nat))]
-  ;;                             [_ (goto S2 (* Nat))]))
-  ;;                     (term (match (* Nat)
-  ;;                             [_ (goto S2 (* Nat))]) ))
-  ;; (csa#-exp-steps-to? (term (match (* Nat)
-  ;;                             [_ (goto S2 (* Nat))]))
-  ;;                     (term (goto S2 (* Nat)) ))
-  ;; (csa#-exp-steps-to? (term (match (* Nat)
-  ;;                             [(tuple) (goto S2 (* Nat))]))
-  ;;                     (term (match (* Nat))))
-
   (check-exp-steps*-to? (term (fold   (Union [A]) (variant A)))
                         (term (folded (Union [A]) (variant A))))
   (define nat-list-type (term (minfixpt NatList (Union (Null) (Cons Nat NatList)))))
@@ -858,6 +835,61 @@
                                (fold ,nat-list-type (variant Cons (* Nat)
                                  (fold ,nat-list-type (variant Null)))))))
                         (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
+
+  ;; Tests for sorting when adding to lists, vectors, and hashes
+  ;; list
+  (check-exp-steps-to?
+   (term (cons (variant A) (list (variant B) (variant C))))
+   (term (list (variant A) (variant B) (variant C))))
+  (check-exp-steps-to?
+   (term (cons (variant A) (list)))
+   (term (list (variant A))))
+  (check-exp-steps-to?
+   (term (cons (variant D) (list (variant B) (variant C))))
+   (term (list (variant B) (variant C) (variant D))))
+  (check-exp-steps-to?
+   (term (cons (variant B) (list (variant B) (variant C))))
+   (term (list (variant B) (variant C))))
+  ;; vector
+  (check-exp-steps-to?
+   (term (vector-append (vector (variant A) (variant B))
+                        (vector (variant C) (variant D))))
+   (term (vector (variant A) (variant B) (variant C) (variant D))))
+  (check-exp-steps-to?
+   (term (vector-append (vector (variant A) (variant B))
+                        (vector (variant C) (variant B))))
+   (term (vector (variant A) (variant B) (variant C))))
+  (check-exp-steps-to?
+   (term (vector-append (vector (variant C) (variant D))
+                        (vector (variant A) (variant B))))
+   (term (vector (variant A) (variant B) (variant C) (variant D))))
+  (check-exp-steps-to?
+  (term (vector-append (vector (variant C) (variant D))
+                       (vector (variant B) (variant A))))
+  (term (vector (variant A) (variant B) (variant C) (variant D))))
+  (check-exp-steps-to? (term (vector-append (vector) (vector))) (term (vector)))
+  (check-exp-steps-to?
+   (term (vector-append (vector (variant A)) (vector)))
+   (term (vector (variant A))))
+  (check-exp-steps-to?
+   (term (vector-append (vector) (vector (variant A))))
+   (term (vector (variant A))))
+  ;; hash
+  (check-exp-steps-to?
+   (term (hash-set (hash (variant B) (variant C)) (* Nat) (variant A)))
+   (term (hash (variant A) (variant B) (variant C))))
+  (check-exp-steps-to?
+   (term (hash-set (hash (variant C) (variant B)) (* Nat) (variant A)))
+   (term (hash (variant A) (variant B) (variant C))))
+  (check-exp-steps-to?
+   (term (hash-set (hash) (* Nat) (variant A)))
+   (term (hash (variant A))))
+  (check-exp-steps-to?
+   (term (hash-set (hash (variant B) (variant C)) (* Nat) (variant D)))
+   (term (hash (variant B) (variant C) (variant D))))
+  (check-exp-steps-to?
+   (term (hash-set (hash (variant B) (variant C)) (* Nat) (variant B)))
+   (term (hash (variant B) (variant C))))
 
   ;; Check that internal addresses in the transmissions do not change the evaluation (had a problem
   ;; with this before)
