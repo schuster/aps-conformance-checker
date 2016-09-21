@@ -35,7 +35,9 @@
       (match (fasl->s-exp file)
         [(? eof-object?) (void)]
         [(list 'initial-pair (config-pair i s))
-         (set! initial-pairs (cons (config-pair (get-config i) (get-config s)) initial-pairs))
+         (define the-pair (config-pair (get-config i) (get-config s)))
+         (set! initial-pairs (cons the-pair initial-pairs))
+         (hash-set! incoming the-pair (mutable-set))
          (loop)]
         [(list 'exploring (config-pair i s))
          (set-add! exploring (config-pair (get-config i) (get-config s)))
