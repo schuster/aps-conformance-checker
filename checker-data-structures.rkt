@@ -49,7 +49,7 @@
 ;;
 ;; destination: The specification configuration reached at the end of the weak transition.
 ;;
-;; spawns: The set of specification configurations forked off by this transition step. A conforming
+;; spawns: The list of specification configurations forked off by this transition step. A conforming
 ;; implementation configuration must conform to all of these configs in addition to destination.
 ;;
 ;; satisfied-commitments: The list of output commitments (address/output-pattern pairs) that are
