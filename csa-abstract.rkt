@@ -458,9 +458,7 @@
                   (filter (negate complete-handler-config?) final-machine-states)))
          (hash-set! eval-cache handler-machine all-final-states)
          all-final-states]
-        [cached-results
-         (displayln "found cached results")
-         cached-results]))
+        [cached-results cached-results]))
 
     (for/list ([machine-state final-machine-states])
       ;; TODO: rename outputs to something like "transmissions", because some of them stay internal
