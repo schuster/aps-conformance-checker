@@ -5,6 +5,7 @@
  "checker-data-structures.rkt"
  "main.rkt")
 
+(define all-configs (make-hash))
 (define initial-pairs null)
 (define exploring (mutable-set))
 (define related-pairs (mutable-set))
@@ -19,31 +20,55 @@
 (define most-recent-pair #f)
 (define pairs-so-far 0)
 
+;; Rather than creating multiple copies of the same object, look for an existing equal? value first
+(define (get-config p)
+  (match (hash-ref all-configs p #f)
+    [#f
+     (hash-set! all-configs p p)
+     p]
+    [pair pair]))
+
 ;; read in the file
 (call-with-input-file "examples/checker_run_log.dat"
   (lambda (file)
     (let loop ()
       (match (fasl->s-exp file)
         [(? eof-object?) (void)]
-        [(list 'initial-pair pair)
-         (set! initial-pairs (cons pair initial-pairs))
+        [(list 'initial-pair (config-pair i s))
+         (set! initial-pairs (cons (config-pair (get-config i) (get-config s)) initial-pairs))
          (loop)]
-        [(list 'exploring pair)
-         (set-add! exploring pair)
+        [(list 'exploring (config-pair i s))
+         (set-add! exploring (config-pair (get-config i) (get-config s)))
          (set! pairs-so-far (add1 pairs-so-far))
          (printf "read number ~s\n" pairs-so-far)
          (set! most-recent-pair pair)
          (loop)]
-        [(list 'related-spec-step config-and-i-step related-steps)
-         (hash-set! related-spec-steps config-and-i-step (list->set related-steps))
+        [(list 'related-spec-step (list i (impl-step trigger from out dest)) related-steps)
+         (define new-steps (mutable-set))
+         (for ([step related-steps])
+           (match-define (spec-step dest spawns sat-coms) step)
+           (set-add! new-steps (spec-step (get-config dest)
+                                          (map get-config spawns)
+                                          sat-coms)))
+         (hash-set! related-spec-steps
+                    (list (get-config i) (impl-step trigger from out (get-config dest)))
+                    new-steps)
          (loop)]
-        [(list 'unrelated pair)
-         (set-add! unrelated-pairs pair)
+        [(list 'unrelated (config-pair i s))
+         (set-add! unrelated-pairs (config-pair (get-config i) (get-config s)))
          (loop)]
-        [(list 'related pair)
-         (set-add! related-pairs pair)
+        [(list 'related (config-pair i s))
+         (set-add! related-pairs (config-pair (get-config i) (get-config s)))
          (loop)]
-        [(list 'incoming pair step)
+        [(list 'incoming (config-pair i s) (list (config-pair i2 s2)
+                                                 (impl-step trig from out i-dest)
+                                                 (spec-step s-dest spawns sat-coms)
+                                                 mapping))
+         (define pair (config-pair (get-config i) (get-config s)))
+         (define step (list (config-pair (get-config i2) (get-config s2))
+                            (impl-step trig from out (get-config i-dest))
+                            (spec-step (get-config s-dest) (map get-config spawns) sat-coms)
+                            mapping))
          (match (hash-ref incoming pair #f)
            [#f
             (hash-set! incoming pair (mutable-set step))]
