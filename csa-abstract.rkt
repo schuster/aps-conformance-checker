@@ -42,7 +42,8 @@
 
 (require
  redex/reduction-semantics
- "csa.rkt")
+ "csa.rkt"
+ "sexp-helpers.rkt")
 
 ;; Abstract-interpretation version of CSA
 (define-extended-language csa# csa-eval
@@ -756,7 +757,7 @@
     (--> ((in-hole E# (loop-context (in-hole E#_2 (send a# v#)))) any_outputs any_loop-outputs any_spawns)
          ((in-hole E# (loop-context (in-hole E#_2 v#)))
           any_outputs
-          ,(remove-duplicates (append (term any_loop-outputs) (list (term [a# v#]))))
+          ,(sort (remove-duplicates (append (term any_loop-outputs) (list (term [a# v#])))) sexp<?)
           any_spawns)
          LoopSend)
 
@@ -890,6 +891,52 @@
   (check-exp-steps-to?
    (term (hash-set (hash (variant B) (variant C)) (* Nat) (variant B)))
    (term (hash (variant B) (variant C))))
+
+  ;; Check for sorting of loop sends
+  (check-equal?
+   (apply-reduction-relation handler-step#
+                             (term ((loop-context (send (obs-ext 1 (Union [A] [B])) (variant A)))
+                                    ()
+                                    ([(obs-ext 1 (Union [A] [B])) (variant B)])
+                                    ())))
+   (list (term ((loop-context (variant A))
+                ()
+                ([(obs-ext 1 (Union [A] [B])) (variant A)]
+                 [(obs-ext 1 (Union [A] [B])) (variant B)])
+                ()))))
+  (check-equal?
+   (apply-reduction-relation handler-step#
+                             (term ((loop-context (send (obs-ext 1 (Union [A] [B])) (variant B)))
+                                    ()
+                                    ([(obs-ext 1 (Union [A] [B])) (variant A)])
+                                    ())))
+   (list (term ((loop-context (variant B))
+                ()
+                ([(obs-ext 1 (Union [A] [B])) (variant A)]
+                 [(obs-ext 1 (Union [A] [B])) (variant B)])
+                ()))))
+  (check-equal?
+   (apply-reduction-relation handler-step#
+                             (term ((loop-context (send (obs-ext 1 (Union [A] [B])) (variant B)))
+                                    ()
+                                    ([(obs-ext 1 (Union [A] [B])) (variant A)]
+                                     [(obs-ext 1 (Union [A] [B])) (variant B)])
+                                    ())))
+   (list (term ((loop-context (variant B))
+                ()
+                ([(obs-ext 1 (Union [A] [B])) (variant A)]
+                 [(obs-ext 1 (Union [A] [B])) (variant B)])
+                ()))))
+  (check-equal?
+   (apply-reduction-relation handler-step#
+                             (term ((loop-context (send (obs-ext 1 (Union [A] [B])) (variant B)))
+                                    ()
+                                    ()
+                                    ())))
+   (list (term ((loop-context (variant B))
+                ()
+                ([(obs-ext 1 (Union [A] [B])) (variant B)])
+                ()))))
 
   ;; Check that internal addresses in the transmissions do not change the evaluation (had a problem
   ;; with this before)
