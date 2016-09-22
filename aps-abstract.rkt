@@ -53,8 +53,8 @@
 (define-extended-language aps#
   aps-eval-with-csa#
   (Σ# ((z ...) (a#int_unobs-receptionists ...) O#))
-  (z ((S-hat ...) e-hat σ#))
-  (σ# a# UNKNOWN)
+  (z ((Φ ...) e-hat σ#))
+  (σ# a# UNKNOWN) ; observed environment interface
   (u .... a#ext)
   (O# ((a#ext (m po) ...) ...)))
 
@@ -118,9 +118,9 @@
   [(subst/aps# (with-outputs ([u po] ...) e-hat) x a#)
    (with-outputs ([(subst/aps#/u u x a#) (subst/aps#/po po x a#)] ...)
      (subst/aps# e-hat x a#))]
-  [(subst/aps# (spawn-spec ((goto s u ...) S-hat ...) e-hat) x a#)
+  [(subst/aps# (spawn-spec ((goto s u ...) Φ ...) e-hat) x a#)
    (spawn-spec ((subst/aps# (goto s u ...) x a#)
-                (subst/aps#/S-hat S-hat x a#) ...)
+                (subst/aps#/Φ Φ x a#) ...)
                (subst/aps# e-hat x a#))])
 
 (define-metafunction aps#
@@ -134,9 +134,9 @@
   [(subst/aps#/po * x a#) *]
   [(subst/aps#/po (spawn-spec any_goto any_s-defs ...) self _)
    (spawn-spec any_goto any_s-defs ...)]
-  [(subst/aps#/po (spawn-spec (goto s u ...) S-hat ...) x a#)
+  [(subst/aps#/po (spawn-spec (goto s u ...) Φ ...) x a#)
    (spawn-spec (goto s (subst/aps#/u u x a#) ...)
-               (subst/aps#/S-hat S-hat x a#) ...)]
+               (subst/aps#/Φ Φ x a#) ...)]
   [(subst/aps#/po self self a#int) a#int]
   [(subst/aps#/po self _ _) self]
   [(subst/aps#/po (variant t po ...) x a#)
@@ -145,10 +145,10 @@
    (record [l (subst/aps#/po po x a#)] ...)])
 
 (define-metafunction aps#
-  subst/aps#/S-hat : S-hat x a# -> S-hat
-  [(subst/aps#/S-hat (define-state (s any_1 ... x any_2 ...) any_trans ...) x a#)
+  subst/aps#/Φ : Φ x a# -> Φ
+  [(subst/aps#/Φ (define-state (s any_1 ... x any_2 ...) any_trans ...) x a#)
    (define-state (s any_1 ... x any_2 ...) any_trans ...)]
-  [(subst/aps#/S-hat (define-state (s x_s ...) any_trans ...) x a#)
+  [(subst/aps#/Φ (define-state (s x_s ...) any_trans ...) x a#)
    (define-state (s x_s ...) (subst/aps#/trans any_trans x a#) ...)])
 
 (define-metafunction aps#
@@ -289,7 +289,7 @@
   (term (aps#-eval/mf ,exp)))
 
 (define-metafunction aps#
-  aps#-eval/mf : e-hat -> [(goto s a#ext ...) ([a#ext po] ...) (((S-hat ...) e-hat σ#) ...)]
+  aps#-eval/mf : e-hat -> [(goto s a#ext ...) ([a#ext po] ...) (((Φ ...) e-hat σ#) ...)]
   [(aps#-eval/mf (goto s a#ext ...))
    ((goto s a#ext ...) () ())]
   [(aps#-eval/mf (with-outputs ([a#ext_1 po_1] any_rest ...) e-hat))
@@ -298,12 +298,12 @@
           (aps#-eval/mf (with-outputs (any_rest ...) e-hat)))]
   [(aps#-eval/mf (with-outputs () e-hat))
    (aps#-eval/mf e-hat)]
-  [(aps#-eval/mf (spawn-spec ((goto s a#ext ...) S-hat ...) e-hat))
-   [any_goto (any_outputs ...) ([(S-hat ...) (goto s a#ext ...) UNKNOWN] any_spawns ...)]
+  [(aps#-eval/mf (spawn-spec ((goto s a#ext ...) Φ ...) e-hat))
+   [any_goto (any_outputs ...) ([(Φ ...) (goto s a#ext ...) UNKNOWN] any_spawns ...)]
    (where [any_goto (any_outputs ...) (any_spawns ...)]
           (aps#-eval/mf e-hat))])
 
-;; Σ# (((S-hat ...) e-hat σ#) ...) -> Σ# (Σ# ...)
+;; Σ# (((Φ ...) e-hat σ#) ...) -> Σ# (Σ# ...)
 ;;
 ;; Given the current configuration and the info needed to spawn new configs, splits information from
 ;; the current configuration off to form the new configurations
@@ -543,7 +543,7 @@
 
 (define-judgment-form aps#
   #:mode (aps#-matches-po?/j I I I O O O)
-  #:contract (aps#-matches-po?/j v# σ# po σ# (((S-hat ...) e-hat σ#)  ...) (a#int ...))
+  #:contract (aps#-matches-po?/j v# σ# po σ# (((Φ ...) e-hat σ#)  ...) (a#int ...))
 
   [-----
    (aps#-matches-po?/j v# σ# * σ# () ,(internals-in (term v#)))]
@@ -551,9 +551,9 @@
   [----
    (aps#-matches-po?/j a#int
                        σ#
-                       (spawn-spec e-hat S-hat ...)
+                       (spawn-spec e-hat Φ ...)
                        σ#
-                       (((S-hat ...) e-hat a#int))
+                       (((Φ ...) e-hat a#int))
                        ())]
 
   [----
@@ -602,7 +602,7 @@
 
 (define-judgment-form aps#
   #:mode (aps#-list-matches-po?/j I I O O O)
-  #:contract (aps#-list-matches-po?/j ((v# po) ...) σ# σ# (((S-hat ...) e-hat σ#) ...) (a#int ...))
+  #:contract (aps#-list-matches-po?/j ((v# po) ...) σ# σ# (((Φ ...) e-hat σ#) ...) (a#int ...))
 
   [---------
    (aps#-list-matches-po?/j () any_addr any_addr () ())]
@@ -1350,5 +1350,5 @@
 ;; Debugging
 
 (define (spec-config-without-state-defs config)
-  (redex-let aps# ([((((S-hat ...) e-hat σ#) ...) any_rec O#) config])
+  (redex-let aps# ([((((Φ ...) e-hat σ#) ...) any_rec O#) config])
              (term (((e-hat σ#) ...) any_rec O#))))

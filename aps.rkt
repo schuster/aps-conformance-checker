@@ -30,18 +30,18 @@
                   (externals [x_ext τ] ...)
                   UNKNOWN
                   ([x τ] ...)
-                  S-hat ...
-                  (goto s x ...))
+                  Φ ...
+                  (goto φ x ...))
    (specification (receptionists [x_rec τ] ...)
                   (externals [x_ext τ] ...)
                   [x τ]
                   ([x τ] ...)
-                  S-hat ...
-                  (goto s x ...)))
-  (e-hat (spawn-spec ((goto s u ...) S-hat ...) e-hat)
-         (goto s u ...)
+                  Φ ...
+                  (goto φ x ...)))
+  (e-hat (spawn-spec ((goto φ u ...) Φ ...) e-hat)
+         (goto φ u ...)
          (with-outputs ([u po] ...) e-hat))
-  (S-hat (define-state (s x ...) (ε -> e-hat) ...))
+  (Φ (define-state (φ x ...) (ε -> e-hat) ...))
   (ε unobs
      p)
   (u x) ; arguments
@@ -50,16 +50,17 @@
      (variant t p ...)
      (record [l p] ...))
   (po *
-      (spawn-spec (goto s u ...) S-hat ...)
+      (spawn-spec (goto φ u ...) Φ ...)
       self
       (variant t po ...)
-      (record [l po] ...)))
+      (record [l po] ...))
+  (φ variable-not-otherwise-mentioned))
 
 (define-extended-language aps-eval
   aps
   (Σ ((z ...) (a ...) O))
   (O ((a po ...) ...))
-  (z ((S-hat ...) e-hat σ))
+  (z ((Φ ...) e-hat σ))
   (σ a UNKNOWN)
   (u .... a))
 
@@ -74,14 +75,14 @@
 
 (define-metafunction aps-eval
   subst/aps-eval : e-hat x a -> e-hat
-  [(subst/aps-eval (goto s u ...) x a)
-   (goto s (subst/aps-eval/u u x a) ...)]
+  [(subst/aps-eval (goto φ u ...) x a)
+   (goto φ (subst/aps-eval/u u x a) ...)]
   [(subst/aps-eval (with-outputs ([u po] ...) e-hat) x a)
    (with-outputs ([(subst/aps-eval/u u x a) (subst/aps-eval/po po x a)] ...)
      (subst/aps-eval e-hat x a))]
-  [(subst/aps-eval (spawn-spec ((goto s u ...) S-hat ...) e-hat) x a)
-   (spawn-spec ((subst/aps-eval (goto s u ...) x a)
-                (subst/aps-eval/S-hat S-hat x a) ...)
+  [(subst/aps-eval (spawn-spec ((goto φ u ...) Φ ...) e-hat) x a)
+   (spawn-spec ((subst/aps-eval (goto φ u ...) x a)
+                (subst/aps-eval/Φ Φ x a) ...)
                (subst/aps-eval e-hat x a))])
 
 (define-metafunction aps-eval
@@ -101,9 +102,9 @@
   [(subst/aps-eval/po * x a) *]
   [(subst/aps-eval/po (spawn-spec any_goto any_s-defs ...) self _)
    (spawn-spec any_goto any_s-defs ...)]
-  [(subst/aps-eval/po (spawn-spec (goto s u ...) S-hat ...) x a)
-   (spawn-spec (goto s (subst/aps-eval/u u x a) ...)
-               (subst/aps-eval/S-hat S-hat x a) ...)]
+  [(subst/aps-eval/po (spawn-spec (goto φ u ...) Φ ...) x a)
+   (spawn-spec (goto φ (subst/aps-eval/u u x a) ...)
+               (subst/aps-eval/Φ Φ x a) ...)]
   [(subst/aps-eval/po self self a) a]
   [(subst/aps-eval/po self _ _) self]
   [(subst/aps-eval/po (variant t po ...) x a)
@@ -112,17 +113,17 @@
    (record [l (subst/aps-eval/po po x a)] ...)])
 
 (define-metafunction aps-eval
-  subst-n/aps-eval/S-hat : S-hat (x a) ... -> S-hat
-  [(subst-n/aps-eval/S-hat S-hat) S-hat]
-  [(subst-n/aps-eval/S-hat S-hat (x a) any_rest ...)
-   (subst-n/aps-eval/S-hat (subst/aps-eval/S-hat S-hat x a) any_rest ...)])
+  subst-n/aps-eval/Φ : Φ (x a) ... -> Φ
+  [(subst-n/aps-eval/Φ Φ) Φ]
+  [(subst-n/aps-eval/Φ Φ (x a) any_rest ...)
+   (subst-n/aps-eval/Φ (subst/aps-eval/Φ Φ x a) any_rest ...)])
 
 (define-metafunction aps-eval
-  subst/aps-eval/S-hat : S-hat x a -> S-hat
-  [(subst/aps-eval/S-hat (define-state (s any_1 ... x any_2 ...) any_trans ...) x a)
-   (define-state (s any_1 ... x any_2 ...) any_trans ...)]
-  [(subst/aps-eval/S-hat (define-state (s x_s ...) any_trans ...) x a)
-   (define-state (s x_s ...) (subst/aps-eval/trans any_trans x a) ...)])
+  subst/aps-eval/Φ : Φ x a -> Φ
+  [(subst/aps-eval/Φ (define-state (φ any_1 ... x any_2 ...) any_trans ...) x a)
+   (define-state (φ any_1 ... x any_2 ...) any_trans ...)]
+  [(subst/aps-eval/Φ (define-state (φ x_φ ...) any_trans ...) x a)
+   (define-state (φ x_φ ...) (subst/aps-eval/trans any_trans x a) ...)])
 
 (define-metafunction aps-eval
   subst/aps-eval/trans : (ε -> e-hat) x a -> (ε -> e-hat)
@@ -151,7 +152,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Predicates
 
-(define (aps-valid-spec? s) (redex-match? aps spec s))
+(define (aps-valid-spec? φ) (redex-match? aps spec φ))
 
 (define (aps-valid-config? c)
   (if (redex-match aps-eval Σ c) #t #f))
@@ -255,15 +256,15 @@
                                        (externals [x_cont _] ...)
                                        any_obs-int
                                        ([x_unobs τ_unobs] ...)
-                                       S-hat ...
-                                       (goto s x_arg ...))
+                                       Φ ...
+                                       (goto φ x_arg ...))
                         ([x_binding a_binding] ...))
    (;; instances
     (;; instance 1
      (; states
-      ((subst-n/aps-eval/S-hat S-hat [x_binding a_binding] ...) ...)
+      ((subst-n/aps-eval/Φ Φ [x_binding a_binding] ...) ...)
       ; exp
-      (subst-n/aps-eval (goto s x_arg ...) [x_binding a_binding] ...)
+      (subst-n/aps-eval (goto φ x_arg ...) [x_binding a_binding] ...)
       ; address
       σ))
     ;; unobserved environment interface
