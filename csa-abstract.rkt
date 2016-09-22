@@ -431,6 +431,44 @@
     [else
      (term (blurred-actor-behaviors-by-address/mf ,config ,address))]))
 
+;; just like apply-reduction-relation*, but with debug messages
+(define (apply-reduction-relation*/debug rel t)
+  (define num-steps 0)
+  (define num-loop-states-written 0)
+  (let loop ([worklist (list t)]
+             [processed-terms (set)]
+             [irreducible-terms (set)])
+    (match worklist
+      ['() (set->list irreducible-terms)]
+      [(list next-term rest-worklist ...)
+       (cond [(set-member? processed-terms next-term)
+              (loop rest-worklist processed-terms irreducible-terms)]
+             [else
+              (set! num-steps (add1 num-steps))
+              (printf "Num steps: ~s\n" num-steps)
+              (printf "Worklist size: ~s\n" (length worklist))
+              ;; (printf "Reducing: ~s\n" next-term)
+              (match (apply-reduction-relation/tag-with-names rel next-term)
+                [(list)
+                 (loop rest-worklist
+                       (set-add processed-terms next-term)
+                       (set-add irreducible-terms next-term))]
+                [(list (list tags results) ...)
+                 ;; (when (> (length results) 1)
+                 ;;   (displayln tags))
+                 (when (member "ForLoop1" tags)
+                   (set! num-loop-states-written (add1 num-loop-states-written))
+                   (printf "Found ~sth for loop step\n" num-loop-states-written)
+                   ;; (call-with-output-file "loop-states.rktd"
+                   ;;   (lambda (file)
+                   ;;     (write next-term file)
+                   ;;     (fprintf file "\n")
+                   ;;     (close-output-port file))
+                   ;;   #:exists 'append)
+                   )
+                 (loop (append rest-worklist results)
+                       (set-add processed-terms next-term)
+                       irreducible-terms)])])])))
 
 ;; A cache of handler evaluation results, represented as a hash table from (initial) handler machines
 ;; to a list of (final) handler machines
