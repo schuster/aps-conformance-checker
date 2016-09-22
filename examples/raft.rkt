@@ -897,8 +897,12 @@
                           (log-index-map-initialize members
                                                     (+ (replicated-log-last-index replicated-log) 1))]
                          [match-index (log-index-map-initialize (: config members) 0)])
-                          (start-heartbeat m next-index replicated-log config)
-                          (goto Leader m next-index match-index replicated-log config)))]
+                     (start-heartbeat m next-index replicated-log config)
+                     (goto Leader (LeaderMeta (: m current-term) (: m last-used-timeout-id))
+                                  next-index
+                                  match-index
+                                  replicated-log
+                                  config)))]
                 [else
                  (goto Candidate including-this-vote replicated-log config)]))]
            [else (goto Candidate m replicated-log config)])]
