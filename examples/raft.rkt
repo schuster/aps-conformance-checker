@@ -7,6 +7,11 @@
 (require
  redex/reduction-semantics)
 
+(define desugared-client-response-type
+  `(Union
+    (LeaderIs Nat) ;; TODO: replace Nat with proper leader type
+    (CommitSuccess String)))
+
 (define desugared-raft-message-type
   `(Union
     (RequestVote Nat
@@ -19,10 +24,13 @@
      Nat
      Nat
      Nat
-     (Vectorof (Record [command String] [term Nat] [index Nat] [client (Addr String)]))
+     (Vectorof (Record [command String]
+                       [term Nat]
+                       [index Nat]
+                       [client (Addr ,desugared-client-response-type)]))
      Nat
      (Addr Nat) ; TODO: add the minfixpt here
-     (Addr Nat)) ; TODO: add a real representation of the ClientMessage type here
+     (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
     (AppendRejected Nat Nat (Addr Nat)) ; TODO: add the minfixpt here
     (AppendSuccessful Nat Nat (Addr Nat)))   ; TODO: add the minfixpt here
   )
@@ -34,8 +42,7 @@
 
 (define unobserved-interface-type
   (term (Union ,cluster-config-variant
-               (ClientMessage (Addr Nat) ; TODO: add the real type here
-                              String)
+               (ClientMessage (Addr ,desugared-client-response-type) String)
                (Timeout Nat)
                (SendHeartbeatTimeouts Nat))))
 
@@ -43,8 +50,7 @@
   (term
    (Union (PeerMessage ,desugared-raft-message-type)
           ,cluster-config-variant
-          (ClientMessage (Addr Nat) ; TODO: add the real type here
-                         String)
+          (ClientMessage (Addr ,desugared-client-response-type) String)
           (Timeout Nat)
           (SendHeartbeatTimeouts Nat))))
 
@@ -153,7 +159,7 @@
   [command String]
   [term Nat]
   [index Nat]
-  [client (Addr String)])
+  [client (Addr ClientResponse)])
 
 (define-variant RaftMessage
   (RequestVote
@@ -199,6 +205,7 @@
 
 (define-variant RaftActorMessage
   (Config [config ClusterConfiguration])
+  ;; maybe BUG: ClientMessage has already been defined as a variant above
   (ClientMessage [client (Addr ClientResponse)] [cmd String])
   (PeerMessage [m RaftMessage])
   (SendHeartbeatTimeouts [id Nat]))
@@ -628,7 +635,7 @@
       (for/fold ([rep-log replicated-log])
                 ([entry entries])
         (send application (: entry command))
-        (cond [notify-client? (send (: entry client) (: entry command))] [else 0])
+        (cond [notify-client? (send (: entry client) (CommitSuccess (: entry command)))] [else 0])
         (replicated-log-commit rep-log (: entry index)))))
 
   ;; TODO: consider making AppendEntries into a record to remove these long param lists and better
