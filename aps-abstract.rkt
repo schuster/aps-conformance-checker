@@ -56,7 +56,6 @@
   (z ((S-hat ...) e-hat σ#))
   (σ# a# UNKNOWN)
   (u .... a#ext)
-  (v-hat a#)
   (O# ((a#ext (m po) ...) ...)))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -107,58 +106,58 @@
 ;; Substitution
 
 (define-metafunction aps#
-  subst-n/aps# : e-hat (x v-hat) ... -> e-hat
+  subst-n/aps# : e-hat (x a#) ... -> e-hat
   [(subst-n/aps# e-hat) e-hat]
-  [(subst-n/aps# e-hat (x v-hat) any_rest ...)
-   (subst-n/aps# (subst/aps# e-hat x v-hat) any_rest ...)])
+  [(subst-n/aps# e-hat (x a#) any_rest ...)
+   (subst-n/aps# (subst/aps# e-hat x a#) any_rest ...)])
 
 (define-metafunction aps#
-  subst/aps# : e-hat x v-hat -> e-hat
-  [(subst/aps# (goto s u ...) x v-hat)
-   (goto s (subst/aps#/u u x v-hat) ...)]
-  [(subst/aps# (with-outputs ([u po] ...) e-hat) x v-hat)
-   (with-outputs ([(subst/aps#/u u x v-hat) (subst/aps#/po po x v-hat)] ...)
-     (subst/aps# e-hat x v-hat))]
-  [(subst/aps# (spawn-spec ((goto s u ...) S-hat ...) e-hat) x v-hat)
-   (spawn-spec ((subst/aps# (goto s u ...) x v-hat)
-                (subst/aps#/S-hat S-hat x v-hat) ...)
-               (subst/aps# e-hat x v-hat))])
+  subst/aps# : e-hat x a# -> e-hat
+  [(subst/aps# (goto s u ...) x a#)
+   (goto s (subst/aps#/u u x a#) ...)]
+  [(subst/aps# (with-outputs ([u po] ...) e-hat) x a#)
+   (with-outputs ([(subst/aps#/u u x a#) (subst/aps#/po po x a#)] ...)
+     (subst/aps# e-hat x a#))]
+  [(subst/aps# (spawn-spec ((goto s u ...) S-hat ...) e-hat) x a#)
+   (spawn-spec ((subst/aps# (goto s u ...) x a#)
+                (subst/aps#/S-hat S-hat x a#) ...)
+               (subst/aps# e-hat x a#))])
 
 (define-metafunction aps#
-  subst/aps#/u : u x v-hat -> u
-  [(subst/aps#/u x x v-hat) v-hat]
-  [(subst/aps#/u x_2 x v-hat) x_2]
-  [(subst/aps#/u a# x v-hat) a#])
+  subst/aps#/u : u x a# -> u
+  [(subst/aps#/u x x a#) a#]
+  [(subst/aps#/u x_2 x a#) x_2]
+  [(subst/aps#/u a#_2 x a#) a#_2])
 
 (define-metafunction aps#
-  subst/aps#/po : po x v-hat -> po
-  [(subst/aps#/po * x v-hat) *]
+  subst/aps#/po : po x a# -> po
+  [(subst/aps#/po * x a#) *]
   [(subst/aps#/po (spawn-spec any_goto any_s-defs ...) self _)
    (spawn-spec any_goto any_s-defs ...)]
-  [(subst/aps#/po (spawn-spec (goto s u ...) S-hat ...) x v-hat)
-   (spawn-spec (goto s (subst/aps#/u u x v-hat) ...)
-               (subst/aps#/S-hat S-hat x v-hat) ...)]
+  [(subst/aps#/po (spawn-spec (goto s u ...) S-hat ...) x a#)
+   (spawn-spec (goto s (subst/aps#/u u x a#) ...)
+               (subst/aps#/S-hat S-hat x a#) ...)]
   [(subst/aps#/po self self a#int) a#int]
   [(subst/aps#/po self _ _) self]
-  [(subst/aps#/po (variant t po ...) x v-hat)
-   (variant t (subst/aps#/po po x v-hat) ...)]
-  [(subst/aps#/po (record t [l po] ...) x v-hat)
-   (record [l (subst/aps#/po po x v-hat)] ...)])
+  [(subst/aps#/po (variant t po ...) x a#)
+   (variant t (subst/aps#/po po x a#) ...)]
+  [(subst/aps#/po (record t [l po] ...) x a#)
+   (record [l (subst/aps#/po po x a#)] ...)])
 
 (define-metafunction aps#
-  subst/aps#/S-hat : S-hat x v-hat -> S-hat
-  [(subst/aps#/S-hat (define-state (s any_1 ... x any_2 ...) any_trans ...) x v-hat)
+  subst/aps#/S-hat : S-hat x a# -> S-hat
+  [(subst/aps#/S-hat (define-state (s any_1 ... x any_2 ...) any_trans ...) x a#)
    (define-state (s any_1 ... x any_2 ...) any_trans ...)]
-  [(subst/aps#/S-hat (define-state (s x_s ...) any_trans ...) x v-hat)
-   (define-state (s x_s ...) (subst/aps#/trans any_trans x v-hat) ...)])
+  [(subst/aps#/S-hat (define-state (s x_s ...) any_trans ...) x a#)
+   (define-state (s x_s ...) (subst/aps#/trans any_trans x a#) ...)])
 
 (define-metafunction aps#
-  subst/aps#/trans : (ε -> e-hat) x v-hat -> (ε -> e-hat)
-  [(subst/aps#/trans (p -> e-hat) x v-hat)
+  subst/aps#/trans : (ε -> e-hat) x a# -> (ε -> e-hat)
+  [(subst/aps#/trans (p -> e-hat) x a#)
    (p -> e-hat)
    (judgment-holds (pattern-binds-var p x))]
-  [(subst/aps#/trans (ε -> e-hat) x v-hat)
-   (ε -> (subst/aps# e-hat x v-hat))])
+  [(subst/aps#/trans (ε -> e-hat) x a#)
+   (ε -> (subst/aps# e-hat x a#))])
 
 (define-judgment-form aps#
   #:mode (pattern-binds-var I I)
@@ -188,10 +187,10 @@
 (define-metafunction aps#
   aps#-instance-transitions/mf : z -> ((ε -> e-hat) ...)
   [(aps#-instance-transitions/mf
-    ((_ ... (define-state (s x ...) (ε -> e-hat) ...) _ ...) (goto s v-hat ...) _))
-   ((ε -> (subst-n/aps# e-hat (x v-hat) ...)) ...
+    ((_ ... (define-state (s x ...) (ε -> e-hat) ...) _ ...) (goto s a# ...) _))
+   ((ε -> (subst-n/aps# e-hat (x a#) ...)) ...
     ;; Note that we include the "null"/no-step transition
-    (unobs -> (goto s v-hat ...)))])
+    (unobs -> (goto s a# ...)))])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
