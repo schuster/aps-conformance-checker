@@ -103,7 +103,7 @@
 ;; Returns #t if the self-address for the specification configuration is a receptionist in the
 ;; implementation configuration (an initial requirement for conformance), #f otherwise.
 (define (spec-address-is-receptionist? impl-config spec-config)
-  (define spec-address (aps-config-only-instance-address spec-config))
+  (define spec-address (aps-config-obs-interface spec-config))
   (and (not (aps#-unknown-address? spec-address))
        (andmap (lambda (a) (not (same-address-without-type? a spec-address)))
                (csa-config-receptionists impl-config))))
@@ -269,7 +269,7 @@
                     (csa#-transition-outputs transition)
                     (csa#-transition-final-config transition))]))
 
-  (define addr (aps#-config-only-instance-address spec-config))
+  (define addr (aps#-config-obs-interface spec-config))
   ;; TODO: (perf. improvement) share the results between the observed and unobserved external
   ;; receives, because often many of the results will be the same (because the same address might
   ;; receive messages from both the observed and unobserved environments)
@@ -330,7 +330,7 @@
   (test-case "No match if trigger does not match"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A) [x -> (goto A)])) '(goto A) null null)
+      (make-Σ# '((define-state (A) [x -> () (goto A)])) '(goto A) null null)
       (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null #f))
      (mutable-set)))
   (test-case "Unobserved outputs don't need to match"
@@ -356,9 +356,9 @@
   (test-case "Output can be matched by new commitment"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A) [x -> (with-outputs ([x *]) (goto A))])) '(goto A) null null)
+      (make-Σ# '((define-state (A) [x -> ([obligation x *]) (goto A)])) '(goto A) null null)
       (impl-step '(external-receive (init-addr 0 Nat) (obs-ext 1 Nat)) #t (list '((obs-ext 1 Nat) (* Nat))) #f))
-     (mutable-set (spec-step (make-Σ# '((define-state (A) [x -> (with-outputs ([x *]) (goto A))]))
+     (mutable-set (spec-step (make-Σ# '((define-state (A) [x -> ([obligation x *]) (goto A)]))
                                       '(goto A)
                                       null
                                       (list '((obs-ext 1 Nat))))
@@ -367,10 +367,10 @@
   (test-case "Multiple copies of same commitment get merged"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (single *)]))
+      (make-Σ# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (single *)]))
       (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null #f))
      (mutable-set
-      (spec-step (make-Σ# '((define-state (A x) [* -> (with-outputs ([x *]) (goto A x))])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (many *)]))
+      (spec-step (make-Σ# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (many *)]))
                  null
                  null)))))
 
@@ -452,12 +452,12 @@
            (((init-addr 2 Nat) (obs-ext 1 Nat) single)
             ((init-addr 2 Nat) (obs-ext 2 Nat) single)
             ((init-addr 2 Nat) (obs-ext 3 Nat) single))))
-    (term ((,aps#-no-transition-instance) () (((obs-ext 3 Nat))))))
+    (aps#-make-no-transition-config '() '(((obs-ext 3 Nat)))))
    (list (term (()
                 ()
                 (((init-addr 2 Nat) (* (Addr Nat)) many)
                  ((init-addr 2 Nat) (obs-ext 3 Nat) single))))
-         (term ((,aps#-no-transition-instance) () (((obs-ext 3 Nat))))))))
+         (aps#-make-no-transition-config '() '(((obs-ext 3 Nat)))))))
 
 ;; Decides whether to blur spawn-addresses with the OLD or NEW flag based on the current impl and spec
 ;; configs, returning the flag for addresses that should be blurred.
@@ -469,8 +469,8 @@
   ;;
   ;; 3. otherwise, just return OLD by default
   (cond
-    [(csa#-spawn-address? (aps#-config-only-instance-address spec-config))
-     (csa#-spawn-address-flag (aps#-config-only-instance-address spec-config))]
+    [(csa#-spawn-address? (aps#-config-obs-interface spec-config))
+     (csa#-spawn-address-flag (aps#-config-obs-interface spec-config))]
     [else ; must be the special "unknown" spec address
      (match (csa#-flags-that-know-externals impl-config (aps#-relevant-external-addrs spec-config))
        [(list 'OLD) 'NEW]
@@ -723,7 +723,7 @@
            #,(syntax/loc stx (check-valid-actor? the-term)))]))
 
   (define-simple-check (check-valid-instance? actual)
-    (redex-match? aps-eval z actual))
+    (redex-match? aps-eval ((Φ ...) (goto φ u ...) σ) actual))
 
   (define-syntax (test-valid-instance? stx)
     (syntax-parse stx
@@ -745,15 +745,16 @@
   (define ignore-all-config (make-ignore-all-config 'Nat))
   (define (make-ignore-all-spec-instance addr-type)
     (term
-     (((define-state (Always) [* -> (goto Always)]))
+     (((define-state (Always) [* -> () (goto Always)]))
       (goto Always)
       (addr 0 ,addr-type))))
   (define ignore-all-spec-instance
     (make-ignore-all-spec-instance 'Nat))
   (check-not-false (redex-match csa-eval K ignore-all-config))
-  (check-not-false (redex-match aps-eval z ignore-all-spec-instance))
+  (test-valid-instance? ignore-all-spec-instance)
 
-  (check-true (check-conformance/config ignore-all-config (make-exclusive-spec ignore-all-spec-instance)))
+  (test-true "ignore all spec/test"
+    (check-conformance/config ignore-all-config (make-exclusive-spec ignore-all-spec-instance)))
 
   ;;;; Send one message to a statically-known address per request
 
@@ -779,20 +780,20 @@
   (define static-response-spec
     (term
      (((define-state (Always response-dest)
-         [* -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
+         [* -> ([obligation response-dest *]) (goto Always response-dest)]))
       (goto Always ,static-response-address)
       (addr 0 Nat))))
   (define ignore-all-with-addr-spec-instance
     (term
-     (((define-state (Always response-dest) [* -> (goto Always response-dest)]))
+     (((define-state (Always response-dest) [* -> () (goto Always response-dest)]))
       (goto Always ,static-response-address)
       (addr 0 Nat))))
   (define static-double-response-spec
     (term
      (((define-state (Always response-dest)
-         [* -> (with-outputs ([response-dest *]
-                              [response-dest *])
-                 (goto Always response-dest))]))
+         [* -> ([obligation response-dest *]
+                [obligation response-dest *])
+               (goto Always response-dest)]))
       (goto Always ,static-response-address)
       (addr 0 Nat))))
 
@@ -824,8 +825,8 @@
   (define pattern-match-spec
     (term
      (((define-state (Matching r)
-         [(variant A *) -> (with-outputs ([r (variant A *)]) (goto Matching r))]
-         [(variant B *) -> (with-outputs ([r (variant B *)]) (goto Matching r))]))
+         [(variant A *) -> ([obligation r (variant A *)]) (goto Matching r)]
+         [(variant B *) -> ([obligation r (variant B *)]) (goto Matching r)]))
       (goto Matching ,static-response-address)
       (addr 0 (Union [A Nat] [B Nat])))))
 
@@ -856,34 +857,36 @@
             [(B y) (goto Always r)])))
        (goto Always ,static-response-address)))))
 
-  (check-not-false (redex-match aps-eval z pattern-match-spec))
-  (check-not-false (redex-match csa-eval αn pattern-matching-actor))
-  (check-not-false (redex-match csa-eval αn reverse-pattern-matching-actor))
-  (check-not-false (redex-match csa-eval αn partial-pattern-matching-actor))
+  (test-valid-instance? pattern-match-spec)
+  (test-valid-actor? pattern-matching-actor)
+  (test-valid-actor? reverse-pattern-matching-actor)
+  (test-valid-actor? partial-pattern-matching-actor)
 
-  (check-true (check-conformance/config (make-single-actor-config pattern-matching-actor)
-                           (make-exclusive-spec pattern-match-spec)))
+  (test-true "Pattern matching"
+    (check-conformance/config (make-single-actor-config pattern-matching-actor)
+                              (make-exclusive-spec pattern-match-spec)))
   (test-false "Send on A but not B; should send on both"
               (check-conformance/config (make-single-actor-config partial-pattern-matching-actor)
                            (make-exclusive-spec pattern-match-spec)))
-  (check-false (check-conformance/config (make-single-actor-config reverse-pattern-matching-actor)
-                            (make-exclusive-spec  pattern-match-spec)))
+  (test-false "Pattern matching discriminates different patterns"
+    (check-conformance/config (make-single-actor-config reverse-pattern-matching-actor)
+                              (make-exclusive-spec  pattern-match-spec)))
 
   ;;;; Dynamic request/response
 
   (define request-response-spec
     (term
      (((define-state (Always)
-         [response-target -> (with-outputs ([response-target *]) (goto Always))]))
+         [response-target -> ([obligation response-target *]) (goto Always)]))
       (goto Always)
       (addr 0 (Addr Nat)))))
 
   (define request-same-response-addr-spec
     (term
      (((define-state (Init)
-         [response-target -> (with-outputs ([response-target *]) (goto HaveAddr response-target))])
+         [response-target -> ([obligation response-target *]) (goto HaveAddr response-target)])
        (define-state (HaveAddr response-target)
-         [new-response-target -> (with-outputs ([response-target *]) (goto HaveAddr response-target))]))
+         [new-response-target -> ([obligation response-target *]) (goto HaveAddr response-target)]))
       (goto Init)
       (addr 0 (Addr Nat)))))
   (define request-response-actor
@@ -976,16 +979,16 @@
                  (goto NoAddr))]))
            (goto NoAddr)))))
 
-  (check-not-false (redex-match aps-eval z request-response-spec))
-  (check-not-false (redex-match aps-eval z request-same-response-addr-spec))
-  (check-not-false (redex-match csa-eval αn request-response-actor))
-  (check-not-false (redex-match csa-eval αn respond-to-first-addr-actor))
-  (check-not-false (redex-match csa-eval αn respond-to-first-addr-actor2))
-  (check-not-false (redex-match csa-eval αn double-response-actor))
-  (check-not-false (redex-match csa-eval αn delay-saving-address-actor))
-  (check-not-false (redex-match csa-eval αn respond-once-actor))
-  (check-not-false (redex-match csa-eval αn delayed-send-no-timeout-actor))
-  (check-not-false (redex-match csa-eval αn delayed-send-with-timeout-actor))
+  (test-valid-instance? request-response-spec)
+  (test-valid-instance? request-same-response-addr-spec)
+  (test-valid-actor? request-response-actor)
+  (test-valid-actor? respond-to-first-addr-actor)
+  (test-valid-actor? respond-to-first-addr-actor2)
+  (test-valid-actor? double-response-actor)
+  (test-valid-actor? delay-saving-address-actor)
+  (test-valid-actor? respond-once-actor)
+  (test-valid-actor? delayed-send-no-timeout-actor)
+  (test-valid-actor? delayed-send-with-timeout-actor)
   (test-true "request/response 1"
              (check-conformance/config (make-single-actor-config request-response-actor)
                           (make-exclusive-spec request-response-spec)))
@@ -1033,15 +1036,15 @@
   (define maybe-reply-spec
     (term
      (((define-state (A)
-         [r -> (with-outputs ([r *]) (goto B))]
-         [r -> (goto B)])
+         [r -> ([obligation r *]) (goto B)]
+         [r -> () (goto B)])
        (define-state (B)
-         [* -> (goto B)]))
+         [* -> () (goto B)]))
       (goto A)
       (addr 0 (Addr Nat)))))
 
-  (check-not-false (redex-match csa-eval αn reply-once-actor))
-  (check-not-false (redex-match aps-eval z maybe-reply-spec))
+  (test-valid-actor? reply-once-actor)
+  (test-valid-instance? maybe-reply-spec)
   (check-true (check-conformance/config (make-single-actor-config reply-once-actor)
                            (make-exclusive-spec maybe-reply-spec)))
 
@@ -1050,14 +1053,14 @@
   (define zero-nonzero-spec
     (term
      (((define-state (S1 r)
-         [* -> (with-outputs ([r (variant Zero)])    (goto S1 r))]
-         [* -> (with-outputs ([r (variant NonZero)]) (goto S1 r))]))
+         [* -> ([obligation r (variant Zero)])    (goto S1 r)]
+         [* -> ([obligation r (variant NonZero)]) (goto S1 r)]))
       (goto S1 ,static-response-address)
       (addr 0 Nat))))
   (define zero-spec
     (term
      (((define-state (S1 r)
-         [* -> (with-outputs ([r (variant Zero)])    (goto S1 r))]))
+         [* -> ([obligation r (variant Zero)]) (goto S1 r)]))
       (goto S1 ,static-response-address)
       (addr 0 Nat))))
   (define primitive-branch-actor
@@ -1071,10 +1074,10 @@
             (goto S1 dest))))
        (goto S1 ,static-response-address)))))
 
-  (check-not-false (redex-match aps-eval z static-response-spec))
-  (check-not-false (redex-match aps-eval z zero-nonzero-spec))
-  (check-not-false (redex-match aps-eval z zero-spec))
-  (check-not-false (redex-match csa-eval αn primitive-branch-actor))
+  (test-valid-instance? static-response-spec)
+  (test-valid-instance? zero-nonzero-spec)
+  (test-valid-instance? zero-spec)
+  (test-valid-actor? primitive-branch-actor)
 
   (check-true (check-conformance/config (make-single-actor-config primitive-branch-actor)
                            (make-exclusive-spec zero-nonzero-spec)))
@@ -1085,12 +1088,12 @@
   (define optional-commitment-spec
     (term
      (((define-state (Always r)
-         [* -> (with-outputs ([r *]) (goto Always r))]
-         [* -> (goto Always r)]))
+         [* -> ([obligation r *]) (goto Always r)]
+         [* -> () (goto Always r)]))
       (goto Always (addr 1 (Addr Nat)))
       (addr 0 Nat))))
 
-  (check-not-false (redex-match aps-eval z optional-commitment-spec))
+  (test-valid-instance? optional-commitment-spec)
   (check-true (check-conformance/config ignore-all-config (make-exclusive-spec optional-commitment-spec)))
 
   ;;;; Stuck states in concrete evaluation
@@ -1098,7 +1101,7 @@
   (define nat-to-nat-spec
     (term
      (((define-state (Always response-dest)
-         [* -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
+         [* -> ([obligation response-dest *]) (goto Always response-dest)]))
       (goto Always ,static-response-address)
       (addr 0 Nat))))
   (define div-by-one-actor
@@ -1118,9 +1121,9 @@
             (goto Always response-dest))))
        (goto Always ,static-response-address)))))
 
-  (check-not-false (redex-match aps-eval z nat-to-nat-spec))
-  (check-not-false (redex-match csa-eval αn div-by-zero-actor))
-  (check-not-false (redex-match csa-eval αn div-by-one-actor))
+  (test-valid-instance? nat-to-nat-spec)
+  (test-valid-actor? div-by-zero-actor)
+  (test-valid-actor? div-by-one-actor)
 
   (test-true "Div by one vs. nat-to-nat spec"
              (check-conformance/config (make-single-actor-config div-by-one-actor)
@@ -1151,11 +1154,11 @@
   (define static-response-spec-with-unobs
     (term
      (((define-state (Always response-dest)
-         [*     -> (with-outputs ([response-dest *]) (goto Always response-dest))]
-         [unobs -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
+         [*     -> ([obligation response-dest *]) (goto Always response-dest)]
+         [unobs -> ([obligation response-dest *]) (goto Always response-dest)]))
       (goto Always ,static-response-address)
       (addr 0 Nat))))
-  (check-not-false (redex-match aps-eval z static-response-spec-with-unobs))
+  (test-valid-instance? static-response-spec-with-unobs)
 
   (test-true "static response with unobs, incl in spec"
              (check-conformance/config (make-single-actor-config static-response-actor)
@@ -1166,10 +1169,10 @@
     (make-static-response-address (term (Union (TurningOn) (TurningOff)))))
   (define unobs-toggle-spec
     (term (((define-state (Off r)
-              [* -> (with-outputs ([r (variant TurningOn)]) (goto On r))])
+              [* -> ([obligation r (variant TurningOn)]) (goto On r)])
             (define-state (On r)
-              [* -> (goto On r)]
-              [unobs -> (with-outputs ([r (variant TurningOff)]) (goto Off r))]))
+              [* -> () (goto On r)]
+              [unobs -> ([obligation r (variant TurningOff)]) (goto Off r)]))
            (goto Off ,obs-unobs-static-response-address)
            (addr 0 (Union [FromObserver])))))
   (define unobs-toggle-actor
@@ -1264,12 +1267,12 @@
                (goto Off r))])))
        (goto Off ,obs-unobs-static-response-address)))))
 
-  (check-not-false (redex-match aps-eval z unobs-toggle-spec))
-  (check-not-false (redex-match aps-eval αn unobs-toggle-actor))
-  (check-not-false (redex-match aps-eval αn unobs-toggle-actor-wrong1))
-  (check-not-false (redex-match aps-eval αn unobs-toggle-actor-wrong2))
-  (check-not-false (redex-match aps-eval αn unobs-toggle-actor-wrong3))
-  (check-not-false (redex-match aps-eval αn unobs-toggle-actor-wrong4))
+  (test-valid-instance? unobs-toggle-spec)
+  (test-valid-actor? unobs-toggle-actor)
+  (test-valid-actor? unobs-toggle-actor-wrong1)
+  (test-valid-actor? unobs-toggle-actor-wrong2)
+  (test-valid-actor? unobs-toggle-actor-wrong3)
+  (test-valid-actor? unobs-toggle-actor-wrong4)
 
   (test-true "Obs/Unobs test"
              (check-conformance/config (make-single-actor-config unobs-toggle-actor)
@@ -1288,8 +1291,8 @@
   (define record-req-resp-spec
     (term
      (((define-state (Always)
-         [(record [dest dest] [msg (variant A)]) -> (with-outputs ([dest (variant A)]) (goto Always))]
-         [(record [dest dest] [msg (variant B)]) -> (with-outputs ([dest (variant B)]) (goto Always))]))
+         [(record [dest dest] [msg (variant A)]) -> ([obligation dest (variant A)]) (goto Always)]
+         [(record [dest dest] [msg (variant B)]) -> ([obligation dest (variant B)]) (goto Always)]))
       (goto Always)
       (addr 0 (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])])))))
   (define record-req-resp-actor
@@ -1309,9 +1312,9 @@
             (goto Always))))
        (goto Always)))))
 
-  (check-not-false (redex-match aps-eval z record-req-resp-spec))
-  (check-not-false (redex-match csa-eval αn record-req-resp-actor))
-  (check-not-false (redex-match csa-eval αn record-req-wrong-resp-actor))
+  (test-valid-instance? record-req-resp-spec)
+  (test-valid-actor? record-req-resp-actor)
+  (test-valid-actor? record-req-wrong-resp-actor)
 
   (test-true "record 1"
              (check-conformance/config (make-single-actor-config record-req-resp-actor)
@@ -1362,8 +1365,8 @@
               (goto Always new-r)))))
        (goto Always ,static-response-address)))))
 
-  (check-not-false (redex-match csa-eval αn static-response-let-actor))
-  (check-not-false (redex-match csa-eval αn static-double-response-let-actor))
+  (test-valid-actor? static-response-let-actor)
+  (test-valid-actor? static-double-response-let-actor)
 
   (test-true "Let 1"
              (check-conformance/config (make-single-actor-config static-response-let-actor)
@@ -1410,9 +1413,9 @@
             (goto B dest))))
        (goto A ,static-response-address)))))
 
-  (check-not-false (redex-match csa-eval αn equal-actor-wrong1))
-  (check-not-false (redex-match csa-eval αn equal-actor-wrong2))
-  (check-not-false (redex-match csa-eval αn equal-actor))
+  (test-valid-actor? equal-actor-wrong1)
+  (test-valid-actor? equal-actor-wrong2)
+  (test-valid-actor? equal-actor)
 
   (test-false "Equal actor wrong 1"
    (check-conformance/config (make-single-actor-config equal-actor-wrong1)
@@ -1478,12 +1481,12 @@
             (goto A))))
        (goto A)))))
 
-  (check-not-false (redex-match csa-eval αn loop-do-nothing-actor))
+  (test-valid-actor? loop-do-nothing-actor)
   ;; TODO: figure out why this test works even when unobs stuff should be bad...
-  (check-not-false (redex-match csa-eval αn loop-send-unobs-actor))
-  (check-not-false (redex-match csa-eval αn send-before-loop-actor))
-  (check-not-false (redex-match csa-eval αn send-inside-loop-actor))
-  (check-not-false (redex-match csa-eval αn send-after-loop-actor))
+  (test-valid-actor? loop-send-unobs-actor)
+  (test-valid-actor? send-before-loop-actor)
+  (test-valid-actor? send-inside-loop-actor)
+  (test-valid-actor? send-after-loop-actor)
 
   (check-true (check-conformance/config (make-single-actor-config loop-do-nothing-actor)
                            (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
@@ -1510,14 +1513,14 @@
   (define timeout-spec
     (term
      (((define-state (A r)
-         [* -> (with-outputs ([r (variant GotMessage)]) (goto A r))]
-         [unobs -> (with-outputs ([r (variant GotTimeout)]) (goto A r))]))
+         [* -> ([obligation r (variant GotMessage)]) (goto A r)]
+         [unobs -> ([obligation r (variant GotTimeout)]) (goto A r)]))
       (goto A ,static-response-address)
       (addr 0 Nat))))
   (define got-message-only-spec
     (term
      (((define-state (A r)
-         [* -> (with-outputs ([r (variant GotMessage)]) (goto A r))]))
+         [* -> ([obligation r (variant GotMessage)]) (goto A r)]))
       (goto A ,static-response-address)
       (addr 0 Nat))))
   (define timeout-and-send-actor
@@ -1533,9 +1536,9 @@
              (goto A r))]))
        (goto A ,static-response-address)))))
 
-  (check-not-false (redex-match aps-eval z timeout-spec))
-  (check-not-false (redex-match aps-eval z got-message-only-spec))
-  (check-not-false (redex-match csa-eval αn timeout-and-send-actor))
+  (test-valid-instance? timeout-spec)
+  (test-valid-instance? got-message-only-spec)
+  (test-valid-actor? timeout-and-send-actor)
   (check-true (check-conformance/config (make-single-actor-config timeout-and-send-actor)
                            (make-exclusive-spec timeout-spec)))
   (check-false (check-conformance/config (make-single-actor-config timeout-and-send-actor)
@@ -1561,14 +1564,14 @@
   (define static-response-with-extra-spec
     (term
      (((define-state (Always response-dest)
-         [* -> (with-outputs ([response-dest *]) (goto Always response-dest))]
-         [unobs -> (with-outputs ([response-dest *]) (goto Always response-dest))]))
+         [* -> ([obligation response-dest *]) (goto Always response-dest)]
+         [unobs -> ([obligation response-dest *]) (goto Always response-dest)]))
       (goto Always ,static-response-address)
       (addr 0 Nat))))
 
-  (check-not-false (redex-match csa-eval αn static-response-actor2))
-  (check-not-false (redex-match csa-eval αn other-static-response-actor))
-  (check-not-false (redex-match aps-eval z static-response-with-extra-spec))
+  (test-valid-actor? static-response-actor2)
+  (test-valid-actor? other-static-response-actor)
+  (test-valid-instance? static-response-with-extra-spec)
 
   (test-false "Multi actor test 1"
               (check-conformance/config
@@ -1587,11 +1590,11 @@
   (define other-static-response-spec
     (term
      (((define-state (Always2 response-dest)
-         [* -> (with-outputs ([response-dest *]) (goto Always2 response-dest))]))
+         [* -> ([obligation response-dest *]) (goto Always2 response-dest)]))
       (goto Always2 (addr 3 (Union [Ack Nat])))
       (addr 1 Nat))))
 
-  (check-not-false (redex-match aps-eval z other-static-response-spec))
+  (test-valid-instance? other-static-response-spec)
 
   ;; TODO: probably get rid of this test
   ;; (test-true "Multi-spec test"
@@ -1619,8 +1622,8 @@
             (goto Always))))
        (goto Always)))))
 
-  (check-not-false (redex-match csa-eval αn statically-delegating-responder-actor))
-  (check-not-false (redex-match csa-eval αn request-response-actor2))
+  (test-valid-actor? statically-delegating-responder-actor)
+  (test-valid-actor? request-response-actor2)
 
   (test-true "Multiple actors 3"
              (check-conformance/config
@@ -1640,9 +1643,9 @@
   (define self-reveal-spec
     (term
      (((define-state (Init r)
-         [unobs -> (with-outputs ([r self]) (goto Running))])
+         [unobs -> ([obligation r self]) (goto Running)])
        (define-state (Running)
-         [r -> (with-outputs ([r *]) (goto Running))]))
+         [r -> ([obligation r *]) (goto Running)]))
       (goto Init (addr 1 (Addr (Addr Nat))))
       UNKNOWN)))
 
@@ -1695,11 +1698,11 @@
 
   ;; TODO: do a version of this test with an ignore-all actor rather than double-send
 
-  (check-not-false (redex-match csa-eval αn self-reveal-actor))
+  (test-valid-actor? self-reveal-actor)
   ;; TODO: redo this test later
-  ;; (check-not-false (redex-match csa-eval αn reveal-wrong-address-actor))
-  (check-not-false (redex-match csa-eval αn reveal-self-double-output-actor))
-  (check-not-false (redex-match aps-eval z self-reveal-spec))
+  ;; (check-not-false ( reveal-wrong-address-actor))
+  (test-valid-actor? reveal-self-double-output-actor)
+  (test-valid-instance? self-reveal-spec)
 
   (test-true "Reveal self works"
              (check-conformance/config
@@ -1765,17 +1768,17 @@
   (define echo-spawn-spec
     (term
      (((define-state (Always)
-         [r -> (with-outputs ([r (spawn-spec
-                                  (goto EchoResponse)
-                                  (define-state (EchoResponse)
-                                    [er -> (with-outputs ([er *]) (goto EchoResponse))]))])
-                 (goto Always))]))
+         [r -> ([obligation r (fork
+                               (goto EchoResponse)
+                               (define-state (EchoResponse)
+                                 [er -> ([obligation er *]) (goto EchoResponse)]))])
+               (goto Always)]))
       (goto Always)
       (addr 0 (Addr (Addr (Addr Nat)))))))
 
-  (check-not-false (redex-match csa-eval αn echo-spawning-actor))
-  (check-not-false (redex-match csa-eval αn double-response-spawning-actor))
-  (check-not-false (redex-match aps-eval z echo-spawn-spec))
+  (test-valid-actor? echo-spawning-actor)
+  (test-valid-actor? double-response-spawning-actor)
+  (test-valid-instance? echo-spawn-spec)
 
   (test-true "Spawned echo matches dynamic response spec"
              (check-conformance/config
@@ -1791,7 +1794,7 @@
   (define no-matching-address-spec
     (term
      (((define-state (DoAnything)
-         [* -> (goto DoAnything)]))
+         [* -> () (goto DoAnything)]))
       (goto DoAnything)
       (addr 500 Nat))))
   (test-valid-instance? no-matching-address-spec)
@@ -1889,12 +1892,12 @@
   (define child-self-reveal-spec
     (term
      (((define-state (Always)
-         [r -> (spawn-spec ((goto Init r)
-                            (define-state (Init r)
-                              [unobs -> (with-outputs ([r self]) (goto EchoResponse))])
-                            (define-state (EchoResponse)
-                              [er -> (with-outputs ([er *]) (goto EchoResponse))]))
-                           (goto Always))]))
+         [r -> ([fork (goto Init r)
+                      (define-state (Init r)
+                        [unobs -> ([obligation r self]) (goto EchoResponse)])
+                      (define-state (EchoResponse)
+                        [er -> ([obligation er *]) (goto EchoResponse)])])
+            (goto Always)]))
       (goto Always)
       (addr 0 (Addr (Addr (Addr Nat)))))))
 
@@ -2050,7 +2053,7 @@
   (define never-send-spec
     (term
      (((define-state (Always r)
-         [* -> (goto Always r)]))
+         [* -> () (goto Always r)]))
       (goto Always ,(make-static-response-address 'Nat))
       (addr 0 Nat))))
 

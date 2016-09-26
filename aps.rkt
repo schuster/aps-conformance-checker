@@ -6,7 +6,7 @@
  aps-eval
  aps-valid-spec?
  aps-valid-config?
- aps-config-only-instance-address
+ aps-config-obs-interface
 
  ;; Testing helpers
  make-spec
@@ -30,60 +30,50 @@
                   (externals [x_ext τ] ...)
                   UNKNOWN
                   ([x τ] ...)
-                  Φ ...
-                  (goto φ x ...))
+                  (goto φ x ...)
+                  Φ ...)
    (specification (receptionists [x_rec τ] ...)
                   (externals [x_ext τ] ...)
                   [x τ]
                   ([x τ] ...)
-                  Φ ...
-                  (goto φ x ...)))
-  (e-hat (spawn-spec ((goto φ u ...) Φ ...) e-hat)
-         (goto φ u ...)
-         (with-outputs ([u po] ...) e-hat))
-  (Φ (define-state (φ x ...) (ε -> e-hat) ...))
-  (ε unobs
+                  (goto φ x ...)
+                  Φ ...))
+  (Φ (define-state (φ x ...) (pt -> (f ...) (goto φ x ...)) ...))
+  ;; effects
+  (f (obligation u po)
+     (fork (goto φ u ...) Φ ...))
+  ;; trigger patterns
+  (pt unobs
      p)
   (u x) ; arguments
+  ;; input patterns
   (p *
      x
      (variant t p ...)
      (record [l p] ...))
+  ;; output patterns
   (po *
-      (spawn-spec (goto φ u ...) Φ ...)
+      (fork (goto φ u ...) Φ ...)
       self
       (variant t po ...)
       (record [l po] ...))
+  ;; state name
   (φ variable-not-otherwise-mentioned))
 
 (define-extended-language aps-eval
   aps
-  (Σ ((z ...) (a ...) O))
-  (O ((a po ...) ...))
-  (z ((Φ ...) e-hat σ))
+  ;; TODO: rename Σ to s (to match the <i, s> from proofs)
+
+  ;; Specification configuration contains the observed environment interface σ, unobserved environment
+  ;; interface (a ...), current state, state definitions, and obligation map
+  (Σ (σ (a ...) (goto φ u ...) (Φ ...) O))
   (σ a UNKNOWN)
+  (O ([a po ...] ...))
+  ;; arguments in aps-eval can be instantiated (as addresses)
   (u .... a))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
-
-(define-metafunction aps-eval
-  subst-n/aps-eval : e-hat (x a) ... -> e-hat
-  [(subst-n/aps-eval e-hat) e-hat]
-  [(subst-n/aps-eval e-hat (x a) any_rest ...)
-   (subst-n/aps-eval (subst/aps-eval e-hat x a) any_rest ...)])
-
-(define-metafunction aps-eval
-  subst/aps-eval : e-hat x a -> e-hat
-  [(subst/aps-eval (goto φ u ...) x a)
-   (goto φ (subst/aps-eval/u u x a) ...)]
-  [(subst/aps-eval (with-outputs ([u po] ...) e-hat) x a)
-   (with-outputs ([(subst/aps-eval/u u x a) (subst/aps-eval/po po x a)] ...)
-     (subst/aps-eval e-hat x a))]
-  [(subst/aps-eval (spawn-spec ((goto φ u ...) Φ ...) e-hat) x a)
-   (spawn-spec ((subst/aps-eval (goto φ u ...) x a)
-                (subst/aps-eval/Φ Φ x a) ...)
-               (subst/aps-eval e-hat x a))])
 
 (define-metafunction aps-eval
   subst/aps-eval/u : u x a -> u
@@ -100,10 +90,10 @@
 (define-metafunction aps-eval
   subst/aps-eval/po : po x a -> po
   [(subst/aps-eval/po * x a) *]
-  [(subst/aps-eval/po (spawn-spec any_goto any_s-defs ...) self _)
-   (spawn-spec any_goto any_s-defs ...)]
-  [(subst/aps-eval/po (spawn-spec (goto φ u ...) Φ ...) x a)
-   (spawn-spec (goto φ (subst/aps-eval/u u x a) ...)
+  [(subst/aps-eval/po (fork any_goto any_s-defs ...) self _)
+   (fork any_goto any_s-defs ...)]
+  [(subst/aps-eval/po (fork (goto φ u ...) Φ ...) x a)
+   (fork (goto φ (subst/aps-eval/u u x a) ...)
                (subst/aps-eval/Φ Φ x a) ...)]
   [(subst/aps-eval/po self self a) a]
   [(subst/aps-eval/po self _ _) self]
@@ -126,12 +116,20 @@
    (define-state (φ x_φ ...) (subst/aps-eval/trans any_trans x a) ...)])
 
 (define-metafunction aps-eval
-  subst/aps-eval/trans : (ε -> e-hat) x a -> (ε -> e-hat)
-  [(subst/aps-eval/trans (p -> e-hat) x a)
-   (p -> e-hat)
+  subst/aps-eval/trans : (pt -> (f ...) (goto φ u ...)) x a -> (pt -> (f ...) (goto φ u ...))
+  [(subst/aps-eval/trans (p -> (f ...) (goto φ u ...)) x a)
+   (p -> (f ...) (goto φ u ...))
    (judgment-holds (pattern-binds-var p x))]
-  [(subst/aps-eval/trans (ε -> e-hat) x a)
-   (ε -> (subst/aps-eval e-hat x a))])
+  [(subst/aps-eval/trans (pt -> (f ...) (goto φ u ...)) x a)
+   (pt -> ((subst/aps-eval/f f x a) ...) (goto φ (subst/aps-eval/u u x a) ...))])
+
+(define-metafunction aps-eval
+  subst/aps-eval/f : f x a -> f
+  [(subst/aps-eval/f (obligation u po) x a)
+   (obligation (subst/aps-eval/u u x a) (subst/aps-eval/po po x a))]
+  [(subst/aps-eval/f (fork (goto φ u ...) Φ ...) x a)
+   (fork (goto φ (subst/aps-eval/u u x a) ...)
+         (subst/aps-eval/Φ Φ x a) ...)])
 
 (define-judgment-form aps-eval
   #:mode (pattern-binds-var I I)
@@ -160,28 +158,31 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
 
-(define (aps-config-only-instance-address config)
-  (redex-let* aps-eval ([((z) _ _) config]
-                        [(_ _ σ) (term z)])
-              (term σ)))
+;; Returns the observable interface of the given configuration
+(define (aps-config-obs-interface config)
+  (redex-let* aps-eval ([(σ _ ...) config])
+    (term σ)))
 
 (module+ test
-  (test-case "config only instance address"
-    (define spec (term (([((define-state (A))) (goto A) (addr 2 Nat)]) () ())))
+  (test-case "config observable interface"
+    (define spec (term ((addr 2 Nat)
+                        ()
+                        (goto A)
+                        ((define-state (A)))
+                        ())))
     (check-not-false (redex-match aps-eval Σ spec))
-    (check-equal? (aps-config-only-instance-address spec) (term (addr 2 Nat)))))
+    (check-equal? (aps-config-obs-interface spec) (term (addr 2 Nat)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing Helpers
 
-(define (make-exclusive-spec instance)
-  (make-spec instance null))
+(define (make-exclusive-spec defs-state-and-addr)
+  (make-spec defs-state-and-addr null))
 
-(define (make-spec instance receptionists)
-  (redex-let* aps-eval ([z instance]
+(define (make-spec defs-state-and-addr receptionists)
+  (redex-let* aps-eval ([((Φ ...) (goto φ a_arg ...) σ) defs-state-and-addr]
                         [(a_rec ...) receptionists]
-                        [(_ (goto _ a ...) _) (term z)]
-                        [Σ (term ((z) (a_rec ...) ((a) ...)))])
+                        [Σ (term (σ (a_rec ...) (goto φ a_arg ...) (Φ ...) ([a_arg] ...)))])
               (term Σ)))
 
 ;; Instantiates the given program and specification as configurations, allocating fresh addresses for
@@ -233,17 +234,13 @@
         ;; externals
         ((addr 3 String) (addr 4 (Union))))
        ;; spec config
-       (;; instances
-        (
-         ;; instance 1
-         (;; state defs
-          ()
-          ;; exp
-          (goto S1)
-          ;; self-address
-          UNKNOWN
-          ))
+       (;; obs interface
+        UNKNOWN
         ;; unobserved environment interface
+        ()
+        ;; current state
+        (goto S1)
+        ;; state defs
         ()
         ;; output commitments
         ())))))
@@ -256,23 +253,22 @@
                                        (externals [x_cont _] ...)
                                        any_obs-int
                                        ([x_unobs τ_unobs] ...)
-                                       Φ ...
-                                       (goto φ x_arg ...))
+                                       (goto φ x_arg ...)
+                                       Φ ...)
                         ([x_binding a_binding] ...))
-   (;; instances
-    (;; instance 1
-     (; states
-      ((subst-n/aps-eval/Φ Φ [x_binding a_binding] ...) ...)
-      ; exp
-      (subst-n/aps-eval (goto φ x_arg ...) [x_binding a_binding] ...)
-      ; address
-      σ))
+   (; observed environment interface
+    σ
     ;; unobserved environment interface
     ((addr natural_unobs τ_unobs) ...)
+    ;; current state
+    (goto φ a_state-arg ...)
+    ; states
+    ((subst-n/aps-eval/Φ Φ [x_binding a_binding] ...) ...)
     ;; output commitment map
-    ())
+    ([a_state-arg] ...))
    (where ((addr natural_unobs _) ...) ((subst-n/aps-eval/u x_unobs [x_binding a_binding] ...) ...))
-   (where σ (resolve-spec-obs-int/mf any_obs-int ([x_binding a_binding] ...)))])
+   (where σ (resolve-spec-obs-int/mf any_obs-int ([x_binding a_binding] ...)))
+   (where (a_state-arg ...) ((subst-n/aps-eval/u x_arg [x_binding a_binding] ...) ...))])
 
 (module+ test
   (test-case "instantiate spec"
@@ -280,7 +276,7 @@
       `(specification (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Union)])
                       UNKNOWN
                       ()
-                      (goto S1)))
+                      (goto S1 d)))
       (check-true (redex-match? aps spec the-spec))
       (check-equal?
        (term (instantiate-spec/mf ,the-spec
@@ -289,19 +285,16 @@
                                    [c (addr 2 Nat)]
                                    [d (addr 3 String)]
                                    [e (addr 4 (Union))])))
-       `(;; instances
-         (;; instance 1
-          (;; state defs
-           ()
-           ;; exp
-           (goto S1)
-           ;; self-address
-           UNKNOWN
-           ))
-          ;; unobserved environment interface
-          ()
-          ;; output commitments
-          ()))))
+       `(;; self-address
+         UNKNOWN
+         ;; unobserved environment interface
+         ()
+         ;; current state
+         (goto S1 (addr 3 String))
+         ;; state defs
+         ()
+         ;; obligation map
+         ([(addr 3 String)])))))
 
 ;; Resolves the observed environment interface address of a specification (either UNKNOWN or [x τ]) to
 ;; either UNKNOWN or an address, using the given name/address bindings as necessary

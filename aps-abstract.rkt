@@ -5,7 +5,7 @@
 (provide
  ;; Required by conformance checker
  ;; TODO: consider having this one return the address or #f
- aps#-config-only-instance-address
+ aps#-config-obs-interface
  aps#-unknown-address?
  aps#-config-receptionists
  aps#-config-singleton-commitments
@@ -25,7 +25,7 @@
 
  ;; Testing helpers
  make-Σ#
- aps#-no-transition-instance
+ aps#-make-no-transition-config
 
  ;; Debugging helpers
  spec-config-without-state-defs)
@@ -47,13 +47,9 @@
 (define-union-language aps-eval-with-csa#
   aps-eval csa#)
 
-;; TODO: remove the idea of a full config; just have individual instances
-
-;; TODO: add sharps to all of these forms to distinguish from concrete forms
 (define-extended-language aps#
   aps-eval-with-csa#
-  (Σ# ((z ...) (a#int_unobs-receptionists ...) O#))
-  (z ((Φ ...) e-hat σ#))
+  (Σ# (σ# (a#int_unobs-receptionists ...) (goto φ u ...) (Φ ...) O#))
   (σ# a# UNKNOWN) ; observed environment interface
   (u .... a#ext)
   (O# ((a#ext (m po) ...) ...)))
@@ -77,51 +73,39 @@
 
 (module+ test
   (check-equal?
-   (aps#-abstract-config (term (((((define-state (A x) (* -> (goto A x))))
-                      (goto A (addr 1 Nat))
-                      (addr 0 Nat)))
-                    ()
-                    ()))
-             (term ((addr 0 Nat))))
-   (term (((((define-state (A x) (* -> (goto A x))))
-            (goto A (obs-ext 1 Nat))
-            (init-addr 0 Nat)))
+   (aps#-abstract-config (term ((addr 0 Nat)
+                                ()
+                                (goto A (addr 1 Nat))
+                                ((define-state (A x) (* -> () (goto A x))))
+                                ()))
+                         (term ((addr 0 Nat))))
+   (term ((init-addr 0 Nat)
           ()
+          (goto A (obs-ext 1 Nat))
+          ((define-state (A x) (* -> () (goto A x))))
           ())))
 
   (test-equal? "Abstraction check for addresses whose types don't match"
-   (aps#-abstract-config (term (((((define-state (A)))
-                      (goto A)
-                      (addr 0 (Union [B]))))
-                    ()
-                    ()))
-             (term ((addr 0 (Union [C])))))
-   (term (((((define-state (A)))
-                      (goto A)
-                      (init-addr 0 (Union [B]))))
-          ()
-          ()))))
+    (aps#-abstract-config (term ((addr 0 (Union [B]))
+                                 ()
+                                 (goto A)
+                                 ((define-state (A)))
+                                 ()))
+                          (term ((addr 0 (Union [C])))))
+    (term ((init-addr 0 (Union [B]))
+           ()
+           (goto A)
+           ((define-state (A)))
+           ()))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
 
 (define-metafunction aps#
-  subst-n/aps# : e-hat (x a#) ... -> e-hat
-  [(subst-n/aps# e-hat) e-hat]
-  [(subst-n/aps# e-hat (x a#) any_rest ...)
-   (subst-n/aps# (subst/aps# e-hat x a#) any_rest ...)])
-
-(define-metafunction aps#
-  subst/aps# : e-hat x a# -> e-hat
-  [(subst/aps# (goto s u ...) x a#)
-   (goto s (subst/aps#/u u x a#) ...)]
-  [(subst/aps# (with-outputs ([u po] ...) e-hat) x a#)
-   (with-outputs ([(subst/aps#/u u x a#) (subst/aps#/po po x a#)] ...)
-     (subst/aps# e-hat x a#))]
-  [(subst/aps# (spawn-spec ((goto s u ...) Φ ...) e-hat) x a#)
-   (spawn-spec ((subst/aps# (goto s u ...) x a#)
-                (subst/aps#/Φ Φ x a#) ...)
-               (subst/aps# e-hat x a#))])
+  subst-n/aps#/u : u (x a#) ... -> u
+  [(subst-n/aps#/u u) u]
+  [(subst-n/aps#/u u (x a#) any_rest ...)
+   (subst-n/aps#/u (subst/aps#/u u x a#) any_rest ...)])
 
 (define-metafunction aps#
   subst/aps#/u : u x a# -> u
@@ -132,10 +116,10 @@
 (define-metafunction aps#
   subst/aps#/po : po x a# -> po
   [(subst/aps#/po * x a#) *]
-  [(subst/aps#/po (spawn-spec any_goto any_s-defs ...) self _)
-   (spawn-spec any_goto any_s-defs ...)]
-  [(subst/aps#/po (spawn-spec (goto s u ...) Φ ...) x a#)
-   (spawn-spec (goto s (subst/aps#/u u x a#) ...)
+  [(subst/aps#/po (fork any_goto any_s-defs ...) self _)
+   (fork any_goto any_s-defs ...)]
+  [(subst/aps#/po (fork (goto φ u ...) Φ ...) x a#)
+   (fork (goto φ (subst/aps#/u u x a#) ...)
                (subst/aps#/Φ Φ x a#) ...)]
   [(subst/aps#/po self self a#int) a#int]
   [(subst/aps#/po self _ _) self]
@@ -146,18 +130,43 @@
 
 (define-metafunction aps#
   subst/aps#/Φ : Φ x a# -> Φ
-  [(subst/aps#/Φ (define-state (s any_1 ... x any_2 ...) any_trans ...) x a#)
-   (define-state (s any_1 ... x any_2 ...) any_trans ...)]
-  [(subst/aps#/Φ (define-state (s x_s ...) any_trans ...) x a#)
-   (define-state (s x_s ...) (subst/aps#/trans any_trans x a#) ...)])
+  [(subst/aps#/Φ (define-state (φ any_1 ... x any_2 ...) any_trans ...) x a#)
+   (define-state (φ any_1 ... x any_2 ...) any_trans ...)]
+  [(subst/aps#/Φ (define-state (φ x_φ ...) any_trans ...) x a#)
+   (define-state (φ x_φ ...) (subst/aps#/trans any_trans x a#) ...)])
 
 (define-metafunction aps#
-  subst/aps#/trans : (ε -> e-hat) x a# -> (ε -> e-hat)
-  [(subst/aps#/trans (p -> e-hat) x a#)
-   (p -> e-hat)
+  subst/aps#/trans : (pt -> (f ...) (goto φ u ...)) x a# -> (pt -> (f ...) (goto φ u ...))
+  [(subst/aps#/trans (p -> (f ...) (goto φ u ...)) x a#)
+   (p -> (f ...) (goto φ u ...))
    (judgment-holds (pattern-binds-var p x))]
-  [(subst/aps#/trans (ε -> e-hat) x a#)
-   (ε -> (subst/aps# e-hat x a#))])
+  [(subst/aps#/trans (pt -> (f ...) (goto φ u ...)) x a#)
+   (pt -> ((subst/aps#/f f x a#) ...) (goto φ (subst/aps#/u u x a#) ...))])
+
+(define-metafunction aps#
+  subst-n/aps#/f : f (x a#) ... -> f
+  [(subst-n/aps#/f f) f]
+  [(subst-n/aps#/f f (x a#) any_rest ...)
+   (subst-n/aps#/f (subst/aps#/f f x a#) any_rest ...)])
+
+(define-metafunction aps#
+  subst/aps#/f : f x a# -> f
+  [(subst/aps#/f (obligation u po) x a#)
+   (obligation (subst/aps#/u u x a#) (subst/aps#/po po x a#))]
+  [(subst/aps#/f (fork (goto φ u ...) Φ ...) x a#)
+   (fork (goto φ (subst/aps#/u u x a#) ...)
+         (subst/aps#/Φ Φ x a#) ...)])
+
+(module+ test
+  (test-equal? "Simple subst/aps#/f test"
+    (term (subst/aps#/f [fork (goto S1 x)
+                              (define-state (S1 y x) [* -> () (goto S2 y)])
+                              (define-state (S2 y) [* -> ([obligation x *]) (goto S2 y)])]
+                        x
+                        (obs-ext 1 Nat)))
+    (term [fork (goto S1 (obs-ext 1 Nat))
+                (define-state (S1 y x) [* -> () (goto S2 y)])
+                (define-state (S2 y) [* -> ([obligation (obs-ext 1 Nat) *]) (goto S2 y)])])))
 
 (define-judgment-form aps#
   #:mode (pattern-binds-var I I)
@@ -178,48 +187,38 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Transition selection
 
-;; Returns the syntax for each transition of the FSM in the spec config (assumes there is at most one
-;; FSM)
-(define (aps#-instance-transitions instance)
-  (term (aps#-instance-transitions/mf ,instance)))
+;; Returns the syntax for each transition of the FSM in the spec config
+(define (config-current-transitions config)
+  (term (config-current-transitions/mf ,config)))
 
 ;; TODO: deal with the case where the pattern variables shadow the state variables
 (define-metafunction aps#
-  aps#-instance-transitions/mf : z -> ((ε -> e-hat) ...)
-  [(aps#-instance-transitions/mf
-    ((_ ... (define-state (s x ...) (ε -> e-hat) ...) _ ...) (goto s a# ...) _))
-   ((ε -> (subst-n/aps# e-hat (x a#) ...)) ...
+  config-current-transitions/mf : Σ# -> ((pt -> (f ...) (goto φ u ...)) ...)
+  [(config-current-transitions/mf
+    (_
+     _
+     (goto φ a# ...)
+     (_ ... (define-state (φ x ...) (pt -> (f ...) (goto φ_trans u_trans ...)) ...) _ ...)
+     _))
+   ((pt ->
+        ((subst-n/aps#/f f (x a#) ...) ...)
+        (goto φ_trans (subst-n/aps#/u u_trans (x a#) ...) ...)) ...
     ;; Note that we include the "null"/no-step transition
-    (unobs -> (goto s a# ...)))])
+    (unobs -> () (goto φ a# ...)))])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
-
-;; (define (aps#-transition-observed? trans)
-;;   (term (aps#-transition-observed?/mf ,trans)))
-
-;; (define-metafunction aps#
-;;   aps#-transition-observed?/mf : (ε -> e-hat) -> boolean
-;;   [(aps#-transition-observed?/mf (p _ _)) #t]
-;;   [(aps#-transition-observed?/mf _) #f])
-
-;; (module+ test
-;;   (check-false (aps#-transition-observed? (term [unobs -> (goto S x y)])))
-;;   (check-true (aps#-transition-observed? (term [(variant Cons y) -> (goto S x y)])))
-;;   (check-true (aps#-transition-observed? (term [* -> (goto S x y)]))))
 
 ;; Σ# bool trigger -> ([Σ# (Σ#_spawn ...)] ...)
 ;;
 ;; Returns all spec configs that can possibly be reached in one step by transitioning from the given
 ;; trigger, also returning spec configs spawned during that transition
 (define (aps#-matching-steps spec-config from-observer? trigger)
-  (match (aps#-config-instances spec-config)
-    [(list instance)
-     (remove-duplicates
-      (filter
-       values
-       (map (lambda (t) (attempt-transition spec-config t from-observer? trigger))
-            (aps#-instance-transitions instance))))]))
+  (remove-duplicates
+   (filter
+    values
+    (map (lambda (t) (attempt-transition spec-config t from-observer? trigger))
+         (config-current-transitions spec-config)))))
 
 (module+ test
   (test-equal? "Null step is possible"
@@ -229,7 +228,7 @@
                          (term ())
                          (term ()))
                 #f
-                (term (timeout/empty-queue ,(single-instance-address 'Nat))))
+                (term (timeout/empty-queue (init-addr 0 Nat))))
                (list
                 (list (make-Σ# (term ((define-state (A))))
                          (term (goto A))
@@ -239,15 +238,15 @@
 
   (test-equal? "Multiple copies of output commitments are merged"
                (aps#-matching-steps
-                (make-Σ# (term ((define-state (A r) [* -> (with-outputs ([r *]) (goto A r))])))
+                (make-Σ# (term ((define-state (A r) [* -> ((obligation r *)) (goto A r)])))
                          (term (goto A (obs-ext 0 Nat)))
                          null
                          (term (((obs-ext 0 Nat) (single *)))))
                 #t
-                (term (external-receive ,(single-instance-address 'Nat) (* Nat))))
+                (term (external-receive (init-addr 0 Nat) (* Nat))))
                (list
                 (list
-                 (make-Σ# (term ((define-state (A r) [* -> (with-outputs ([r *]) (goto A r))])))
+                 (make-Σ# (term ((define-state (A r) [* -> ((obligation r *)) (goto A r)])))
                           (term (goto A (obs-ext 0 Nat)))
                           null
                           (term (((obs-ext 0 Nat) (many *)))))
@@ -257,15 +256,13 @@
 ;; trigger, along with all configs spawned in the transition, or #f if the transition is not possible
 ;; from this trigger
 (define (attempt-transition config transition from-observer? trigger)
-  (define instance (first (aps#-config-instances config)))
   (match (match-trigger from-observer?
                         trigger
-                        (aps#-instance-address instance)
+                        (aps#-config-obs-interface config)
                         (aps#-transition-trigger transition))
     [#f #f]
     [(list bindings ...)
-     (define body-with-bindings (term (subst-n/aps# ,(aps#-transition-body transition) ,@bindings)))
-     (match-define (list new-goto commitments spawn-infos) (aps#-eval body-with-bindings))
+     (match-define (list new-goto commitments spawn-infos) (aps#-eval transition bindings))
      (define updated-commitment-map
        (term
         (add-commitments
@@ -273,50 +270,49 @@
            (aps#-config-commitment-map config) bindings)
          ,@commitments)))
      (define stepped-current-config
-       (term (((,(aps#-instance-state-defs instance)
-                ,new-goto
-                ,(aps#-instance-address instance)))
+       (term (,(aps#-config-obs-interface config)
               ,(aps#-config-receptionists config)
+              ,new-goto
+              ,(aps#-config-state-defs config)
               ,updated-commitment-map)))
      (fork-configs stepped-current-config spawn-infos)]))
 
-;; exp -> goto-exp ([a po] ...) (<S ..., e, σ#> ...)
+;; transition ([x a#] ...) -> goto-exp ([a# po] ...) (<σ#, goto-exp, (Φ ...)> ...)
 ;;
-;; Evaluates the given spec expression for an instance at the given address and returns the results (a
-;; goto exp, the new output commitments, the address of this instance, and spawn-info for any spawned
-;; specs
-(define (aps#-eval exp)
-  (term (aps#-eval/mf ,exp)))
+;; Evaluates the given spec transition with the given variable bindings and returns the results (a
+;; goto, the new output commitments, and spawn-info for any spawned specs
+(define (aps#-eval transition bindings)
+  (term (aps#-eval/mf ,transition ,bindings)))
 
 (define-metafunction aps#
-  aps#-eval/mf : e-hat -> [(goto s a#ext ...) ([a#ext po] ...) (((Φ ...) e-hat σ#) ...)]
-  [(aps#-eval/mf (goto s a#ext ...))
-   ((goto s a#ext ...) () ())]
-  [(aps#-eval/mf (with-outputs ([a#ext_1 po_1] any_rest ...) e-hat))
-   ((goto s a#ext ...) ([a#ext_1 po_1] any_outputs ...) (any_spawns ...))
-   (where [(goto s a#ext ...) (any_outputs ...) (any_spawns ...)]
-          (aps#-eval/mf (with-outputs (any_rest ...) e-hat)))]
-  [(aps#-eval/mf (with-outputs () e-hat))
-   (aps#-eval/mf e-hat)]
-  [(aps#-eval/mf (spawn-spec ((goto s a#ext ...) Φ ...) e-hat))
-   [any_goto (any_outputs ...) ([(Φ ...) (goto s a#ext ...) UNKNOWN] any_spawns ...)]
-   (where [any_goto (any_outputs ...) (any_spawns ...)]
-          (aps#-eval/mf e-hat))])
+  aps#-eval/mf : (pt -> (f ...) (goto φ u ...)) ([x a#] ...)
+  -> [(goto φ a#ext ...) ([a#ext po] ...) ((σ# (goto φ a#ext ...) (Φ ...)) ...)]
+  [(aps#-eval/mf (_ -> (f ...) (goto φ u ...)) ([x a#] ...))
+   ((goto φ (subst-n/aps#/u u [x a#] ...) ...)
+    ([a#_ob po] ...)
+    ([UNKNOWN any_fork-state (any_state-defs ...)] ...))
+   (where (((obligation a#_ob po) ...)
+           ((fork any_fork-state any_state-defs ...) ...))
+          ,(collect-effects (term ((subst-n/aps#/f f [x a#] ...) ...))))])
 
-;; Σ# (((Φ ...) e-hat σ#) ...) -> Σ# (Σ# ...)
+;; (f ...) -> (([a# po] ...) ((<Φ ..., goto-exp, σ#> ...) ...))
+(define (collect-effects fs)
+  (define-values (obligations forks) (partition (lambda (f) (equal? (car f) 'obligation)) fs))
+  (list obligations forks))
+
+;; Σ# ((σ# goto-exp (Φ ...)) ...) -> Σ# (Σ# ...)
 ;;
 ;; Given the current configuration and the info needed to spawn new configs, splits information from
 ;; the current configuration off to form the new configurations
 (define (fork-configs current-config spawn-infos)
-  (redex-let aps# ([((z) any_receptionists O#) current-config])
+  (redex-let aps# ([(σ# any_receptionists any_goto any_states O#) current-config])
     (define-values (commitment-map spawned-configs)
       (for/fold ([current-commitment-map (term O#)]
                  [spawned-configs null])
                 ([spawn-info spawn-infos])
-        (match-define (list state-defs goto address) spawn-info)
+        (match-define (list address goto state-defs) spawn-info)
         (match-define (list remaining-map spawned-map)
           (fork-commitment-map current-commitment-map (externals-in (list state-defs goto))))
-        (define new-instance (term (,state-defs ,goto ,address)))
         ;; TODO: figure out what to do with this old receptionist code
         ;; (define new-receptionists
         ;;   (remove-duplicates (append (term any_receptionists)
@@ -325,21 +321,21 @@
         ;;                                  (list (aps#-config-only-instance-address current-config))))))
         (values remaining-map
                 ;; TODO: add parent to this receptionist list
-                (cons (term ((,new-instance) any_receptionists ,spawned-map))
+                (cons (term (,address any_receptionists ,goto ,state-defs ,spawned-map))
                       spawned-configs))))
     ;; TODO: add all forked addresses to this receptionist list
-    (list (term ((z) any_receptionists ,commitment-map)) spawned-configs)))
+    (list (term (σ# any_receptionists any_goto any_states ,commitment-map)) spawned-configs)))
 
 (module+ test
   (test-equal? "Degenerate fork config case"
-               (fork-configs (term (([((define-state (A))) (goto A) UNKNOWN]) () ())) null)
-               (list (term (([((define-state (A))) (goto A) UNKNOWN]) () ())) null))
+               (fork-configs (term (UNKNOWN () (goto A) ((define-state (A))) ())) null)
+               (list (term (UNKNOWN () (goto A) ((define-state (A))) ())) null))
 
   (test-equal? "Basic fork config case"
-    (fork-configs (term (([((define-state (A))) (goto A) UNKNOWN]) () ([(obs-ext 1 Nat) (single *)] [(obs-ext 2 Nat) (single (record))])))
-                  (term ([((define-state (B r))) (goto B (obs-ext 2 Nat)) null])))
-    (list (term (([((define-state (A))) (goto A) UNKNOWN]) () ([(obs-ext 1 Nat) (single *)])))
-          (list (term (([((define-state (B r))) (goto B (obs-ext 2 Nat)) null]) () ([(obs-ext 2 Nat) (single (record))])))))))
+    (fork-configs (term (UNKNOWN () (goto A) ((define-state (A))) ([(obs-ext 1 Nat) (single *)] [(obs-ext 2 Nat) (single (record))])))
+                  (term ([UNKNOWN (goto B (obs-ext 2 Nat)) ((define-state (B r)))])))
+    (list (term (UNKNOWN () (goto A) ((define-state (A))) ([(obs-ext 1 Nat) (single *)])))
+          (list (term (UNKNOWN () (goto B (obs-ext 2 Nat)) ((define-state (B r))) ([(obs-ext 2 Nat) (single (record))])))))))
 
 (define (fork-commitment-map commitment-map addresses)
   (term (fork-commitment-map/mf ,commitment-map () ,addresses)))
@@ -411,10 +407,10 @@
 
 ;; Matches the trigger against the given transition pattern, returning the bindings created from the
 ;; match if such a match exists, else #f
-(define (match-trigger from-observer? trigger instance-address pattern)
+(define (match-trigger from-observer? trigger address pattern)
   (match
       (judgment-holds
-       (match-trigger/j ,from-observer? ,trigger ,instance-address ,pattern any_bindings)
+       (match-trigger/j ,from-observer? ,trigger ,address ,pattern any_bindings)
        any_bindings)
     [(list) #f]
     [(list binding-list) binding-list]
@@ -424,7 +420,7 @@
 
 (define-judgment-form aps#
   #:mode (match-trigger/j I I I I O)
-  #:contract (match-trigger/j boolean trigger# σ# ε ([x v#] ...))
+  #:contract (match-trigger/j boolean trigger# σ# pt ([x v#] ...))
 
   [-------------------------------------------------------
    (match-trigger/j _ (timeout/empty-queue _) _ unobs ())]
@@ -543,7 +539,7 @@
 
 (define-judgment-form aps#
   #:mode (aps#-matches-po?/j I I I O O O)
-  #:contract (aps#-matches-po?/j v# σ# po σ# (((Φ ...) e-hat σ#)  ...) (a#int ...))
+  #:contract (aps#-matches-po?/j v# σ# po σ# ((σ# (goto φ a# ...) (Φ ...))  ...) (a#int ...))
 
   [-----
    (aps#-matches-po?/j v# σ# * σ# () ,(internals-in (term v#)))]
@@ -551,9 +547,9 @@
   [----
    (aps#-matches-po?/j a#int
                        σ#
-                       (spawn-spec e-hat Φ ...)
+                       (fork (goto φ a# ...) Φ ...)
                        σ#
-                       (((Φ ...) e-hat a#int))
+                       ((a#int (goto φ a# ...) (Φ ...)))
                        ())]
 
   [----
@@ -602,8 +598,11 @@
 
 (define-judgment-form aps#
   #:mode (aps#-list-matches-po?/j I I O O O)
-  #:contract (aps#-list-matches-po?/j ((v# po) ...) σ# σ# (((Φ ...) e-hat σ#) ...) (a#int ...))
-
+  #:contract (aps#-list-matches-po?/j ((v# po) ...)
+                                      σ#
+                                      σ#
+                                      ((σ# (goto φ a# ...) (Φ ...)) ...)
+                                      (a#int ...))
   [---------
    (aps#-list-matches-po?/j () any_addr any_addr () ())]
 
@@ -645,16 +644,18 @@
   (test-equal? "Spawn match po test"
    (aps#-match-po '(spawn-addr 'foo NEW Nat)
                   'UNKNOWN
-                  '(spawn-spec (goto B) (define-state (B))))
+                  '(fork (goto B) (define-state (B))))
    (list 'UNKNOWN
-         '([((define-state (B))) (goto B) (spawn-addr 'foo NEW Nat)])
+         '([(spawn-addr 'foo NEW Nat) (goto B) ((define-state (B)))])
          '()))
   (test-equal? "Full match po test"
    (aps#-match-po '(variant A (spawn-addr 'foo NEW Nat) (init-addr 2 Nat))
                   'UNKNOWN
-                  '(variant A (spawn-spec (goto B) (define-state (B))) self))
+                  '(variant A (fork (goto B) (define-state (B))) self))
    (list '(init-addr 2 Nat)
-         '([((define-state (B))) (goto B) (spawn-addr 'foo NEW Nat)])
+         '([(spawn-addr 'foo NEW Nat)
+            (goto B)
+            ((define-state (B)))])
          '()))
 
     ;; TODO: rewrite these tests
@@ -684,22 +685,19 @@
 (define (aps#-resolve-outputs spec-config outputs)
   ;; TODO: deal with loop output
   (let loop ([commitment-map (aps#-config-commitment-map spec-config)]
-             [self-address (aps#-instance-address (first (aps#-config-instances spec-config)))]
+             [self-address (aps#-config-obs-interface spec-config)]
              [spawn-infos null]
              [added-unobs-receptionists null]
              [satisfied-commitments null]
              [remaining-outputs outputs])
     (match remaining-outputs
       [(list)
-       (define old-instance (first (aps#-config-instances spec-config)))
-       (define updated-instance
-         (term (,(aps#-instance-state-defs old-instance)
-                ,(aps#-instance-exp old-instance)
-                ,self-address)))
        (define updated-config
-         (term ((,updated-instance)
+         (term (,self-address
                 ,(merge-receptionists (aps#-config-receptionists spec-config)
                                       added-unobs-receptionists)
+                ,(aps#-config-current-state spec-config)
+                ,(aps#-config-state-defs spec-config)
                 ,commitment-map)))
        (match-define (list remaining-config spawned-configs)
          (fork-configs updated-config spawn-infos))
@@ -739,32 +737,33 @@
           (list pattern self-addr spawn-infos new-receptionists)])])))
 
 (module+ test
-  (define dummy-instance (term (((define-state (DummyState))) (goto DummyState) UNKNOWN)))
+  (define (make-dummy-spec commitments)
+    (term (UNKNOWN () (goto DummyState) ((define-state (DummyState))) ,commitments)))
   (test-false "resolve test 1"
-   (aps#-resolve-outputs
-    (term ((,dummy-instance) () (((obs-ext 1 Nat)))))
-    (term (((obs-ext 1 Nat) (* Nat))))))
+    (aps#-resolve-outputs
+     (make-dummy-spec `(((obs-ext 1 Nat))))
+     (term (((obs-ext 1 Nat) (* Nat))))))
   (test-equal? "resolve test 2"
-   (aps#-resolve-outputs
-    (term ((,dummy-instance) ()  (((obs-ext 1 Nat) (single *)))))
-    (term (((obs-ext 1 Nat) (* Nat)))))
-   (term (((,dummy-instance) () (((obs-ext 1 Nat))))
-          ()
-          (((obs-ext 1 Nat) *)))))
+    (aps#-resolve-outputs
+     (make-dummy-spec `(((obs-ext 1 Nat) (single *))))
+     (term (((obs-ext 1 Nat) (* Nat)))))
+    (list (make-dummy-spec `(((obs-ext 1 Nat))))
+          `()
+          `(((obs-ext 1 Nat) *))))
   (test-equal? "resolve test 3"
-   (aps#-resolve-outputs
-    (term ((,dummy-instance) ()  (((obs-ext 1 Nat) (single *) (single (record))))))
-    (term (((obs-ext 1 Nat) (* Nat)))))
-   (term (((,dummy-instance) () (((obs-ext 1 Nat) (single (record)))))
-          ()
-          (((obs-ext 1 Nat) *)))))
+    (aps#-resolve-outputs
+     (make-dummy-spec `(((obs-ext 1 Nat) (single *) (single (record)))))
+     (term (((obs-ext 1 Nat) (* Nat)))))
+    (list (make-dummy-spec `(((obs-ext 1 Nat) (single (record)))))
+          `()
+          `(((obs-ext 1 Nat) *))))
   (test-equal? "resolve test 4"
-   (aps#-resolve-outputs
-    (term ((,dummy-instance) () (((obs-ext 1 Nat) (many *) (single (record))))))
-    (term (((obs-ext 1 Nat) (* Nat)))))
-   (term (((,dummy-instance) () (((obs-ext 1 Nat) (many *) (single (record)))))
-          ()
-          (((obs-ext 1 Nat) *)))))
+    (aps#-resolve-outputs
+     (make-dummy-spec `(((obs-ext 1 Nat) (many *) (single (record)))))
+     (term (((obs-ext 1 Nat) (* Nat)))))
+    (list (make-dummy-spec `(((obs-ext 1 Nat) (many *) (single (record)))))
+          `()
+          `(((obs-ext 1 Nat) *))))
 
   ;; TODO: test aps#-resolve-outputs for (along with normal cases):
   ;; * spec that observes an address but neither saves it nor has output commtiments for it
@@ -853,18 +852,20 @@
       (spawn-addr 3 OLD Nat)))))
 
 (define (aps#-config-has-commitment? config address pattern)
-  (judgment-holds (aps#-config-has-commitment?/j ,config ,address ,pattern)))
+  (judgment-holds (aps#-commitment-map-has-commitment?/j ,(aps#-config-commitment-map config)
+                                                         ,address
+                                                         ,pattern)))
 
 (define-judgment-form aps#
-  #:mode (aps#-config-has-commitment?/j I I I)
-  #:contract (aps#-config-has-commitment?/j Σ# a# po)
+  #:mode (aps#-commitment-map-has-commitment?/j I I I)
+  #:contract (aps#-commitment-map-has-commitment?/j O# a# po)
   [-----
-   (aps#-config-has-commitment?/j (_ _ (_ ... [a# _ ... (_ po) _ ...] _ ...)) a# po)])
+   (aps#-commitment-map-has-commitment?/j (_ ... [a# _ ... (_ po) _ ...] _ ...) a# po)])
 
 (module+ test
   (define has-commitment-test-config
-    (term (() () (((obs-ext 1 Nat) (single *))
-                  ((obs-ext 2 Nat) (single *) (single (record)))))))
+    (term (UNKNOWN () (goto S1) () (((obs-ext 1 Nat) (single *))
+                                    ((obs-ext 2 Nat) (single *) (single (record)))))))
   (test-false "aps#-config-has-commitment? 1"
     (aps#-config-has-commitment? has-commitment-test-config (term (obs-ext 3 Nat)) (term *)))
   (test-false "aps#-config-has-commitment? 2"
@@ -875,22 +876,40 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
 
-(define (aps#-config-instances config)
-  (term (config-instances/mf ,config)))
-
-(define-metafunction aps#
-  config-instances/mf : Σ# -> (z ...)
-  [(config-instances/mf ((z ...) _ _)) (z ...)])
+(define (aps#-config-obs-interface config)
+  (redex-let aps# ([(σ# _ ...) config])
+    (term σ#)))
 
 (define (aps#-config-receptionists config)
   (term (config-receptionists/mf ,config)))
 
 (define-metafunction aps#
   config-receptionists/mf : Σ# -> (a#int ...)
-  [(config-receptionists/mf (_ (a#int ...) _)) (a#int ...)])
+  [(config-receptionists/mf (_ (a#int ...) _ ...)) (a#int ...)])
+
+(define (aps#-config-state-defs config)
+  (redex-let aps# ([(_ _ _ any_state-defs _) config])
+             (term any_state-defs)))
+
+(define (aps#-config-current-state config)
+  (redex-let aps# ([(_ _ any_goto _ ...) config])
+    (term any_goto)))
+
+(define (aps#-config-current-state-args config)
+  (redex-let aps# ([(_ _ (goto _ a# ...) _ ...) config])
+    (term (a# ...))))
 
 (define (aps#-config-commitment-map config)
   (term (config-commitment-map/mf ,config)))
+
+(define-metafunction aps#
+  config-commitment-map/mf : Σ# -> O#
+  [(config-commitment-map/mf (_ _ _ _ O#)) O#])
+
+(module+ test
+  (test-equal? "foobar"
+    (aps#-config-commitment-map `((init-addr 1 Nat) () (goto A1) () ()))
+    '()))
 
 ;; Returns all singleton commitments in the config as a list of address/pattern pairs
 (define (aps#-config-singleton-commitments config)
@@ -902,11 +921,12 @@
 
 (define-metafunction aps#
   config-commitments-by-multiplicity/mf : Σ# m -> ([a#ext po] ...)
-  [(config-commitments-by-multiplicity/mf (_ _ ((a#ext (m_any po) ...) ...)) m_target)
+  [(config-commitments-by-multiplicity/mf Σ# m_target)
    ,(append*
      (for/list ([address (term (a#ext ...))]
                 [pattern-list (term ((po_result ...) ...))])
        (for/list ([pattern pattern-list]) (list address pattern))))
+   (where ((a#ext (m_any po) ...) ...) ,(aps#-config-commitment-map (term Σ#)))
    (where (((_ po_result) ...) ...)
           ,(map (lambda (com-list)
                   (filter (lambda (com) (equal? (first com) (term m_target))) com-list))
@@ -915,9 +935,13 @@
 (module+ test
   (test-equal? "config-singleton-commitments"
     (aps#-config-singleton-commitments
-     `(() () ([(obs-ext 1 Nat) (single *) (many (record))]
-              [(obs-ext 2 Nat)]
-              [(obs-ext 3 Nat) (single *) (single (variant A)) (single (record [a *]))])))
+     `(UNKNOWN
+       ()
+       (goto S1)
+       ()
+       ([(obs-ext 1 Nat) (single *) (many (record))]
+        [(obs-ext 2 Nat)]
+        [(obs-ext 3 Nat) (single *) (single (variant A)) (single (record [a *]))])))
     (list `[(obs-ext 1 Nat) *]
           `[(obs-ext 3 Nat) *]
           `[(obs-ext 3 Nat) (variant A)]
@@ -925,30 +949,21 @@
 
   (test-equal? "config-many-of-commitments"
     (aps#-config-many-of-commitments
-     `(() () ([(obs-ext 1 Nat) (single *) (many (record))]
-              [(obs-ext 2 Nat)]
-              [(obs-ext 3 Nat) (single *) (single (variant A)) (single (record [a *]))]
-              [(obs-ext 4 Nat) (many *) (many (variant A)) (single (record [a *]))])))
+     `(UNKNOWN
+       ()
+       (goto S1)
+       ()
+       ([(obs-ext 1 Nat) (single *) (many (record))]
+        [(obs-ext 2 Nat)]
+        [(obs-ext 3 Nat) (single *) (single (variant A)) (single (record [a *]))]
+        [(obs-ext 4 Nat) (many *) (many (variant A)) (single (record [a *]))])))
     (list `[(obs-ext 1 Nat) (record)]
           `[(obs-ext 4 Nat) *]
           `[(obs-ext 4 Nat) (variant A)])))
 
-(define (aps#-config-only-instance-address config)
-  (match (aps#-config-instances config)
-    [(list instance) (aps#-instance-address instance)]
-    [_ (error 'aps#-config-only-instance-address "More than one instance in config ~s" config)]))
-
-(define-metafunction aps#
-  config-commitment-map/mf : Σ# -> O#
-  [(config-commitment-map/mf (_ _ O#)) O#])
-
-(define (aps#-transition-pattern transition)
-  (redex-let aps# ([(ε -> _) transition])
-    (term ε)))
-
-(define (aps#-transition-expression transition)
-  (redex-let aps# ([(_ -> e-hat) transition])
-    (term e-hat)))
+(define (aps#-transition-trigger transition)
+  (redex-let aps# ([(pt -> _ _) transition])
+    (term pt)))
 
 (define (aps#-commitment-entry-address entry)
   (redex-let aps# ([(a#ext _ ...)  entry])
@@ -987,78 +1002,30 @@
 (define (commitment-pattern commitment)
   (redex-let aps# ([(m po) commitment]) (term po)))
 
-(define (aps#-instance-address z)
-  (redex-let aps# ([(_ _ σ#) z])
-             (term σ#)))
-
-(define (aps#-instance-state-defs z)
-  (redex-let aps# ([(any_state-defs _ _) z])
-             (term any_state-defs)))
-
-(define (aps#-instance-exp z)
-  (redex-let aps# ([(_ any_exp _) z])
-             (term any_exp)))
-
-(define (aps#-instance-state z)
-  (term (instance-state/mf ,z)))
-
-(define-metafunction aps#
-  instance-state/mf : z -> s
-  [(instance-state/mf (_ (goto s _ ...) _)) s])
-
-(define (aps#-instance-arguments z)
-  (term (instance-arguments/mf ,z)))
-
-(define-metafunction aps#
-  instance-arguments/mf : z -> (a#ext ...)
-  [(instance-arguments/mf (_ (goto _ u ...) _)) (u ...)])
-
-(module+ test
-  (test-equal? "instate-state check 1"
-   (aps#-instance-state (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
-                               (goto Always (* (Addr Nat)) (obs-ext 1 Nat))
-                               UNKNOWN)))
-   (term Always))
-
-  (test-equal? "instate-state check 2"
-   (aps#-instance-arguments (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
-                                   (goto Always (* (Addr Nat)) (obs-ext 1 Nat))
-                                   UNKNOWN)))
-   (term ((* (Addr Nat)) (obs-ext 1 Nat)))))
-
+;; "Relevant" external addresses are those in either the current state arguments or obligations of a
+;; spec config
 (define (aps#-relevant-external-addrs Σ#)
   (term (relevant-external-addrs/mf ,Σ#)))
 
 (define-metafunction aps#
   relevant-external-addrs/mf : Σ# -> (a#ext ...)
   [(relevant-external-addrs/mf Σ#)
-   ,(remove-duplicates (term (any_args ... ... any_commitment-addr ...)))
-   (where (any_z ...) (config-instances/mf Σ#))
-   (where ((any_args ...) ...) ((instance-arguments/mf any_z) ...))
+   ,(remove-duplicates (term (any_args ... any_commitment-addr ...)))
+   (where (any_args ...) ,(aps#-config-current-state-args (term Σ#)))
    (where ((any_commitment-addr _ ...) ...) (config-commitment-map/mf Σ#))])
 
 (module+ test
   (check-equal?
    (aps#-relevant-external-addrs
     (redex-let* aps#
-                ([z_1 (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
-                             (goto Always (obs-ext 1 Nat) (obs-ext 2 Nat))
-                             UNKNOWN))]
-                 [z_2 (term (((define-state (Always r1 r2) (* -> (goto Always r1 r2))))
-                             (goto Always (obs-ext 1 Nat) (obs-ext 3 Nat))
-                             UNKNOWN))]
-                 [O# (term (((obs-ext 1 Nat)) ((obs-ext 3 Nat)) ((obs-ext 4 Nat))))]
-                 [Σ# (term ((z_1 z_2) () O#))])
+                ([O# (term (((obs-ext 1 Nat)) ((obs-ext 3 Nat)) ((obs-ext 4 Nat))))]
+                 [Σ# (term (UNKNOWN
+                            ()
+                            (goto Always (obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat))
+                            ((define-state (Always r1 r2) (* -> () (goto Always r1 r2))))
+                            O#))])
                 (term Σ#)))
    (term ((obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))))
-
-(define (aps#-transition-trigger transition)
-  (redex-let aps# ([(ε -> _) transition])
-             (term ε)))
-
-(define (aps#-transition-body transition)
-  (redex-let aps# ([(_ -> e-hat) transition])
-             (term e-hat)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Spec Split
@@ -1071,71 +1038,77 @@
 ;; environment's interface does not change in any of the new configs.
 (define (split-spec config)
   (define receptionists (aps#-config-receptionists config))
-  (define instance (first (aps#-config-instances config)))
   ;; A commitment map entry is "relevant" if it is used as a state argument
   (define-values (relevant-entries irrelevant-entries)
     (partition (lambda (entry)
                  (member (aps#-commitment-entry-address entry)
-                         (aps#-instance-arguments instance)))
+                         (aps#-config-current-state-args config)))
                (aps#-config-commitment-map config)))
   (define commitment-only-configs
-    (map (curryr aps#-spec-from-commitment-entry
-                 (aps#-config-only-instance-address config)
+    (map (curryr aps#-config-from-commitment-entry
+                 (aps#-config-obs-interface config)
                  receptionists)
          irrelevant-entries))
-  (cons (term ((,instance) ,receptionists ,relevant-entries))
+  (cons (term (,(aps#-config-obs-interface config)
+               ,receptionists
+               ,(aps#-config-current-state config)
+               ,(aps#-config-state-defs config)
+               ,relevant-entries))
         commitment-only-configs))
 
 (module+ test
-  (define simple-instance-for-split-test
+  (define (make-simple-spec-for-split-test commitments)
     (term
-     (((define-state (A x)
-         [* -> (goto A x)]))
+     ((init-addr 0 Nat)
+      ()
       (goto A (obs-ext 0 Nat))
-      (init-addr 0 Nat))))
-
-  (test-not-false "simple instance" (redex-match aps# z simple-instance-for-split-test))
+      ((define-state (A x) [* -> () (goto A x)]))
+      ,commitments)))
 
   (test-equal? "split spec with one FSM gets same spec"
-   (split-spec (term ((,simple-instance-for-split-test) () ())))
-   (list (term ((,simple-instance-for-split-test) () ()))))
+    (split-spec (make-simple-spec-for-split-test '()))
+    (list (make-simple-spec-for-split-test '())))
 
   (test-equal? "split with one related commit"
-   (split-spec (term ((,simple-instance-for-split-test) () (((obs-ext 0 Nat) (single *))))))
-   (list (term ((,simple-instance-for-split-test) () (((obs-ext 0 Nat) (single *)))))))
+   (split-spec (make-simple-spec-for-split-test `(((obs-ext 0 Nat) (single *)))))
+   (list (make-simple-spec-for-split-test `(((obs-ext 0 Nat) (single *))))))
 
   (test-same-items? "split with unrelated commit"
-   (split-spec (term ((,simple-instance-for-split-test) () (((obs-ext 1 Nat) (single *))))))
-   (list (term ((,simple-instance-for-split-test) () ()))
-         (term ((,aps#-no-transition-instance) ((init-addr 0 Nat)) (((obs-ext 1 Nat) (single *))))))))
+   (split-spec (make-simple-spec-for-split-test `(((obs-ext 1 Nat) (single *)))))
+   (list (make-simple-spec-for-split-test `())
+         (aps#-make-no-transition-config `((init-addr 0 Nat)) `(((obs-ext 1 Nat) (single *)))))))
 
-;; A specification instance with an UNKNOWN address and an FSM with no transitions. Used for
+;; Makes a specification config with an UNKNOWN address and an FSM with no transitions. Used for
 ;; specifications where only the commitments are important.
-(define aps#-no-transition-instance
-  (term [((define-state (DummySpecFsmState))) (goto DummySpecFsmState) UNKNOWN]))
+(define (aps#-make-no-transition-config receptionists commitments)
+  (term (UNKNOWN
+         ,receptionists
+         (goto DummySpecFsmState)
+         ((define-state (DummySpecFsmState)))
+         ,commitments)))
 
 ;; Creates a spec config with a transition-less FSM and a commitment map with just the given
 ;; entry. The receptionists for the unobserved environment will be the given list plus the given FSM
 ;; address if it is not UNKONWN.
-(define (aps#-spec-from-commitment-entry entry fsm-addr receptionists)
+(define (aps#-config-from-commitment-entry entry fsm-addr receptionists)
   (define all-receptionists
     (remove-duplicates
      (append receptionists
              (if (equal? fsm-addr 'UNKNOWN) '() (list fsm-addr)))))
-  (term ((,aps#-no-transition-instance) ,all-receptionists ,(list entry))))
+  (aps#-make-no-transition-config all-receptionists (list entry)))
 
 (module+ test
   (check-equal?
-   (aps#-spec-from-commitment-entry (term ((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))  'UNKNOWN null)
-   (term ((,aps#-no-transition-instance) () (((obs-ext 0 Nat) (single *) (single (record [a *] [b *])))))))
+   (aps#-config-from-commitment-entry (term ((obs-ext 0 Nat) (single *) (single (record [a *] [b *])))) 'UNKNOWN null)
+   (aps#-make-no-transition-config '() '(((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))))
 
   (test-equal? "Commitment entry spec should also include old FSM address as unobs receptionist"
-    (aps#-spec-from-commitment-entry (term ((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))
+    (aps#-config-from-commitment-entry (term ((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))
                                      '(init-addr 0 Nat)
                                      null)
-    (term ((,aps#-no-transition-instance)
-           ((init-addr 0 Nat))
-           (((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))))))
+    (aps#-make-no-transition-config
+     '((init-addr 0 Nat))
+     '(((obs-ext 0 Nat) (single *) (single (record [a *] [b *])))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Blurring
@@ -1143,30 +1116,32 @@
 ;; Blurs the given specification configuration by removing all receptionists in the unobserved
 ;; environment interface with the wrong spawn flag
 (define (aps#-blur-config config internals-to-blur)
-  (redex-let aps# ([[([any_state-defs any_exp any_addr]) any_receptionists any_out-coms] config])
-    (term [([any_state-defs any_exp any_addr])
+  (redex-let aps# ([[any_addr any_receptionists any_exp any_state-defs any_out-coms] config])
+    (term [any_addr
            ,(remove-duplicates
              (csa#-blur-internal-addresses (term any_receptionists) internals-to-blur))
+           any_exp
+           any_state-defs
            any_out-coms])))
 
 (module+ test
   (test-equal? "aps#-blur-config"
-    (aps#-blur-config (term ((,aps#-no-transition-instance)
-                             ((init-addr  0 Nat)
-                              (spawn-addr 1 OLD Nat)
-                              (spawn-addr 1 NEW Nat)
-                              (spawn-addr 2 NEW Nat)
-                              (blurred-spawn-addr 1 Nat)
-                              (spawn-addr 2 OLD Nat))
-                             ()))
+    (aps#-blur-config (aps#-make-no-transition-config
+                       `((init-addr  0 Nat)
+                         (spawn-addr 1 OLD Nat)
+                         (spawn-addr 1 NEW Nat)
+                         (spawn-addr 2 NEW Nat)
+                         (blurred-spawn-addr 1 Nat)
+                         (spawn-addr 2 OLD Nat))
+                       `())
                       (list (term (spawn-addr 1 NEW Nat))))
-    (term ((,aps#-no-transition-instance)
-           ((init-addr  0 Nat)
-            (spawn-addr 1 OLD Nat)
-            (blurred-spawn-addr 1 Nat)
-            (spawn-addr 2 NEW Nat)
-            (spawn-addr 2 OLD Nat))
-           ()))))
+    (aps#-make-no-transition-config
+     `((init-addr  0 Nat)
+       (spawn-addr 1 OLD Nat)
+       (blurred-spawn-addr 1 Nat)
+       (spawn-addr 2 NEW Nat)
+       (spawn-addr 2 OLD Nat))
+     `())))
 
 ;; (define-metafunction aps#
 ;;   blur-receptionists : (a#int ...) spawn-flag -> (a#int ...)
@@ -1215,20 +1190,20 @@
              (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
               (goto A (obs-ext 25 Nat) (obs-ext 42 Nat) (obs-ext 10 Nat))))))
      (term
-      (((((define-state (A a b c) [* -> (goto A)]))
-         (goto A (obs-ext 25 Nat) (obs-ext 42 Nat) (obs-ext 10 Nat))
-         (init-addr 0 Nat)))
+      ((init-addr 0 Nat)
        ()
+       (goto A (obs-ext 25 Nat) (obs-ext 42 Nat) (obs-ext 10 Nat))
+       ((define-state (A a b c) [* -> () (goto A)]))
        (((obs-ext 25 Nat)) ((obs-ext 42 Nat)) ((obs-ext 10 Nat))))))
     (term
      (,(make-single-actor-abstract-config
         (term ((init-addr 0 Nat)
                (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
                 (goto A (obs-ext 0 Nat) (obs-ext 1 Nat) (obs-ext 2 Nat))))))
-      (((((define-state (A a b c) [* -> (goto A)]))
-         (goto A (obs-ext 0 Nat) (obs-ext 1 Nat) (obs-ext 2 Nat))
-         (init-addr 0 Nat)))
+      ((init-addr 0 Nat)
        ()
+       (goto A (obs-ext 0 Nat) (obs-ext 1 Nat) (obs-ext 2 Nat))
+       ((define-state (A a b c) [* -> () (goto A)]))
        (((obs-ext 0 Nat)) ((obs-ext 1 Nat)) ((obs-ext 2 Nat))))
       ([25 0] [42 1] [10 2]))))
 
@@ -1239,38 +1214,22 @@
              (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
               (goto A (obs-ext 10 Nat) (obs-ext 42 Nat) (obs-ext 25 Nat))))))
      (term
-      (((((define-state (A c b a) [* -> (goto A)]))
-         (goto A (obs-ext 25 Nat) (obs-ext 42 Nat) (obs-ext 10 Nat))
-         (spawn-addr 0 OLD Nat)))
+      ((spawn-addr 0 OLD Nat)
        ()
+       (goto A (obs-ext 25 Nat) (obs-ext 42 Nat) (obs-ext 10 Nat))
+       ((define-state (A c b a) [* -> () (goto A)]))
        (((obs-ext 25 Nat)) ((obs-ext 42 Nat)) ((obs-ext 10 Nat))))))
     (term
      (,(make-single-actor-abstract-config
         (term ((spawn-addr 0 OLD Nat)
                (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
                 (goto A (obs-ext 2 Nat) (obs-ext 1 Nat) (obs-ext 0 Nat))))))
-      (((((define-state (A c b a) [* -> (goto A)]))
-         (goto A (obs-ext 0 Nat) (obs-ext 1 Nat) (obs-ext 2 Nat))
-         (spawn-addr 0 OLD Nat)))
+      ((spawn-addr 0 OLD Nat)
        ()
+       (goto A (obs-ext 0 Nat) (obs-ext 1 Nat) (obs-ext 2 Nat))
+       ((define-state (A c b a) [* -> () (goto A)]))
        (((obs-ext 0 Nat)) ((obs-ext 1 Nat)) ((obs-ext 2 Nat))))
-      ([25 0] [42 1] [10 2]))))
-
-  (test-equal? "canonicalize 3"
-    (canonicalize-pair
-     (make-single-actor-abstract-config
-      (term ((spawn-addr 0 NEW Nat)
-             (((define-state (A) (m) (goto A)))
-              (goto A)))))
-     (term
-      (() () (((obs-ext 101 Nat) (single *))))))
-    (term
-     (,(make-single-actor-abstract-config
-        (term ((spawn-addr 0 OLD Nat)
-               (((define-state (A) (m) (goto A)))
-                (goto A)))))
-      (() () (((obs-ext 0 Nat) (single *))))
-      ([101 0])))))
+      ([25 0] [42 1] [10 2])))))
 
 ;; Given a term, changes all spawn addresses of the form (spawn-addr _ NEW _) to (spawn-addr _ OLD _),
 ;; to ensure that spawned addresses in the next handler are fresh.
@@ -1304,8 +1263,8 @@
 
 ;; Returns a spec config identical to the given one except that the the receptionist list is sorted
 (define (aps#-sort-receptionists config)
-  (redex-let aps# ([(any_instances any_receptionists any_com) config])
-    (term (any_instances ,(sort (term any_receptionists) sexp<?) any_com))))
+  (redex-let aps# ([(any_addr any_receptionists any_rest ...) config])
+    (term (any_addr ,(sort (term any_receptionists) sexp<?) any_rest ...))))
 
 (define (try-rename-address rename-map addr)
   (redex-let aps# ([(obs-ext natural any_type) addr])
@@ -1342,13 +1301,11 @@
 ;; Testing Helpers
 
 (define (make-Σ# defs goto receptionists out-coms)
-  (term (((,defs ,goto (init-addr 0 Nat))) ,receptionists ,out-coms)))
-
-(define (single-instance-address type) (term (init-addr 0 ,type)))
+  (term ((init-addr 0 Nat) ,receptionists ,goto ,defs ,out-coms)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debugging
 
 (define (spec-config-without-state-defs config)
-  (redex-let aps# ([((((Φ ...) e-hat σ#) ...) any_rec O#) config])
-             (term (((e-hat σ#) ...) any_rec O#))))
+  (redex-let aps# ([(any_addr any_rec any_goto _ any_out) config])
+    (term (any_addr any_rec any_goto any_out))))
