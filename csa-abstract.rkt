@@ -51,13 +51,13 @@
   (α# (α#n ...))
   (β# ((a#int (b# ...)) ...)) ; blurred actors, represented by a set of abstract behaviors
   (α#n (a#int b#))
-  (b# ((S# ...) e#)) ; behavior
+  (b# ((Q# ...) e#)) ; behavior
   ;; TODO: refactor the packets to hold *un*typed addresses - will solve most of my address comparison
   ;; issues
   (μ# ((a#int v# m) ...)) ; message packets
   (m single many) ; m for "multiplicity"
-  (S# (define-state (s [x τ] ...) (x) e#)
-      (define-state (s [x τ] ...) (x) e# [(timeout v#) e#]))
+  (Q# (define-state (q [x τ] ...) (x) e#)
+      (define-state (q [x τ] ...) (x) e# [(timeout v#) e#]))
   (v# a#
       (variant t v# ...)
       (record [l v#] ...)
@@ -66,9 +66,9 @@
       (list v# ...)
       (vector v# ...)
       (hash v# ...))
-  (e# (spawn any_location τ e# S# ...)
-      (spawning a#int τ e# S# ...)
-      (goto s e# ...)
+  (e# (spawn any_location τ e# Q# ...)
+      (spawning a#int τ e# Q# ...)
+      (goto q e# ...)
       (send e# e#)
       (begin e# ... e#)
       (let ([x e#] ...) e#)
@@ -105,8 +105,8 @@
   ;; H# = handler machine state (exp + outputs + loop outputs + spawns so far)
   (H# (e# ([a# v#] ...) ([a# v#] ...) (α#n ...)))
   (E# hole
-      (spawning a#int τ E# S# ...)
-      (goto s v# ... E# e# ...)
+      (spawning a#int τ E# Q# ...)
+      (goto q v# ... E# e# ...)
       (send E# e#)
       (send v# E#)
       (begin E# e# ...)
@@ -335,11 +335,11 @@
 ;; state arguments and the message substituted for the appropriate variables
 (define (handler-machine-for-message behavior message)
   (redex-let csa#
-      ([((_ ... (define-state (s [x_s τ_s] ..._n) (x_m) e# any_timeout-clause ...) _ ...)
-         (goto s v# ..._n))
+      ([((_ ... (define-state (q [x_q τ_q] ..._n) (x_m) e# any_timeout-clause ...) _ ...)
+         (goto q v# ..._n))
         behavior])
-    ;; TODO: deal with the case where x_m shadows an x_s
-    (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_s v#] ...)))))
+    ;; TODO: deal with the case where x_m shadows an x_q
+    (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_q v#] ...)))))
 
 ;; Abstractly removes the entry in K# corresponding to the packet (a# v#), which will actually remove
 ;; it if its multiplicity is single, else leave it there if its multiplicity is many (because removing
@@ -402,9 +402,9 @@
 ;; if the current state has a timeout clause, else #f
 (define-metafunction csa#
   get-timeout-handler-exp/mf : b# -> e# or #f
-  [(get-timeout-handler-exp/mf ((_ ... (define-state (s [x_s τ_s] ..._n) _ _ [(timeout _) e#]) _ ...)
-                                (goto s v# ..._n)))
-   (csa#-subst-n e# [x_s v#] ...)]
+  [(get-timeout-handler-exp/mf ((_ ... (define-state (q [x_q τ_q] ..._n) _ _ [(timeout _) e#]) _ ...)
+                                (goto q v# ..._n)))
+   (csa#-subst-n e# [x_q v#] ...)]
   [(get-timeout-handler-exp/mf _) #f])
 
 ;; Returns #t if the configuration has any in-transit messages for the given internal address; #f
@@ -526,7 +526,7 @@
     (stuck-at-empty-list-ref? (inject/H# (term (hash-ref (hash) (* Nat)))))))
 
 (define (complete-handler-config? c)
-  (redex-match csa# ((in-hole E# (goto s v#_param ...)) any_output any_loop-output any_spawns) c))
+  (redex-match csa# ((in-hole E# (goto q v#_param ...)) any_output any_loop-output any_spawns) c))
 
 (define (inject/H# exp)
   (redex-let csa#
@@ -800,18 +800,18 @@
          LoopSend)
 
     ;; Spawn
-    (==> (spawn any_location τ e# S# ...)
-         (spawning a#int τ (csa#-subst-n e# [self a#int]) (csa#-subst/S# S# self a#int) ...)
+    (==> (spawn any_location τ e# Q# ...)
+         (spawning a#int τ (csa#-subst-n e# [self a#int]) (csa#-subst/Q# Q# self a#int) ...)
          (where a#int (spawn-addr any_location NEW τ))
          SpawnStart)
-    (--> ((in-hole E# (spawning a#int τ (in-hole E#_2 (goto s v# ...)) S# ...))
+    (--> ((in-hole E# (spawning a#int τ (in-hole E#_2 (goto q v# ...)) Q# ...))
           any_outputs
           any_loop-outputs
           (any_spawns ...))
          ((in-hole E# a#int)
           any_outputs
           any_loop-outputs
-          (any_spawns ... (a#int ((S# ...) (goto s v# ...)))))
+          (any_spawns ... (a#int ((Q# ...) (goto q v# ...)))))
          SpawnFinish)
 
     ;; Debugging
@@ -990,8 +990,8 @@
 (define (update-config-with-handler-results config address final-exp outputs spawns update-behavior)
   ;; 1. update the behavior
   (define with-updated-behavior
-    (redex-let csa# ([(in-hole E# (goto s v# ...)) final-exp])
-      (update-behavior config address (term (goto s v# ...)))))
+    (redex-let csa# ([(in-hole E# (goto q v# ...)) final-exp])
+      (update-behavior config address (term (goto q v# ...)))))
   ;; 2. add spawned actors
   (define with-spawns (merge-new-actors with-updated-behavior spawns))
   ;; 3. add sent messages
@@ -1115,10 +1115,10 @@
   ;; [(csa#-subst n x v) n]
   [(csa#-subst (* τ) _ _) (* τ)]
   [(csa#-subst a# _ _) a#]
-  [(csa#-subst (spawn any_location τ e# S# ...) self v#) (spawn any_location τ e# S# ...)]
-  [(csa#-subst (spawn any_location τ e# S# ...) x v#)
-    (spawn any_location τ (csa#-subst e# x v#) (csa#-subst/S# S# x v#) ...)]
-  [(csa#-subst (goto s e# ...) x v#) (goto s (csa#-subst e# x v#) ...)]
+  [(csa#-subst (spawn any_location τ e# Q# ...) self v#) (spawn any_location τ e# Q# ...)]
+  [(csa#-subst (spawn any_location τ e# Q# ...) x v#)
+    (spawn any_location τ (csa#-subst e# x v#) (csa#-subst/Q# Q# x v#) ...)]
+  [(csa#-subst (goto q e# ...) x v#) (goto q (csa#-subst e# x v#) ...)]
   [(csa#-subst (send e#_1 e#_2) x v#)
    (send (csa#-subst e#_1 x v#) (csa#-subst e#_2 x v#))]
   [(csa#-subst (begin e# ...) x v#) (begin (csa#-subst e# x v#) ...)]
@@ -1158,26 +1158,26 @@
    [(t x_other ...) (csa#-subst e# x v#)]])
 
 (define-metafunction csa#
-  csa#-subst/S# : S# x v# -> S#
+  csa#-subst/Q# : Q# x v# -> Q#
   ;; Case 1: no timeout, var is shadowed
-  [(csa#-subst/S# (define-state (s [x_s τ] ...) (x_m) e#) x v#)
-   (define-state (s [x_s τ] ...) (x_m) e#)
-   (where (_ ... x _ ...) (x_s ... x_m))]
+  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e#) x v#)
+   (define-state (q [x_q τ] ...) (x_m) e#)
+   (where (_ ... x _ ...) (x_q ... x_m))]
   ;; Case 2: timeout, var shadowed by state param
-  [(csa#-subst/S# (define-state (s [x_s τ] ...) (x_m) e# [(timeout v#_t) e#_t]) x v#)
-   (define-state (s [x_s τ] ...) (x_m) e# [(timeout v#_t) e#_t])
-   (where (_ ... x _ ...) (x_s ...))]
+  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e# [(timeout v#_t) e#_t]) x v#)
+   (define-state (q [x_q τ] ...) (x_m) e# [(timeout v#_t) e#_t])
+   (where (_ ... x _ ...) (x_q ...))]
   ;; Case 3: timeout, var shadowed by message param
-  [(csa#-subst/S# (define-state (s [x_s τ] ...) (x_m) e# [(timeout v#_t) e#_t]) x_m v#)
-   (define-state (s [x_s τ] ...) (x_m) e# [(timeout v#_t) (csa#-subst e#_t x_m v#)])]
+  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e# [(timeout v#_t) e#_t]) x_m v#)
+   (define-state (q [x_q τ] ...) (x_m) e# [(timeout v#_t) (csa#-subst e#_t x_m v#)])]
   ;; Case 4: timeout, no shadowing
-  [(csa#-subst/S# (define-state (s [x_s τ] ...) (x_m) e# [(timeout v#_t) e#_t]) x v#)
-   (define-state (s [x_s τ] ...) (x_m)
+  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e# [(timeout v#_t) e#_t]) x v#)
+   (define-state (q [x_q τ] ...) (x_m)
      (csa#-subst e# x v#)
      [(timeout v#_t) (csa#-subst e#_t x v#)])]
   ;; Case 5: no timeout, no shadowing
-  [(csa#-subst/S# (define-state (s [x_s τ] ...) (x_m) e#) x v#)
-   (define-state (s [x_s τ] ...) (x_m) (csa#-subst e# x v#))])
+  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e#) x v#)
+   (define-state (q [x_q τ] ...) (x_m) (csa#-subst e# x v#))])
 
 (module+ test
   (check-equal? (term (csa#-subst/case-clause [(Cons p) (begin p x)] p (* Nat)))
@@ -1272,17 +1272,17 @@
 
 (define-metafunction csa#
   abstract-actor : αn (a_internals ...) natural_depth -> α#n
-  [(abstract-actor (a_this ((S ...) e)) (a ...) natural_depth)
+  [(abstract-actor (a_this ((Q ...) e)) (a ...) natural_depth)
    ((abstract-e a_this (a ...) natural_depth)
-    (((abstract-S S (a ...) natural_depth) ...)
+    (((abstract-Q Q (a ...) natural_depth) ...)
      (abstract-e e (a ...) natural_depth)))])
 
 (define-metafunction csa#
-  abstract-S : S (a_internals ...) natural_depth -> S#
-  [(abstract-S (define-state (s [x τ] ...) (x_m) e) (a ...) natural_depth)
-   (define-state (s [x τ] ...) (x_m) (abstract-e e (a ...) natural_depth))]
-  [(abstract-S (define-state (s [x τ] ...) (x_m) e [(timeout n) e_timeout]) (a ...) natural_depth)
-   (define-state (s [x τ] ...) (x_m)
+  abstract-Q : Q (a_internals ...) natural_depth -> Q#
+  [(abstract-Q (define-state (q [x τ] ...) (x_m) e) (a ...) natural_depth)
+   (define-state (q [x τ] ...) (x_m) (abstract-e e (a ...) natural_depth))]
+  [(abstract-Q (define-state (q [x τ] ...) (x_m) e [(timeout n) e_timeout]) (a ...) natural_depth)
+   (define-state (q [x τ] ...) (x_m)
      (abstract-e e (a ...) natural_depth)
      [(timeout (* Nat)) (abstract-e e_timeout (a ...) natural_depth)])])
 
@@ -1294,16 +1294,16 @@
   [(abstract-e string _ _) (* String)]
   [(abstract-e x _ _) x]
   [(abstract-e a (a_int ...) _) (abstract-address a (a_int ...))]
-  [(abstract-e (goto s e ...) (a ...) natural_depth)
-   (goto s (abstract-e e (a ...) natural_depth) ...)]
+  [(abstract-e (goto q e ...) (a ...) natural_depth)
+   (goto q (abstract-e e (a ...) natural_depth) ...)]
   [(abstract-e (begin e ...) (a ...) natural_depth) (begin (abstract-e e (a ...) natural_depth) ...)]
   [(abstract-e (send e_1 e_2) (a ...) natural_depth)
    (send (abstract-e e_1 (a ...) natural_depth) (abstract-e e_2 (a ...) natural_depth))]
-  [(abstract-e (spawn any_location τ e S ...) (a ...) natural_depth)
+  [(abstract-e (spawn any_location τ e Q ...) (a ...) natural_depth)
    (spawn any_location
           τ
           (abstract-e e (a ...) natural_depth)
-          (abstract-S S (a ...) natural_depth) ...)]
+          (abstract-Q Q (a ...) natural_depth) ...)]
   [(abstract-e (let ([x e_binding] ...) e_body) (a ...) natural)
    (let ([x (abstract-e e_binding (a ...) natural)] ...) (abstract-e e_body (a ...) natural))]
   [(abstract-e (case e_val [(t x ...) e_clause] ...) (a ...) natural_depth)

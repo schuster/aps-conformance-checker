@@ -35,9 +35,9 @@
       (receptionists [x_receptionist τ] ...)
       (externals [x_external τ] ...)
       ;; NOTE: ; let-bound values and state args e should be x or v
-      (actors [x (let ([x e] ...) (spawn any_loc τ (goto s e ...) S ...))] ...)))
-  (e (spawn any_loc τ e S ...)
-     (goto s e ...)
+      (actors [x (let ([x e] ...) (spawn any_loc τ (goto q e ...) Q ...))] ...)))
+  (e (spawn any_loc τ e Q ...)
+     (goto q e ...)
      (send e e)
      (begin e ... e)
      ;; TODO: let should probably be syntactic sugar for a special kind of case statement
@@ -59,8 +59,8 @@
      (vector e ...)
      (hash)
      (for/fold ([x e]) ([x e]) e))
-  (S (define-state (s [x τ] ...) (x) e)
-     (define-state (s [x τ] ...) (x) e [(timeout n) e]))
+  (Q (define-state (q [x τ] ...) (x) e)
+     (define-state (q [x τ] ...) (x) e [(timeout n) e]))
   (primop
    <
    <=
@@ -92,7 +92,7 @@
    print-len)
   (x self
      variable-not-otherwise-mentioned )
-  ((s t l) variable-not-otherwise-mentioned)
+  ((q t l) variable-not-otherwise-mentioned)
   (n natural)
   (τ Nat
      String
@@ -111,7 +111,7 @@
   (K (α μ ρ χ))
   (α (αn ...))
   (αn (a b))
-  (b ((S ...) e)) ; behavior
+  (b ((Q ...) e)) ; behavior
   (μ (m ...))
   (m (a <= v))
   ((ρ χ) (a ...))
@@ -187,9 +187,9 @@
   [(spawn->behavior e_spawn ([x_binding v_binding] ...) a_self)
    b
    ;; 1. Substitute all non-self bindings
-   (where (spawn _ _ e_goto S ...) (subst-n e_spawn [x_binding v_binding] ...))
+   (where (spawn _ _ e_goto Q ...) (subst-n e_spawn [x_binding v_binding] ...))
    ;; 2. Substitute the self-binding
-   (where b (((subst-n/S S [self a_self]) ...) (subst-n e_goto [self a_self])))])
+   (where b (((subst-n/Q Q [self a_self]) ...) (subst-n e_goto [self a_self])))])
 
 (module+ test
   (test-case "Instantiate program"
@@ -284,10 +284,10 @@
   [(subst n x v) n]
   [(subst a x v) a]
   [(subst string x v) string]
-  [(subst (spawn any_loc τ e S ...) self v) (spawn any_loc τ e S ...)]
-  [(subst (spawn any_loc τ e S ...) x v)
-    (spawn any_loc τ (subst e x v) (subst/S S x v) ...)]
-  [(subst (goto s e ...) x v) (goto s (subst e x v) ...)]
+  [(subst (spawn any_loc τ e Q ...) self v) (spawn any_loc τ e Q ...)]
+  [(subst (spawn any_loc τ e Q ...) x v)
+    (spawn any_loc τ (subst e x v) (subst/Q Q x v) ...)]
+  [(subst (goto q e ...) x v) (goto q (subst e x v) ...)]
   [(subst (send e_1 e_2) x v)
    (send (subst e_1 x v) (subst e_2 x v))]
   [(subst (begin e ...) x v) (begin (subst e x v) ...)]
@@ -336,23 +336,23 @@
                 (term (case q [(A) (+ 5 y)] [(B x z) (+ x z)]))))
 
 (define-metafunction csa-eval
-  subst/S : S x v -> S
-  [(subst/S (define-state (s [x_s τ_s] ...) (x_h) e) x v)
-   (define-state (s [x_s τ_s] ...) (x_h) e)
-   (where (_ ... x _ ...) (x_s ... x_h))]
-  [(subst/S (define-state (s [x_s τ_s] ...) (x_h) e) x v)
-   (define-state (s [x_s τ_s] ...) (x_h) (subst e x v))]
-  [(subst/S (define-state (s [x_s τ_s] ...) (x_h) e_1 [(timeout n) e_2]) x v)
-   (define-state (s [x_s τ_s] ...) (x_h) e_1 [(timeout n) e_2])
-   (where (_ ... x _ ...) (x_s ... x_h))]
-  [(subst/S (define-state (s [x_s τ_s] ...) (x_h) e_1 [(timeout n) e_2]) x v)
-   (define-state (s [x_s τ_s] ...) (x_h) (subst e_1 x v) [(timeout n) (subst e_2 x v)])])
+  subst/Q : Q x v -> Q
+  [(subst/Q (define-state (q [x_q τ_q] ...) (x_h) e) x v)
+   (define-state (q [x_q τ_q] ...) (x_h) e)
+   (where (_ ... x _ ...) (x_q ... x_h))]
+  [(subst/Q (define-state (q [x_q τ_q] ...) (x_h) e) x v)
+   (define-state (q [x_q τ_q] ...) (x_h) (subst e x v))]
+  [(subst/Q (define-state (q [x_q τ_q] ...) (x_h) e_1 [(timeout n) e_2]) x v)
+   (define-state (q [x_q τ_q] ...) (x_h) e_1 [(timeout n) e_2])
+   (where (_ ... x _ ...) (x_q ... x_h))]
+  [(subst/Q (define-state (q [x_q τ_q] ...) (x_h) e_1 [(timeout n) e_2]) x v)
+   (define-state (q [x_q τ_q] ...) (x_h) (subst e_1 x v) [(timeout n) (subst e_2 x v)])])
 
 (define-metafunction csa-eval
-  subst-n/S : S [x v] ... -> S
-  [(subst-n/S S) S]
-  [(subst-n/S S [x v] any_rest ...)
-   (subst-n/S (subst/S S x v) any_rest ...)])
+  subst-n/Q : Q [x v] ... -> Q
+  [(subst-n/Q Q) Q]
+  [(subst-n/Q Q [x v] any_rest ...)
+   (subst-n/Q (subst/Q Q x v) any_rest ...)])
 
 (module+ test
   (check-equal? (term (subst 0 x 1))
@@ -361,13 +361,13 @@
                 (term 0))
   (check-equal? (term (subst a b 0))
                 (term a))
-  (check-equal? (term (subst (goto s x y) x 0))
-                (term (goto s 0 y)))
+  (check-equal? (term (subst (goto q x y) x 0))
+                (term (goto q 0 y)))
   (check-equal? (term (subst (begin x y x) x 0))
                 (term (begin 0 y 0)))
 
-  (check-equal? (term (subst-n (goto s x y z) (x 0) (y 1)))
-                (term (goto s 0 1 z)))
+  (check-equal? (term (subst-n (goto q x y z) (x 0) (y 1)))
+                (term (goto q 0 1 z)))
   (check-equal? (term (subst (+ a b) a 1))
                 (term (+ 1 b)))
   (check-equal? (term (subst (record [r1 x] [r2 y]) x 2))
@@ -377,7 +377,7 @@
   (check-equal? (term (subst (! rec [field 2]) rec (record [field 1])))
                 (term (! (record [field 1]) [field 2])))
   (check-equal?
-   (term (subst-n/S (define-state (S1 [a Nat]) (m) (+ a b)) [a 1] [b 2] [m 3]))
+   (term (subst-n/Q (define-state (S1 [a Nat]) (m) (+ a b)) [a 1] [b 2] [m 3]))
    (term (define-state (S1 [a Nat]) (m) (+ a 2)))))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -424,7 +424,7 @@
 
 ;; Returns the type given in a spawn expression
 (define-metafunction csa-eval
-  spawn-type/mf : (spawn any_loc τ e S ...) -> τ
+  spawn-type/mf : (spawn any_loc τ e Q ...) -> τ
   [(spawn-type/mf (spawn _ τ _ ...))
    τ])
 
