@@ -48,9 +48,8 @@
 ;; Abstract-interpretation version of CSA
 (define-extended-language csa# csa-eval
   (i# (α# β# μ#))
-  (α# (α#n ...))
+  (α# ((a#int b#) ...))
   (β# ((a#int (b# ...)) ...)) ; blurred actors, represented by a set of abstract behaviors
-  (α#n (a#int b#))
   (b# ((Q# ...) e#)) ; behavior
   ;; TODO: refactor the packets to hold *un*typed addresses - will solve most of my address comparison
   ;; issues
@@ -103,7 +102,7 @@
    (obs-ext natural τ))
   (ρ# (a#int ...))
   ;; H# = handler machine state (exp + outputs + loop outputs + spawns so far)
-  (H# (e# ([a# v#] ...) ([a# v#] ...) (α#n ...)))
+  (H# (e# ([a# v#] ...) ([a# v#] ...) ((a#int b#) ...)))
   (E# hole
       (spawning a#int τ E# Q# ...)
       (goto q v# ... E# e# ...)
@@ -845,10 +844,10 @@
 
 (module+ test
   (define (csa#-make-simple-test-config exp)
-    (redex-let* csa# ([α#n (term [(init-addr 0 Nat)
-                                  (((define-state (Always) (long-unused-name) (begin ,exp (goto Always))))
-                                   (begin ,exp (goto Always)))])]
-                      [α# (term (α#n))]
+    (redex-let* csa# ([a# (term (init-addr 0 Nat))]
+                      [b# (term (((define-state (Always) (long-unused-name) (begin ,exp (goto Always))))
+                                 (begin ,exp (goto Always))))]
+                      [α# (term ([a# b#]))]
                       [μ# (term ())])
                 (term (α# μ# ()))))
 
@@ -1260,18 +1259,18 @@
 
 (define-metafunction csa#
   abstract-config/mf : i (a_internal ...) natural_recursion-depth -> i#
-  [(abstract-config/mf ((αn ...) ; actors
+  [(abstract-config/mf (((a b) ...) ; actors
                  () ; messages-in-transit
                  _ ; receptionists (ignored because the spec config manages these)
                  _ ; externals (ignored because the spec config manages these)
                  )
                 (a_internal ...)
                 natural_depth)
-   ((α#n ...) () ())
-   (where (α#n ...) ((abstract-actor αn (a_internal ...) natural_depth) ...))])
+   (([a# b#] ...) () ())
+   (where ([a# b#] ...) ((abstract-actor (a b) (a_internal ...) natural_depth) ...))])
 
 (define-metafunction csa#
-  abstract-actor : αn (a_internals ...) natural_depth -> α#n
+  abstract-actor : (a b) (a_internals ...) natural_depth -> [a# b#]
   [(abstract-actor (a_this ((Q ...) e)) (a ...) natural_depth)
    ((abstract-e a_this (a ...) natural_depth)
     (((abstract-Q Q (a ...) natural_depth) ...)
@@ -1483,7 +1482,7 @@
              ((init-addr 2 Nat) (obs-ext 3 Nat) single))))
      null)))
 
-;; impl-config spawn-flag -> impl-config (α#n ...)
+;; impl-config spawn-flag -> impl-config ((a# b#) ...)
 ;;
 ;; Removes from the configuration all actors that have the given spawn flag in their address, along
 ;; with any in-transit message packets sent to them. Returns the resulting config, and the list of
@@ -1577,28 +1576,30 @@
   (test-equal? "blur test 2"
     (blur-addresses
      (redex-let* csa#
-                 ([α#n (term
-                        ((init-addr 0 Nat)
-                         (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
-                             (begin
-                               (send (obs-ext 1 Nat) (* Nat))
-                               (send (obs-ext 2 Nat) (* Nat))
-                               (goto A x y z))))
-                          (goto A (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))))]
-                  [i# (term ((α#n) () ()))])
-                 (term i#))
-     null
-     (term ((obs-ext 1 Nat) (obs-ext 3 Nat))))
-    (redex-let* csa#
-                ([α#n (term
+                 ([(a# b#)
+                   (term
                        ((init-addr 0 Nat)
                         (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
                             (begin
                               (send (obs-ext 1 Nat) (* Nat))
-                              (send (* (Addr Nat)) (* Nat))
+                              (send (obs-ext 2 Nat) (* Nat))
                               (goto A x y z))))
-                         (goto A (* (Addr Nat)) (obs-ext 3 Nat) (* (Addr Nat))))))]
-                 [i# (term ((α#n) () ()))])
+                         (goto A (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))))]
+                  [i# (term (([a# b#]) () ()))])
+                 (term i#))
+     null
+     (term ((obs-ext 1 Nat) (obs-ext 3 Nat))))
+    (redex-let* csa#
+                ([(a# b#)
+                  (term
+                         ((init-addr 0 Nat)
+                          (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
+                              (begin
+                                (send (obs-ext 1 Nat) (* Nat))
+                                (send (* (Addr Nat)) (* Nat))
+                                (goto A x y z))))
+                           (goto A (* (Addr Nat)) (obs-ext 3 Nat) (* (Addr Nat))))))]
+                 [i# (term (([a# b#]) () ()))])
                 (term i#)))
 
   ;; Make sure duplicates are removed from vectors, lists, and hashes
@@ -1748,14 +1749,14 @@
   (term (make-single-actor-abstract-config/mf ,actor)))
 
 (define-metafunction csa#
-  make-single-actor-abstract-config/mf : α#n -> i#
-  [(make-single-actor-abstract-config/mf α#n)
-   ((α#n) () ())])
+  make-single-actor-abstract-config/mf : (a# b#) -> i#
+  [(make-single-actor-abstract-config/mf (a# b#))
+   (([a# b#]) () ())])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
 
-;; Returns a list of actors (α#n's)
+;; Returns a list of actors ([a# b#] tuples)
 (define (csa#-config-actors config)
   (redex-let csa# ([(α# _ ...) config])
              (term α#)))
@@ -1774,7 +1775,7 @@
   (term (config-actor-and-rest-by-address/mf ,config ,addr)))
 
 (define-metafunction csa#
-  config-actor-and-rest-by-address/mf : i# a#int -> ((α#n ...) α#n (α#n ...))
+  config-actor-and-rest-by-address/mf : i# a#int -> (([a# b#] ...) [a# b#] ([a# b#] ...))
   [(config-actor-and-rest-by-address/mf ((any_1 ... (name the-actor (a#int _)) any_2 ...) _ ...)
                                         a#int_target)
    ((any_1 ...) the-actor (any_2 ...))
@@ -1785,7 +1786,7 @@
   (term (actor-by-address/mf ,(csa#-config-actors config) ,addr)))
 
 (define-metafunction csa#
-  actor-by-address/mf : α# a#int -> #f or α#n
+  actor-by-address/mf : α# a#int -> #f or [a# b#]
   [(actor-by-address/mf () _) #f]
   [(actor-by-address/mf ((a#int any_behavior) _ ...) a#int_target)
    (a#int any_behavior)
@@ -1813,9 +1814,8 @@
    (same-external-address-without-type? (obs-ext natural _) (obs-ext natural _))])
 
 (define (csa#-actor-address a)
-  (redex-let* csa# ([α#n a]
-                    [(a#int _) (term α#n)])
-              (term a#int)))
+  (redex-let* csa# ([(a#int _) a])
+    (term a#int)))
 
 (define (csa#-blurred-actor-address a)
   (redex-let csa# ([(a#int _) a])
@@ -1840,7 +1840,7 @@
 
 (define csa#-output-message cadr)
 
-;; α#n -> b#
+;; (a# b#) -> b#
 (define (actor-behavior actor)
   (second actor))
 

@@ -109,8 +109,7 @@
 (define-extended-language csa-eval
   csa
   (i (α μ ρ χ))
-  (α (αn ...))
-  (αn (a b))
+  (α ((a b) ...))
   (b ((Q ...) e)) ; behavior
   (μ (m ...))
   (m (a <= v))
@@ -251,22 +250,20 @@
   (term (make-single-actor-config/mf ,actor)))
 
 (define-metafunction csa-eval
-  make-single-actor-config/mf : αn -> i
-  [(make-single-actor-config/mf αn)
-   ((αn) () (a) ())
-   (where (a _) αn)])
+  make-single-actor-config/mf : (a b) -> i
+  [(make-single-actor-config/mf (a b))
+   (((a b)) () (a) ())])
 
 (define (make-empty-queues-config receptionists internal-actors)
   (term (make-empty-queues-config/mf ,receptionists ,internal-actors)))
 
 (define-metafunction csa-eval
-  make-empty-queues-config/mf : (αn ...) (αn ...) -> i
-  [(make-empty-queues-config/mf (αn_receptionist ...) (αn_internal ...))
-   ((αn_receptionist ... αn_internal ...)
+  make-empty-queues-config/mf : ((a b) ...) ((a b) ...) -> i
+  [(make-empty-queues-config/mf ((a_receptionist b_receptionist) ...) (any_internal ...))
+   (((a_receptionist b_receptionist) ... any_internal ...)
     ()
     (a_receptionist ...)
-    ())
-   (where ((a_receptionist _) ...) (αn_receptionist ...))])
+    ())])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution

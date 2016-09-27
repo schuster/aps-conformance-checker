@@ -711,7 +711,7 @@
 
 (module+ test
   (define-simple-check (check-valid-actor? actual)
-    (redex-match? csa-eval αn actual))
+    (redex-match? csa-eval (a b) actual))
 
   (define-syntax (test-valid-actor? stx)
     (syntax-parse stx
