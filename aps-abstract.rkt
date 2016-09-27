@@ -24,7 +24,7 @@
  aps#-relevant-external-addrs
 
  ;; Testing helpers
- make-Σ#
+ make-s#
  aps#-make-no-transition-config
 
  ;; Debugging helpers
@@ -49,7 +49,7 @@
 
 (define-extended-language aps#
   aps-eval-with-csa#
-  (Σ# (σ# (a#int_unobs-receptionists ...) (goto φ u ...) (Φ ...) O#))
+  (s# (σ# (a#int_unobs-receptionists ...) (goto φ u ...) (Φ ...) O#))
   (σ# a# UNKNOWN) ; observed environment interface
   (u .... a#ext)
   (O# ((a#ext (m po) ...) ...)))
@@ -59,8 +59,8 @@
 
 (define (aps#-abstract-config spec-config internal-addresses)
   ;; Doing a redex-let here just to add a codomain contract
-  (redex-let aps# ([Σ# (term (aps#-abstract-config/mf ,spec-config ,internal-addresses))])
-             (term Σ#)))
+  (redex-let aps# ([s# (term (aps#-abstract-config/mf ,spec-config ,internal-addresses))])
+             (term s#)))
 
 ;; TODO: rewrite this and put a better contract on here once we put #'s on all the APS# non-terminals
 (define-metafunction aps#
@@ -193,7 +193,7 @@
 
 ;; TODO: deal with the case where the pattern variables shadow the state variables
 (define-metafunction aps#
-  config-current-transitions/mf : Σ# -> ((pt -> (f ...) (goto φ u ...)) ...)
+  config-current-transitions/mf : s# -> ((pt -> (f ...) (goto φ u ...)) ...)
   [(config-current-transitions/mf
     (_
      _
@@ -209,7 +209,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
 
-;; Σ# bool trigger -> ([Σ# (Σ#_spawn ...)] ...)
+;; s# bool trigger -> ([s# (s#_spawn ...)] ...)
 ;;
 ;; Returns all spec configs that can possibly be reached in one step by transitioning from the given
 ;; trigger, also returning spec configs spawned during that transition
@@ -223,14 +223,14 @@
 (module+ test
   (test-equal? "Null step is possible"
                (aps#-matching-steps
-                (make-Σ# (term ((define-state (A))))
+                (make-s# (term ((define-state (A))))
                          (term (goto A))
                          (term ())
                          (term ()))
                 #f
                 (term (timeout/empty-queue (init-addr 0 Nat))))
                (list
-                (list (make-Σ# (term ((define-state (A))))
+                (list (make-s# (term ((define-state (A))))
                          (term (goto A))
                          (term ())
                          (term ()))
@@ -238,7 +238,7 @@
 
   (test-equal? "Multiple copies of output commitments are merged"
                (aps#-matching-steps
-                (make-Σ# (term ((define-state (A r) [* -> ((obligation r *)) (goto A r)])))
+                (make-s# (term ((define-state (A r) [* -> ((obligation r *)) (goto A r)])))
                          (term (goto A (obs-ext 0 Nat)))
                          null
                          (term (((obs-ext 0 Nat) (single *)))))
@@ -246,7 +246,7 @@
                 (term (external-receive (init-addr 0 Nat) (* Nat))))
                (list
                 (list
-                 (make-Σ# (term ((define-state (A r) [* -> ((obligation r *)) (goto A r)])))
+                 (make-s# (term ((define-state (A r) [* -> ((obligation r *)) (goto A r)])))
                           (term (goto A (obs-ext 0 Nat)))
                           null
                           (term (((obs-ext 0 Nat) (many *)))))
@@ -300,7 +300,7 @@
   (define-values (obligations forks) (partition (lambda (f) (equal? (car f) 'obligation)) fs))
   (list obligations forks))
 
-;; Σ# ((σ# goto-exp (Φ ...)) ...) -> Σ# (Σ# ...)
+;; s# ((σ# goto-exp (Φ ...)) ...) -> s# (s# ...)
 ;;
 ;; Given the current configuration and the info needed to spawn new configs, splits information from
 ;; the current configuration off to form the new configurations
@@ -674,7 +674,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Commitment Satisfaction
 
-;; Σ# ((a#ext v#) ...) ->  Σ# (Σ# ...) ([a po] ...)
+;; s# ((a#ext v#) ...) ->  s# (s# ...) ([a po] ...)
 ;;
 ;; Returns a tuple of the specification config after having resolved all of the given outputs
 ;; (removing output commitments as necessary), a list of the satisfied commitments, and the spawned
@@ -884,7 +884,7 @@
   (term (config-receptionists/mf ,config)))
 
 (define-metafunction aps#
-  config-receptionists/mf : Σ# -> (a#int ...)
+  config-receptionists/mf : s# -> (a#int ...)
   [(config-receptionists/mf (_ (a#int ...) _ ...)) (a#int ...)])
 
 (define (aps#-config-state-defs config)
@@ -903,7 +903,7 @@
   (term (config-commitment-map/mf ,config)))
 
 (define-metafunction aps#
-  config-commitment-map/mf : Σ# -> O#
+  config-commitment-map/mf : s# -> O#
   [(config-commitment-map/mf (_ _ _ _ O#)) O#])
 
 (module+ test
@@ -920,13 +920,13 @@
   (term (config-commitments-by-multiplicity/mf ,config many)))
 
 (define-metafunction aps#
-  config-commitments-by-multiplicity/mf : Σ# m -> ([a#ext po] ...)
-  [(config-commitments-by-multiplicity/mf Σ# m_target)
+  config-commitments-by-multiplicity/mf : s# m -> ([a#ext po] ...)
+  [(config-commitments-by-multiplicity/mf s# m_target)
    ,(append*
      (for/list ([address (term (a#ext ...))]
                 [pattern-list (term ((po_result ...) ...))])
        (for/list ([pattern pattern-list]) (list address pattern))))
-   (where ((a#ext (m_any po) ...) ...) ,(aps#-config-commitment-map (term Σ#)))
+   (where ((a#ext (m_any po) ...) ...) ,(aps#-config-commitment-map (term s#)))
    (where (((_ po_result) ...) ...)
           ,(map (lambda (com-list)
                   (filter (lambda (com) (equal? (first com) (term m_target))) com-list))
@@ -1004,27 +1004,27 @@
 
 ;; "Relevant" external addresses are those in either the current state arguments or obligations of a
 ;; spec config
-(define (aps#-relevant-external-addrs Σ#)
-  (term (relevant-external-addrs/mf ,Σ#)))
+(define (aps#-relevant-external-addrs s#)
+  (term (relevant-external-addrs/mf ,s#)))
 
 (define-metafunction aps#
-  relevant-external-addrs/mf : Σ# -> (a#ext ...)
-  [(relevant-external-addrs/mf Σ#)
+  relevant-external-addrs/mf : s# -> (a#ext ...)
+  [(relevant-external-addrs/mf s#)
    ,(remove-duplicates (term (any_args ... any_commitment-addr ...)))
-   (where (any_args ...) ,(aps#-config-current-state-args (term Σ#)))
-   (where ((any_commitment-addr _ ...) ...) (config-commitment-map/mf Σ#))])
+   (where (any_args ...) ,(aps#-config-current-state-args (term s#)))
+   (where ((any_commitment-addr _ ...) ...) (config-commitment-map/mf s#))])
 
 (module+ test
   (check-equal?
    (aps#-relevant-external-addrs
     (redex-let* aps#
                 ([O# (term (((obs-ext 1 Nat)) ((obs-ext 3 Nat)) ((obs-ext 4 Nat))))]
-                 [Σ# (term (UNKNOWN
+                 [s# (term (UNKNOWN
                             ()
                             (goto Always (obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat))
                             ((define-state (Always r1 r2) (* -> () (goto Always r1 r2))))
                             O#))])
-                (term Σ#)))
+                (term s#)))
    (term ((obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -1300,7 +1300,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing Helpers
 
-(define (make-Σ# defs goto receptionists out-coms)
+(define (make-s# defs goto receptionists out-coms)
   (term ((init-addr 0 Nat) ,receptionists ,goto ,defs ,out-coms)))
 
 ;; ---------------------------------------------------------------------------------------------------

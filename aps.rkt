@@ -62,11 +62,9 @@
 
 (define-extended-language aps-eval
   aps
-  ;; TODO: rename Σ to s (to match the <i, s> from proofs)
-
   ;; Specification configuration contains the observed environment interface σ, unobserved environment
   ;; interface (a ...), current state, state definitions, and obligation map
-  (Σ (σ (a ...) (goto φ u ...) (Φ ...) O))
+  (s (σ (a ...) (goto φ u ...) (Φ ...) O))
   (σ a UNKNOWN)
   (O ([a po ...] ...))
   ;; arguments in aps-eval can be instantiated (as addresses)
@@ -153,7 +151,7 @@
 (define (aps-valid-spec? φ) (redex-match? aps spec φ))
 
 (define (aps-valid-config? c)
-  (if (redex-match aps-eval Σ c) #t #f))
+  (if (redex-match aps-eval s c) #t #f))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
@@ -170,7 +168,7 @@
                         (goto A)
                         ((define-state (A)))
                         ())))
-    (check-not-false (redex-match aps-eval Σ spec))
+    (check-not-false (redex-match aps-eval s spec))
     (check-equal? (aps-config-obs-interface spec) (term (addr 2 Nat)))))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -182,8 +180,8 @@
 (define (make-spec defs-state-and-addr receptionists)
   (redex-let* aps-eval ([((Φ ...) (goto φ a_arg ...) σ) defs-state-and-addr]
                         [(a_rec ...) receptionists]
-                        [Σ (term (σ (a_rec ...) (goto φ a_arg ...) (Φ ...) ([a_arg] ...)))])
-              (term Σ)))
+                        [s (term (σ (a_rec ...) (goto φ a_arg ...) (Φ ...) ([a_arg] ...)))])
+              (term s)))
 
 ;; Instantiates the given program and specification as configurations, allocating fresh addresses for
 ;; each actor in the program and substituting them throughout both configurations as needed.
@@ -191,13 +189,13 @@
   (term (instantiate-configs/mf ,prog ,spec)))
 
 (define-metafunction aps-eval
-  instantiate-configs/mf : P spec -> (K Σ)
+  instantiate-configs/mf : P spec -> (i s)
   [(instantiate-configs/mf P spec)
-   (K Σ)
+   (i s)
    ;; NOTE: the receptionists and externals for the spec (including their declared types) should be
    ;; subsets of those for the program
-   (where (K ([x a] ...)) ,(instantiate-prog+bindings (term P)))
-   (where Σ (instantiate-spec/mf spec ([x a] ...)))])
+   (where (i ([x a] ...)) ,(instantiate-prog+bindings (term P)))
+   (where s (instantiate-spec/mf spec ([x a] ...)))])
 
 (module+ test
   (test-case "Instantiate test"
@@ -248,7 +246,7 @@
 ;; Instantiates the given spec as a specification configuration, using the given bindings as allocated
 ;; addresses.
 (define-metafunction aps-eval
-  instantiate-spec/mf : spec ([x a] ...) -> Σ
+  instantiate-spec/mf : spec ([x a] ...) -> s
   [(instantiate-spec/mf (specification (receptionists [x_rec _] ...)
                                        (externals [x_cont _] ...)
                                        any_obs-int

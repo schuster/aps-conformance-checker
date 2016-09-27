@@ -108,7 +108,7 @@
 
 (define-extended-language csa-eval
   csa
-  (K (α μ ρ χ))
+  (i (α μ ρ χ))
   (α (αn ...))
   (αn (a b))
   (b ((Q ...) e)) ; behavior
@@ -137,10 +137,10 @@
   (term (instantiate-prog/mf ,prog)))
 
 (define-metafunction csa-eval
-  instantiate-prog/mf : P -> K
+  instantiate-prog/mf : P -> i
   [(instantiate-prog/mf P)
-   K
-   (where (K ([x a] ...)) (instantiate-prog+bindings/mf P))])
+   i
+   (where (i ([x a] ...)) (instantiate-prog+bindings/mf P))])
 
 ;; Instantiates the given program as a configuration by allocating fresh addresses and subsituting
 ;; them throughout the program as needed. Returns both the configuration and the set of bindings for
@@ -149,11 +149,11 @@
   (term (instantiate-prog+bindings/mf ,prog)))
 
 (define-metafunction csa-eval
-  instantiate-prog+bindings/mf : P -> (K ([x a] ...))
+  instantiate-prog+bindings/mf : P -> (i ([x a] ...))
   [(instantiate-prog+bindings/mf (program (receptionists [x_receptionist _] ...)
                                                (externals     [x_external     τ_external] ...)
                                                (actors [x_internal (let ([x_let e_let] ...) e)] ...)))
-   (K
+   (i
     ([x_internal a_internal] ... [x_external a_external] ...))
 
    ;; 1. Generate addresses for internal and external actors
@@ -172,7 +172,7 @@
                             a_internal) ...))
 
    ;; 3. Construct the configuration
-   (where K
+   (where i
           [; actors
            ((a_internal b) ...)
            ; message store
@@ -251,7 +251,7 @@
   (term (make-single-actor-config/mf ,actor)))
 
 (define-metafunction csa-eval
-  make-single-actor-config/mf : αn -> K
+  make-single-actor-config/mf : αn -> i
   [(make-single-actor-config/mf αn)
    ((αn) () (a) ())
    (where (a _) αn)])
@@ -260,7 +260,7 @@
   (term (make-empty-queues-config/mf ,receptionists ,internal-actors)))
 
 (define-metafunction csa-eval
-  make-empty-queues-config/mf : (αn ...) (αn ...) -> K
+  make-empty-queues-config/mf : (αn ...) (αn ...) -> i
   [(make-empty-queues-config/mf (αn_receptionist ...) (αn_internal ...))
    ((αn_receptionist ... αn_internal ...)
     ()
@@ -386,7 +386,7 @@
 (define (csa-valid-program? p) (redex-match csa-eval P p))
 
 (define (csa-valid-config? c)
-  (and (redex-match csa-eval K c)
+  (and (redex-match csa-eval i c)
        (not (check-duplicates (csa-config-internal-addresses c)))))
 
 (define (csa-valid-receptionist-list? l)

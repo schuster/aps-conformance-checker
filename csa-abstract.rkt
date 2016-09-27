@@ -47,7 +47,7 @@
 
 ;; Abstract-interpretation version of CSA
 (define-extended-language csa# csa-eval
-  (K# (α# β# μ#))
+  (i# (α# β# μ#))
   (α# (α#n ...))
   (β# ((a#int (b# ...)) ...)) ; blurred actors, represented by a set of abstract behaviors
   (α#n (a#int b#))
@@ -341,11 +341,11 @@
     ;; TODO: deal with the case where x_m shadows an x_q
     (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_q v#] ...)))))
 
-;; Abstractly removes the entry in K# corresponding to the packet (a# v#), which will actually remove
+;; Abstractly removes the entry in i# corresponding to the packet (a# v#), which will actually remove
 ;; it if its multiplicity is single, else leave it there if its multiplicity is many (because removing
 ;; a message from an abstract list of 0 or more yields a list of 0 or more).
 (define-metafunction csa#
-  config-remove-packet/mf : K# (a# v#) -> K#
+  config-remove-packet/mf : i# (a# v#) -> i#
   [(config-remove-packet/mf (any_precise any_blurred (any_pkt1 ... (a# v# single) any_pkt2 ...))
                             (a# v#))
    (any_precise any_blurred (any_pkt1 ... any_pkt2 ...))]
@@ -380,7 +380,7 @@
                                     update-behavior
                                     abort)))))))
 
-;; a#int b# K# (K# a#int e# -> K#) -> (Listof csa#-transition)
+;; a#int b# i# (i# a#int e# -> i#) -> (Listof csa#-transition)
 ;;
 ;; Returns all possible transitions enabled by taking a timeout on the given behavior for the actor
 ;; with the given address (if such a timeout exists). If no such timeout exists, the empty list is
@@ -852,7 +852,7 @@
                       [μ# (term ())])
                 (term (α# μ# ()))))
 
-  (check-not-false (redex-match csa# K# (csa#-make-simple-test-config (term (* Nat)))))
+  (check-not-false (redex-match csa# i# (csa#-make-simple-test-config (term (* Nat)))))
 
   (define-check (check-exp-steps-to? e1 e2)
     (define next-steps (apply-reduction-relation handler-step# (inject/H# e1)))
@@ -1010,7 +1010,7 @@
     (term (update-behavior/blurred/mf ,config ,address (,state-defs ,goto-exp)))))
 
 (define-metafunction csa#
-  update-behavior/blurred/mf : K# a#int b# -> K#
+  update-behavior/blurred/mf : i# a#int b# -> i#
   [(update-behavior/blurred/mf
     (any_precise-actors
      (any_blurred1 ... (a#int (b#_old ...)) any_blurred2 ...)
@@ -1259,7 +1259,7 @@
   ((abstract-config-result-continuation) #f))
 
 (define-metafunction csa#
-  abstract-config/mf : K (a_internal ...) natural_recursion-depth -> K#
+  abstract-config/mf : i (a_internal ...) natural_recursion-depth -> i#
   [(abstract-config/mf ((αn ...) ; actors
                  () ; messages-in-transit
                  _ ; receptionists (ignored because the spec config manages these)
@@ -1585,8 +1585,8 @@
                                (send (obs-ext 2 Nat) (* Nat))
                                (goto A x y z))))
                           (goto A (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))))]
-                  [K# (term ((α#n) () ()))])
-                 (term K#))
+                  [i# (term ((α#n) () ()))])
+                 (term i#))
      null
      (term ((obs-ext 1 Nat) (obs-ext 3 Nat))))
     (redex-let* csa#
@@ -1598,8 +1598,8 @@
                               (send (* (Addr Nat)) (* Nat))
                               (goto A x y z))))
                          (goto A (* (Addr Nat)) (obs-ext 3 Nat) (* (Addr Nat))))))]
-                 [K# (term ((α#n) () ()))])
-                (term K#)))
+                 [i# (term ((α#n) () ()))])
+                (term i#)))
 
   ;; Make sure duplicates are removed from vectors, lists, and hashes
   (test-equal? "blur test 3"
@@ -1748,7 +1748,7 @@
   (term (make-single-actor-abstract-config/mf ,actor)))
 
 (define-metafunction csa#
-  make-single-actor-abstract-config/mf : α#n -> K#
+  make-single-actor-abstract-config/mf : α#n -> i#
   [(make-single-actor-abstract-config/mf α#n)
    ((α#n) () ())])
 
@@ -1774,7 +1774,7 @@
   (term (config-actor-and-rest-by-address/mf ,config ,addr)))
 
 (define-metafunction csa#
-  config-actor-and-rest-by-address/mf : K# a#int -> ((α#n ...) α#n (α#n ...))
+  config-actor-and-rest-by-address/mf : i# a#int -> ((α#n ...) α#n (α#n ...))
   [(config-actor-and-rest-by-address/mf ((any_1 ... (name the-actor (a#int _)) any_2 ...) _ ...)
                                         a#int_target)
    ((any_1 ...) the-actor (any_2 ...))
@@ -1846,7 +1846,7 @@
 
 ;; Returns all behaviors assigned to the blurred actor with the given address in the given config
 (define-metafunction csa#
-  blurred-actor-behaviors-by-address/mf : K# a#int -> (b# ...)
+  blurred-actor-behaviors-by-address/mf : i# a#int -> (b# ...)
   [(blurred-actor-behaviors-by-address/mf (_ (_ ... (a#int any_behaviors) _ ...) _) a#int_target)
    any_behaviors
    (judgment-holds (same-internal-address-without-type? a#int a#int_target))])

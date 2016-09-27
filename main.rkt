@@ -313,7 +313,7 @@
   matched-stepped-configs)
 
 (module+ test
-  (define null-spec-config (make-Σ# '((define-state (S))) '(goto S) null null))
+  (define null-spec-config (make-s# '((define-state (S))) '(goto S) null null))
 
   (test-case "Null transition okay for unobs"
     (check-equal?
@@ -330,7 +330,7 @@
   (test-case "No match if trigger does not match"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A) [x -> () (goto A)])) '(goto A) null null)
+      (make-s# '((define-state (A) [x -> () (goto A)])) '(goto A) null null)
       (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null #f))
      (mutable-set)))
   (test-case "Unobserved outputs don't need to match"
@@ -342,23 +342,23 @@
   (test-case "No match if outputs do not match"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat))))
+      (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat))))
       (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) #f))
      (mutable-set)))
   (test-case "Output can be matched by previous commitment"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat) (single *))))
+      (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat) (single *))))
       (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) #f))
-     (mutable-set (spec-step (make-Σ# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat))))
+     (mutable-set (spec-step (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat))))
                              null
                              (list `[(obs-ext 1 Nat) *])))))
   (test-case "Output can be matched by new commitment"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A) [x -> ([obligation x *]) (goto A)])) '(goto A) null null)
+      (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)])) '(goto A) null null)
       (impl-step '(external-receive (init-addr 0 Nat) (obs-ext 1 Nat)) #t (list '((obs-ext 1 Nat) (* Nat))) #f))
-     (mutable-set (spec-step (make-Σ# '((define-state (A) [x -> ([obligation x *]) (goto A)]))
+     (mutable-set (spec-step (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)]))
                                       '(goto A)
                                       null
                                       (list '((obs-ext 1 Nat))))
@@ -367,10 +367,10 @@
   (test-case "Multiple copies of same commitment get merged"
     (check-equal?
      (matching-spec-steps
-      (make-Σ# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (single *)]))
+      (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (single *)]))
       (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null #f))
      (mutable-set
-      (spec-step (make-Σ# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (many *)]))
+      (spec-step (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (many *)]))
                  null
                  null)))))
 
@@ -750,7 +750,7 @@
       (addr 0 ,addr-type))))
   (define ignore-all-spec-instance
     (make-ignore-all-spec-instance 'Nat))
-  (check-not-false (redex-match csa-eval K ignore-all-config))
+  (check-not-false (redex-match csa-eval i ignore-all-config))
   (test-valid-instance? ignore-all-spec-instance)
 
   (test-true "ignore all spec/test"
