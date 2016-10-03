@@ -872,6 +872,30 @@
     (check-conformance/config (make-single-actor-config reverse-pattern-matching-actor)
                               (make-exclusive-spec  pattern-match-spec)))
 
+  ;;;; "Or" pattern matching
+  (define or-pattern-match-spec
+    (term
+     (((define-state (Matching r)
+         [* -> ([obligation r (or (variant A *) (variant B *))]) (goto Matching r)]))
+      (goto Matching ,static-response-address)
+      (addr 0 (Union [A Nat] [B Nat])))))
+
+  (define or-wrong-pattern-match-spec
+    (term
+     (((define-state (Matching r)
+         [* -> ([obligation r (or (variant A *) (variant C *))]) (goto Matching r)]))
+      (goto Matching ,static-response-address)
+      (addr 0 (Union [A Nat] [B Nat])))))
+
+  (test-valid-instance? or-pattern-match-spec)
+  (test-valid-instance? or-wrong-pattern-match-spec)
+  (test-true "Pattern match with or"
+    (check-conformance/config (make-single-actor-config pattern-matching-actor)
+                              (make-exclusive-spec or-pattern-match-spec)))
+  (test-false "Pattern match with wrong or pattern"
+    (check-conformance/config (make-single-actor-config pattern-matching-actor)
+                              (make-exclusive-spec or-wrong-pattern-match-spec)))
+
   ;;;; Dynamic request/response
 
   (define request-response-spec

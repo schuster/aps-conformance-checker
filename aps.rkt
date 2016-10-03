@@ -53,6 +53,7 @@
      (record [l p] ...))
   ;; output patterns
   (po *
+      (or po ...)
       (fork (goto φ u ...) Φ ...)
       self
       (variant t po ...)
@@ -88,6 +89,7 @@
 (define-metafunction aps-eval
   subst/aps-eval/po : po x a -> po
   [(subst/aps-eval/po * x a) *]
+  [(subst/aps-eval/po (or po ...) x a) (or (subst/aps-eval/po po x a) ...)]
   [(subst/aps-eval/po (fork any_goto any_s-defs ...) self _)
    (fork any_goto any_s-defs ...)]
   [(subst/aps-eval/po (fork (goto φ u ...) Φ ...) x a)

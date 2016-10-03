@@ -116,6 +116,7 @@
 (define-metafunction aps#
   subst/aps#/po : po x a# -> po
   [(subst/aps#/po * x a#) *]
+  [(subst/aps#/po (or po ...) x a#) (or (subst/aps#/po po x a#) ...)]
   [(subst/aps#/po (fork any_goto any_s-defs ...) self _)
    (fork any_goto any_s-defs ...)]
   [(subst/aps#/po (fork (goto φ u ...) Φ ...) x a#)
@@ -544,6 +545,10 @@
   [-----
    (aps#-matches-po?/j v# σ# * σ# () ,(internals-in (term v#)))]
 
+  [(aps#-matches-po?/j v# σ# po                  any_self-addr any_spawns any_receptionists)
+   -----
+   (aps#-matches-po?/j v# σ# (or _ ... po _ ...) any_self-addr any_spawns any_receptionists)]
+
   [----
    (aps#-matches-po?/j a#int
                        σ#
@@ -639,6 +644,16 @@
   (check-equal?
    (aps#-match-po '(variant A (* Nat) (init-addr 2 Nat)) '(init-addr 2 Nat) '(variant A * self))
    (list '(init-addr 2 Nat) '() '()))
+  (check-equal?
+   (aps#-match-po '(variant A (* Nat) (init-addr 2 Nat))
+                  '(init-addr 2 Nat)
+                  '(or (variant A * self) (variant B)))
+   (list '(init-addr 2 Nat) '() '()))
+  (check-equal? (aps#-match-po (term (variant A)) 'UNKNOWN (term (or (variant A) (variant B))))
+                (list 'UNKNOWN null null))
+  (check-equal? (aps#-match-po (term (variant B)) 'UNKNOWN (term (or (variant A) (variant B))))
+                (list 'UNKNOWN null null))
+  (check-false (aps#-match-po (term (variant C)) 'UNKNOWN (term (or (variant A) (variant B)))))
   (check-false
    (aps#-match-po '(variant A (* Nat) (init-addr 2 Nat)) '(init-addr 1 Nat) '(variant A * self)))
   (test-equal? "Spawn match po test"
