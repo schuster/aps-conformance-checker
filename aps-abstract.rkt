@@ -689,7 +689,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Commitment Satisfaction
 
-;; s# ((a#ext v#) ...) ->  s# (s# ...) ([a po] ...)
+;; s# ((a#ext v#) ...) ->  [s# (s# ...) ([a po] ...)] or #f
 ;;
 ;; Returns a tuple of the specification config after having resolved all of the given outputs
 ;; (removing output commitments as necessary), a list of the satisfied commitments, and the spawned
@@ -697,49 +697,55 @@
 ;;
 ;; NOTE: assuming there is at most one way to satisfy the given config's commitments with these
 ;; outputs, which may not necessarily be true (but usually should be)
-(define (aps#-resolve-outputs spec-config outputs)
-  ;; TODO: deal with loop output
-  (let loop ([commitment-map (aps#-config-commitment-map spec-config)]
-             [self-address (aps#-config-obs-interface spec-config)]
-             [spawn-infos null]
-             [added-unobs-receptionists null]
-             [satisfied-commitments null]
-             [remaining-outputs outputs])
-    (match remaining-outputs
-      [(list)
-       (define updated-config
-         (term (,self-address
-                ,(merge-receptionists (aps#-config-receptionists spec-config)
-                                      added-unobs-receptionists)
-                ,(aps#-config-current-state spec-config)
-                ,(aps#-config-state-defs spec-config)
-                ,commitment-map)))
-       (match-define (list remaining-config spawned-configs)
-         (fork-configs updated-config spawn-infos))
-       (list remaining-config spawned-configs satisfied-commitments)]
-      [(list output remaining-outputs ...)
-       (define address (csa#-output-address output))
-       (match (commitments-for-address commitment-map address)
-         ;; we can ignore outputs on unobserved addresses
-         [#f (loop commitment-map
-                   self-address
-                   spawn-infos
-                   added-unobs-receptionists
-                   satisfied-commitments
-                   remaining-outputs)]
-         [commitments
-          (define patterns (map commitment-pattern commitments))
-          ;; NOTE: This assumes there is at most one pattern that matches the message (this should
-          ;; usually be true)
-          (match (find-matching-pattern patterns (csa#-output-message output) self-address)
-            [#f #f]
-            [(list pat self-address new-spawn-infos new-receptionists)
-             (loop (aps#-remove-commitment-pattern commitment-map address pat)
-                   self-address
-                   (append spawn-infos new-spawn-infos)
-                   (append added-unobs-receptionists new-receptionists)
-                   (append satisfied-commitments (list (term (,address ,pat))))
-                   remaining-outputs)])])])))
+(define (aps#-resolve-outputs spec-config outputs loop-outputs)
+  (define initial-commitment-map (aps#-config-commitment-map spec-config))
+  (cond
+    ;; We assume a send to an observed address from a loop context *always* breaks conformance. This
+    ;; is overly conservative, but is good enough for our purposes right now.
+    [(ormap (curry commitments-for-address initial-commitment-map) (map first loop-outputs))
+     #f]
+    [else
+     (let loop ([commitment-map (aps#-config-commitment-map spec-config)]
+                [self-address (aps#-config-obs-interface spec-config)]
+                [spawn-infos null]
+                [added-unobs-receptionists null]
+                [satisfied-commitments null]
+                [remaining-outputs outputs])
+       (match remaining-outputs
+         [(list)
+          (define updated-config
+            (term (,self-address
+                   ,(merge-receptionists (aps#-config-receptionists spec-config)
+                                         added-unobs-receptionists)
+                   ,(aps#-config-current-state spec-config)
+                   ,(aps#-config-state-defs spec-config)
+                   ,commitment-map)))
+          (match-define (list remaining-config spawned-configs)
+            (fork-configs updated-config spawn-infos))
+          (list remaining-config spawned-configs satisfied-commitments)]
+         [(list output remaining-outputs ...)
+          (define address (csa#-output-address output))
+          (match (commitments-for-address commitment-map address)
+            ;; we can ignore outputs on unobserved addresses
+            [#f (loop commitment-map
+                      self-address
+                      spawn-infos
+                      added-unobs-receptionists
+                      satisfied-commitments
+                      remaining-outputs)]
+            [commitments
+             (define patterns (map commitment-pattern commitments))
+             ;; NOTE: This assumes there is at most one pattern that matches the message (this should
+             ;; usually be true)
+             (match (find-matching-pattern patterns (csa#-output-message output) self-address)
+               [#f #f]
+               [(list pat self-address new-spawn-infos new-receptionists)
+                (loop (aps#-remove-commitment-pattern commitment-map address pat)
+                      self-address
+                      (append spawn-infos new-spawn-infos)
+                      (append added-unobs-receptionists new-receptionists)
+                      (append satisfied-commitments (list (term (,address ,pat))))
+                      remaining-outputs)])])]))]))
 
 (define (find-matching-pattern patterns message self-address)
   (let loop ([patterns patterns])
@@ -757,28 +763,37 @@
   (test-false "resolve test 1"
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1 Nat))))
-     (term (((obs-ext 1 Nat) (* Nat))))))
+     (term (((obs-ext 1 Nat) (* Nat))))
+     null))
   (test-equal? "resolve test 2"
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1 Nat) (single *))))
-     (term (((obs-ext 1 Nat) (* Nat)))))
+     (term (((obs-ext 1 Nat) (* Nat))))
+     null)
     (list (make-dummy-spec `(((obs-ext 1 Nat))))
           `()
           `(((obs-ext 1 Nat) *))))
   (test-equal? "resolve test 3"
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1 Nat) (single *) (single (record)))))
-     (term (((obs-ext 1 Nat) (* Nat)))))
+     (term (((obs-ext 1 Nat) (* Nat))))
+     null)
     (list (make-dummy-spec `(((obs-ext 1 Nat) (single (record)))))
           `()
           `(((obs-ext 1 Nat) *))))
   (test-equal? "resolve test 4"
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1 Nat) (many *) (single (record)))))
-     (term (((obs-ext 1 Nat) (* Nat)))))
+     (term (((obs-ext 1 Nat) (* Nat))))
+     null)
     (list (make-dummy-spec `(((obs-ext 1 Nat) (many *) (single (record)))))
           `()
           `(((obs-ext 1 Nat) *))))
+  (test-false "resolve loop test"
+    (aps#-resolve-outputs
+     (make-dummy-spec `(((obs-ext 1 Nat) (many *) (single (record)))))
+     null
+     (term ([(obs-ext 1 Nat) (* Nat)]))))
 
   ;; TODO: test aps#-resolve-outputs for (along with normal cases):
   ;; * spec that observes an address but neither saves it nor has output commtiments for it

@@ -276,6 +276,7 @@
 (struct csa#-transition
   (trigger ; follows trigger# above
    outputs ; list of abstract-addr/abstract-message 2-tuples
+   loop-outputs ; list of abstract-addr/abstract-message 2-tuples
    final-config) ; an abstract implementation configuration
   #:transparent)
 
@@ -505,7 +506,10 @@
       ;; TODO: check that there are no internal loop outputs, or refactor that code entirely
       (define new-config
         (update-config-with-handler-results config address final-exp outputs spawns update-behavior))
-      (csa#-transition trigger (filter (negate internal-output?) outputs) new-config))))
+      (csa#-transition trigger
+                       (filter (negate internal-output?) outputs)
+                       (filter (negate internal-output?) loop-outputs)
+                       new-config))))
 
 ;; Returns #t if the given handler machine state is unable to step because of an over-approximation in
 ;; the abstraction (assumes that there are no empty vector/list/hash references in the actual running

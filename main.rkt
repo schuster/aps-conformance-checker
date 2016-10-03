@@ -267,6 +267,7 @@
          (impl-step (csa#-transition-trigger transition)
                     observed?
                     (csa#-transition-outputs transition)
+                    (csa#-transition-loop-outputs transition)
                     (csa#-transition-final-config transition))]))
 
   (define addr (aps#-config-obs-interface spec-config))
@@ -305,7 +306,7 @@
                                              (impl-step-from-observer? i-step)
                                              (impl-step-trigger i-step))])
     (match-define (list config spawns1) trigger-result)
-    (match (aps#-resolve-outputs config (impl-step-outputs i-step))
+    (match (aps#-resolve-outputs config (impl-step-outputs i-step) (impl-step-loop-outputs i-step))
       [#f (void)]
       [(list stepped-spec-config spawns2 satisfied-commitments)
        (set-add! matched-stepped-configs
@@ -319,37 +320,37 @@
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f null #f))
+      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f null null #f))
      (mutable-set (spec-step null-spec-config null null))))
   (test-case "Null transition not okay for observed input"
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null #f))
+      (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null null #f))
      (mutable-set)))
   (test-case "No match if trigger does not match"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A) [x -> () (goto A)])) '(goto A) null null)
-      (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null #f))
+      (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null null #f))
      (mutable-set)))
   (test-case "Unobserved outputs don't need to match"
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) #f))
+      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) null #f))
      (mutable-set (spec-step null-spec-config null null))))
   (test-case "No match if outputs do not match"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat))))
-      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) #f))
+      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) null #f))
      (mutable-set)))
   (test-case "Output can be matched by previous commitment"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat) (single *))))
-      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) #f))
+      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) null #f))
      (mutable-set (spec-step (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat))))
                              null
                              (list `[(obs-ext 1 Nat) *])))))
@@ -357,7 +358,7 @@
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)])) '(goto A) null null)
-      (impl-step '(external-receive (init-addr 0 Nat) (obs-ext 1 Nat)) #t (list '((obs-ext 1 Nat) (* Nat))) #f))
+      (impl-step '(external-receive (init-addr 0 Nat) (obs-ext 1 Nat)) #t (list '((obs-ext 1 Nat) (* Nat))) null #f))
      (mutable-set (spec-step (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)]))
                                       '(goto A)
                                       null
@@ -368,7 +369,7 @@
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (single *)]))
-      (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null #f))
+      (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null null #f))
      (mutable-set
       (spec-step (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (many *)]))
                  null
@@ -562,12 +563,12 @@
   (define bz-pair (config-pair 'B 'Z))
   (define cw-pair (config-pair 'C 'W))
 
-  (define aa-step (impl-step '(timeout (init-addr 0 Nat)) #f null 'A))
+  (define aa-step (impl-step '(timeout (init-addr 0 Nat)) #f null null 'A))
   (define xx-step (spec-step 'X null null))
-  (define ab-step (impl-step '(timeout (init-addr 0 Nat)) #f null 'B))
+  (define ab-step (impl-step '(timeout (init-addr 0 Nat)) #f null null 'B))
   (define xy-step (spec-step 'Y null null))
   (define xz-step (spec-step 'Z null null))
-  (define bc-step (impl-step '(timeout (init-addr 0 Nat)) #f null 'C))
+  (define bc-step (impl-step '(timeout (init-addr 0 Nat)) #f null null 'C))
   (define yw-step (spec-step 'W null null))
 
   (test-equal? "Remove no pairs, because no list"
@@ -1506,7 +1507,6 @@
        (goto A)))))
 
   (test-valid-actor? loop-do-nothing-actor)
-  ;; TODO: figure out why this test works even when unobs stuff should be bad...
   (test-valid-actor? loop-send-unobs-actor)
   (test-valid-actor? send-before-loop-actor)
   (test-valid-actor? send-inside-loop-actor)
@@ -1518,13 +1518,8 @@
                            (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
   (check-true (check-conformance/config (make-single-actor-config send-before-loop-actor)
                            (make-exclusive-spec request-response-spec)))
-  ;; TODO: get this test working again (need to at least check that none of the outputs in a loop were
-  ;; observed)
-  ;;
-  ;; (check-false (check-conformance/config (make-single-actor-config send-inside-loop-actor)
-  ;;                      request-response-spec
-  ;;                      (term ((addr 0 (Addr Nat)))) null
-  ;;                      (hash 'A 'Always)))
+  (check-false (check-conformance/config (make-single-actor-config send-inside-loop-actor)
+                           (make-exclusive-spec request-response-spec)))
   (check-true (check-conformance/config (make-single-actor-config send-after-loop-actor)
                            (make-exclusive-spec request-response-spec)))
 

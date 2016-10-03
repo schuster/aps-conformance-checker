@@ -37,10 +37,14 @@
 ;; external-receive triggers.
 ;;
 ;; outputs: A list of abstract address/abstract value pairs indicating the messages sent to the
-;; environment during the computation.
+;; environment during the computation (excluding messages sent in the context of a loop).
+;;
+;; loop-outputs: A list of abstract address/abstract value pairs indicating messages sent to the
+;; environment from the context of a loop. A concrete run of the handler may send each of these
+;; messages anywhere from 0 to an unbounded number of times.
 ;;
 ;; destination: The implementation configuration reached at the end of this transition step
-(struct impl-step (trigger from-observer? outputs destination) #:prefab)
+(struct impl-step (trigger from-observer? outputs loop-outputs destination) #:prefab)
 
 ;; A possible (weak handler-level) transition step of a specification configuration, representing the
 ;; actions taken to match some (handler-level) implementation transition step. Weak transitions
