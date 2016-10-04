@@ -1525,10 +1525,6 @@
 
   ;;;; Timeouts
 
-  ;; TODO: check the case where we rely on a timeout for the initial message. Should not be allowed,
-  ;; because it might not happen. Similarly try the one where we have a second thing that times out,
-  ;; and that *does* work
-
   (define timeout-spec
     (term
      (((define-state (A r)
@@ -1554,14 +1550,51 @@
              (send r (variant GotTimeout))
              (goto A r))]))
        (goto A ,static-response-address)))))
+  (define timeout-to-send-actor
+    (term
+     ((addr 0 Nat)
+      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
+          (goto SendOnTimeout r))
+        (define-state (SendOnTimeout [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
+          (begin
+            (send r (variant GotMessage))
+            (goto SendOnTimeout r))
+          [(timeout 5)
+           (begin
+             (send r (variant GotMessage))
+             (goto A r))]))
+       (goto A ,static-response-address)))))
+  (define spawn-timeout-sender-actor
+    (term
+     ((addr 0 Nat)
+      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
+          (begin
+            (spawn 3 Nat (goto B)
+                   (define-state (B) (m)
+                     (goto B)
+                     [(timeout 5)
+                      (begin
+                        (send r (variant GotMessage))
+                        (goto Done))])
+                   (define-state (Done) (m)
+                     (goto Done)))
+            (goto A r))))
+       (goto A ,static-response-address)))))
 
   (test-valid-instance? timeout-spec)
   (test-valid-instance? got-message-only-spec)
   (test-valid-actor? timeout-and-send-actor)
+  (test-valid-actor? timeout-to-send-actor)
+  (test-valid-actor? spawn-timeout-sender-actor)
   (check-true (check-conformance/config (make-single-actor-config timeout-and-send-actor)
                            (make-exclusive-spec timeout-spec)))
   (check-false (check-conformance/config (make-single-actor-config timeout-and-send-actor)
                        (make-exclusive-spec got-message-only-spec)))
+  (check-false (check-conformance/config (make-single-actor-config timeout-to-send-actor)
+                                         (make-exclusive-spec timeout-spec)))
+  ;; we would expect this to pass, except the abstraction is too coarse
+  (check-false (check-conformance/config (make-single-actor-config spawn-timeout-sender-actor)
+                                         (make-exclusive-spec timeout-spec)))
 
   ;; Multiple Disjoint Actors
   (define static-response-actor2
