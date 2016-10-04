@@ -1638,23 +1638,6 @@
                (make-empty-queues-config (list static-response-actor other-static-response-actor) null)
                (make-spec static-response-spec (list '(addr 1 Nat)))))
 
-  ;; Multiple specifications
-  (define other-static-response-spec
-    (term
-     (((define-state (Always2 response-dest)
-         [* -> ([obligation response-dest *]) (goto Always2 response-dest)]))
-      (goto Always2 (addr 3 (Union [Ack Nat])))
-      (addr 1 Nat))))
-
-  (test-valid-instance? other-static-response-spec)
-
-  ;; TODO: probably get rid of this test
-  ;; (test-true "Multi-spec test"
-  ;;            (check-conformance/config
-  ;;             (make-empty-queues-config (list static-response-actor other-static-response-actor) null)
-  ;;             (make-exclusive-spec (list static-response-spec other-static-response-spec))
-  ;;             (term ((addr 0 Nat) (addr 1 Nat))) null))
-
   ;; Actors working together
   (define statically-delegating-responder-actor
     (term
