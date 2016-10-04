@@ -2142,64 +2142,43 @@
      (make-single-actor-config create-later-send-children-actor)
      (make-exclusive-spec never-send-spec)))
 
-  ;; Tests:
-  ;; blurred actor that closed over internal/external
-  ;; blurred message that closed over internal/external
-  ;; send message with internal/external to blurred
-
   ;; step 1: spawn the forwarder; save it
   ;; step 2: spawn the new agent (spec follows it)
   ;; step 3: new agent uses forwarder to fulfill its dynamic request/response (can't do static yet)
-  ;; (define conflicts-only-test-actor
-  ;;   (term
-  ;;    ((addr 0 (Addr (Addr (Addr Nat))))
-  ;;     (((define-state (Always [maybe-forwarder (Union [None] [Forwarder (Addr (Addr Nat))])]) (dest)
-  ;;         (let ([forwarder
-  ;;                (case maybe-forwarder
-  ;;                  [(None)
-  ;;                   ;; The forwarder actor takes any address it's given and sends a message to it
-  ;;                   (spawn forwarder-loc (Addr Nat)
-  ;;                                 (goto Forwarding)
-  ;;                                 (define-state (Forwarding) (r)
-  ;;                                   (begin
-  ;;                                     (send r 1)
-  ;;                                     (goto Forwarding))))]
-  ;;                  [(Forwarder the-addr) the-addr])])
-  ;;           (begin
-  ;;             (send dest
-  ;;                   (spawn surfaced-loc
-  ;;                          (Addr Nat)
-  ;;                          (goto Responding)
-  ;;                          (define-state (Responding) (r)
-  ;;                            (begin
-  ;;                              (send forwarder r)
-  ;;                              (goto Responding)))))
-  ;;             (goto Always (variant Forwarder forwarder))))))
-  ;;      (goto Always (variant None))))))
+  (define conflicts-only-test-actor
+    (term
+     ((addr 0 (Addr (Addr (Addr Nat))))
+      (((define-state (Always [maybe-forwarder (Union [None] [Forwarder (Addr (Addr Nat))])]) (dest)
+          (let ([forwarder
+                 (case maybe-forwarder
+                   [(None)
+                    ;; The forwarder actor takes any address it's given and sends a message to it
+                    (spawn forwarder-loc (Addr Nat)
+                                  (goto Forwarding)
+                                  (define-state (Forwarding) (r)
+                                    (begin
+                                      (send r 1)
+                                      (goto Forwarding))))]
+                   [(Forwarder the-addr) the-addr])])
+            (begin
+              (send dest
+                    ;; the per-request child is sent back to the client. When the client sends a
+                    ;; message to the child, the message is sent to the forwarder, who sends a message
+                    ;; on it
+                    (spawn surfaced-loc
+                           (Addr Nat)
+                           (goto Responding)
+                           (define-state (Responding) (r)
+                             (begin
+                               (send forwarder r)
+                               (goto Responding)))))
+              (goto Always (variant Forwarder forwarder))))))
+       (goto Always (variant None))))))
 
-  ;; (test-true "Only spawned actors with conflicts are blurred out"
-  ;;   (check-conformance/config
-  ;;    (make-single-actor-config conflicts-only-test-actor)
-  ;;    (make-exclusive-spec echo-spawn-spec)))
-
-  ;; first: do only for overlaps: on message A, spawn a forwarder (just once). on message B, either send directly or send to forwarder.
-
-  ;; test idea: check that a config with blurred thing that has escaped address satisfies send-whenever, but not send-once/never
-  ;;
-  ;; can do similar for internal address by having a single forwarding actor
-
-  ;; can send to obs address after blurred
-
-  ;; can send to other internal address after blurred
-
-
-
-  ;; (for both of these, it just sends the abstract wildcard value for that type)
-  ;; actually, this won't work: that message to an internal might contain an *external* observable address. Need to think about that one a little bit
-
-  ;; blur out only the *conflicting* actors
-
-  ;; merge messages to blurred actors, too
+  (test-true "Only spawned actors with conflicts are blurred out"
+    (check-conformance/config
+     (make-single-actor-config conflicts-only-test-actor)
+     (make-exclusive-spec echo-spawn-spec)))
 
   ;;;; Abstraction past max fold depth
   (test-case "Cannot test conformance if address found below max fold depth"
