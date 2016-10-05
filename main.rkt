@@ -979,30 +979,30 @@
         (define-state (NoMore) (new-response-target)
           (goto NoMore)))
        (goto Init)))))
-    (define delayed-send-no-timeout-actor
-      (term
-       ((addr 0 (Addr Nat))
-        (((define-state (NoAddr) (response-target)
-            (goto HaveAddr response-target))
-          (define-state (HaveAddr [response-target (Addr Nat)]) (new-response-target)
-            (begin
-              (send response-target 1)
-              (goto HaveAddr new-response-target))))
-         (goto NoAddr)))))
-      (define delayed-send-with-timeout-actor
-        (term
-         ((addr 0 (Addr Nat))
-          (((define-state (NoAddr) (response-target)
-              (goto HaveAddr response-target))
-            (define-state (HaveAddr [response-target (Addr Nat)]) (new-response-target)
-              (begin
-                (send response-target 1)
-                (goto HaveAddr new-response-target))
-              [(timeout 5)
-               (begin
-                 (send response-target 2)
-                 (goto NoAddr))]))
-           (goto NoAddr)))))
+  (define delayed-send-no-timeout-actor
+    (term
+     ((addr 0 (Addr Nat))
+      (((define-state (NoAddr) (response-target)
+          (goto HaveAddr response-target))
+        (define-state (HaveAddr [response-target (Addr Nat)]) (new-response-target)
+          (begin
+            (send response-target 1)
+            (goto HaveAddr new-response-target))))
+       (goto NoAddr)))))
+  (define delayed-send-with-timeout-actor
+    (term
+     ((addr 0 (Addr Nat))
+      (((define-state (NoAddr) (response-target)
+          (goto HaveAddr response-target))
+        (define-state (HaveAddr [response-target (Addr Nat)]) (new-response-target)
+          (begin
+            (send response-target 1)
+            (goto HaveAddr new-response-target))
+          [(timeout 5)
+           (begin
+             (send response-target 2)
+             (goto NoAddr))]))
+       (goto NoAddr)))))
 
   (test-valid-instance? request-response-spec)
   (test-valid-instance? request-same-response-addr-spec)
