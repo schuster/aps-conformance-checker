@@ -1047,6 +1047,48 @@
   (check-true (check-conformance/config (make-single-actor-config delayed-send-with-timeout-actor)
                            (make-exclusive-spec request-response-spec)))
 
+  (define (make-self-send-response-actor addr-number)
+    (let ([self-addr (term (addr ,addr-number (Union [FromEnv (Addr Nat)] [FromSelf (Addr Nat)])))])
+      (term
+       (,self-addr
+        (((define-state (Always) (msg)
+            (case msg
+              [(FromEnv response-target)
+               (begin
+                 (send ,self-addr (variant FromSelf response-target))
+                 (goto Always))]
+              [(FromSelf response-target)
+               (begin
+                 (send response-target 0)
+                 (goto Always))])))
+         (goto Always))))))
+
+  (define from-env-request-response-spec
+    (term
+     (((define-state (Always)
+         [(variant FromEnv response-target) -> ([obligation response-target *]) (goto Always)]))
+      (goto Always)
+      (addr 0 (Union [FromEnv (Addr Nat)])))))
+
+  (define from-env-wrapper
+    (term
+     ((addr 0 (Addr Nat))
+      (((define-state (Always [sender (Addr (Union [FromEnv (Addr Nat)]))]) (msg)
+          (begin
+            (send sender (variant FromEnv msg))
+            (goto Always sender))))
+       (goto Always (addr 1 (Addr (Union [FromEnv (Addr Nat)]))))))))
+
+  (test-valid-actor? (make-self-send-response-actor 0))
+  (test-valid-instance? from-env-request-response-spec)
+  (test-true "Can self-send, then send out to satisfy dynamic request/response"
+    (check-conformance/config (make-single-actor-config (make-self-send-response-actor 0))
+                              (make-exclusive-spec from-env-request-response-spec)))
+  (test-true "From-env wrapper with self-send sender"
+    (check-conformance/config (make-empty-queues-config (list from-env-wrapper)
+                                                        (list (make-self-send-response-actor 1)))
+                              (make-exclusive-spec request-response-spec)))
+
   ;; When given two choices to/from same state, have to take the one where the outputs match the
   ;; commitments
   (define reply-once-actor
