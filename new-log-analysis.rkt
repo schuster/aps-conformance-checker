@@ -49,7 +49,7 @@
          (printf "read number ~s\n" pairs-so-far)
          ;; (set! most-recent-pair pair)
          (loop)]
-        [(list 'related-spec-step (list i (impl-step trigger from out dest)) related-steps)
+        [(list 'related-spec-step (list i (impl-step trigger from out loop-out dest)) related-steps)
          (define new-steps (mutable-set))
          (for ([step related-steps])
            (match-define (spec-step dest spawns sat-coms) step)
@@ -57,7 +57,7 @@
                                           (map get-config spawns)
                                           sat-coms)))
          (hash-set! related-spec-steps
-                    (list (get-config i) (impl-step trigger from out (get-config dest)))
+                    (list (get-config i) (impl-step trigger from out loop-out (get-config dest)))
                     new-steps)
          (loop)]
         [(list 'unrelated (config-pair i s))
@@ -67,12 +67,12 @@
          (set-add! related-pairs (config-pair (get-config i) (get-config s)))
          (loop)]
         [(list 'incoming (config-pair i s) (list (config-pair i2 s2)
-                                                 (impl-step trig from out i-dest)
+                                                 (impl-step trig from out loop-out i-dest)
                                                  (spec-step s-dest spawns sat-coms)
                                                  mapping))
          (define pair (config-pair (get-config i) (get-config s)))
          (define step (list (config-pair (get-config i2) (get-config s2))
-                            (impl-step trig from out (get-config i-dest))
+                            (impl-step trig from out loop-out (get-config i-dest))
                             (spec-step (get-config s-dest) (map get-config spawns) sat-coms)
                             mapping))
          (match (hash-ref incoming pair #f)
