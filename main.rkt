@@ -897,6 +897,44 @@
     (check-conformance/config (make-single-actor-config pattern-matching-actor)
                               (make-exclusive-spec or-wrong-pattern-match-spec)))
 
+  (define send-message-then-another
+    (term
+     ((addr 0 Nat)
+      (((define-state (Init [r (Addr (Union [A] [B]))]) (m)
+          (begin
+            (send r (variant A))
+            (goto SendOther r)))
+        (define-state (SendOther [r (Addr (Union [A] [B]))]) (m)
+          (begin
+            (send r (variant A))
+            (goto Done))
+          [(timeout 5)
+           (begin
+             (send r (variant B))
+             (goto Done))])
+        (define-state (Done) (m) (goto Done)))
+       (goto Init (addr 1 (Union [A] [B])))))))
+
+  (define overlapping-patterns-spec
+    (term
+     (((define-state (Init r)
+         [* -> ([obligation r (or (variant A) (variant B))]
+                [obligation r (variant A)])
+            (goto NoMoreSends)])
+       (define-state (NoMoreSends)
+         [* -> () (goto NoMoreSends)]))
+      (goto Init (addr 1 (Union [A] [B])))
+      (addr 0 Nat))))
+
+  ;; Non-deterministic/overlap pattern-matching is unsupported: we just pick for each output the first
+  ;; pattern that can possibly match
+  (test-valid-actor? send-message-then-another)
+  (test-valid-instance? overlapping-patterns-spec)
+  (test-false "Overlapping output patterns cause non-conformance"
+    (check-conformance/config
+     (make-single-actor-config send-message-then-another)
+     (make-exclusive-spec overlapping-patterns-spec)))
+
   ;;;; Dynamic request/response
 
   (define request-response-spec
