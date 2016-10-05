@@ -494,7 +494,7 @@
            (error 'eval-handler
                   "Abstract evaluation did not complete\nInitial state: ~s\nFinal stuck states:~s"
                   handler-machine
-                  (filter (negate complete-handler-config?) final-machine-states)))
+                  (filter (negate complete-handler-config?) all-final-states)))
          (hash-set! eval-cache handler-machine all-final-states)
          all-final-states]
         [cached-results cached-results]))
