@@ -524,8 +524,10 @@
   (check-true (judgment-holds (aps#-match/j (* Nat) * any)))
   (check-false (judgment-holds (aps#-match/j (* Nat) x any))))
 
-;;  aps#-match-po (csa#-output-message output) self-address) patterns)
-
+;;  aps#-match-po : (csa#-output-message output) self-address) patterns)
+;;
+;; Returns an output-match-result (a 3-tuple of new observed interface, spawn infos, and new
+;; receptionists) if the value and old observed interface matches the pattern; #f otherwise.
 (define (aps#-match-po value self-address pattern)
   (match (judgment-holds (aps#-matches-po?/j ,value
                                              ,self-address
@@ -747,6 +749,9 @@
                       (append satisfied-commitments (list (term (,address ,pat))))
                       remaining-outputs)])])]))]))
 
+;; Returns the output-match-result if a single pattern in the list matches the message (where the
+;; current known observed environment interface is self-address); #f otherwise. Overlapping patterns
+;; are not supported, which is why we return #f if more than one pattern matches.
 (define (find-matching-pattern patterns message self-address)
   (let loop ([patterns patterns])
     (match patterns
