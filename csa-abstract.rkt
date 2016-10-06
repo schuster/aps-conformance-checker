@@ -791,15 +791,18 @@
     ;; Communication
 
     (--> ((in-hole E# (send a# v#)) (any_outputs ...) any_loop-outputs any_spawns)
-         ((in-hole E# v#)           (any_outputs ... [a# v#]) any_loop-outputs any_spawns)
+         ((in-hole E# v#)           (any_outputs ... [a# (coerce v# τ)]) any_loop-outputs any_spawns)
          ;; regular send only occurs outside of loop contexts
          (side-condition (not (redex-match csa# (in-hole E# (loop-context E#_2)) (term E#))))
+         (where τ (address-type a#))
          Send)
     (--> ((in-hole E# (loop-context (in-hole E#_2 (send a# v#)))) any_outputs any_loop-outputs any_spawns)
          ((in-hole E# (loop-context (in-hole E#_2 v#)))
           any_outputs
-          ,(sort (remove-duplicates (append (term any_loop-outputs) (list (term [a# v#])))) sexp<?)
+          ,(sort (remove-duplicates (append (term any_loop-outputs) (list (term [a# (coerce v# τ)]))))
+                 sexp<?)
           any_spawns)
+         (where τ (address-type a#))
          LoopSend)
 
     ;; Spawn
@@ -1828,6 +1831,14 @@
   [------
    (same-external-address-without-type? (obs-ext natural _) (obs-ext natural _))])
 
+(define-metafunction csa#
+  address-type : a# -> τ
+  [(address-type (* (Addr τ))) τ]
+  [(address-type (init-addr _ τ)) τ]
+  [(address-type (spawn-addr _ _ τ)) τ]
+  [(address-type (blurred-spawn-addr _ τ)) τ]
+  [(address-type (obs-ext _ τ)) τ])
+
 (define (csa#-actor-address a)
   (redex-let* csa# ([(a#int _) a])
     (term a#int)))
@@ -1999,6 +2010,83 @@
   (test-equal? "type-join 3"
                (term (type-join (Union [A] [B]) (Union [B])))
                '(Union [A] [B])))
+
+;; Coerces the abstract value v# according to the type τ (just change the types of addresses in
+;; v). The type system should always make this sound
+(define-metafunction csa#
+  coerce : v# τ -> v#
+  ;; wildcard
+  [(coerce (* _) τ) (* τ)]
+  ;; addresses
+  [(coerce (init-addr natural _) (Addr τ))
+   (init-addr natural τ)]
+  [(coerce (spawn-addr any_loc spawn-flag _) (Addr τ))
+   (spawn-addr any_loc spawn-flag τ)]
+  [(coerce (blurred-spawn-addr any_loc _) (Addr τ))
+   (blurred-spawn-addr any_loc τ)]
+  [(coerce (obs-ext natural _) (Addr τ))
+   (obs-ext natural τ)]
+  ;; variants and records
+  [(coerce (variant t v# ..._n) (Union _ ... [t τ ..._n] _ ...))
+   (variant t (coerce v# τ) ...)]
+  [(coerce (record [l v#] ..._n) (Record [l τ] ..._n))
+   (record [l (coerce v# τ)] ...)]
+  ;; fold
+  [(coerce (folded _ v#) (minfixpt X τ))
+   (folded (minfixpt X τ) (coerce v# (type-subst τ X (minfixpt X τ))))]
+  ;; lists, vectors, and hashes
+  [(coerce (list v# ...) (Listof τ))
+   (normalize-collection (list (coerce v# τ) ...))]
+  [(coerce (vector v# ...) (Vectorof τ))
+   (normalize-collection (vector (coerce v# τ) ...))]
+  [(coerce (hash v# ...) (Hash _ τ))
+   (normalize-collection (hash (coerce v# τ) ...))])
+
+(module+ test
+  (test-equal? "coerce wildcard 1" (term (coerce (* Nat) Nat)) (term (* Nat)))
+  (test-equal? "coerce wildcard 2"
+    (term (coerce (* (Addr (Union [A] [B]))) (Addr (Union [A]))))
+    (term (* (Addr (Union [A])))))
+  (test-equal? "coerce init-addr"
+    (term (coerce (init-addr 1 (Union [A] [B])) (Addr (Union [A]))))
+    (term (init-addr 1 (Union [A]))))
+  (test-equal? "coerce spawn-addr"
+    (term (coerce (spawn-addr 1 OLD (Union [A] [B])) (Addr (Union [A]))))
+    (term (spawn-addr 1 OLD (Union [A]))))
+  (test-equal? "coerce blurred-spawn-addr"
+    (term (coerce (blurred-spawn-addr 1 (Union [A] [B])) (Addr (Union [A]))))
+    (term (blurred-spawn-addr 1 (Union [A]))))
+  (test-equal? "coerce obs-ext"
+    (term (coerce (obs-ext 1 (Union [A] [B])) (Addr (Union [A]))))
+    (term (obs-ext 1 (Union [A]))))
+  (test-equal? "coerce variant"
+    (term (coerce (variant Z (* (Addr (Union [A] [B])))) (Union [Z (Addr (Union [A]))])))
+    (term (variant Z (* (Addr (Union [A]))))))
+  (test-equal? "coerce record"
+    (term (coerce (record [foo (* (Addr (Union [A] [B])))]) (Record [foo (Addr (Union [A]))])))
+    (term (record [foo (* (Addr (Union [A])))])))
+  (test-equal? "coerce fold"
+    (term (coerce (folded (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A] [B])) AddrList]))
+                          (* (Union [Empty]
+                                    [Cons (Addr (Union [A] [B]))
+                                          (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A] [B])) AddrList]))])))
+                  (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A])) AddrList]))))
+    (term (folded (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A])) AddrList]))
+                  (* (Union [Empty]
+                            [Cons (Addr (Union [A]))
+                                  (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A])) AddrList]))])))))
+  (test-equal? "coerce list"
+    (term (coerce (list (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
+                  (Listof (Addr (Union [A])))))
+    (term (list (* (Addr (Union [A]))))))
+  (test-equal? "coerce vector"
+    (term (coerce (vector (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
+                  (Vectorof (Addr (Union [A])))))
+    (term (vector (* (Addr (Union [A]))))))
+  (test-equal? "coerce hash"
+    (term (coerce (hash (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
+                  (Hash Nat (Addr (Union [A])))))
+    (term (hash (* (Addr (Union [A])))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Address containment

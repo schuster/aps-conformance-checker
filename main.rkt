@@ -828,7 +828,7 @@
      (((define-state (Matching r)
          [(variant A *) -> ([obligation r (variant A *)]) (goto Matching r)]
          [(variant B *) -> ([obligation r (variant B *)]) (goto Matching r)]))
-      (goto Matching ,static-response-address)
+      (goto Matching ,(make-static-response-address `(Union [A Nat] [B Nat])))
       (addr 0 (Union [A Nat] [B Nat])))))
 
   (define pattern-matching-actor
@@ -838,7 +838,7 @@
           (case m
             [(A x) (begin (send r (variant A x)) (goto Always r))]
             [(B y) (begin (send r (variant B 0)) (goto Always r))])))
-       (goto Always ,static-response-address)))))
+       (goto Always ,(make-static-response-address `(Union [A Nat] [B Nat])))))))
 
   (define reverse-pattern-matching-actor
     (term
@@ -847,7 +847,7 @@
           (case m
             [(A x) (begin (send r (variant B 0)) (goto Always r))]
             [(B y) (begin (send r (variant A y)) (goto Always r))])))
-       (goto Always ,static-response-address)))))
+       (goto Always ,(make-static-response-address `(Union [A Nat] [B Nat])))))))
 
   (define partial-pattern-matching-actor
     (term
@@ -856,7 +856,7 @@
           (case m
             [(A x) (begin (send r (variant A 0)) (goto Always r))]
             [(B y) (goto Always r)])))
-       (goto Always ,static-response-address)))))
+       (goto Always ,(make-static-response-address `(Union [A Nat] [B Nat])))))))
 
   (test-valid-instance? pattern-match-spec)
   (test-valid-actor? pattern-matching-actor)
@@ -878,14 +878,14 @@
     (term
      (((define-state (Matching r)
          [* -> ([obligation r (or (variant A *) (variant B *))]) (goto Matching r)]))
-      (goto Matching ,static-response-address)
+      (goto Matching ,(make-static-response-address `(Union [A Nat] [B Nat])))
       (addr 0 (Union [A Nat] [B Nat])))))
 
   (define or-wrong-pattern-match-spec
     (term
      (((define-state (Matching r)
          [* -> ([obligation r (or (variant A *) (variant C *))]) (goto Matching r)]))
-      (goto Matching ,static-response-address)
+      (goto Matching ,(make-static-response-address `(Union [A Nat] [B Nat])))
       (addr 0 (Union [A Nat] [B Nat])))))
 
   (test-valid-instance? or-pattern-match-spec)
@@ -1115,7 +1115,7 @@
           (begin
             (send sender (variant FromEnv msg))
             (goto Always sender))))
-       (goto Always (addr 1 (Addr (Union [FromEnv (Addr Nat)]))))))))
+       (goto Always (addr 1 (Union [FromEnv (Addr Nat)])))))))
 
   (test-valid-actor? (make-self-send-response-actor 0))
   (test-valid-instance? from-env-request-response-spec)
@@ -1160,7 +1160,7 @@
      (((define-state (S1 r)
          [* -> ([obligation r (variant Zero)])    (goto S1 r)]
          [* -> ([obligation r (variant NonZero)]) (goto S1 r)]))
-      (goto S1 ,static-response-address)
+      (goto S1 ,(make-static-response-address `(Union [NonZero] [Zero])))
       (addr 0 Nat))))
   (define zero-spec
     (term
@@ -1177,17 +1177,19 @@
               [(True) (send dest (variant NonZero))]
               [(False) (send dest (variant Zero))])
             (goto S1 dest))))
-       (goto S1 ,static-response-address)))))
+       (goto S1 ,(make-static-response-address `(Union [NonZero] [Zero])))))))
 
   (test-valid-instance? static-response-spec)
   (test-valid-instance? zero-nonzero-spec)
   (test-valid-instance? zero-spec)
   (test-valid-actor? primitive-branch-actor)
 
-  (check-true (check-conformance/config (make-single-actor-config primitive-branch-actor)
-                           (make-exclusive-spec zero-nonzero-spec)))
-  (check-false (check-conformance/config (make-single-actor-config primitive-branch-actor)
-                            (make-exclusive-spec zero-spec)))
+  (test-true "Zero/NonZero"
+    (check-conformance/config (make-single-actor-config primitive-branch-actor)
+                              (make-exclusive-spec zero-nonzero-spec)))
+  (test-false "Zero"
+    (check-conformance/config (make-single-actor-config primitive-branch-actor)
+                              (make-exclusive-spec zero-spec)))
 
   ;;;; Optional Commitments
   (define optional-commitment-spec
@@ -1610,13 +1612,13 @@
      (((define-state (A r)
          [* -> ([obligation r (variant GotMessage)]) (goto A r)]
          [unobs -> ([obligation r (variant GotTimeout)]) (goto A r)]))
-      (goto A ,static-response-address)
+      (goto A ,(make-static-response-address `(Union (GotMessage) (GotTimeout))))
       (addr 0 Nat))))
   (define got-message-only-spec
     (term
      (((define-state (A r)
          [* -> ([obligation r (variant GotMessage)]) (goto A r)]))
-      (goto A ,static-response-address)
+      (goto A ,(make-static-response-address `(Union (GotMessage) (GotTimeout))))
       (addr 0 Nat))))
   (define timeout-and-send-actor
     (term
@@ -1629,7 +1631,7 @@
            (begin
              (send r (variant GotTimeout))
              (goto A r))]))
-       (goto A ,static-response-address)))))
+       (goto A ,(make-static-response-address `(Union (GotMessage) (GotTimeout))))))))
   (define timeout-to-send-actor
     (term
      ((addr 0 Nat)
@@ -1643,7 +1645,7 @@
            (begin
              (send r (variant GotMessage))
              (goto A r))]))
-       (goto A ,static-response-address)))))
+       (goto A ,(make-static-response-address `(Union (GotMessage) (GotTimeout))))))))
   (define spawn-timeout-sender-actor
     (term
      ((addr 0 Nat)
@@ -1659,22 +1661,26 @@
                    (define-state (Done) (m)
                      (goto Done)))
             (goto A r))))
-       (goto A ,static-response-address)))))
+       (goto A ,(make-static-response-address `(Union (GotMessage) (GotTimeout))))))))
 
   (test-valid-instance? timeout-spec)
   (test-valid-instance? got-message-only-spec)
   (test-valid-actor? timeout-and-send-actor)
   (test-valid-actor? timeout-to-send-actor)
   (test-valid-actor? spawn-timeout-sender-actor)
-  (check-true (check-conformance/config (make-single-actor-config timeout-and-send-actor)
-                           (make-exclusive-spec timeout-spec)))
-  (check-false (check-conformance/config (make-single-actor-config timeout-and-send-actor)
-                       (make-exclusive-spec got-message-only-spec)))
-  (check-false (check-conformance/config (make-single-actor-config timeout-to-send-actor)
-                                         (make-exclusive-spec timeout-spec)))
+  (test-true "Timeout and send vs. timeout spec"
+    (check-conformance/config (make-single-actor-config timeout-and-send-actor)
+                              (make-exclusive-spec timeout-spec)))
+  (test-false "Timeout and send vs. got-messaage-only spec"
+    (check-conformance/config (make-single-actor-config timeout-and-send-actor)
+                              (make-exclusive-spec got-message-only-spec)))
+  (test-false "Timeout to send vs. timeout spec"
+    (check-conformance/config (make-single-actor-config timeout-to-send-actor)
+                              (make-exclusive-spec timeout-spec)))
   ;; we would expect this to pass, except the abstraction is too coarse
-  (check-false (check-conformance/config (make-single-actor-config spawn-timeout-sender-actor)
-                                         (make-exclusive-spec timeout-spec)))
+  (test-false "Spawn timeout sender"
+    (check-conformance/config (make-single-actor-config spawn-timeout-sender-actor)
+                              (make-exclusive-spec timeout-spec)))
 
   ;; Multiple Disjoint Actors
   (define static-response-actor2
@@ -2304,4 +2310,41 @@
     (check-false
      (check-conformance/config
       (make-single-actor-config addr-list-actor)
-      (make-exclusive-spec request-response-spec)))))
+      (make-exclusive-spec request-response-spec))))
+
+  ;;;; Type Coercions
+
+  (define ping-coercion-spawner
+    (term
+     ((addr 0 (Addr (Addr (Union [Ping (Addr (Union [Pong]))]))))
+      (((define-state (Always) (dest)
+          (begin
+            (send dest
+                 (spawn 1
+                        (Union [Ping (Addr (Union [Pong]))] [InternalOnly])
+                        (goto Ready)
+                        (define-state (Ready) (msg)
+                          (begin
+                            (case msg
+                              [(Ping response-dest) (send response-dest (variant Pong))]
+                              [(InternalOnly) (variant Pong)])
+                            (goto Ready)))))
+            (goto Always))))
+       (goto Always)))))
+
+  (define ping-coercion-spawner-spec
+    (term
+     (((define-state (Always)
+         [r -> ([obligation r (fork
+                               (goto Ready)
+                               (define-state (Ready)
+                                 [(variant Ping r) -> ([obligation r (variant Pong)]) (goto Ready)]))])
+            (goto Always)]))
+      (goto Always)
+      (addr 0 (Addr (Addr (Union [Ping (Addr (Union [Pong]))])))))))
+
+  ;; make sure that
+  (test-true "Exposed addresses only expose types according to the type of the address they were exposed through"
+    (check-conformance/config
+     (make-single-actor-config ping-coercion-spawner)
+     (make-exclusive-spec ping-coercion-spawner-spec))))
