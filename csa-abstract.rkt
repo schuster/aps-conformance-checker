@@ -667,7 +667,7 @@
     ;; TODO: keep the elements in a canonical order, so that equivalent abstract values are equal?
 
     (==> (cons v#_new (list v# ...))
-         (list ,@(sort (remove-duplicates (term (v#_new v# ...))) sexp<?))
+         (normalize-collection (list v#_new v# ...))
          Cons)
     (==> (cons v# (* (Listof τ)))
          (* (Listof τ))
@@ -710,7 +710,7 @@
          VectorWildcardCopy)
     ;; TODO: figure out if the type is ever *not* big enough to also cover the other vector
     (==> (vector-append (vector v#_1 ...) (vector v#_2 ...))
-         (vector ,@(sort (remove-duplicates (term (v#_1 ... v#_2 ...))) sexp<?))
+         (normalize-collection (vector v#_1 ... v#_2 ...))
          VectorAppend)
     (==> (vector-append (* (Vectorof τ)) _)
          (* (Vectorof τ))
@@ -734,7 +734,7 @@
          (hash v#_1 ... v#_value v#_2 ...)
          HashSetExists)
     (==> (hash-set (hash v#_current ...) v#_key v#_value)
-         (hash ,@(sort (term (v#_current ... v#_value))  sexp<?))
+         (normalize-collection (hash v#_current ... v#_value))
          (side-condition (not (member (term v#_value) (term (v#_current ...)))))
          HashSetNewItem)
     (==> (hash-set (* Hash τ_1 τ_2) v#_key v#_value)
@@ -989,6 +989,17 @@
    (apply-reduction-relation* handler-step#
      (inject/H# (term (begin (spawn L Nat (goto A) (define-state (A) (x) (goto A))) (goto B)))))
    (list (term ((begin (goto B)) () () ([(spawn-addr L NEW Nat) [((define-state (A) (x) (goto A))) (goto A)]]))))))
+
+;; Puts the given abstract collection value (a list, vector, or hash) and puts it into a canonical
+;; form
+(define-metafunction csa#
+  normalize-collection : v# -> v#
+  [(normalize-collection (list v# ...))
+   (list ,@(sort (remove-duplicates (term (v# ...))) sexp<?))]
+  [(normalize-collection (vector v# ...))
+   (vector ,@(sort (remove-duplicates (term (v# ...))) sexp<?))]
+  [(normalize-collection (hash v# ...))
+   (hash ,@(sort (remove-duplicates (term (v# ...))) sexp<?))])
 
 (define (update-config-with-handler-results config address final-exp outputs spawns update-behavior)
   ;; 1. update the behavior
