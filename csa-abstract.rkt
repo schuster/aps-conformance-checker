@@ -1030,13 +1030,15 @@
   update-behavior/blurred/mf : i# a#int b# -> i#
   [(update-behavior/blurred/mf
     (any_precise-actors
-     (any_blurred1 ... (a#int (b#_old ...)) any_blurred2 ...)
+     (any_blurred1 ... (a#int_blur (b#_old ...)) any_blurred2 ...)
      any_packets)
-    a#int
+    a#int_target
     b#_new)
    (any_precise-actors
-    (any_blurred1 ... (a#int ,(remove-duplicates (term (b#_old ... b#_new)))) any_blurred2 ...)
-    any_packets)])
+    (any_blurred1 ... (a#int_blur ,(remove-duplicates (term (b#_old ... b#_new)))) any_blurred2 ...)
+    any_packets)
+   (where any_stripped ,(csa#-address-strip-type (term a#int_target)))
+   (where any_stripped ,(csa#-address-strip-type (term a#int_blur)))])
 
 ;; Abstractly adds the set of new packets to the packet set in the given config.
 (define (merge-messages-into-config config new-message-list)
@@ -1469,8 +1471,8 @@
   (define removed-actor-addresses (map csa#-actor-address removed-actors))
   (match-define (list renamed-config renamed-removed-actors)
     (blur-addresses (list remaining-config removed-actors)
-                    removed-actor-addresses
-                    relevant-externals))
+                    (map csa#-address-strip-type removed-actor-addresses)
+                    (map csa#-address-strip-type relevant-externals)))
   ;; 3. Deduplicate message packets in the packet set that now have the same content (the renaming
   ;; might have caused messages with differing content or address to now be the same)
   (define deduped-packets (deduplicate-packets (csa#-config-message-packets renamed-config)))
@@ -1548,20 +1550,20 @@
 ;; For a term assumed to contain no external addresses, renames the addresses in internals-to-blur as
 ;; done in the blurring process.
 (define (csa#-blur-internal-addresses some-term internals-to-blur)
-  (blur-addresses some-term internals-to-blur null))
+  (blur-addresses some-term (map csa#-address-strip-type internals-to-blur) null))
 
-;; term (a#int ...) (a#ext ...) -> term
+;; term (a#int-without-type ...) (a#ext-without-type ...) -> term
 ;;
 ;; Renames internal addresses in internals-to-bour and external addresses *not* in
 ;; relevant-externals to their respective imprecise forms
 (define (blur-addresses some-term internals-to-blur relevant-externals)
   (match some-term
     [(and addr `(spawn-addr ,loc ,_ ,type))
-     (if (member addr internals-to-blur)
+     (if (member (csa#-address-strip-type addr) internals-to-blur)
          (term (blurred-spawn-addr ,loc ,type))
          addr)]
     [(and addr `(obs-ext ,_ ,type))
-     (if (member addr relevant-externals)
+     (if (member (csa#-address-strip-type addr) relevant-externals)
          addr
          (term (* (Addr ,type))))]
     [(list (and keyword (or `vector 'list 'hash)) terms ...)
@@ -1581,8 +1583,8 @@
             (spawn-addr bar OLD Nat)
             (spawn-addr baz OLD Nat)
             (spawn-addr quux NEW Nat)))
-     (list (term (spawn-addr foo NEW Nat)) (term (spawn-addr bar NEW Nat)))
-     (list '(obs-ext 2 Nat)))
+     (list (term (spawn-addr foo NEW)) (term (spawn-addr bar NEW)))
+     (list '(obs-ext 2)))
     (term (((spawn-addr foo OLD Nat) (blurred-spawn-addr foo Nat))
            (blurred-spawn-addr bar Nat)
            (* (Addr Nat))
@@ -1606,7 +1608,7 @@
                   [i# (term (([a# b#]) () ()))])
                  (term i#))
      null
-     (term ((obs-ext 1 Nat) (obs-ext 3 Nat))))
+     (term ((obs-ext 1) (obs-ext 3))))
     (redex-let* csa#
                 ([(a# b#)
                   (term
@@ -1630,7 +1632,7 @@
                          (obs-ext 4 Nat)))])
        (term e#))
     null
-    '((obs-ext 1 Nat) (obs-ext 3 Nat)))
+    '((obs-ext 1) (obs-ext 3)))
    (term (hash (obs-ext 1 Nat) (* (Addr Nat)) (obs-ext 3 Nat))))
 
   (test-equal? "blur test 4"
@@ -1654,8 +1656,28 @@
                            (obs-ext 4 Nat)))])
       (term e#))
     null
-    `((obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))
-   (term (vector (obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))))
+    `((obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))
+   (term (vector (obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat))))
+
+  (test-equal? "Blur for addresses with differing types"
+    (blur-addresses `(vector (spawn-addr 1 OLD (Union [A] [B]))
+                             (spawn-addr 1 OLD (Union [A]))
+                             (spawn-addr 2 OLD (Union [A] [B]))
+                             (spawn-addr 2 OLD (Union [A]))
+                             (obs-ext 3 (Union [A] [B]))
+                             (obs-ext 3 (Union [A]))
+                             (obs-ext 4 (Union [A] [B]))
+                             (obs-ext 4 (Union [A])))
+                    `((spawn-addr 1 OLD))
+                    `((obs-ext 3)))
+    `(vector (blurred-spawn-addr 1 (Union [A] [B]))
+             (blurred-spawn-addr 1 (Union [A]))
+             (spawn-addr 2 OLD (Union [A] [B]))
+             (spawn-addr 2 OLD (Union [A]))
+             (obs-ext 3 (Union [A] [B]))
+             (obs-ext 3 (Union [A]))
+             (* (Addr (Union [A] [B])))
+             (* (Addr (Union [A]))))))
 
 ;; Returns #t if the address is of the form (spawn-addr _ flag _), #f otherwise.
 (define (has-spawn-flag? addr flag)
@@ -1838,6 +1860,19 @@
   [(address-type (spawn-addr _ _ τ)) τ]
   [(address-type (blurred-spawn-addr _ τ)) τ]
   [(address-type (obs-ext _ τ)) τ])
+
+(define (csa#-address-strip-type a)
+  (term (address-strip-type/mf ,a)))
+
+;; TODO: refactor the code so that addresses are distinct from their types and this function is
+;; unnecessary
+(define-metafunction csa#
+  address-strip-type/mf : a# -> any
+  [(address-strip-type/mf (* (Addr τ))) *]
+  [(address-strip-type/mf (init-addr any_loc _)) (init-addr any_loc)]
+  [(address-strip-type/mf (spawn-addr any_loc any_flag _)) (spawn-addr any_loc any_flag)]
+  [(address-strip-type/mf (blurred-spawn-addr any_loc _)) (blurred-spawn-addr any_loc)]
+  [(address-strip-type/mf (obs-ext any_nat _)) (obs-ext any_nat)])
 
 (define (csa#-actor-address a)
   (redex-let* csa# ([(a#int _) a])
