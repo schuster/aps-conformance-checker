@@ -28,8 +28,11 @@
   (quasiquote
 
 (program (receptionists [guard GetSessionType]) (externals)
-            ;; alternative receptionists/externals for testing just one worker
-            ;; (receptionists [worker AuthenticateType]) (externals [reply-to GetSessionResult])
+         ;; alternative receptionists/externals for testing just one worker:
+         ;; (receptionists [worker AuthenticateType]) (externals [reply-to GetSessionResult])
+         ;; alternative receptionists/externals for testing just the service:
+         ;; (receptionists [service SessionCommand]) (externals)
+
   (define-variant SessionResponse
     (Pong))
 
@@ -243,22 +246,22 @@
 
 (define spawn-server-specification
   (quasiquote
-   (spawn-spec (goto ServerReady)
-               (define-state (ServerReady)
-                 [(variant Ping reply-to) ->
-                  (with-outputs ([reply-to (variant Pong)]) (goto ServerReady))]))))
+   (fork (goto ServerReady)
+         (define-state (ServerReady)
+           [(variant Ping reply-to) ->
+            ([obligation reply-to (variant Pong)])
+            (goto ServerReady)]))))
 
 (define spawn-auth-specification
   (quasiquote
-    (spawn-spec (goto WaitingForCredentials)
-                (define-state (WaitingForCredentials)
-                  [(variant Authenticate * * reply-to) ->
-                   (with-outputs ([reply-to (variant FailedSession)]) (goto Done))]
-                  [(variant Authenticate * * reply-to) ->
-                   (with-outputs ([reply-to (variant ActiveNewSession * ,spawn-server-specification)])
-                     (goto Done))])
-                (define-state (Done)
-                  [(variant Authenticate * * reply-to) -> (goto Done)]))))
+    (fork (goto WaitingForCredentials)
+          (define-state (WaitingForCredentials)
+            [(variant Authenticate * * reply-to) ->
+             ([obligation reply-to (or (variant FailedSession)
+                                       (variant ActiveNewSession * ,spawn-server-specification))])
+             (goto Done)])
+          (define-state (Done)
+            [(variant Authenticate * * reply-to) -> () (goto Done)]))))
 
 ;; (define worker-specification
 ;;   (quasiquote
@@ -281,14 +284,12 @@
    (specification (receptionists [guard ,desugared-GetSessionType]) (externals)
      [guard ,desugared-GetSessionType] ; observed environment interface
      () ; unobserved environment interface
+     (goto Ready)
      (define-state (Ready)
        [(variant GetSession * reply-to) ->
-        (with-outputs ([reply-to (variant ActiveOldSession ,spawn-server-specification)])
-          (goto Ready))]
-       [(variant GetSession * reply-to) ->
-        (with-outputs ([reply-to (variant NewSession * ,spawn-auth-specification)])
-          (goto Ready))])
-     (goto Ready))))
+        ([obligation reply-to (or (variant ActiveOldSession ,spawn-server-specification)
+                                  (variant NewSession ,spawn-auth-specification))])
+        (goto Ready)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing code
