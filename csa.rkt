@@ -11,9 +11,9 @@
  csa-valid-receptionist-list?
  csa-config-receptionists
  csa-config-internal-addresses
- same-address-without-type?
  instantiate-prog
  instantiate-prog+bindings
+ csa-strip-address-type
  csa-contains-address?)
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -113,19 +113,21 @@
   (b ((Q ...) e)) ; behavior
   (μ (m ...))
   (m (a <= v))
-  ((ρ χ) (a ...))
+  ((ρ χ) (τa ...))
   (e ....
      v)
   (v n
      (variant t v ...)
      (record [l v] ...)
      (folded τ v)
-     a
+     τa
      string
      (list v ...)
      (vector v ...)
      (hash [v v] ...))
-  (a (addr natural τ))) ; only used for the initial receptionist lists for now
+  (a (addr natural))
+  (τa (τ a)) ; an address a able to carry messages of type τ
+  )
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Instantiation
@@ -148,47 +150,49 @@
   (term (instantiate-prog+bindings/mf ,prog)))
 
 (define-metafunction csa-eval
-  instantiate-prog+bindings/mf : P -> (i ([x a] ...))
-  [(instantiate-prog+bindings/mf (program (receptionists [x_receptionist _] ...)
-                                               (externals     [x_external     τ_external] ...)
-                                               (actors [x_internal (let ([x_let e_let] ...) e)] ...)))
+  instantiate-prog+bindings/mf : P -> (i ([x τa] ...))
+  [(instantiate-prog+bindings/mf
+    (program (receptionists [x_receptionist _] ...)
+             (externals     [x_external     τ_external] ...)
+             (actors        [x_internal (let ([x_let e_let] ...) e)] ...)))
    (i
-    ([x_internal a_internal] ... [x_external a_external] ...))
+    ([x_internal τa_internal] ... [x_external τa_external] ...))
 
    ;; 1. Generate addresses for internal and external actors
-   (where (a_internal ...) (generate-fresh-addresses/mf ((spawn-type/mf e) ...) ()))
-   (where (a_external ...) (generate-fresh-addresses/mf (τ_external ...) (a_internal ...)))
+   (where (τa_internal ...) (generate-fresh-addresses/mf ((spawn-type/mf e) ...) ()))
+   (where (τa_external ...) (generate-fresh-addresses/mf (τ_external ...) (τa_internal ...)))
 
    ;; 2. Do substitutions into spawn to get a behavior
    (where ((v_let ...) ...) (((subst-n e_let
-                                       [x_external a_external] ...
-                                       [x_internal a_internal] ...) ...) ...))
+                                       [x_external τa_external] ...
+                                       [x_internal τa_internal] ...) ...) ...))
    (where (b ...)
           ((spawn->behavior e
                             ([x_let v_let] ...
-                             [x_internal a_internal] ...
-                             [x_external a_external] ...)
-                            a_internal) ...))
+                             [x_internal τa_internal] ...
+                             [x_external τa_external] ...)
+                            τa_internal) ...))
 
    ;; 3. Construct the configuration
+   (where ((_ a_internal) ...) (τa_internal ...))
    (where i
           [; actors
            ((a_internal b) ...)
            ; message store
            ()
            ; receptionists
-           ((subst-n x_receptionist [x_internal a_internal] ...) ...)
+           ((subst-n x_receptionist [x_internal τa_internal] ...) ...)
            ; externals
-           (a_external ...)])])
+           (τa_external ...)])])
 
 (define-metafunction csa-eval
-  spawn->behavior : e ([x v] ...) a -> b
-  [(spawn->behavior e_spawn ([x_binding v_binding] ...) a_self)
+  spawn->behavior : e ([x v] ...) τa -> b
+  [(spawn->behavior e_spawn ([x_binding v_binding] ...) τa_self)
    b
    ;; 1. Substitute all non-self bindings
    (where (spawn _ _ e_goto Q ...) (subst-n e_spawn [x_binding v_binding] ...))
    ;; 2. Substitute the self-binding
-   (where b (((subst-n/Q Q [self a_self]) ...) (subst-n e_goto [self a_self])))])
+   (where b (((subst-n/Q Q [self τa_self]) ...) (subst-n e_goto [self τa_self])))])
 
 (module+ test
   (test-case "Instantiate program"
@@ -206,42 +210,43 @@
         ;; actors
         (
          ;; a
-         ((addr 0 Nat) (() (goto S1)))
+         ((addr 0) (() (goto S1)))
          ;; b
-         ((addr 1 (Record)) (() (goto S2)))
+         ((addr 1) (() (goto S2)))
          ;; c
-         ((addr 2 Nat) (() (goto S3)))
+         ((addr 2) (() (goto S3)))
          )
         ;; messages
         ()
         ;; receptionists
-        ((addr 0 Nat) (addr 1 (Record)))
+        ((Nat (addr 0)) ((Record) (addr 1)))
         ;; externals
-        ((addr 3 String) (addr 4 (Union))))
+        ((String (addr 3)) ((Union) (addr 4))))
        ;; bindings
-       ([a (addr 0 Nat)]
-        [b (addr 1 (Record))]
-        [c (addr 2 Nat)]
-        [d (addr 3 String)]
-        [e (addr 4 (Union))])))))
+       ([a (Nat (addr 0))]
+        [b ((Record) (addr 1))]
+        [c (Nat (addr 2))]
+        [d (String (addr 3))]
+        [e ((Union) (addr 4))])))))
 
-;; Returns a lsit containing one fresh address of the given type per given type τ, where the given
+;; Returns a list containing one fresh address of the given type per given type τ, where the given
 ;; list of addresses indicates the existing set of allocated addresses.
 (define-metafunction csa-eval
-  generate-fresh-addresses/mf : (τ ...) (a ...) -> (a ...)
-  [(generate-fresh-addresses/mf (τ ...) ((addr natural _) ...))
-   ,(map (lambda (type index) `(addr ,(+ (term natural_next) index) ,type))
+  generate-fresh-addresses/mf : (τ ...) (τa ...) -> (τa ...)
+  [(generate-fresh-addresses/mf (τ ...) ((_ (addr natural)) ...))
+   ,(map (lambda (type index) `(,type (addr ,(+ (term natural_next) index))))
          (term (τ ...))
          (build-list (length (term (τ ...))) values))
    (where natural_next ,(add1 (apply max -1 (term (natural ...)))))])
 
 (module+ test
   (test-equal? "Fresh address generation"
-    (term (generate-fresh-addresses/mf (Nat (Record) Nat) ((addr 1 Nat) (addr 4 Nat) (addr 2 Nat))))
-    `((addr 5 Nat) (addr 6 (Record)) (addr 7 Nat)))
+    (term (generate-fresh-addresses/mf (Nat (Record) Nat)
+                                       ((Nat (addr 1)) (Nat (addr 4)) (Nat (addr 2)))))
+    `((Nat (addr 5)) ((Record) (addr 6)) (Nat (addr 7))))
   (test-equal? "Fresh address generation 2"
     (term (generate-fresh-addresses/mf (Nat (Record) Nat) ()))
-    `((addr 0 Nat) (addr 1 (Record)) (addr 2 Nat))))
+    `((Nat (addr 0)) ((Record) (addr 1)) (Nat (addr 2)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing helpers
@@ -250,19 +255,20 @@
   (term (make-single-actor-config/mf ,actor)))
 
 (define-metafunction csa-eval
-  make-single-actor-config/mf : (a b) -> i
-  [(make-single-actor-config/mf (a b))
-   (((a b)) () (a) ())])
+  make-single-actor-config/mf : ((τ a) b) -> i
+  [(make-single-actor-config/mf ((τ a) b))
+   (((a b)) () ((τ a)) ())])
 
 (define (make-empty-queues-config receptionists internal-actors)
   (term (make-empty-queues-config/mf ,receptionists ,internal-actors)))
 
 (define-metafunction csa-eval
-  make-empty-queues-config/mf : ((a b) ...) ((a b) ...) -> i
-  [(make-empty-queues-config/mf ((a_receptionist b_receptionist) ...) (any_internal ...))
-   (((a_receptionist b_receptionist) ... any_internal ...)
+  make-empty-queues-config/mf : ((τa b) ...) ((τa b) ...) -> i
+  [(make-empty-queues-config/mf (((τ_rec a_rec) b_receptionist) ...)
+                                (((τ_int a_int) b_int) ...))
+   (((a_rec b_receptionist) ... (a_int b_int) ...)
     ()
-    (a_receptionist ...)
+    ((τ_rec a_rec) ...)
     ())])
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -279,7 +285,7 @@
   [(subst x x v) v]
   [(subst x x_2 v) x]
   [(subst n x v) n]
-  [(subst a x v) a]
+  [(subst τa x v) τa]
   [(subst string x v) string]
   [(subst (spawn any_loc τ e Q ...) self v) (spawn any_loc τ e Q ...)]
   [(subst (spawn any_loc τ e Q ...) x v)
@@ -387,33 +393,34 @@
        (not (check-duplicates (csa-config-internal-addresses c)))))
 
 (define (csa-valid-receptionist-list? l)
-  (redex-match csa-eval (a ...) l))
+  (redex-match csa-eval (τa ...) l))
 
+;; Returns true if the expression contains any address
 (define (csa-contains-address? e)
   (term (csa-contains-address?/mf ,e)))
 
 (define-metafunction csa
   csa-contains-address?/mf : any -> boolean
-  [(csa-contains-address?/mf (addr _ _)) #t]
+  [(csa-contains-address?/mf (addr _)) #t]
   [(csa-contains-address?/mf (any ...))
    ,(ormap csa-contains-address? (term (any ...)))]
   [(csa-contains-address?/mf _) #f])
 
 (module+ test
   (test-true "csa-contains-address?"
-    (csa-contains-address? (term ((addr 1 Nat) (addr 2 Nat)))))
+    (csa-contains-address? (term ((Nat (addr 1)) (Nat (addr 2))))))
 
   (test-false "csa-contains-address?"
     (csa-contains-address? (term ((abc 1 Nat) (def 2 Nat)))))
 
   (test-true "csa-contains-address?"
-    (csa-contains-address? (term (((abc) (addr 1 Nat)) ())))))
+    (csa-contains-address? (term (((abc) (Nat (addr 1))) ())))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
 
 (define (csa-config-internal-addresses config)
-  (redex-let* csa-eval ([(((a _) ...) _ _ _) config])
+  (redex-let* csa-eval ([((((_ a) _) ...) _ _ _) config])
               (term (a ...))))
 
 (define (csa-config-receptionists config)
@@ -425,24 +432,12 @@
   [(spawn-type/mf (spawn _ τ _ ...))
    τ])
 
-;; ---------------------------------------------------------------------------------------------------
-;; Address matching
-
-(define-judgment-form csa-eval
-  #:mode (same-address-without-type?/j I I)
-  #:contract (same-address-without-type?/j a a)
-  [------
-   (same-address-without-type?/j (addr natural _) (addr natural _))])
-
-(define (same-address-without-type? a1 a2)
-  (judgment-holds (same-address-without-type?/j ,a1 ,a2)))
+;; Returns just the address part of a typed address
+(define (csa-strip-address-type a)
+  (second a))
 
 (module+ test
-  (test-true "Same address"
-             (same-address-without-type? '(addr 1 (Union)) '(addr 1 (Union [A]))))
-  (test-true "Same address 2"
-             (same-address-without-type? '(addr 1 (Union)) '(addr 1 (Union))))
-  (test-false "Not same address"
-              (same-address-without-type? '(addr 2 (Union)) '(addr 1 (Union))))
-  (test-false "Not same address 2"
-              (same-address-without-type? '(addr 2 (Union)) '(addr 1 (Union [A])))))
+  (check-equal?
+   (redex-let csa-eval ([τa (term (Nat (addr 1)))])
+     (csa-strip-address-type (term τa)))
+   (term (addr 1))))
