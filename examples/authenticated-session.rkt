@@ -139,7 +139,7 @@
             (cond
               [(= password found-password)
                (send server (CreateSession auth-token self))
-               (goto WaitingForCredentials)]
+               (goto WaitingForServer)]
               [else
                (send reply-to (FailedSession))
                (goto Done)])])]
