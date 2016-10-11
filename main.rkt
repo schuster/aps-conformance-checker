@@ -86,18 +86,26 @@
                             incoming-steps
                             rank1-related-spec-steps)
           (find-rank1-simulation initial-pairs))
+        ;; (printf "Finished rank1 simulation at: ~a\n"
+        ;;         (date->string (seconds->date (current-seconds)) #t))
         (match-define (list simulation-pairs simulation-related-spec-steps)
           (prune-unsupported rank1-pairs
                              incoming-steps
                              rank1-related-spec-steps
                              rank1-unrelated-successors))
+        ;; (printf "Finished simulation prune at: ~a\n"
+        ;;         (date->string (seconds->date (current-seconds)) #t))
         (match-define (list commitment-satisfying-pairs unsatisfying-pairs)
           (partition-by-satisfaction simulation-pairs incoming-steps simulation-related-spec-steps))
+        ;; (printf "Finished obligation fulfillment check at: ~a\n"
+        ;;         (date->string (seconds->date (current-seconds)) #t))
         (match-define (list conforming-pairs _)
           (prune-unsupported commitment-satisfying-pairs
                              incoming-steps
                              simulation-related-spec-steps
                              unsatisfying-pairs))
+        ;; (printf "Finished obligation fulfillment prune at: ~a\n"
+        ;;         (date->string (seconds->date (current-seconds)) #t))
         (andmap (curry set-member? conforming-pairs) initial-pairs)])]))
 
 ;; Returns #t if the self-address for the specification configuration is a receptionist in the
