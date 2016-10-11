@@ -62,6 +62,10 @@
          (loop)]
         [(list 'unrelated (config-pair i s))
          (set-add! unrelated-pairs (config-pair (get-config i) (get-config s)))
+         ;; (call-with-output-file "unlrelated.rktd"
+         ;;   (lambda (file)
+         ;;     (fprintf file "~s\n\n" (config-pair i s)))
+         ;;   #:exists 'append)
          (loop)]
         [(list 'related (config-pair i s))
          (set-add! related-pairs (config-pair (get-config i) (get-config s)))
