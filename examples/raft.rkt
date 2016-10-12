@@ -8,37 +8,51 @@
  redex/reduction-semantics)
 
 (define desugared-client-response-type
-  `(Union
-    (LeaderIs Nat) ;; TODO: replace Nat with proper leader type
-    (CommitSuccess String)))
+  `(minfixpt ResponseType
+             (Union [LeaderIs
+                     (Union [NoLeader]
+                            [JustLeader (Union [ClientMessage (Addr ResponseType) String])])]
+                    [CommitSuccess String])))
 
 (define desugared-raft-message-type
-  `(Union
-    (RequestVote Nat
-                 (Addr Nat) ;; TODO: add the minfixpt here
-                 Nat
-                 Nat)
-    (VoteCandidate Nat (Addr Nat))
-    (DeclineCandidate Nat (Addr Nat)) ;; TODO: add the minfixpt here
-    (AppendEntries
-     Nat
-     Nat
-     Nat
-     (Vectorof (Record [command String]
-                       [term Nat]
-                       [index Nat]
-                       [client (Addr ,desugared-client-response-type)]))
-     Nat
-     (Addr Nat) ; TODO: add the minfixpt here
-     (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
-    (AppendRejected Nat Nat (Addr Nat)) ; TODO: add the minfixpt here
-    (AppendSuccessful Nat Nat (Addr Nat)))   ; TODO: add the minfixpt here
-  )
+  `(minfixpt RaftMsgType
+    (Union
+
+     (RequestVote
+      Nat
+      (Addr (Union [PeerMessage RaftMsgType]))
+      Nat
+      Nat)
+
+     (VoteCandidate
+      Nat
+      (Addr (Union [PeerMessage RaftMsgType])))
+
+     (DeclineCandidate
+      Nat
+      (Addr (Union [PeerMessage RaftMsgType])))
+
+     (AppendEntries
+      Nat
+      Nat
+      Nat
+      (Vectorof Entry)
+      Nat
+      (Addr (Union [PeerMessage RaftMsgType]))
+      (Addr (Union (ClientMessage (Addr ClientResponse) String))))
+
+     (AppendRejected
+      Nat
+      Nat
+      (Addr (Union [PeerMessage RaftMsgType])))
+
+     (AppendSuccessful
+      Nat
+      Nat
+      (Union [PeerMessage RaftMsgType])))))
 
 (define cluster-config-variant
-  ;; TODO:
-  (term (Config (Record [members (Listof (Addr Nat ;; RaftMessage
-                                               ))]))))
+  (term (Config (Record [members (Listof (Addr (Union [PeerMessage ,desugared-raft-message-type])))]))))
 
 (define unobserved-interface-type
   (term (Union ,cluster-config-variant
@@ -67,8 +81,8 @@
      (define-state (Running)
        ;; TODO: consider removing the "PeerMessage" part of the type, just to make things more
        ;; concise, esp. for sending back *out*
-       [(variant PeerMessage (variant RequestVote * candidate * *)) ->
-        ([obligation candidate (variant PeerMessage (variant VoteCandidate * *))])
+       [(variant PeerMessage (fold (variant RequestVote * candidate * *))) ->
+        ([obligation candidate (fold (variant PeerMessage (variant VoteCandidate * *)))])
         (goto Running)]
        [(variant PeerMessage (variant RequestVote * candidate * *)) ->
         ([obligation candidate (variant PeerMessage (variant DeclineCandidate * *))])
@@ -131,29 +145,22 @@
 
 ;; TODO: write code that desugars types with recursive references into types with minfixpts
 
-(define-record ClusterConfiguration
-  ;; TODO:
-  [members (Listof (Addr Nat ;; RaftMessage
-                         ))
-           ]
-  ;; ignoring other config fields for now, since I'm not implementing configuration changes
-  )
-
-(define-variant ClientResponse
-  ;; TODO: allow this recursive type
-  (LeaderIs [leader Nat ;;MaybeLeader
-                    ])
-  (CommitSuccess [cmd String]))
-
 ;; Client message contains a command (string) to print when applying to the state machine, and a
 ;; channel to send to to confirm the application
+
+(define-type ClientResponse ,desugared-client-response-type)
+
 (define-variant ClientMessage
   (ClientMessage [client (Addr ClientResponse)] [cmd String]))
 
 (define-variant MaybeLeader
   (NoLeader)
-  ;; TODO: allow this type
   (JustLeader [leader (Addr ClientMessage)]))
+
+;; Defining this only for the variant constructors
+(define-variant ClientResponseBranches
+  (LeaderIs [leader MaybeLeader])
+  (CommitSuccess [cmd String]))
 
 (define-record Entry
   [command String]
@@ -161,30 +168,32 @@
   [index Nat]
   [client (Addr ClientResponse)])
 
-(define-variant RaftMessage
+(define-type RaftMessage ,desugared-raft-message-type)
+
+;; TODO: use unfold for all points where we receive such a message, fold for all sends
+
+(define-type SendableRaftMessage (Union [PeerMessage RaftMessage]))
+
+;; Defined only to get the variant constructors
+(define-variant RaftMessageBranches
   (RequestVote
    [term Nat]
-   [candidate (Addr Nat ;; TODO: RaftMessage
-                    )]
+   [candidate (Addr SendableRaftMessage)]
    [last-log-term Nat]
    [last-log-index Nat])
   (VoteCandidate
    [term Nat]
-   ;; TODO:
-   [follower (Addr Nat ;; RaftMessage
-                   )])
+   [follower (Addr SendableRaftMessage)])
   (DeclineCandidate
    [term Nat]
-   [follower (Addr Nat ;; TODO: RaftMessage
-                   )])
+   [follower (Addr SendableRaftMessage)])
   (AppendEntries
    [term Nat]
    [prev-log-term Nat]
    [prev-log-index Nat]
    [entries (Vectorof Entry)]
    [leader-commit-id Nat]
-   [leader (Addr Nat ; TODO: RaftMessage
-                 )]
+   [leader (Addr SendableRaftMessage)]
    [leader-client (Addr ClientMessage)])
   ;; A note on last-index: In the paper, this is the optimization at the bottom of p. 7 that allows
   ;; for quicker recovery of a node that has fallen behind in its log. In RaftScope, they call this
@@ -193,36 +202,44 @@
   (AppendRejected
    [term Nat]
    [last-index Nat]
-   ;; TODO:
-   [member (Addr Nat ;; RaftMessage
-                 )])
+   [member (Addr SendableRaftMessage)])
   (AppendSuccessful
    [term Nat]
    [last-index Nat]
-   ;; TODO:
-   [member (Addr Nat ;; RaftMessage
-                 )]))
+   [member (Addr SendableRaftMessage)]))
 
-(define-variant RaftActorMessage
+(define-record ClusterConfiguration
+  [members (Listof (Addr SendableRaftMessage))]
+  ;; ignoring other config fields for now, since I'm not implementing configuration changes
+  )
+
+;; including this only to define some of the other variants of RaftActorMessage
+(define-variant RaftActorMessageOtherBranches
   (Config [config ClusterConfiguration])
-  ;; maybe BUG: ClientMessage has already been defined as a variant above
-  (ClientMessage [client (Addr ClientResponse)] [cmd String])
+  ;; ClientMessage has already been defined as a variant above
   (PeerMessage [m RaftMessage])
   (SendHeartbeatTimeouts [id Nat]))
 
+(define-type RaftActorMessage
+  (Union
+   (Config ClusterConfiguration)
+   (ClientMessage (Addr ClientResponse) String)
+   (PeerMessage RaftMessage)
+   (SendHeartbeatTimeouts Nat)))
+
 (define-variant MaybePeer
   (NoPeer)
-  (JustPeer [peer (Addr RaftMessage)]))
+  (JustPeer [peer (Addr SendableRaftMessage)]))
 
 (define-record StateMetadata
   [current-term Nat]
-  [votes (Hash Nat (Addr RaftMessage))]
+  [votes (Hash Nat (Addr SendableRaftMessage))]
   [last-used-timeout-id Nat])
 
 (define-record ElectionMeta
   [current-term Nat]
-  [votes-received (Hash (Addr RaftMessage) Boolean)]
-  [votes (Hash Nat (Addr RaftMessage))]
+  [votes-received (Hash (Addr SendableRaftMessage) Boolean)]
+  [votes (Hash Nat (Addr SendableRaftMessage))]
   [last-used-timeout-id Nat])
 
 (define-record LeaderMeta
@@ -369,7 +386,7 @@
 (define-function (grant-vote?/follower [metadata StateMetadata]
                               [log ReplicatedLog]
                               [term Nat]
-                              [candidate (Addr RaftMessage)]
+                              [candidate (Addr SendableRaftMessage)]
                               [last-log-term Nat]
                               [last-log-index Nat])
   (and (>= term (: metadata current-term))
@@ -381,7 +398,7 @@
 (define-function (grant-vote?/candidate [metadata StateMetadata]
                                [log ReplicatedLog]
                                [term Nat]
-                               [candidate (Addr RaftMessage)]
+                               [candidate (Addr SendableRaftMessage)]
                                [last-log-term Nat]
                                [last-log-index Nat])
   (and (>= term (: metadata current-term))
@@ -393,13 +410,13 @@
 (define-function (grant-vote?/leader [metadata StateMetadata]
                             [log ReplicatedLog]
                             [term Nat]
-                            [candidate (Addr RaftMessage)]
+                            [candidate (Addr SendableRaftMessage)]
                             [last-log-term Nat]
                             [last-log-index Nat])
   (and (>= term (: metadata current-term))
        (candidate-at-least-as-up-to-date? log last-log-term last-log-index)))
 
-(define-function (with-vote [metadata StateMetadata] [term Nat] [candidate (Addr RaftMessage)])
+(define-function (with-vote [metadata StateMetadata] [term Nat] [candidate (Addr SendableRaftMessage)])
   (! metadata [votes (hash-set (: metadata votes) term candidate)]))
 
 (define-function (initial-metadata)
@@ -465,18 +482,18 @@
   (ElectionMeta (next (: m current-term)) (hash) (: m votes) (: m last-used-timeout-id)))
 
 ;; ;; this effectively duplicates the logic of withVote, but it follows the akka-raft code
-(define-function (with-vote-for [m ElectionMeta] [term Nat] [candidate (Addr RaftMessage)])
+(define-function (with-vote-for [m ElectionMeta] [term Nat] [candidate (Addr SendableRaftMessage)])
   (! m [votes (hash-set (: m votes) term candidate)]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Config helpers
 
-(define-function (members-except-self [config ClusterConfiguration] [self (Addr RaftMessage)])
+(define-function (members-except-self [config ClusterConfiguration] [self (Addr SendableRaftMessage)])
   (for/fold ([result (list)])
             ([member (: config members)])
     (if (not (= member self)) (cons member result) result)))
 
-(define-function (inc-vote [m ElectionMeta] [follower (Addr RaftMessage)])
+(define-function (inc-vote [m ElectionMeta] [follower (Addr SendableRaftMessage)])
   (! m [votes-received (hash-set (: m votes-received) follower true)]))
 
 (define-function (has-majority [m ElectionMeta] [config ClusterConfiguration])
@@ -489,14 +506,14 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; LogIndexMap
 
-(define-function (log-index-map-initialize [members (Listof (Addr RaftMessage))]
+(define-function (log-index-map-initialize [members (Listof (Addr SendableRaftMessage))]
                                            [initialize-with Nat])
   (for/fold ([map (hash)])
             ([member members])
     (hash-set map member initialize-with)))
 
-(define-function (log-index-map-value-for [map (Hash (Addr RaftMessage) Nat)]
-                                 [member (Addr RaftMessage)])
+(define-function (log-index-map-value-for [map (Hash (Addr SendableRaftMessage) Nat)]
+                                 [member (Addr SendableRaftMessage)])
   (case (hash-ref map member)
     [(Nothing)
       ;; akka-raft would update the map here, but we should never have to because we don't change the
@@ -504,16 +521,16 @@
       0]
     [(Just value) value]))
 
-(define-function (log-index-map-put-if-greater [map (Hash (Addr RaftMessage) Nat)]
-                                               [member (Addr RaftMessage)]
+(define-function (log-index-map-put-if-greater [map (Hash (Addr SendableRaftMessage) Nat)]
+                                               [member (Addr SendableRaftMessage)]
                                                [value Nat])
   (let ([old-value (log-index-map-value-for map member)])
     (cond
       [(< old-value value) (hash-set map member value)]
       [else map])))
 
-(define-function (log-index-map-put-if-smaller [map (Hash (Addr RaftMessage) Nat)]
-                                      [member (Addr RaftMessage)]
+(define-function (log-index-map-put-if-smaller [map (Hash (Addr SendableRaftMessage) Nat)]
+                                      [member (Addr SendableRaftMessage)]
                                       [value Nat])
   (let ([old-value (log-index-map-value-for map member)])
     (cond
@@ -522,7 +539,7 @@
 
 ;; ;; NOTE: because the akka-raft version of this is completely wrong, I'm writing my own
 ;; ;; Returns the greatest index that a majority of entries in the map agree on
-(define-function (log-index-map-consensus-for-index [map (Hash (Addr RaftMessage) Nat)]
+(define-function (log-index-map-consensus-for-index [map (Hash (Addr SendableRaftMessage) Nat)]
                                                     [config ClusterConfiguration])
   (let ([all-indices
          (for/fold ([indices-so-far (list)])
@@ -546,7 +563,7 @@
                              [replicated-log ReplicatedLog]
                              [from-index Nat]
                              [leader-commit-id Nat]
-                             [leader (Addr (Union (PeerMessage RaftMessage)))]
+                             [leader (Addr SendableRaftMessage)]
                              [leader-client (Addr (Union (ClientMessage ClientMessage)))])
   (let ([entries (replicated-log-entries-batch-from replicated-log from-index)])
     (cond
@@ -635,7 +652,11 @@
       (for/fold ([rep-log replicated-log])
                 ([entry entries])
         (send application (: entry command))
-        (cond [notify-client? (send (: entry client) (CommitSuccess (: entry command)))] [else 0])
+        (cond
+          [notify-client?
+           (send (: entry client)
+                 (fold ClientResponse (CommitSuccess (: entry command))))]
+          [else 0])
         (replicated-log-commit rep-log (: entry index)))))
 
   ;; TODO: consider making AppendEntries into a record to remove these long param lists and better
@@ -645,7 +666,7 @@
                                    [prev-log-index Nat]
                                    [entries (Vectorof Entry)]
                                    [leader-commit-id Nat]
-                                   [leader (Addr RaftMessage)]
+                                   [leader (Addr SendableRaftMessage)]
                                    [m StateMetadata]
                                    [replicated-log ReplicatedLog]
                                    [config ClusterConfiguration]
@@ -653,23 +674,27 @@
     (cond
       [(leader-is-lagging term m)
        ;; MY FIX:
-       (send leader (PeerMessage (AppendRejected (: m current-term)
-                                                 (replicated-log-last-index replicated-log)
-                                                 self)))
+       (send leader
+             (PeerMessage (fold RaftMessage (AppendRejected (: m current-term)
+                                                            (replicated-log-last-index replicated-log)
+                                                            self))))
        ;; APS PROTOCOL BUG: akka-raft does not respond to heartbeats in this case, but I think it
        ;; should
        ;; (cond
        ;;   [(not (is-heartbeat entries))
-       ;;    (send leader (PeerMessage (AppendRejected (: m current-term)
-       ;;                                              (replicated-log-last-index replicated-log)
-       ;;                                              self)))]
+       ;;    (send leader
+       ;;          (PeerMessage (fold RaftMessage (AppendRejected (: m current-term)
+       ;;                                                         (replicated-log-last-index replicated-log)
+       ;;                                                         self))))]
        ;;   [else 0])
        (goto Follower recently-contacted-by-leader m replicated-log config)]
       [(not (replicated-log-consistent-update replicated-log prev-log-term prev-log-index))
        (let ([meta-with-updated-term (! m [current-term term])])
-         (send leader (PeerMessage (AppendRejected (: meta-with-updated-term current-term)
-                                                   (replicated-log-last-index replicated-log)
-                                                   self)))
+         (send leader
+               (PeerMessage (fold RaftMessage
+                                  (AppendRejected (: meta-with-updated-term current-term)
+                                                  (replicated-log-last-index replicated-log)
+                                                  self))))
          (accept-heartbeat meta-with-updated-term
                            replicated-log
                            config
@@ -681,7 +706,7 @@
       [else
        (let* ([meta-with-updated-term (! m [current-term term])]
               [append-result (append replicated-log prev-log-index entries meta-with-updated-term)])
-         (send leader (PeerMessage (: append-result message)))
+         (send leader (PeerMessage (fold RaftMessage (: append-result message))))
          (let  ([replicated-log (commit-until-index (: append-result log) leader-commit-id false)])
            (accept-heartbeat meta-with-updated-term
                              replicated-log
@@ -689,7 +714,7 @@
                              recently-contacted-by-leader)))]))
 
   (define-function (replicate-log [m LeaderMeta]
-                                  [next-index (Hash (Addr RaftMessage) Nat)]
+                                  [next-index (Hash (Addr SendableRaftMessage) Nat)]
                                   [replicated-log ReplicatedLog]
                                   [config ClusterConfiguration])
     (for ([member (members-except-self config self)])
@@ -701,14 +726,14 @@
                                         self))))
 
   (define-function (send-heartbeat [m LeaderMeta]
-                                   [next-index (Hash (Addr RaftMessage) Nat)]
+                                   [next-index (Hash (Addr SendableRaftMessage) Nat)]
                                    [replicated-log ReplicatedLog]
                                    [config ClusterConfiguration])
     (replicate-log m next-index replicated-log config))
 
   (define-constant heartbeat-timer-name "HeartbeatTimer")
   (define-constant heartbeat-interval 50)
-  (define-function (start-heartbeat [m LeaderMeta] [next-index (Hash (Addr RaftMessage) Nat)]
+  (define-function (start-heartbeat [m LeaderMeta] [next-index (Hash (Addr SendableRaftMessage) Nat)]
                                     [replicated-log ReplicatedLog]
                                     [config ClusterConfiguration])
     (send-heartbeat m next-index replicated-log config)
@@ -718,23 +743,24 @@
   (define-function (stop-heartbeat)
     (send timer-manager (CancelTimer heartbeat-timer-name)))
 
-  (define-function (send-entries [follower (Addr RaftMessage)]
+  (define-function (send-entries [follower (Addr SendableRaftMessage)]
                                  [m LeaderMeta]
                                  [replicated-log ReplicatedLog]
                                  [next-index Nat]
                                  [leader-commit-id Nat]
-                                 [leader (Addr RaftMessage)]
+                                 [leader (Addr SendableRaftMessage)]
                                  [leader-client (Addr ClientMessage)])
     (send follower
           (PeerMessage
-           (AppendEntries-apply (: m current-term)
-                                replicated-log
-                                (log-index-map-value-for next-index follower)
-                                (: replicated-log committed-index)
-                                self
-                                self))))
+           (fold RaftMessage
+            (AppendEntries-apply (: m current-term)
+                                 replicated-log
+                                 (log-index-map-value-for next-index follower)
+                                 (: replicated-log committed-index)
+                                 self
+                                 self)))))
 
-  (define-function (maybe-commit-entry [match-index (Hash (Addr RaftMessage) Nat)]
+  (define-function (maybe-commit-entry [match-index (Hash (Addr SendableRaftMessage) Nat)]
                                        [replicated-log ReplicatedLog]
                                        [config ClusterConfiguration])
     (let ([index-on-majority (log-index-map-consensus-for-index match-index config)])
@@ -747,10 +773,10 @@
   ;; fields so much
   (define-function (register-append-successful [follower-term Nat]
                                                [follower-index Nat]
-                                               [member (Addr RaftMessage)]
+                                               [member (Addr SendableRaftMessage)]
                                                [m LeaderMeta]
-                                               [next-index (Hash (Addr RaftMessage) Nat)]
-                                               [match-index (Hash (Addr RaftMessage) Nat)]
+                                               [next-index (Hash (Addr SendableRaftMessage) Nat)]
+                                               [match-index (Hash (Addr SendableRaftMessage) Nat)]
                                                [replicated-log ReplicatedLog]
                                                [config ClusterConfiguration])
     ;; TODO: (maybe akka-raft bug): why don't both indices use put-if-greater?
@@ -763,10 +789,10 @@
 
   (define-function (register-append-rejected [follower-term Nat]
                                              [follower-index Nat]
-                                             [member (Addr RaftMessage)]
+                                             [member (Addr SendableRaftMessage)]
                                              [m LeaderMeta]
-                                             [next-index (Hash (Addr RaftMessage) Nat)]
-                                             [match-index (Hash (Addr RaftMessage) Nat)]
+                                             [next-index (Hash (Addr SendableRaftMessage) Nat)]
+                                             [match-index (Hash (Addr SendableRaftMessage) Nat)]
                                              [replicated-log ReplicatedLog]
                                              [config ClusterConfiguration])
     (let ([next-index (log-index-map-put-if-smaller next-index member (+ 1 follower-index))])
@@ -813,14 +839,14 @@
                          [config ClusterConfiguration]) (m)
    (case m
      [(ClientMessage client command)
-      (send client (LeaderIs recently-contacted-by-leader))
+      (send client (fold ClientResponse (LeaderIs recently-contacted-by-leader)))
       (goto Follower recently-contacted-by-leader metadata replicated-log config)]
      [(PeerMessage m)
-      (case m
+      (case (unfold RaftMessage m)
         [(RequestVote term candidate last-term last-index)
          (cond
            [(grant-vote?/follower metadata replicated-log term candidate last-term last-index)
-            (send candidate (PeerMessage (VoteCandidate term self)))
+            (send candidate (PeerMessage (fold RaftMessage (VoteCandidate term self))))
             ;; NOTE: akka-raft did not update the term here, which I think is a bug
             (let ([metadata (reset-election-deadline/follower timer-manager self metadata)])
               (goto Follower recently-contacted-by-leader
@@ -829,7 +855,9 @@
                     config))]
            [else
             (let ([metadata (! metadata [current-term (max term (: metadata current-term))])])
-              (send candidate (PeerMessage (DeclineCandidate (: metadata current-term) self)))
+              (send candidate
+                    (PeerMessage
+                     (fold RaftMessage (DeclineCandidate (: metadata current-term) self))))
               (goto Follower recently-contacted-by-leader metadata replicated-log config))])]
         [(VoteCandidate t f)
          (goto Follower recently-contacted-by-leader metadata replicated-log config)]
@@ -867,20 +895,21 @@
                           [config ClusterConfiguration]) (message)
    (case message
      [(ClientMessage client command)
-      (send client (LeaderIs (NoLeader)))
+      (send client (fold ,desugared-client-response-type (LeaderIs (NoLeader))))
       (goto Candidate m replicated-log config)]
      [(PeerMessage msg)
-      (case msg
+      (case (unfold RaftMessage msg)
         [(RequestVote term candidate last-log-term last-log-index)
          (cond
            [(grant-vote?/candidate m replicated-log term candidate last-log-term last-log-index)
-            (send candidate (PeerMessage (VoteCandidate term self)))
+            (send candidate (PeerMessage (fold RaftMessage (VoteCandidate term self))))
             ;; TODO: (maybe akka-raft bug): this seems wrong that we stay in candidate instead of
             ;; going to Follower. Some test should probably break this
             (goto Candidate (with-vote-for m term candidate) replicated-log config)]
            [else
             (let ([m (! m [current-term (max term (: m current-term))])])
-              (send candidate (PeerMessage (DeclineCandidate (: m current-term) self)))
+              (send candidate
+                    (PeerMessage (fold RaftMessage (DeclineCandidate (: m current-term) self))))
               (goto Candidate m replicated-log config))])]
         [(VoteCandidate term follower)
          (cond
@@ -948,9 +977,10 @@
               ;; APS PROTOCOL BUG: original code left out this response
               (send leader
                     (PeerMessage
-                     (AppendRejected (: m current-term)
-                                     (replicated-log-last-index replicated-log)
-                                     self)))
+                     (fold RaftMessage
+                      (AppendRejected (: m current-term)
+                                      (replicated-log-last-index replicated-log)
+                                      self))))
               (goto Candidate m replicated-log config)]))]
         [(AppendSuccessful t i member) (goto Candidate m replicated-log config)]
         [(AppendRejected t i member) (goto Candidate m replicated-log config)])]
@@ -968,8 +998,8 @@
      [(SendHeartbeatTimeouts id) (goto Candidate m replicated-log config)]))
 
  (define-state (Leader [m LeaderMeta]
-                       [next-index (Hash (Addr RaftMessage) Nat)]
-                       [match-index (Hash (Addr RaftMessage) Nat)]
+                       [next-index (Hash (Addr SendableRaftMessage) Nat)]
+                       [match-index (Hash (Addr SendableRaftMessage) Nat)]
                        [replicated-log ReplicatedLog]
                        [config ClusterConfiguration]) (message)
    (case message
@@ -982,19 +1012,20 @@
         (replicate-log m next-index replicated-log config)
         (goto Leader m next-index match-index replicated-log config))]
      [(PeerMessage msg)
-      (case msg
+      (case (unfold RaftMessage msg)
         [(RequestVote term candidate last-log-term last-log-index)
          (cond
            [(grant-vote?/leader m replicated-log term candidate last-log-term last-log-index)
-            (send candidate (PeerMessage (VoteCandidate term self)))
+            (send candidate (PeerMessage (fold RaftMessage (VoteCandidate term self))))
             (stop-heartbeat)
             (step-down m replicated-log config)]
            [(> term (: m current-term))
             (let ([m (! m [current-term term])])
-              (send candidate (PeerMessage (DeclineCandidate term self)))
+              (send candidate (PeerMessage (fold RaftMessage (DeclineCandidate term self))))
               (step-down m replicated-log config))]
            [else
-            (send candidate (PeerMessage (DeclineCandidate (: m current-term) self)))
+            (send candidate
+                  (PeerMessage (fold RaftMessage (DeclineCandidate (: m current-term) self))))
             (goto Leader m next-index match-index replicated-log config)])]
         [(VoteCandidate t s) (goto Leader m next-index match-index replicated-log config)]
         [(DeclineCandidate t s) (goto Leader m next-index match-index replicated-log config)]
@@ -1028,9 +1059,10 @@
                                 recently-contacted-by-leader)))]
            [else
             ;; MY FIX:
-            (send leader (PeerMessage (AppendRejected (: m current-term)
-                                                      (replicated-log-last-index replicated-log)
-                                                      self)))
+            (send leader (PeerMessage (fold RaftMessage
+                                            (AppendRejected (: m current-term)
+                                                            (replicated-log-last-index replicated-log)
+                                                            self))))
             ;; APS PROTOCOL BUG: this is where akka-raft sends entries back instead of the rejection
             ;; response
             ;;
