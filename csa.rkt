@@ -57,7 +57,7 @@
      n
      (list e ...)
      (vector e ...)
-     (hash)
+     (hash [e e] ...)
      (for/fold ([x e]) ([x e]) e))
   (Q (define-state (q [x τ] ...) (x) e)
      (define-state (q [x τ] ...) (x) e [(timeout n) e]))
@@ -303,7 +303,7 @@
   [(subst (primop e ...) x v) (primop (subst e x v) ...)]
   [(subst (list e ...) x v) (list (subst e x v) ...)]
   [(subst (vector e ...) x v) (vector (subst e x v) ...)]
-  [(subst (hash) x v) (hash)]
+  [(subst (hash [e_key e_val] ...) x v) (hash [(subst e_key x v) (subst e_val x v)] ...)]
   [(subst (for/fold ([x_1 e_1]) ([x_2 e_2]) e_3) x_1 v)
    (for/fold ([x_1 (subst e_1 x_1 v)]) ([x_2 (subst e_2 x_1 v)]) e_3)]
   [(subst (for/fold ([x_1 e_1]) ([x_2 e_2]) e_3) x_2 v)

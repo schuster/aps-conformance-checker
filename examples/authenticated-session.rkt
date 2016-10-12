@@ -191,9 +191,7 @@
          (send reply-to (Pong))
          (goto Running sessions next-auth-token)])))
 
-  ;; TODO: allow for hash literals with values in them
-  (define-constant pw-table ;; (hash-set (hash-set (hash) "joe" "abc") "sally" "xyz")
-    (hash))
+  (define-constant pw-table (hash ["joe" "abc"] ["sally" "xyz"]))
 
   (actors [server (spawn 1 Server)]
           [guard (spawn 2 ServiceGuard server pw-table)]

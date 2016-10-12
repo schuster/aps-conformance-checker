@@ -118,7 +118,7 @@
        (vector-take e1 e2)
        (vector-copy e1 e2 e3)
        (vector-append e1 e2)
-       (hash)
+       (hash [e1 e2] ...)
        (hash-ref e1 e2)
        (hash-set e1 e2 e3)
        (hash-has-key? e1 e2)

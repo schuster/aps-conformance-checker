@@ -64,7 +64,7 @@
       (* τ)
       (list v# ...)
       (vector v# ...)
-      (hash v# ...))
+      (hash-val v# ...))
   (e# (spawn any_location τ e# Q# ...)
       (spawning a#int τ e# Q# ...)
       (goto q e# ...)
@@ -82,7 +82,7 @@
       (printf string e# ...) ; for debugging only
       (list e# ...)
       (vector e# ...)
-      (hash)
+      (hash [e# e#] ...)
       (for/fold ([x e#]) ([x e#]) e#)
       (loop-context e#)
       x
@@ -122,6 +122,8 @@
       (printf string v# ... E# e# ...)
       (list v# ... E# e# ...)
       (vector v# ... E# e# ...)
+      (hash [v# v#] ... [E# e#] [e# e#] ...)
+      (hash [v# v#] ... [v# E#] [e# e#] ...)
       (for/fold ([x E#]) ([x e#]) e#)
       (for/fold ([x v#]) ([x E#]) e#)
       (loop-context E#))
@@ -518,7 +520,7 @@
   (redex-let csa# ([(e# _ _ _) h])
     (or (redex-match? csa# (in-hole E# (list-ref   (list)   v#)) (term e#))
         (redex-match? csa# (in-hole E# (vector-ref (vector) v#)) (term e#))
-        (redex-match? csa# (in-hole E# (hash-ref   (hash)   v#)) (term e#)))))
+        (redex-match? csa# (in-hole E# (hash-ref   (hash-val)   v#)) (term e#)))))
 
 (module+ test
   (test-true "stuck config 1"
@@ -526,7 +528,7 @@
   (test-true "stuck config 2"
     (stuck-at-empty-list-ref? (inject/H# (term (list-ref (list) (* Nat))))))
   (test-true "stuck config 3"
-    (stuck-at-empty-list-ref? (inject/H# (term (hash-ref (hash) (* Nat)))))))
+    (stuck-at-empty-list-ref? (inject/H# (term (hash-ref (hash-val) (* Nat)))))))
 
 (define (complete-handler-config? c)
   (redex-match csa# ((in-hole E# (goto q v#_param ...)) any_output any_loop-output any_spawns) c))
@@ -730,32 +732,35 @@
     (==> (vector-append _ (* (Vectorof τ)))
          (* (Vectorof τ))
          VectorWildcardAppend2)
-    (==> (hash-ref (hash v#_1 ... v# v#_2 ...) v#_key)
+    (==> (hash [v#_key v#_val] ...)
+         (normalize-collection (hash-val v#_val ...))
+         HashEval)
+    (==> (hash-ref (hash-val v#_1 ... v# v#_2 ...) v#_key)
          (variant Just v#)
          HashRefSuccess)
     (==> (hash-ref (* Hash τ_1 τ_2) v#_key)
          (variant Just (* τ_2))
          HashWildcardRefSuccess)
-    (==> (hash-ref (hash v#_other ...) v#_key)
+    (==> (hash-ref (hash-val v#_other ...) v#_key)
          (variant Nothing)
          HashRefFailure)
     (==> (hash-ref (* Hash τ_1 τ_2) v#_key)
          (variant Nothing)
          HashWildcardRefFailure)
-    (==> (hash-set (hash v#_1 ... v#_value v#_2 ...) v#_key v#_value)
-         (hash v#_1 ... v#_value v#_2 ...)
+    (==> (hash-set (hash-val v#_1 ... v#_value v#_2 ...) v#_key v#_value)
+         (hash-val v#_1 ... v#_value v#_2 ...)
          HashSetExists)
-    (==> (hash-set (hash v#_current ...) v#_key v#_value)
-         (normalize-collection (hash v#_current ... v#_value))
+    (==> (hash-set (hash-val v#_current ...) v#_key v#_value)
+         (normalize-collection (hash-val v#_current ... v#_value))
          (side-condition (not (member (term v#_value) (term (v#_current ...)))))
          HashSetNewItem)
     (==> (hash-set (* Hash τ_1 τ_2) v#_key v#_value)
          (* Hash τ_1 τ_2)
          HashWildcardSet)
-    (==> (hash-has-key? (hash v# ...) v#_key)
+    (==> (hash-has-key? (hash-val v# ...) v#_key)
          (variant True)
          HashHasKeyTrue)
-    (==> (hash-has-key? (hash v# ...) v#_key)
+    (==> (hash-has-key? (hash-val v# ...) v#_key)
          (variant False)
          HashHasKeyFalse)
     (==> (hash-has-key? (* (Hash τ_1 τ_2)) v#_key)
@@ -949,20 +954,23 @@
    (term (vector (variant A))))
   ;; hash
   (check-exp-steps-to?
-   (term (hash-set (hash (variant B) (variant C)) (* Nat) (variant A)))
-   (term (hash (variant A) (variant B) (variant C))))
+   (term (hash [(* Nat) (variant B)] [(* Nat) (variant A)]))
+   (term (hash-val (variant A) (variant B))))
   (check-exp-steps-to?
-   (term (hash-set (hash (variant C) (variant B)) (* Nat) (variant A)))
-   (term (hash (variant A) (variant B) (variant C))))
+   (term (hash-set (hash-val (variant B) (variant C)) (* Nat) (variant A)))
+   (term (hash-val (variant A) (variant B) (variant C))))
   (check-exp-steps-to?
-   (term (hash-set (hash) (* Nat) (variant A)))
-   (term (hash (variant A))))
+   (term (hash-set (hash-val (variant C) (variant B)) (* Nat) (variant A)))
+   (term (hash-val (variant A) (variant B) (variant C))))
   (check-exp-steps-to?
-   (term (hash-set (hash (variant B) (variant C)) (* Nat) (variant D)))
-   (term (hash (variant B) (variant C) (variant D))))
+   (term (hash-set (hash-val) (* Nat) (variant A)))
+   (term (hash-val (variant A))))
   (check-exp-steps-to?
-   (term (hash-set (hash (variant B) (variant C)) (* Nat) (variant B)))
-   (term (hash (variant B) (variant C))))
+   (term (hash-set (hash-val (variant B) (variant C)) (* Nat) (variant D)))
+   (term (hash-val (variant B) (variant C) (variant D))))
+  (check-exp-steps-to?
+   (term (hash-set (hash-val (variant B) (variant C)) (* Nat) (variant B)))
+   (term (hash-val (variant B) (variant C))))
 
   ;; Check for sorting of loop sends
   (check-equal?
@@ -1029,8 +1037,8 @@
    (list ,@(sort (remove-duplicates (term (v# ...))) sexp<?))]
   [(normalize-collection (vector v# ...))
    (vector ,@(sort (remove-duplicates (term (v# ...))) sexp<?))]
-  [(normalize-collection (hash v# ...))
-   (hash ,@(sort (remove-duplicates (term (v# ...))) sexp<?))])
+  [(normalize-collection (hash-val v# ...))
+   (hash-val ,@(sort (remove-duplicates (term (v# ...))) sexp<?))])
 
 (define (update-config-with-handler-results config address final-exp outputs spawns update-behavior)
   ;; 1. update the behavior
@@ -1188,7 +1196,10 @@
   [(csa#-subst (unfold τ e#) x v#) (unfold τ (csa#-subst e# x v#))]
   [(csa#-subst (list e# ...) x v#) (list (csa#-subst e# x v#) ...)]
   [(csa#-subst (vector e# ...) x v#) (vector (csa#-subst e# x v#) ...)]
-  [(csa#-subst (hash v#_element ...) x v#) (hash (csa#-subst v#_element x v#) ...)]
+  [(csa#-subst (hash [e#_key e#_val] ...) x v#)
+   (hash [(csa#-subst e#_key x v#) (csa#-subst e#_val x v#)] ...)]
+  [(csa#-subst (hash-val v#_element ...) x v#) (hash-val (csa#-subst v#_element x v#) ...)]
+  [(csa#-subst (hash-val v#_element ...) x v#) (hash-val (csa#-subst v#_element x v#) ...)]
   [(csa#-subst (for/fold ([x_1 e#_1]) ([x_2 e#_2]) e#_3) x_1 v#)
    (for/fold ([x_1 (csa#-subst e#_1 x_1 v#)]) ([x_2 (csa#-subst e#_2 x_1 v#)]) e#_3)]
   [(csa#-subst (for/fold ([x_1 e#_1]) ([x_2 e#_2]) e#_3) x_2 v#)
@@ -1387,6 +1398,10 @@
    (vector e#_unique ...)
    (where (e# ...) ((abstract-e e (a ...) natural_depth) ...))
    (where (e#_unique ...) ,(set->list (list->set (term (e# ...)) )))]
+  [(abstract-e (hash [v v_val] ...) (a ...) natural_depth)
+   (normalize-collection (hash-val (abstract-e v_val (a ...) natural_depth) ...))]
+  [(abstract-e (hash [e_key e_val] ...) (a ...) natural_depth)
+   (hash [(abstract-e e_key (a ...) natural_depth) (abstract-e e_val (a ...) natural_depth)] ...)]
   [(abstract-e (hash) _ _) (hash)]
   [(abstract-e (for/fold ([x_1 e_1]) ([x_2 e_2]) e) (a ...) natural)
    (for/fold ([x_1 (abstract-e e_1 (a ...) natural)])
@@ -1415,6 +1430,10 @@
                 (term (list (* Nat))))
   (check-equal? (term (abstract-e (vector 1 2) () 10))
                 (term (vector (* Nat))))
+  (check-equal? (term (abstract-e (hash [1 2] [3 4]) () 10))
+                (term (hash-val (* Nat))))
+  (check-equal? (term (abstract-e (hash [1 (let ([x 1]) x)] [3 4]) () 10))
+                (term (hash [(* Nat) (let ([x (* Nat)]) x)] [(* Nat) (* Nat)])))
   (test-equal? "Abstraction on non-matching addresses"
                (term (abstract-e (addr 1 (Union [A])) ((addr 1 (Union [B]))) 0))
                (term (init-addr 1 (Union [A]))))
@@ -1594,7 +1613,7 @@
      (if (member (csa#-address-strip-type addr) relevant-externals)
          addr
          (term (* (Addr ,type))))]
-    [(list (and keyword (or `vector 'list 'hash)) terms ...)
+    [(list (and keyword (or `vector 'list 'hash-val)) terms ...)
      (define blurred-args (map (curryr blur-addresses internals-to-blur relevant-externals) terms))
      (term (,keyword ,@(remove-duplicates blurred-args)))]
     [(list terms ...)
@@ -1654,14 +1673,14 @@
   (test-equal? "blur test 3"
    (blur-addresses
     (redex-let csa#
-        ([e# (term (hash (obs-ext 1 Nat)
-                         (obs-ext 2 Nat)
-                         (obs-ext 3 Nat)
-                         (obs-ext 4 Nat)))])
+        ([e# (term (hash-val (obs-ext 1 Nat)
+                             (obs-ext 2 Nat)
+                             (obs-ext 3 Nat)
+                             (obs-ext 4 Nat)))])
        (term e#))
     null
     '((obs-ext 1) (obs-ext 3)))
-   (term (hash (obs-ext 1 Nat) (* (Addr Nat)) (obs-ext 3 Nat))))
+   (term (hash-val (obs-ext 1 Nat) (* (Addr Nat)) (obs-ext 3 Nat))))
 
   (test-equal? "blur test 4"
    (blur-addresses
@@ -2102,8 +2121,8 @@
    (normalize-collection (list (coerce v# τ) ...))]
   [(coerce (vector v# ...) (Vectorof τ))
    (normalize-collection (vector (coerce v# τ) ...))]
-  [(coerce (hash v# ...) (Hash _ τ))
-   (normalize-collection (hash (coerce v# τ) ...))])
+  [(coerce (hash-val v# ...) (Hash _ τ))
+   (normalize-collection (hash-val (coerce v# τ) ...))])
 
 (module+ test
   (test-equal? "coerce wildcard 1" (term (coerce (* Nat) Nat)) (term (* Nat)))
@@ -2147,9 +2166,9 @@
                   (Vectorof (Addr (Union [A])))))
     (term (vector (* (Addr (Union [A]))))))
   (test-equal? "coerce hash"
-    (term (coerce (hash (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
+    (term (coerce (hash-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
                   (Hash Nat (Addr (Union [A])))))
-    (term (hash (* (Addr (Union [A])))))))
+    (term (hash-val (* (Addr (Union [A])))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Address containment
