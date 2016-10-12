@@ -1308,18 +1308,23 @@
 (define-metafunction csa#
   type-subst : τ X τ -> τ
   [(type-subst Nat _ _) Nat]
+  [(type-subst String _ _) String]
   [(type-subst (minfixpt X τ_1) X τ_2)
    (minfixpt X τ_1)]
-  ;; TODO: do the full renaming here
-  [(type-subst (μ X_1 τ_1) X_2 τ_2)
-   (μ X_1 (type-subst τ_1 X_2 τ_2))]
+  [(type-subst (minfixpt X_1 τ_1) X_2 τ_2)
+   (minfixpt X_fresh (type-subst (type-subst τ_1 X_1 X_fresh) X_2 τ_2))
+   (where X_fresh (variable-not-in ((minfixpt X_1 τ_1) X_2 τ_2) X_1))]
   [(type-subst X X τ) τ]
   [(type-subst X_1 X_2 τ) X_1]
   [(type-subst (Union [t τ ...] ...) X τ_2)
    (Union [t (type-subst τ X τ_2) ...] ...)]
-  ;; TODO: Record
+  [(type-subst (Record [l τ_l] ...) X τ)
+   (Record [l (type-subst τ_l X τ)] ...)]
   [(type-subst (Addr τ) X τ_2)
-   (Addr (type-subst τ X τ_2))])
+   (Addr (type-subst τ X τ_2))]
+  [(type-subst (Listof τ_e) X τ) (Listof (type-subst τ_e X τ))]
+  [(type-subst (Vectorof τ_e) X τ) (Vectorof (type-subst τ_e X τ))]
+  [(type-subst (Hash τ_k τ_v) X τ) (Hash (type-subst τ_k X τ) (type-subst τ_v X τ))])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
