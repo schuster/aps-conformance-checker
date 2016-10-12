@@ -1402,7 +1402,6 @@
    (normalize-collection (hash-val (abstract-e v_val (a ...) natural_depth) ...))]
   [(abstract-e (hash [e_key e_val] ...) (a ...) natural_depth)
    (hash [(abstract-e e_key (a ...) natural_depth) (abstract-e e_val (a ...) natural_depth)] ...)]
-  [(abstract-e (hash) _ _) (hash)]
   [(abstract-e (for/fold ([x_1 e_1]) ([x_2 e_2]) e) (a ...) natural)
    (for/fold ([x_1 (abstract-e e_1 (a ...) natural)])
              ([x_2 (abstract-e e_2 (a ...) natural)])
@@ -1432,6 +1431,8 @@
                 (term (vector (* Nat))))
   (check-equal? (term (abstract-e (hash [1 2] [3 4]) () 10))
                 (term (hash-val (* Nat))))
+  (check-equal? (term (abstract-e (hash) () 10))
+                (term (hash-val)))
   (check-equal? (term (abstract-e (hash [1 (let ([x 1]) x)] [3 4]) () 10))
                 (term (hash [(* Nat) (let ([x (* Nat)]) x)] [(* Nat) (* Nat)])))
   (test-equal? "Abstraction on non-matching addresses"
