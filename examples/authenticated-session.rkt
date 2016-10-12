@@ -139,7 +139,7 @@
             (cond
               [(= password found-password)
                (send server (CreateSession auth-token self))
-               (goto WaitingForServer)]
+               (goto WaitingForServer reply-to)]
               [else
                (send reply-to (FailedSession))
                (goto Done)])])]
@@ -147,15 +147,15 @@
         [(SuccessInternal) (goto WaitingForCredentials)]
         [(FailureInternal) (goto WaitingForCredentials)]
         [(NewSessionInternal auth-token) (goto WaitingForCredentials)]))
-    (define-state (WaitingForServer) (m)
+    (define-state (WaitingForServer [auth-reply-dest (Addr AuthenticateResult)]) (m)
       (case m
         [(NewSessionInternal auth-token)
-         (send client (ActiveNewSession auth-token server))
+         (send auth-reply-dest (ActiveNewSession auth-token server))
          (goto Done)]
         ;; None of these should happen right now
-        [(SuccessInternal) (goto WaitingForServer)]
-        [(FailureInternal) (goto WaitingForServer)]
-        [(Authenticate u p r) (goto WaitingForServer)]))
+        [(SuccessInternal) (goto WaitingForServer auth-reply-dest)]
+        [(FailureInternal) (goto WaitingForServer auth-reply-dest)]
+        [(Authenticate u p r) (goto WaitingForServer auth-reply-dest)]))
     (define-state (Done) (m) (goto Done)))
 
   (define-actor GetSessionType
