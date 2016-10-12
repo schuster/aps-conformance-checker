@@ -185,7 +185,9 @@
   [(messages-of-type/mf (minfixpt X τ) 0)
    ((* (minfixpt X τ)))]
   [(messages-of-type/mf (minfixpt X τ) natural_max-depth)
-   (messages-of-type/mf (type-subst τ X (minfixpt X τ)) ,(sub1 (term natural_max-depth)))]
+   ((folded (minfixpt X τ) v#) ...)
+   (where (v# ...)
+          (messages-of-type/mf (type-subst τ X (minfixpt X τ)) ,(sub1 (term natural_max-depth))))]
   [(messages-of-type/mf (Record [l_1 τ_1] [l_rest τ_rest] ...) natural_max-depth)
    ,(for/fold ([records-so-far null])
               ([sub-record (term (messages-of-type/mf (Record [l_rest τ_rest] ...) natural_max-depth))])
@@ -238,7 +240,7 @@
    (list '(* (minfixpt Dummy Nat))))
   (test-same-items?
    (term (messages-of-type/mf (minfixpt Dummy Nat) 1))
-   (list '(* Nat)))
+   (list '(folded (minfixpt Dummy Nat) (* Nat))))
   (test-same-items?
    (term (messages-of-type/mf (Record [a Nat] [b Nat]) 0))
    (list '(record [a (* Nat)] [b (* Nat)])))
@@ -254,12 +256,13 @@
    (list `(* ,list-of-nat)))
   (test-same-items?
    (term (messages-of-type/mf ,list-of-nat 1))
-   (list `(variant Null) `(variant Cons (* Nat) (* ,list-of-nat))))
+   (list `(folded ,list-of-nat (variant Null))
+         `(folded ,list-of-nat (variant Cons (* Nat) (* ,list-of-nat)))))
   (test-same-items?
    (term (messages-of-type/mf ,list-of-nat 2))
-   (list `(variant Null)
-         `(variant Cons (* Nat) (variant Null))
-         `(variant Cons (* Nat) (variant Cons (* Nat) (* ,list-of-nat)))))
+   (list `(folded ,list-of-nat (variant Null))
+         `(folded ,list-of-nat (variant Cons (* Nat) (folded ,list-of-nat (variant Null))))
+         `(folded ,list-of-nat (variant Cons (* Nat) (folded ,list-of-nat (variant Cons (* Nat) (* ,list-of-nat)))))))
   (test-same-items?
    (term (messages-of-type/mf (Union) 0))
    '())
