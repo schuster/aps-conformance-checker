@@ -143,8 +143,6 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 
-;; TODO: write code that desugars types with recursive references into types with minfixpts
-
 ;; Client message contains a command (string) to print when applying to the state machine, and a
 ;; channel to send to to confirm the application
 
@@ -1109,8 +1107,13 @@
 (module+ test
   (require
    rackunit
+   "../csa.rkt" ; for csa-valid-type?
    "../desugar.rkt"
    "../main.rkt")
+
+  (test-true "Client response type" (csa-valid-type? desugared-client-response-type))
+  (test-true "Raft message type" (csa-valid-type? desugared-raft-message-type))
+  (test-true "Full Raft actor type" (csa-valid-type? full-raft-actor-type))
 
   (test-true "Raft verification"
     (check-conformance (desugar raft-actor-surface-prog) raft-spec)))
