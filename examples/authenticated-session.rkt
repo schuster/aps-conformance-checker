@@ -267,15 +267,14 @@
 ;;                   (externals [reply-to ,desugared-GetSessionResultType])
 ;;      [worker ,desugared-AuthenticateType]
 ;;      ()
+;;      (goto WaitingForCredentials)
 ;;      (define-state (WaitingForCredentials)
 ;;        [(variant Authenticate * * reply-to) ->
-;;         (with-outputs ([reply-to (variant FailedSession)]) (goto Done))]
-;;        [(variant Authenticate * * reply-to) ->
-;;         (with-outputs ([reply-to (variant ActiveNewSession * ,spawn-server-specification)])
-;;           (goto Done))])
+;;         ([obligation reply-to (or (variant FailedSession)
+;;                                   (variant ActiveNewSession * ,spawn-server-specification))])
+;;         (goto Done)])
 ;;      (define-state (Done)
-;;        [(variant Authenticate * * reply-to) -> (goto Done)])
-;;      (goto WaitingForCredentials))))
+;;        [(variant Authenticate * * reply-to) -> () (goto Done)]))))
 
 (define authN-specification
   (quasiquote
