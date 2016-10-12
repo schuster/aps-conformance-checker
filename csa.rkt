@@ -7,6 +7,7 @@
  make-single-actor-config
  make-empty-queues-config
  csa-valid-program?
+ csa-valid-type?
  csa-valid-config?
  csa-valid-receptionist-list?
  csa-config-receptionists
@@ -387,6 +388,8 @@
 ;; Predicates
 
 (define (csa-valid-program? p) (redex-match csa-eval P p))
+
+(define (csa-valid-type? t) (redex-match? csa-eval τ t))
 
 (define (csa-valid-config? c)
   (and (redex-match csa-eval i c)
