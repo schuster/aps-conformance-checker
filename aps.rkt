@@ -50,14 +50,16 @@
   (p *
      x
      (variant t p ...)
-     (record [l p] ...))
+     (record [l p] ...)
+     (fold p))
   ;; output patterns
   (po *
       (or po ...)
       (fork (goto φ u ...) Φ ...)
       self
       (variant t po ...)
-      (record [l po] ...))
+      (record [l po] ...)
+      (fold p))
   ;; state name
   (φ variable-not-otherwise-mentioned))
 
@@ -145,7 +147,11 @@
   [(side-condition ,(ormap (lambda (p) (judgment-holds (pattern-binds-var ,p x)))
                            (term (p ...))))
    ----------
-   (pattern-binds-var (reocrd [l p] ...) x)])
+   (pattern-binds-var (reocrd [l p] ...) x)]
+
+  [(pattern-binds-var p x)
+   -------------------------------
+   (pattern-binds-var (fold p) x)])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Predicates

@@ -183,7 +183,11 @@
   [(side-condition ,(ormap (lambda (p) (judgment-holds (pattern-binds-var ,p x)))
                            (term (p ...))))
    ----------
-   (pattern-binds-var (reocrd [l p] ...) x)])
+   (pattern-binds-var (reocrd [l p] ...) x)]
+
+  [(pattern-binds-var p x)
+   ---------
+   (pattern-binds-var (fold p) x)])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Transition selection
@@ -501,7 +505,11 @@
 
   [(aps#-match/j (* τ) p ([x v#_binding] ...)) ...
    ---------------------------------------------
-   (aps#-match/j (* (Record [l τ] ..._n)) (record [l p] ..._n) ([x v#_binding] ... ...))])
+   (aps#-match/j (* (Record [l τ] ..._n)) (record [l p] ..._n) ([x v#_binding] ... ...))]
+
+  [(aps#-match/j v# p ([x v#_binding] ...))
+   -----------------------------------------------------------
+   (aps#-match/j (folded _ v#) (fold p) ([x v#_binding] ...))])
 
 (module+ test
 ;; TODO: rewrite these tests
@@ -522,7 +530,10 @@
   ;; (check-equal? (aps#-match (term (* (Tuple 'a 'b))) (term (tuple x 'b)))
   ;;               (list (term ([x (* 'a)]))))
   (check-true (judgment-holds (aps#-match/j (* Nat) * any)))
-  (check-false (judgment-holds (aps#-match/j (* Nat) x any))))
+  (check-false (judgment-holds (aps#-match/j (* Nat) x any)))
+  (check-true (judgment-holds (aps#-match/j (folded Nat (* (Addr Nat))) (fold x) any)))
+  (check-false (judgment-holds (aps#-match/j (folded Nat (* Nat)) x any)))
+  (check-false (judgment-holds (aps#-match/j (* Nat) (fold x) any))))
 
 ;;  aps#-match-po : (csa#-output-message output) self-address) patterns)
 ;;
@@ -601,7 +612,11 @@
                        (record [l po] ..._n)
                        any_self-addr
                        any_spawns
-                       any_receptionists)])
+                       any_receptionists)]
+
+  [(aps#-matches-po?/j v# σ# po any_self-addr any_spawns any_receptionists)
+   ------------------------------------------------------------------------------------------
+   (aps#-matches-po?/j (folded _ v#) σ# (fold po) any_self-addr any_spawns any_receptionists)])
 
 (define-judgment-form aps#
   #:mode (aps#-list-matches-po?/j I I O O O)
@@ -674,6 +689,10 @@
             (goto B)
             ((define-state (B)))])
          '()))
+
+  (test-equal? "Fold test"
+   (aps#-match-po '(folded Nat (variant A)) 'UNKNOWN '(fold (variant A)))
+   (list 'UNKNOWN '() '()))
 
     ;; TODO: rewrite these tests
   ;; (check-true (judgment-holds (aps#-matches-po?/j 'a 'a)))
