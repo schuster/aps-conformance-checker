@@ -31,7 +31,7 @@
          ;; alternative receptionists/externals for testing just one worker:
          ;; (receptionists [worker AuthenticateType]) (externals [reply-to GetSessionResult])
          ;; alternative receptionists/externals for testing just the service:
-         ;; (receptionists [service SessionCommand]) (externals)
+         ;; (receptionists [server SessionCommand]) (externals)
 
   (define-variant SessionResponse
     (Pong))
@@ -200,12 +200,7 @@
           ))))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Specification
-
-;; Spec says that:
-;; * initial request gets response with authN thing.
-;; * auth can fail or succeed, get response either way
-;; * if succeed, returned address responds to pings
+;; Desugared Types
 
 (define desugared-SessionResponse
   `(Union (Pong)))
@@ -242,51 +237,57 @@
     (CreateSession String desugared-CreateSessionResult)
     (Ping (Addr SessionResponse))))
 
-(define spawn-server-specification
-  (quasiquote
-   (fork (goto ServerReady)
-         (define-state (ServerReady)
-           [(variant Ping reply-to) ->
-            ([obligation reply-to (variant Pong)])
-            (goto ServerReady)]))))
+;; ---------------------------------------------------------------------------------------------------
+;; Specification
 
-(define spawn-auth-specification
-  (quasiquote
-    (fork (goto WaitingForCredentials)
-          (define-state (WaitingForCredentials)
-            [(variant Authenticate * * reply-to) ->
-             ([obligation reply-to (or (variant FailedSession)
-                                       (variant ActiveNewSession * ,spawn-server-specification))])
-             (goto Done)])
-          (define-state (Done)
-            [(variant Authenticate * * reply-to) -> () (goto Done)]))))
+(define server-spec-behavior
+  `((goto ServerReady)
+    (define-state (ServerReady)
+      [(variant Ping reply-to) ->
+       ([obligation reply-to (variant Pong)])
+       (goto ServerReady)])))
 
-;; (define worker-specification
-;;   (quasiquote
-;;    (specification (receptionists [worker ,desugared-AuthenticateType])
-;;                   (externals [reply-to ,desugared-GetSessionResultType])
-;;      [worker ,desugared-AuthenticateType]
-;;      ()
-;;      (goto WaitingForCredentials)
-;;      (define-state (WaitingForCredentials)
-;;        [(variant Authenticate * * reply-to) ->
-;;         ([obligation reply-to (or (variant FailedSession)
-;;                                   (variant ActiveNewSession * ,spawn-server-specification))])
-;;         (goto Done)])
-;;      (define-state (Done)
-;;        [(variant Authenticate * * reply-to) -> () (goto Done)]))))
+(define worker-spec-behavior
+  `((goto WaitingForCredentials)
+     (define-state (WaitingForCredentials)
+       [(variant Authenticate * * reply-to) ->
+        ([obligation reply-to (or (variant FailedSession)
+                                  (variant ActiveNewSession * (fork ,@server-spec-behavior)))])
+        (goto Done)])
+     (define-state (Done)
+       [(variant Authenticate * * reply-to) -> () (goto Done)])))
+
+;; Spec says that:
+;; * initial request gets response with authN thing.
+;; * auth can fail or succeed, get response either way
+;; * if succeed, returned address responds to pings
 
 (define authN-specification
-  (quasiquote
-   (specification (receptionists [guard ,desugared-GetSessionType]) (externals)
+  `(specification (receptionists [guard ,desugared-GetSessionType]) (externals)
      [guard ,desugared-GetSessionType] ; observed environment interface
      () ; unobserved environment interface
      (goto Ready)
      (define-state (Ready)
        [(variant GetSession * reply-to) ->
-        ([obligation reply-to (or (variant ActiveOldSession ,spawn-server-specification)
-                                  (variant NewSession ,spawn-auth-specification))])
-        (goto Ready)]))))
+        ([obligation reply-to (or (variant ActiveOldSession (fork ,@server-spec-behavior))
+                                  (variant NewSession (fork ,@worker-spec-behavior)))])
+        (goto Ready)])))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Alternative Specifications
+
+(define worker-specification
+  `(specification (receptionists [worker ,desugared-AuthenticateType])
+                  (externals [reply-to ,desugared-GetSessionResultType])
+     [worker ,desugared-AuthenticateType]
+     ()
+     ,@worker-spec-behavior))
+
+(define server-specification
+  `(specification (receptionists [server ,desugared-SessionCommand]) (externals)
+     [server ,desugared-SessionCommand]
+     ()
+     ,@server-spec-behavior))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing code
@@ -306,8 +307,10 @@
 
   (test-true "Authenticated session verification"
     (check-conformance (desugar authN-program) authN-specification)
-    ;; Use this to test just the worker
+    ;; Use this to test a single worker, in a context with the server and guard
     ;; (check-conformance (desugar authN-program) worker-specification)
+    ;; Use this to test just the service
+    ;; (check-conformance (desugar authN-program) server-specification)
     ))
 
 ;; ---------------------------------------------------------------------------------------------------
