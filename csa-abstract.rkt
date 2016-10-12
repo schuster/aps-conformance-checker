@@ -62,8 +62,8 @@
       (record [l v#] ...)
       (folded τ v#)
       (* τ)
-      (list v# ...)
-      (vector v# ...)
+      (list-val v# ...)
+      (vector-val v# ...)
       (hash-val v# ...))
   (e# (spawn any_location τ e# Q# ...)
       (spawning a#int τ e# Q# ...)
@@ -518,15 +518,15 @@
 ;; progrm)
 (define (stuck-at-empty-list-ref? h)
   (redex-let csa# ([(e# _ _ _) h])
-    (or (redex-match? csa# (in-hole E# (list-ref   (list)   v#)) (term e#))
-        (redex-match? csa# (in-hole E# (vector-ref (vector) v#)) (term e#))
+    (or (redex-match? csa# (in-hole E# (list-ref   (list-val)   v#)) (term e#))
+        (redex-match? csa# (in-hole E# (vector-ref (vector-val) v#)) (term e#))
         (redex-match? csa# (in-hole E# (hash-ref   (hash-val)   v#)) (term e#)))))
 
 (module+ test
   (test-true "stuck config 1"
-    (stuck-at-empty-list-ref? (inject/H# (term (vector-ref (vector) (* Nat))))))
+    (stuck-at-empty-list-ref? (inject/H# (term (vector-ref (vector-val) (* Nat))))))
   (test-true "stuck config 2"
-    (stuck-at-empty-list-ref? (inject/H# (term (list-ref (list) (* Nat))))))
+    (stuck-at-empty-list-ref? (inject/H# (term (list-ref (list-val) (* Nat))))))
   (test-true "stuck config 3"
     (stuck-at-empty-list-ref? (inject/H# (term (hash-ref (hash-val) (* Nat)))))))
 
@@ -678,53 +678,58 @@
          NatEqualityFalse)
 
     ;; Vectors, Lists, and Hashes
-    ;; TODO: keep the elements in a canonical order, so that equivalent abstract values are equal?
 
-    (==> (cons v#_new (list v# ...))
-         (normalize-collection (list v#_new v# ...))
+    (==> (list v# ...)
+         (normalize-collection (list-val v# ...))
+         ListEval)
+    (==> (cons v#_new (list-val v# ...))
+         (normalize-collection (list-val v#_new v# ...))
          Cons)
     (==> (cons v# (* (Listof τ)))
          (* (Listof τ))
          WildcardCons)
-    (==> (list-ref (list _ ... v# _ ...) (* Nat))
+    (==> (list-ref (list-val _ ... v# _ ...) (* Nat))
          v#
          ListRef)
     (==> (list-ref (* (Listof τ)) (* Nat))
          (* τ)
          WildcardListRef)
-    (==> (length (list v# ...))
+    (==> (length (list-val v# ...))
          (* Nat)
          ListLength)
     (==> (length (* (Listof _)))
          (* Nat)
          WildcardListLength)
-    (==> (vector-ref (vector _ .... v# _ ...) (* Nat))
+    (==> (vector v# ...)
+         (normalize-collection (vector-val v# ...))
+         VectorEval)
+    (==> (vector-ref (vector-val _ .... v# _ ...) (* Nat))
          v#
          VectorRef)
     (==> (vector-ref (* (Vectorof τ)) (* Nat))
          (* τ)
          VectorWildcardRef)
-    (==> (vector-take (vector v# ...) (* Nat))
-         (vector v# ...)
+    (==> (vector-take (vector-val v# ...) (* Nat))
+         (vector-val v# ...)
          VectorTake)
     (==> (vector-take (* (Vectorof τ)) (* Nat))
          (* (Vectorof τ))
          VectorWildcardTake)
-    (==> (vector-length (vector v# ...))
+    (==> (vector-length (vector-val v# ...))
          (* Nat)
          VectorLength)
     (==> (vector-length (* (Vectorof τ)))
          (* Nat)
          VectorWildcardLength)
-    (==> (vector-copy (vector v# ...) (* Nat) (* Nat))
-         (vector v# ...)
+    (==> (vector-copy (vector-val v# ...) (* Nat) (* Nat))
+         (vector-val v# ...)
          VectorCopy)
     (==> (vector-copy (* (Vectorof τ)) (* Nat) (* Nat))
          (* (Vectorof τ))
          VectorWildcardCopy)
     ;; TODO: figure out if the type is ever *not* big enough to also cover the other vector
-    (==> (vector-append (vector v#_1 ...) (vector v#_2 ...))
-         (normalize-collection (vector v#_1 ... v#_2 ...))
+    (==> (vector-append (vector-val v#_1 ...) (vector-val v#_2 ...))
+         (normalize-collection (vector-val v#_1 ... v#_2 ...))
          VectorAppend)
     (==> (vector-append (* (Vectorof τ)) _)
          (* (Vectorof τ))
@@ -852,7 +857,7 @@
          (* Nat)
          (side-condition (printf "1"))
          PrintLenListWildcard)
-    (==> (print-len (vector v# ...))
+    (==> (print-len (vector-val v# ...))
          (* Nat)
          (side-condition (printf "~s" (length (term (v# ...)))))
          PrintLenVector)
@@ -917,41 +922,53 @@
   ;; Tests for sorting when adding to lists, vectors, and hashes
   ;; list
   (check-exp-steps-to?
-   (term (cons (variant A) (list (variant B) (variant C))))
-   (term (list (variant A) (variant B) (variant C))))
+   (term (list (variant C) (variant B)))
+   (term (list-val (variant B) (variant C))))
   (check-exp-steps-to?
-   (term (cons (variant A) (list)))
-   (term (list (variant A))))
+   (term (list))
+   (term (list-val)))
   (check-exp-steps-to?
-   (term (cons (variant D) (list (variant B) (variant C))))
-   (term (list (variant B) (variant C) (variant D))))
+   (term (cons (variant A) (list-val (variant B) (variant C))))
+   (term (list-val (variant A) (variant B) (variant C))))
   (check-exp-steps-to?
-   (term (cons (variant B) (list (variant B) (variant C))))
-   (term (list (variant B) (variant C))))
+   (term (cons (variant A) (list-val)))
+   (term (list-val (variant A))))
+  (check-exp-steps-to?
+   (term (cons (variant D) (list-val (variant B) (variant C))))
+   (term (list-val (variant B) (variant C) (variant D))))
+  (check-exp-steps-to?
+   (term (cons (variant B) (list-val (variant B) (variant C))))
+   (term (list-val (variant B) (variant C))))
   ;; vector
   (check-exp-steps-to?
-   (term (vector-append (vector (variant A) (variant B))
-                        (vector (variant C) (variant D))))
-   (term (vector (variant A) (variant B) (variant C) (variant D))))
+   (term (vector (variant C) (variant B)))
+   (term (vector-val (variant B) (variant C))))
   (check-exp-steps-to?
-   (term (vector-append (vector (variant A) (variant B))
-                        (vector (variant C) (variant B))))
-   (term (vector (variant A) (variant B) (variant C))))
+   (term (vector))
+   (term (vector-val)))
   (check-exp-steps-to?
-   (term (vector-append (vector (variant C) (variant D))
-                        (vector (variant A) (variant B))))
-   (term (vector (variant A) (variant B) (variant C) (variant D))))
+   (term (vector-append (vector-val (variant A) (variant B))
+                        (vector-val (variant C) (variant D))))
+   (term (vector-val (variant A) (variant B) (variant C) (variant D))))
   (check-exp-steps-to?
-  (term (vector-append (vector (variant C) (variant D))
-                       (vector (variant B) (variant A))))
-  (term (vector (variant A) (variant B) (variant C) (variant D))))
-  (check-exp-steps-to? (term (vector-append (vector) (vector))) (term (vector)))
+   (term (vector-append (vector-val (variant A) (variant B))
+                        (vector-val (variant C) (variant B))))
+   (term (vector-val (variant A) (variant B) (variant C))))
   (check-exp-steps-to?
-   (term (vector-append (vector (variant A)) (vector)))
-   (term (vector (variant A))))
+   (term (vector-append (vector-val (variant C) (variant D))
+                        (vector-val (variant A) (variant B))))
+   (term (vector-val (variant A) (variant B) (variant C) (variant D))))
   (check-exp-steps-to?
-   (term (vector-append (vector) (vector (variant A))))
-   (term (vector (variant A))))
+  (term (vector-append (vector-val (variant C) (variant D))
+                       (vector-val (variant B) (variant A))))
+  (term (vector-val (variant A) (variant B) (variant C) (variant D))))
+  (check-exp-steps-to? (term (vector-append (vector-val) (vector-val))) (term (vector-val)))
+  (check-exp-steps-to?
+   (term (vector-append (vector-val (variant A)) (vector-val)))
+   (term (vector-val (variant A))))
+  (check-exp-steps-to?
+   (term (vector-append (vector-val) (vector-val (variant A))))
+   (term (vector-val (variant A))))
   ;; hash
   (check-exp-steps-to?
    (term (hash [(* Nat) (variant B)] [(* Nat) (variant A)]))
@@ -1033,10 +1050,10 @@
 ;; form
 (define-metafunction csa#
   normalize-collection : v# -> v#
-  [(normalize-collection (list v# ...))
-   (list ,@(sort (remove-duplicates (term (v# ...))) sexp<?))]
-  [(normalize-collection (vector v# ...))
-   (vector ,@(sort (remove-duplicates (term (v# ...))) sexp<?))]
+  [(normalize-collection (list-val v# ...))
+   (list-val ,@(sort (remove-duplicates (term (v# ...))) sexp<?))]
+  [(normalize-collection (vector-val v# ...))
+   (vector-val ,@(sort (remove-duplicates (term (v# ...))) sexp<?))]
   [(normalize-collection (hash-val v# ...))
    (hash-val ,@(sort (remove-duplicates (term (v# ...))) sexp<?))])
 
@@ -1195,7 +1212,9 @@
   [(csa#-subst (folded τ e#) x v#) (folded τ (csa#-subst e# x v#))]
   [(csa#-subst (unfold τ e#) x v#) (unfold τ (csa#-subst e# x v#))]
   [(csa#-subst (list e# ...) x v#) (list (csa#-subst e# x v#) ...)]
+  [(csa#-subst (list-val e# ...) x v#) (list-val (csa#-subst e# x v#) ...)]
   [(csa#-subst (vector e# ...) x v#) (vector (csa#-subst e# x v#) ...)]
+  [(csa#-subst (vector-val e# ...) x v#) (vector-val (csa#-subst e# x v#) ...)]
   [(csa#-subst (hash [e#_key e#_val] ...) x v#)
    (hash [(csa#-subst e#_key x v#) (csa#-subst e#_val x v#)] ...)]
   [(csa#-subst (hash-val v#_element ...) x v#) (hash-val (csa#-subst v#_element x v#) ...)]
@@ -1390,14 +1409,14 @@
    (fold τ (abstract-e e (a ...) natural_depth))]
   [(abstract-e (unfold τ e) (a ...) natural_depth)
    (unfold τ (abstract-e e (a ...) natural_depth))]
+  [(abstract-e (list v ...) (a ...) natural_depth)
+   (normalize-collection (list-val (abstract-e v (a ...) natural_depth) ...))]
   [(abstract-e (list e ...) (a ...) natural_depth)
-   (list e#_unique ...)
-   (where (e# ...) ((abstract-e e (a ...) natural_depth) ...))
-   (where (e#_unique ...) ,(set->list (list->set (term (e# ...)) )))]
+   (list (abstract-e e (a ...) natural_depth) ...)]
+  [(abstract-e (vector v ...) (a ...) natural_depth)
+   (normalize-collection (vector-val (abstract-e v (a ...) natural_depth) ...))]
   [(abstract-e (vector e ...) (a ...) natural_depth)
-   (vector e#_unique ...)
-   (where (e# ...) ((abstract-e e (a ...) natural_depth) ...))
-   (where (e#_unique ...) ,(set->list (list->set (term (e# ...)) )))]
+   (vector (abstract-e e (a ...) natural_depth) ...)]
   [(abstract-e (hash [v v_val] ...) (a ...) natural_depth)
    (normalize-collection (hash-val (abstract-e v_val (a ...) natural_depth) ...))]
   [(abstract-e (hash [e_key e_val] ...) (a ...) natural_depth)
@@ -1406,7 +1425,6 @@
    (for/fold ([x_1 (abstract-e e_1 (a ...) natural)])
              ([x_2 (abstract-e e_2 (a ...) natural)])
      (abstract-e e (a ...) natural))])
-
 
 ;; Abstracts the address a, where internal-addresses is the list of all addresses belonging to actors
 ;; in a's implementation configuration.
@@ -1426,9 +1444,19 @@
                  (variant Foo (init-addr 1 Nat) (obs-ext 2 Nat))
                  (term (abstract-e (variant Foo (addr 1 Nat) (addr 2 Nat)) ((addr 1 Nat)) 10))))
   (check-equal? (term (abstract-e (list 1 2) () 10))
-                (term (list (* Nat))))
+                (term (list-val (* Nat))))
+  (check-equal? (term (abstract-e (list 1 (let () 1)) () 10))
+                (term (list (* Nat) (let () (* Nat)))))
   (check-equal? (term (abstract-e (vector 1 2) () 10))
-                (term (vector (* Nat))))
+                (term (vector-val (* Nat))))
+  (check-equal? (term (abstract-e (vector 1 (let () 1)) () 10))
+                (term (vector (* Nat) (let () (* Nat)))))
+  (check-equal? (term (abstract-e (list (variant B) (variant A)) () 10))
+                (term (list-val (variant A) (variant B))))
+  (check-equal? (term (abstract-e (vector (variant B) (variant A)) () 10))
+                (term (vector-val (variant A) (variant B))))
+  (check-equal? (term (abstract-e (hash [1 (variant B)] [2 (variant A)]) () 10))
+                (term (hash-val (variant A) (variant B))))
   (check-equal? (term (abstract-e (hash [1 2] [3 4]) () 10))
                 (term (hash-val (* Nat))))
   (check-equal? (term (abstract-e (hash) () 10))
@@ -1614,9 +1642,9 @@
      (if (member (csa#-address-strip-type addr) relevant-externals)
          addr
          (term (* (Addr ,type))))]
-    [(list (and keyword (or `vector 'list 'hash-val)) terms ...)
+    [(list (and keyword (or `vector-val 'list-val 'hash-val)) terms ...)
      (define blurred-args (map (curryr blur-addresses internals-to-blur relevant-externals) terms))
-     (term (,keyword ,@(remove-duplicates blurred-args)))]
+     (term (normalize-collection (,keyword ,@blurred-args)))]
     [(list terms ...)
      (map (curryr blur-addresses internals-to-blur relevant-externals) terms)]
     [_ some-term]))
@@ -1681,51 +1709,53 @@
        (term e#))
     null
     '((obs-ext 1) (obs-ext 3)))
-   (term (hash-val (obs-ext 1 Nat) (* (Addr Nat)) (obs-ext 3 Nat))))
+   ;; Some reordering happens as a result of normalize-collection
+   (term (hash-val (* (Addr Nat)) (obs-ext 1 Nat) (obs-ext 3 Nat))))
 
   (test-equal? "blur test 4"
    (blur-addresses
     (redex-let csa#
-        ([e# (term (list (obs-ext 1 Nat)
-                         (obs-ext 2 Nat)
-                         (obs-ext 3 Nat)
-                         (obs-ext 4 Nat)))])
+        ([e# (term (list-val (obs-ext 1 Nat)
+                             (obs-ext 2 Nat)
+                             (obs-ext 3 Nat)
+                             (obs-ext 4 Nat)))])
       (term e#))
     null
     null)
-   (term (list (* (Addr Nat)))))
+   (term (list-val (* (Addr Nat)))))
 
   (test-equal? "blur test 5"
    (blur-addresses
     (redex-let csa#
-        ([e# (term (vector (obs-ext 1 Nat)
-                           (obs-ext 2 Nat)
-                           (obs-ext 3 Nat)
-                           (obs-ext 4 Nat)))])
+        ([e# (term (vector-val (obs-ext 1 Nat)
+                               (obs-ext 2 Nat)
+                               (obs-ext 3 Nat)
+                               (obs-ext 4 Nat)))])
       (term e#))
     null
     `((obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))
-   (term (vector (obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat))))
+   (term (vector-val (obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat))))
 
   (test-equal? "Blur for addresses with differing types"
-    (blur-addresses `(vector (spawn-addr 1 OLD (Union [A] [B]))
-                             (spawn-addr 1 OLD (Union [A]))
-                             (spawn-addr 2 OLD (Union [A] [B]))
-                             (spawn-addr 2 OLD (Union [A]))
-                             (obs-ext 3 (Union [A] [B]))
-                             (obs-ext 3 (Union [A]))
-                             (obs-ext 4 (Union [A] [B]))
-                             (obs-ext 4 (Union [A])))
+    (blur-addresses `(vector-val (obs-ext 3 (Union [A] [B]))
+                                 (obs-ext 3 (Union [A]))
+                                 (obs-ext 4 (Union [A] [B]))
+                                 (obs-ext 4 (Union [A]))
+                                 (spawn-addr 1 OLD (Union [A] [B]))
+                                 (spawn-addr 1 OLD (Union [A]))
+                                 (spawn-addr 2 OLD (Union [A] [B]))
+                                 (spawn-addr 2 OLD (Union [A])))
                     `((spawn-addr 1 OLD))
                     `((obs-ext 3)))
-    `(vector (blurred-spawn-addr 1 (Union [A] [B]))
-             (blurred-spawn-addr 1 (Union [A]))
-             (spawn-addr 2 OLD (Union [A] [B]))
-             (spawn-addr 2 OLD (Union [A]))
-             (obs-ext 3 (Union [A] [B]))
-             (obs-ext 3 (Union [A]))
-             (* (Addr (Union [A] [B])))
-             (* (Addr (Union [A]))))))
+    ;; Some reordering happens as a result of normalize-collection
+    `(vector-val (* (Addr (Union [A] [B])))
+                 (* (Addr (Union [A])))
+                 (blurred-spawn-addr 1 (Union [A] [B]))
+                 (blurred-spawn-addr 1 (Union [A]))
+                 (obs-ext 3 (Union [A] [B]))
+                 (obs-ext 3 (Union [A]))
+                 (spawn-addr 2 OLD (Union [A] [B]))
+                 (spawn-addr 2 OLD (Union [A])))))
 
 ;; Returns #t if the address is of the form (spawn-addr _ flag _), #f otherwise.
 (define (has-spawn-flag? addr flag)
@@ -2118,10 +2148,10 @@
   [(coerce (folded _ v#) (minfixpt X τ))
    (folded (minfixpt X τ) (coerce v# (type-subst τ X (minfixpt X τ))))]
   ;; lists, vectors, and hashes
-  [(coerce (list v# ...) (Listof τ))
-   (normalize-collection (list (coerce v# τ) ...))]
-  [(coerce (vector v# ...) (Vectorof τ))
-   (normalize-collection (vector (coerce v# τ) ...))]
+  [(coerce (list-val v# ...) (Listof τ))
+   (normalize-collection (list-val (coerce v# τ) ...))]
+  [(coerce (vector-val v# ...) (Vectorof τ))
+   (normalize-collection (vector-val (coerce v# τ) ...))]
   [(coerce (hash-val v# ...) (Hash _ τ))
    (normalize-collection (hash-val (coerce v# τ) ...))])
 
@@ -2159,13 +2189,13 @@
                             [Cons (Addr (Union [A]))
                                   (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A])) AddrList]))])))))
   (test-equal? "coerce list"
-    (term (coerce (list (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
+    (term (coerce (list-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
                   (Listof (Addr (Union [A])))))
-    (term (list (* (Addr (Union [A]))))))
+    (term (list-val (* (Addr (Union [A]))))))
   (test-equal? "coerce vector"
-    (term (coerce (vector (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
+    (term (coerce (vector-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
                   (Vectorof (Addr (Union [A])))))
-    (term (vector (* (Addr (Union [A]))))))
+    (term (vector-val (* (Addr (Union [A]))))))
   (test-equal? "coerce hash"
     (term (coerce (hash-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
                   (Hash Nat (Addr (Union [A])))))
