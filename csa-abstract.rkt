@@ -662,6 +662,18 @@
     (==> (= a#_1 a#_2)
          (variant False)
          AddressEqualityFalse)
+    (==> (= (* String) (* String))
+         (variant True)
+         StringEqualityTrue)
+    (==> (= (* String) (* String))
+         (variant False)
+         StringEqualityFalse)
+    (==> (= (* Nat) (* Nat))
+         (variant True)
+         NatEqualityTrue)
+    (==> (= (* Nat) (* Nat))
+         (variant False)
+         NatEqualityFalse)
 
     ;; Vectors, Lists, and Hashes
     ;; TODO: keep the elements in a canonical order, so that equivalent abstract values are equal?
@@ -880,6 +892,22 @@
                                (fold ,nat-list-type (variant Cons (* Nat)
                                  (fold ,nat-list-type (variant Null)))))))
                         (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
+
+  (define-check (check-exp-steps-to-all exp expected-exp-results)
+    (define next-steps (apply-reduction-relation* handler-step# (inject/H# exp)))
+    ;; TODO: Pick up here on Wednesday
+    (unless (equal? (list->set next-steps) (list->set (map inject/H# expected-exp-results)))
+      (fail-check (format "Actual next steps were ~s, expected ~s"
+                          next-steps
+                          (map inject/H# expected-exp-results)))))
+
+  ;; Equality checks
+  (check-exp-steps-to-all (term (= (* String) (* String)))
+                          (list (term (variant True)) (term (variant False))))
+  (check-exp-steps-to-all (term (= (* Nat) (* Nat)))
+                          (list (term (variant True)) (term (variant False))))
+  (check-exp-steps-to-all (term (= (* (Addr Nat)) (obs-ext 1 Nat)))
+                          (list (term (variant True)) (term (variant False))))
 
   ;; Tests for sorting when adding to lists, vectors, and hashes
   ;; list
