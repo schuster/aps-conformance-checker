@@ -139,6 +139,7 @@
             (define-constant x e)) ; TODO: should really only be literals
   (Type (τ)
         pτ
+        (minfixpt T τ)
         (Addr τ)
         (Record [x τ] ...)
         (Union [V τ ...] ...)
@@ -527,8 +528,7 @@
 (define-language csa/inlined-types
   (extends csa/inlined-records)
   (ProgItem (PI)
-            (- (define-type T τ)))
-  (Type (τ) (- T)))
+            (- (define-type T τ))))
 
 (define-parser parse-csa/inlined-types csa/inlined-types)
 
@@ -565,9 +565,8 @@
            (,actors-kw [,x3 ,e3] ...))])
   (Type : Type (τ) -> Type ()
         [,T
-         (hash-ref aliases-so-far
-                   T
-                   (lambda () (error 'inline-type-aliases "Could not find alias for type ~s" T)))])
+         ;; Return this type by default, because it might be the name of a recursive type
+         (hash-ref aliases-so-far T T)])
   (Prog P null))
 
 (module+ test
