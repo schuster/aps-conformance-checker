@@ -298,6 +298,8 @@
   [(subst (record [l e] ...) x v) (record [l (subst e x v)] ...)]
   [(subst (: e_1 l) x v) (: (subst e_1 x v) l)]
   [(subst (! e_1 [l e_2]) x v) (! (subst e_1 x v) [l (subst e_2 x v)])]
+  [(subst (fold τ e) x v) (fold τ (subst e x v))]
+  [(subst (unfold τ e) x v) (unfold τ (subst e x v))]
   [(subst (record [l e] ...) x v) (record [l (subst e x v)] ...)]
   [(subst (variant t e ...) x v) (variant t (subst e x v) ...)]
   [(subst (primop e ...) x v) (primop (subst e x v) ...)]
@@ -375,7 +377,11 @@
                 (term (! (record [field 1]) [field 2])))
   (check-equal?
    (term (subst-n/Q (define-state (S1 [a Nat]) (m) (+ a b)) [a 1] [b 2] [m 3]))
-   (term (define-state (S1 [a Nat]) (m) (+ a 2)))))
+   (term (define-state (S1 [a Nat]) (m) (+ a 2))))
+
+  (check-equal? (term (subst (fold Nat x) x 5)) (term (fold Nat 5)))
+  (check-equal? (term (subst (fold Nat y) x 5)) (term (fold Nat y)))
+  (check-equal? (term (subst (unfold Nat x) x 5)) (term (unfold Nat 5))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Predicates
