@@ -87,6 +87,8 @@
        (variant V e ...)
        (: e x)
        (! e [x e2])
+       (fold τ e)
+       (unfold τ e)
        (case e1 [(V x ...) e2 e* ...] ...)
        ;; (po e ...)
        ;;
