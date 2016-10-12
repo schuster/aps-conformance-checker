@@ -89,22 +89,6 @@
    (subst-n/aps-eval/u (subst/aps-eval/u u x a) any_rest ...)])
 
 (define-metafunction aps-eval
-  subst/aps-eval/po : po x a -> po
-  [(subst/aps-eval/po * x a) *]
-  [(subst/aps-eval/po (or po ...) x a) (or (subst/aps-eval/po po x a) ...)]
-  [(subst/aps-eval/po (fork any_goto any_s-defs ...) self _)
-   (fork any_goto any_s-defs ...)]
-  [(subst/aps-eval/po (fork (goto φ u ...) Φ ...) x a)
-   (fork (goto φ (subst/aps-eval/u u x a) ...)
-               (subst/aps-eval/Φ Φ x a) ...)]
-  [(subst/aps-eval/po self self a) a]
-  [(subst/aps-eval/po self _ _) self]
-  [(subst/aps-eval/po (variant t po ...) x a)
-   (variant t (subst/aps-eval/po po x a) ...)]
-  [(subst/aps-eval/po (record t [l po] ...) x a)
-   (record [l (subst/aps-eval/po po x a)] ...)])
-
-(define-metafunction aps-eval
   subst-n/aps-eval/Φ : Φ (x a) ... -> Φ
   [(subst-n/aps-eval/Φ Φ) Φ]
   [(subst-n/aps-eval/Φ Φ (x a) any_rest ...)
@@ -128,7 +112,7 @@
 (define-metafunction aps-eval
   subst/aps-eval/f : f x a -> f
   [(subst/aps-eval/f (obligation u po) x a)
-   (obligation (subst/aps-eval/u u x a) (subst/aps-eval/po po x a))]
+   (obligation (subst/aps-eval/u u x a) po)]
   [(subst/aps-eval/f (fork (goto φ u ...) Φ ...) x a)
    (fork (goto φ (subst/aps-eval/u u x a) ...)
          (subst/aps-eval/Φ Φ x a) ...)])

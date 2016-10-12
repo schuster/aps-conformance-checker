@@ -114,22 +114,6 @@
   [(subst/aps#/u a#_2 x a#) a#_2])
 
 (define-metafunction aps#
-  subst/aps#/po : po x a# -> po
-  [(subst/aps#/po * x a#) *]
-  [(subst/aps#/po (or po ...) x a#) (or (subst/aps#/po po x a#) ...)]
-  [(subst/aps#/po (fork any_goto any_s-defs ...) self _)
-   (fork any_goto any_s-defs ...)]
-  [(subst/aps#/po (fork (goto φ u ...) Φ ...) x a#)
-   (fork (goto φ (subst/aps#/u u x a#) ...)
-               (subst/aps#/Φ Φ x a#) ...)]
-  [(subst/aps#/po self self a#int) a#int]
-  [(subst/aps#/po self _ _) self]
-  [(subst/aps#/po (variant t po ...) x a#)
-   (variant t (subst/aps#/po po x a#) ...)]
-  [(subst/aps#/po (record t [l po] ...) x a#)
-   (record [l (subst/aps#/po po x a#)] ...)])
-
-(define-metafunction aps#
   subst/aps#/Φ : Φ x a# -> Φ
   [(subst/aps#/Φ (define-state (φ any_1 ... x any_2 ...) any_trans ...) x a#)
    (define-state (φ any_1 ... x any_2 ...) any_trans ...)]
@@ -153,7 +137,7 @@
 (define-metafunction aps#
   subst/aps#/f : f x a# -> f
   [(subst/aps#/f (obligation u po) x a#)
-   (obligation (subst/aps#/u u x a#) (subst/aps#/po po x a#))]
+   (obligation (subst/aps#/u u x a#) po)]
   [(subst/aps#/f (fork (goto φ u ...) Φ ...) x a#)
    (fork (goto φ (subst/aps#/u u x a#) ...)
          (subst/aps#/Φ Φ x a#) ...)])
