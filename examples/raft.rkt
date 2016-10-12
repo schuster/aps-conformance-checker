@@ -39,7 +39,7 @@
       (Vectorof Entry)
       Nat
       (Addr (Union [PeerMessage RaftMsgType]))
-      (Addr (Union (ClientMessage (Addr ClientResponse) String))))
+      (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
 
      (AppendRejected
       Nat
