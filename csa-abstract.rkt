@@ -1313,7 +1313,7 @@
    (minfixpt X τ_1)]
   [(type-subst (minfixpt X_1 τ_1) X_2 τ_2)
    (minfixpt X_fresh (type-subst (type-subst τ_1 X_1 X_fresh) X_2 τ_2))
-   (where X_fresh (variable-not-in ((minfixpt X_1 τ_1) X_2 τ_2) X_1))]
+   (where X_fresh ,(variable-not-in (term ((minfixpt X_1 τ_1) X_2 τ_2)) (term X_1)))]
   [(type-subst X X τ) τ]
   [(type-subst X_1 X_2 τ) X_1]
   [(type-subst (Union [t τ ...] ...) X τ_2)
