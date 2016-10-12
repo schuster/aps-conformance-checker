@@ -14,6 +14,12 @@
                             [JustLeader (Union [ClientMessage (Addr ResponseType) String])])]
                     [CommitSuccess String])))
 
+(define desugared-entry-type
+  `(Record [command String]
+           [term Nat]
+           [index Nat]
+           [client (Addr ,desugared-client-response-type)]))
+
 (define desugared-raft-message-type
   `(minfixpt RaftMsgType
     (Union
@@ -36,7 +42,7 @@
       Nat
       Nat
       Nat
-      (Vectorof Entry)
+      (Vectorof ,desugared-entry-type)
       Nat
       (Addr (Union [PeerMessage RaftMsgType]))
       (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
@@ -49,7 +55,7 @@
      (AppendSuccessful
       Nat
       Nat
-      (Union [PeerMessage RaftMsgType])))))
+      (Addr (Union [PeerMessage RaftMsgType]))))))
 
 (define cluster-config-variant
   (term (Config (Record [members (Listof (Addr (Union [PeerMessage ,desugared-raft-message-type])))]))))
