@@ -20,7 +20,7 @@
  ;; Required by APS#
  csa#-output-address
  csa#-output-message
- csa#-blur-internal-addresses ; needed for blurring in APS#
+ csa#-blur-addresses ; needed for blurring in APS#
  internals-in
  externals-in
 
@@ -1467,9 +1467,9 @@
   ;; actors, and removed messages)
   (define removed-actor-addresses (map csa#-actor-address removed-actors))
   (match-define (list renamed-config renamed-removed-actors)
-    (blur-addresses (list remaining-config removed-actors)
-                    removed-actor-addresses
-                    relevant-externals))
+    (csa#-blur-addresses (list remaining-config removed-actors)
+                         removed-actor-addresses
+                         relevant-externals))
   ;; 3. Deduplicate message packets in the packet set that now have the same content (the renaming
   ;; might have caused messages with differing content or address to now be the same)
   (define deduped-packets (deduplicate-packets (csa#-config-message-packets renamed-config)))
@@ -1544,16 +1544,11 @@
        ()))
      (list (term ((spawn-addr 1 NEW) ,test-behavior1))))))
 
-;; For a term assumed to contain no external addresses, renames the addresses in internals-to-blur as
-;; done in the blurring process.
-(define (csa#-blur-internal-addresses some-term internals-to-blur)
-  (blur-addresses some-term (map csa#-address-strip-type internals-to-blur) null))
-
 ;; term (a#int-without-type ...) (a#ext-without-type ...) -> term
 ;;
 ;; Renames internal addresses in internals-to-bour and external addresses *not* in
 ;; relevant-externals to their respective imprecise forms
-(define (blur-addresses some-term internals-to-blur relevant-externals)
+(define (csa#-blur-addresses some-term internals-to-blur relevant-externals)
   (match some-term
     [(and addr `(spawn-addr ,loc ,_))
      (if (member addr internals-to-blur)
@@ -1564,15 +1559,16 @@
          some-term
          (term (* (Addr ,type))))]
     [(list (and keyword (or `vector 'list 'hash)) terms ...)
-     (define blurred-args (map (curryr blur-addresses internals-to-blur relevant-externals) terms))
+     (define blurred-args
+       (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) terms))
      (term (,keyword ,@(remove-duplicates blurred-args)))]
     [(list terms ...)
-     (map (curryr blur-addresses internals-to-blur relevant-externals) terms)]
+     (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) terms)]
     [_ some-term]))
 
 (module+ test
   (test-equal? "blur test"
-    (blur-addresses
+    (csa#-blur-addresses
      (term (((Nat (spawn-addr foo OLD)) (Nat (spawn-addr foo NEW)))
             (Nat (spawn-addr bar NEW))
             (Nat (obs-ext 1))
@@ -1591,7 +1587,7 @@
            (Nat (spawn-addr quux NEW)))))
 
   (test-equal? "blur test 2"
-    (blur-addresses
+    (csa#-blur-addresses
      (redex-let* csa#
                  ([(a# b#)
                    (term
@@ -1621,7 +1617,7 @@
 
   ;; Make sure duplicates are removed from vectors, lists, and hashes
   (test-equal? "blur test 3"
-   (blur-addresses
+   (csa#-blur-addresses
     (redex-let csa#
         ([e# (term (hash (Nat (obs-ext 1))
                          (Nat (obs-ext 2))
@@ -1633,7 +1629,7 @@
    (term (hash (Nat (obs-ext 1)) (* (Addr Nat)) (Nat (obs-ext 3)))))
 
   (test-equal? "blur test 4"
-   (blur-addresses
+   (csa#-blur-addresses
     (redex-let csa#
         ([e# (term (list (Nat (obs-ext 1))
                          (Nat (obs-ext 2))
@@ -1645,7 +1641,7 @@
    (term (list (* (Addr Nat)))))
 
   (test-equal? "blur test 5"
-   (blur-addresses
+   (csa#-blur-addresses
     (redex-let csa#
         ([e# (term (vector (Nat (obs-ext 1))
                            (Nat (obs-ext 2))
@@ -1657,14 +1653,14 @@
    (term (vector (Nat (obs-ext 1)) (Nat (obs-ext 2)) (Nat (obs-ext 3)) (Nat (obs-ext 4)))))
 
   (test-equal? "Blur for addresses with differing types"
-    (blur-addresses `(vector ((Union [A] [B]) (spawn-addr 1 OLD))
-                             ((Union [A]) (spawn-addr 1 OLD))
-                             ((Union [A] [B]) (spawn-addr 2 OLD))
-                             ((Union [A]) (spawn-addr 2 OLD))
-                             ((Union [A] [B]) (obs-ext 3))
-                             ((Union [A]) (obs-ext 3))
-                             ((Union [A] [B]) (obs-ext 4))
-                             ((Union [A]) (obs-ext 4)))
+    (csa#-blur-addresses `(vector ((Union [A] [B]) (spawn-addr 1 OLD))
+                                  ((Union [A]) (spawn-addr 1 OLD))
+                                  ((Union [A] [B]) (spawn-addr 2 OLD))
+                                  ((Union [A]) (spawn-addr 2 OLD))
+                                  ((Union [A] [B]) (obs-ext 3))
+                                  ((Union [A]) (obs-ext 3))
+                                  ((Union [A] [B]) (obs-ext 4))
+                                  ((Union [A]) (obs-ext 4)))
                     `((spawn-addr 1 OLD))
                     `((obs-ext 3)))
     `(vector ((Union [A] [B]) (blurred-spawn-addr 1))
@@ -2121,13 +2117,13 @@
                       (foo bar (baz (Nat (init-addr 2)) (Nat (obs-ext 3)))))))
    (term ((obs-ext 1) (obs-ext 2) (obs-ext 3)))))
 
-;; Returns the list of all internal addresses in the given term
+;; Returns the list of all internal (typed) addresses in the given term
 (define (internals-in the-term)
   (remove-duplicates (term (internals-in/mf ,the-term))))
 
 (define-metafunction csa#
-  internals-in/mf : any -> (a#int ...)
-  [(internals-in/mf a#int) (a#int)]
+  internals-in/mf : any -> (τa# ...)
+  [(internals-in/mf (τ a#int)) ((τ a#int))]
   [(internals-in/mf (any ...))
    (any_addr ... ...)
    (where ((any_addr ...) ...) ((internals-in/mf any) ...))]
@@ -2140,7 +2136,7 @@
                         (Nat (obs-ext 2))
                         (Nat (spawn-addr 3 NEW))
                       (foo bar (baz (Nat (init-addr 2)) (Nat (obs-ext 3)))))))
-   (term ((init-addr 1) (spawn-addr 3 NEW) (init-addr 2)))))
+   (term ((Nat (init-addr 1)) (Nat (spawn-addr 3 NEW)) (Nat (init-addr 2))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debug helpers
