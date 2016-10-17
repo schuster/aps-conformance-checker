@@ -105,8 +105,8 @@
 (define (spec-address-is-receptionist? impl-config spec-config)
   (define spec-address (aps-config-obs-interface spec-config))
   (and (not (aps#-unknown-address? spec-address))
-       (andmap (lambda (a) (not (same-address-without-type? a spec-address)))
-               (csa-config-receptionists impl-config))))
+       ;; TODO: move this function into aps-abstract, or something like that
+       (member spec-address (map csa-strip-address-type (csa-config-receptionists impl-config)))))
 
 ;; Abstracts and sbc's the initial pair, returning the list of initial abstract pairs, or #f if the
 ;; abstraction was not possible for some reason
@@ -320,58 +320,58 @@
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f null null #f))
+      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f null null #f))
      (mutable-set (spec-step null-spec-config null null))))
   (test-case "Null transition not okay for observed input"
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null null #f))
+      (impl-step '(external-receive (init-addr 0) (* Nat)) #t null null #f))
      (mutable-set)))
   (test-case "No match if trigger does not match"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A) [x -> () (goto A)])) '(goto A) null null)
-      (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null null #f))
+      (impl-step '(external-receive (init-addr 0) (* Nat)) #t null null #f))
      (mutable-set)))
   (test-case "Unobserved outputs don't need to match"
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) null #f))
+      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f (list '((obs-ext 1) (* Nat))) null #f))
      (mutable-set (spec-step null-spec-config null null))))
   (test-case "No match if outputs do not match"
     (check-equal?
      (matching-spec-steps
-      (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat))))
-      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) null #f))
+      (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1))))
+      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f (list '((obs-ext 1) (* Nat))) null #f))
      (mutable-set)))
   (test-case "Output can be matched by previous commitment"
     (check-equal?
      (matching-spec-steps
-      (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat) (single *))))
-      (impl-step '(internal-receive (init-addr 0 Nat) (* Nat)) #f (list '((obs-ext 1 Nat) (* Nat))) null #f))
-     (mutable-set (spec-step (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1 Nat))))
+      (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1) (single *))))
+      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f (list '((obs-ext 1) (* Nat))) null #f))
+     (mutable-set (spec-step (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1))))
                              null
-                             (list `[(obs-ext 1 Nat) *])))))
+                             (list `[(obs-ext 1) *])))))
   (test-case "Output can be matched by new commitment"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)])) '(goto A) null null)
-      (impl-step '(external-receive (init-addr 0 Nat) (obs-ext 1 Nat)) #t (list '((obs-ext 1 Nat) (* Nat))) null #f))
+      (impl-step '(external-receive (init-addr 0) (Nat (obs-ext 1))) #t (list '((obs-ext 1) (* Nat))) null #f))
      (mutable-set (spec-step (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)]))
                                       '(goto A)
                                       null
-                                      (list '((obs-ext 1 Nat))))
+                                      (list '((obs-ext 1))))
                              null
-                             (list `[(obs-ext 1 Nat) *])))))
+                             (list `[(obs-ext 1) *])))))
   (test-case "Multiple copies of same commitment get merged"
     (check-equal?
      (matching-spec-steps
-      (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (single *)]))
-      (impl-step '(external-receive (init-addr 0 Nat) (* Nat)) #t null null #f))
+      (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1)) null (list '[(obs-ext 1) (single *)]))
+      (impl-step '(external-receive (init-addr 0) (* Nat)) #t null null #f))
      (mutable-set
-      (spec-step (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1 Nat)) null (list '[(obs-ext 1 Nat) (many *)]))
+      (spec-step (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1)) null (list '[(obs-ext 1) (many *)]))
                  null
                  null)))))
 
@@ -450,15 +450,15 @@
    (blur-by-relevant-addresses
     (term (()
            ()
-           (((init-addr 2 Nat) (obs-ext 1 Nat) single)
-            ((init-addr 2 Nat) (obs-ext 2 Nat) single)
-            ((init-addr 2 Nat) (obs-ext 3 Nat) single))))
-    (aps#-make-no-transition-config '() '(((obs-ext 3 Nat)))))
+           (((init-addr 2) (Nat (obs-ext 1)) single)
+            ((init-addr 2) (Nat (obs-ext 2)) single)
+            ((init-addr 2) (Nat (obs-ext 3)) single))))
+    (aps#-make-no-transition-config '() '(((obs-ext 3)))))
    (list (term (()
                 ()
-                (((init-addr 2 Nat) (* (Addr Nat)) many)
-                 ((init-addr 2 Nat) (obs-ext 3 Nat) single))))
-         (aps#-make-no-transition-config '() '(((obs-ext 3 Nat)))))))
+                (((init-addr 2) (* (Addr Nat)) many)
+                 ((init-addr 2) (Nat (obs-ext 3)) single))))
+         (aps#-make-no-transition-config '() '(((obs-ext 3)))))))
 
 ;; Decides whether to blur spawn-addresses with the OLD or NEW flag based on the current impl and spec
 ;; configs, returning the flag for addresses that should be blurred.
@@ -563,12 +563,12 @@
   (define bz-pair (config-pair 'B 'Z))
   (define cw-pair (config-pair 'C 'W))
 
-  (define aa-step (impl-step '(timeout (init-addr 0 Nat)) #f null null 'A))
+  (define aa-step (impl-step '(timeout (init-addr 0)) #f null null 'A))
   (define xx-step (spec-step 'X null null))
-  (define ab-step (impl-step '(timeout (init-addr 0 Nat)) #f null null 'B))
+  (define ab-step (impl-step '(timeout (init-addr 0)) #f null null 'B))
   (define xy-step (spec-step 'Y null null))
   (define xz-step (spec-step 'Z null null))
-  (define bc-step (impl-step '(timeout (init-addr 0 Nat)) #f null null 'C))
+  (define bc-step (impl-step '(timeout (init-addr 0)) #f null null 'C))
   (define yw-step (spec-step 'W null null))
 
   (test-equal? "Remove no pairs, because no list"
@@ -740,7 +740,7 @@
   (define (make-ignore-all-config addr-type)
     (make-single-actor-config
      (term
-      ((addr 0 ,addr-type)
+      ((,addr-type (addr 0))
        (((define-state (Always) (m) (goto Always)))
         (goto Always))))))
   (define ignore-all-config (make-ignore-all-config 'Nat))
@@ -748,7 +748,7 @@
     (term
      (((define-state (Always) [* -> () (goto Always)]))
       (goto Always)
-      (addr 0 ,addr-type))))
+      ((,addr-type) (addr 0)))))
   (define ignore-all-spec-instance
     (make-ignore-all-spec-instance 'Nat))
   (check-not-false (redex-match csa-eval i ignore-all-config))
