@@ -420,8 +420,17 @@
 ;; Selectors
 
 (define (csa-config-internal-addresses config)
-  (redex-let* csa-eval ([((((_ a) _) ...) _ _ _) config])
-              (term (a ...))))
+  (redex-let* csa-eval ([(((a _) ...) _ _ _) config])
+    (term (a ...))))
+
+(module+ test
+  (redex-let* csa-eval ([b_1 (term (() (goto A)))]
+                        [b_2 (term (() (goto B (Nat (addr 3)) (Nat (addr 4)))))]
+                        [α (term ([(addr 0) b_1]
+                                  [(addr 1) b_2]))]
+                        [i (term (α () () ()))])
+    (check-equal? (csa-config-internal-addresses (term i))
+                  (term ((addr 0) (addr 1))))))
 
 (define (csa-config-receptionists config)
   (third config))
