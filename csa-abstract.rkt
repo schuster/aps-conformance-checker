@@ -5,12 +5,14 @@
 (provide
  ;; Required by conformance checker
  (struct-out csa#-transition)
- csa#-messages-of-address-type
+ csa#-messages-of-type
  csa#-handle-external-message
  csa#-handle-all-internal-actions
  csa#-abstract-config
  csa#-blur-config
  necessary-action?
+ csa#-address-type
+ csa#-address-strip-type
 
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
  csa#-spawn-address?
@@ -20,15 +22,13 @@
  ;; Required by APS#
  csa#-output-address
  csa#-output-message
- csa#-blur-internal-addresses ; needed for blurring in APS#
+ csa#-blur-addresses ; needed for blurring in APS#
  internals-in
  externals-in
 
  ;; Required by APS#; should go into a "common" language instead
  csa#
  csa#-abstract-address
- same-internal-address-without-type?
- same-external-address-without-type?
  type-join
 
  ;; Testing helpers
@@ -48,8 +48,8 @@
 ;; Abstract-interpretation version of CSA
 (define-extended-language csa# csa-eval
   (i# (α# β# μ#))
-  (α# ((a#int b#) ...))
-  (β# ((a#int (b# ...)) ...)) ; blurred actors, represented by a set of abstract behaviors
+  (α# ((a#int-precise b#) ...))
+  (β# ((a#int-collective (b# ...)) ...)) ; blurred actors, represented by a set of abstract behaviors
   (b# ((Q# ...) e#)) ; behavior
   ;; TODO: refactor the packets to hold *un*typed addresses - will solve most of my address comparison
   ;; issues
@@ -57,7 +57,7 @@
   (m single many) ; m for "multiplicity"
   (Q# (define-state (q [x τ] ...) (x) e#)
       (define-state (q [x τ] ...) (x) e# [(timeout v#) e#]))
-  (v# a#
+  (v# τa#
       (variant t v# ...)
       (record [l v#] ...)
       (folded τ v#)
@@ -89,18 +89,19 @@
       v#)
   (a# a#int a#ext) ; internal and external addresses
   (a#int a#int-precise
-         (blurred-spawn-addr any_location τ))
-  (a#int-precise (init-addr natural τ)
-                 (spawn-addr any_location spawn-flag τ))
+         a#int-collective)
+  (a#int-precise (init-addr natural)
+                 (spawn-addr any_location spawn-flag))
+  (a#int-collective (blurred-spawn-addr any_location))
   ;; OLD means it is a unique actor that existed before the current handler was run, NEW means it was
   ;; spawned in the current handler (should all be OLD between runs, after blur/canonicalize)
   (spawn-flag NEW OLD)
   (a#ext
    (* (Addr τ)) ; unobserved address
-   ;; NOTE: only a finite number of addresses in the initial config, so we can use natural numbers
-   ;; here
-   (obs-ext natural τ))
-  (ρ# (a#int ...))
+   (obs-ext natural))
+  (τa# (τ a#int)
+       (τ (obs-ext natural))
+       (* (Addr τ)))
   ;; H# = handler machine state (exp + outputs + loop outputs + spawns so far)
   (H# (e# ([a# v#] ...) ([a# v#] ...) ((a#int b#) ...)))
   (E# hole
@@ -159,15 +160,8 @@
 (define next-generated-address 100)
 
 ;; Returns an exhaustive list of abstract messages for the type of the given address
-(define (csa#-messages-of-address-type address)
-  (term (messages-of-type/mf (receptionist-type ,address) ,MAX-RECURSION-DEPTH)))
-
-;; Returns the type of the given internal address
-(define-metafunction csa#
-  receptionist-type : a#int -> τ
-  [(receptionist-type (init-addr natural τ)) τ]
-  [(receptionist-type (spawn-addr _ _ τ)) τ]
-  [(receptionist-type (blurred-spawn-addr _ τ)) τ])
+(define (csa#-messages-of-type type)
+  (term (messages-of-type/mf ,type ,MAX-RECURSION-DEPTH)))
 
 ;; Returns an exhaustive list of abstract messages for the given type with the natural argument
 ;; indicating the maximum number of times to unfold recursive types.
@@ -202,7 +196,7 @@
   [(messages-of-type/mf (Addr τ) _)
    ,(begin
       (set! next-generated-address (add1 next-generated-address))
-      (term ((obs-ext ,next-generated-address τ))))]
+      (term ((τ (obs-ext ,next-generated-address)))))]
   [(messages-of-type/mf (Listof τ) _) ((* (Listof τ)))]
   [(messages-of-type/mf (Vectorof τ) _) ((* (Vectorof τ)))]
   [(messages-of-type/mf (Hash τ_1 τ_2) _) ((* (Hash τ_1 τ_2)))])
@@ -421,11 +415,11 @@
 
 (module+ test
   (test-true "any-messages-for? 1"
-    (any-messages-for? (term (() () ([(init-addr 1 Nat) (* Nat) 1]))) (term (init-addr 1 Nat))))
+    (any-messages-for? (term (() () ([(init-addr 1) (* Nat) 1]))) (term (init-addr 1))))
   (test-false "any-messages-for? 2"
-    (any-messages-for? (term (() () ([(init-addr 2 Nat) (* Nat) 1]))) (term (init-addr 1 Nat))))
-  (test-false "any-messages-for? 1"
-    (any-messages-for? (term (() () ())) (term (init-addr 1 Nat)))))
+    (any-messages-for? (term (() () ([(init-addr 2) (* Nat) 1]))) (term (init-addr 1))))
+  (test-false "any-messages-for? 3"
+    (any-messages-for? (term (() () ())) (term (init-addr 1)))))
 
 ;; Returns all behaviors currently available in the given config for the actor with the given address
 ;; (will only be a single behavior for precise addresses, one or more for blurred ones).
@@ -661,10 +655,11 @@
          (csa#-not (canonicalize-boolean v#))
          Not)
 
-    (==> (= a#_1 a#_2)
+    ;; For now, we're conservative and always assume both results are possible
+    (==> (= τa#_1 τa#_2)
          (variant True)
          AddressEqualityTrue)
-    (==> (= a#_1 a#_2)
+    (==> (= τa#_1 τa#_2)
          (variant False)
          AddressEqualityFalse)
     (==> (= (* String) (* String))
@@ -815,31 +810,36 @@
 
     ;; Communication
 
-    (--> ((in-hole E# (send a# v#)) (any_outputs ...) any_loop-outputs any_spawns)
-         ((in-hole E# v#)           (any_outputs ... [a# (coerce v# τ)]) any_loop-outputs any_spawns)
+    (--> ((in-hole E# (send τa# v#)) (any_outputs ...) any_loop-outputs any_spawns)
+         ((in-hole E# v#)            (any_outputs ... [a# (coerce v# τ)]) any_loop-outputs any_spawns)
          ;; regular send only occurs outside of loop contexts
          (side-condition (not (redex-match csa# (in-hole E# (loop-context E#_2)) (term E#))))
-         (where τ (address-type a#))
+         (where τ (address-type/mf τa#))
+         (where a# (address-strip-type/mf τa#))
          Send)
-    (--> ((in-hole E# (loop-context (in-hole E#_2 (send a# v#)))) any_outputs any_loop-outputs any_spawns)
+    (--> ((in-hole E# (loop-context (in-hole E#_2 (send τa# v#))))
+          any_outputs
+          any_loop-outputs
+          any_spawns)
          ((in-hole E# (loop-context (in-hole E#_2 v#)))
           any_outputs
           ,(sort (remove-duplicates (append (term any_loop-outputs) (list (term [a# (coerce v# τ)]))))
                  sexp<?)
           any_spawns)
-         (where τ (address-type a#))
+         (where τ (address-type/mf τa#))
+         (where a# (address-strip-type/mf τa#))
          LoopSend)
 
     ;; Spawn
     (==> (spawn any_location τ e# Q# ...)
-         (spawning a#int τ (csa#-subst-n e# [self a#int]) (csa#-subst/Q# Q# self a#int) ...)
-         (where a#int (spawn-addr any_location NEW τ))
+         (spawning a#int τ (csa#-subst-n e# [self (τ a#int)]) (csa#-subst/Q# Q# self (τ a#int)) ...)
+         (where a#int (spawn-addr any_location NEW))
          SpawnStart)
     (--> ((in-hole E# (spawning a#int τ (in-hole E#_2 (goto q v# ...)) Q# ...))
           any_outputs
           any_loop-outputs
           (any_spawns ...))
-         ((in-hole E# a#int)
+         ((in-hole E# (τ a#int))
           any_outputs
           any_loop-outputs
           (any_spawns ... (a#int ((Q# ...) (goto q v# ...)))))
@@ -876,7 +876,7 @@
 
 (module+ test
   (define (csa#-make-simple-test-config exp)
-    (redex-let* csa# ([a# (term (init-addr 0 Nat))]
+    (redex-let* csa# ([a# (term (init-addr 0))]
                       [b# (term (((define-state (Always) (long-unused-name) (begin ,exp (goto Always))))
                                  (begin ,exp (goto Always))))]
                       [α# (term ([a# b#]))]
@@ -919,7 +919,7 @@
                           (list (term (variant True)) (term (variant False))))
   (check-exp-steps-to-all (term (= (* Nat) (* Nat)))
                           (list (term (variant True)) (term (variant False))))
-  (check-exp-steps-to-all (term (= (* (Addr Nat)) (obs-ext 1 Nat)))
+  (check-exp-steps-to-all (term (= (* (Addr Nat)) (Nat (obs-ext 1))))
                           (list (term (variant True)) (term (variant False))))
 
   ;; Tests for sorting when adding to lists, vectors, and hashes
@@ -995,59 +995,59 @@
   ;; Check for sorting of loop sends
   (check-equal?
    (apply-reduction-relation handler-step#
-                             (term ((loop-context (send (obs-ext 1 (Union [A] [B])) (variant A)))
+                             (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant A)))
                                     ()
-                                    ([(obs-ext 1 (Union [A] [B])) (variant B)])
+                                    ([(obs-ext 1) (variant B)])
                                     ())))
    (list (term ((loop-context (variant A))
                 ()
-                ([(obs-ext 1 (Union [A] [B])) (variant A)]
-                 [(obs-ext 1 (Union [A] [B])) (variant B)])
+                ([(obs-ext 1) (variant A)]
+                 [(obs-ext 1) (variant B)])
                 ()))))
   (check-equal?
    (apply-reduction-relation handler-step#
-                             (term ((loop-context (send (obs-ext 1 (Union [A] [B])) (variant B)))
+                             (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant B)))
                                     ()
-                                    ([(obs-ext 1 (Union [A] [B])) (variant A)])
+                                    ([(obs-ext 1) (variant A)])
                                     ())))
    (list (term ((loop-context (variant B))
                 ()
-                ([(obs-ext 1 (Union [A] [B])) (variant A)]
-                 [(obs-ext 1 (Union [A] [B])) (variant B)])
+                ([(obs-ext 1) (variant A)]
+                 [(obs-ext 1) (variant B)])
                 ()))))
   (check-equal?
    (apply-reduction-relation handler-step#
-                             (term ((loop-context (send (obs-ext 1 (Union [A] [B])) (variant B)))
+                             (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant B)))
                                     ()
-                                    ([(obs-ext 1 (Union [A] [B])) (variant A)]
-                                     [(obs-ext 1 (Union [A] [B])) (variant B)])
+                                    ([(obs-ext 1) (variant A)]
+                                     [(obs-ext 1) (variant B)])
                                     ())))
    (list (term ((loop-context (variant B))
                 ()
-                ([(obs-ext 1 (Union [A] [B])) (variant A)]
-                 [(obs-ext 1 (Union [A] [B])) (variant B)])
+                ([(obs-ext 1) (variant A)]
+                 [(obs-ext 1) (variant B)])
                 ()))))
   (check-equal?
    (apply-reduction-relation handler-step#
-                             (term ((loop-context (send (obs-ext 1 (Union [A] [B])) (variant B)))
+                             (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant B)))
                                     ()
                                     ()
                                     ())))
    (list (term ((loop-context (variant B))
                 ()
-                ([(obs-ext 1 (Union [A] [B])) (variant B)])
+                ([(obs-ext 1) (variant B)])
                 ()))))
 
   ;; Check that internal addresses in the transmissions do not change the evaluation (had a problem
   ;; with this before)
   (check-equal?
-   (apply-reduction-relation* handler-step# (inject/H# (term (begin (send (init-addr 1 Nat) (* Nat)) (goto A)))))
-   (list (term ((begin (goto A)) (((init-addr 1 Nat) (* Nat))) () ()))))
+   (apply-reduction-relation* handler-step# (inject/H# (term (begin (send (Nat (init-addr 1)) (* Nat)) (goto A)))))
+   (list (term ((begin (goto A)) (((init-addr 1) (* Nat))) () ()))))
 
   (check-equal?
    (apply-reduction-relation* handler-step#
      (inject/H# (term (begin (spawn L Nat (goto A) (define-state (A) (x) (goto A))) (goto B)))))
-   (list (term ((begin (goto B)) () () ([(spawn-addr L NEW Nat) [((define-state (A) (x) (goto A))) (goto A)]]))))))
+   (list (term ((begin (goto B)) () () ([(spawn-addr L NEW) [((define-state (A) (x) (goto A))) (goto A)]]))))))
 
 ;; Puts the given abstract collection value (a list, vector, or hash) and puts it into a canonical
 ;; form
@@ -1082,19 +1082,40 @@
   (lambda (config address goto-exp)
     (term (update-behavior/blurred/mf ,config ,address (,state-defs ,goto-exp)))))
 
+;; Adds the given behavior as a possible behavior for the given blurred address in the given config
 (define-metafunction csa#
-  update-behavior/blurred/mf : i# a#int b# -> i#
+  update-behavior/blurred/mf : i# a#int-collective b# -> i#
   [(update-behavior/blurred/mf
     (any_precise-actors
-     (any_blurred1 ... (a#int_blur (b#_old ...)) any_blurred2 ...)
+     (any_blurred1 ... (a#int-collective (b#_old ...)) any_blurred2 ...)
      any_packets)
-    a#int_target
+    a#int-collective
     b#_new)
    (any_precise-actors
-    (any_blurred1 ... (a#int_blur ,(remove-duplicates (term (b#_old ... b#_new)))) any_blurred2 ...)
-    any_packets)
-   (where any_stripped ,(csa#-address-strip-type (term a#int_target)))
-   (where any_stripped ,(csa#-address-strip-type (term a#int_blur)))])
+    (any_blurred1 ...
+     (a#int-collective ,(remove-duplicates (term (b#_old ... b#_new))))
+     any_blurred2 ...)
+    any_packets)])
+
+(module+ test
+  (test-case "update-behavior/blurred/mf"
+  (redex-let* csa# ([b#_1 '(() (goto A))]
+                    [b#_2 '(() (goto B))]
+                    [b#_3 '(() (goto C))]
+                    [b#_4 '(() (goto D))]
+                    [i# (term (()
+                               (((blurred-spawn-addr 1) (b#_1 b#_2))
+                                ((blurred-spawn-addr 2) (b#_3)))
+                               ()))])
+    (check-equal?
+      (term (update-behavior/blurred/mf i# (blurred-spawn-addr 1) b#_2))
+      (term i#))
+    (check-equal?
+     (term (update-behavior/blurred/mf i# (blurred-spawn-addr 1) b#_4))
+     (term (()
+            (((blurred-spawn-addr 1) (b#_1 b#_2 b#_4))
+             ((blurred-spawn-addr 2) (b#_3)))
+           ()))))))
 
 ;; Abstractly adds the set of new packets to the packet set in the given config.
 (define (merge-messages-into-config config new-message-list)
@@ -1110,29 +1131,29 @@
 
 (module+ test
   (check-equal?
-   (merge-messages-into-config (term (() () ())) (list (term ((init-addr 0 Nat) (* Nat)))))
-   (term (() () (((init-addr 0 Nat) (* Nat) single)))))
+   (merge-messages-into-config (term (() () ())) (list (term ((init-addr 0) (* Nat)))))
+   (term (() () (((init-addr 0) (* Nat) single)))))
 
   (check-equal?
-   (merge-messages-into-config (term (() () (((init-addr 0 Nat) (* Nat) single))))
-                       (list (term ((init-addr 0 Nat) (* Nat)))))
-   (term (() () (((init-addr 0 Nat) (* Nat) many)))))
+   (merge-messages-into-config (term (() () (((init-addr 0) (* Nat) single))))
+                       (list (term ((init-addr 0) (* Nat)))))
+   (term (() () (((init-addr 0) (* Nat) many)))))
 
   (check-equal?
-   (merge-messages-into-config (term (() () (((init-addr 0 Nat) (* Nat) single))))
-                       (list (term ((init-addr 1 Nat) (* Nat)))))
-   (term (() () (((init-addr 0 Nat) (* Nat) single) ((init-addr 1 Nat) (* Nat) single)))))
+   (merge-messages-into-config (term (() () (((init-addr 0) (* Nat) single))))
+                       (list (term ((init-addr 1) (* Nat)))))
+   (term (() () (((init-addr 0) (* Nat) single) ((init-addr 1) (* Nat) single)))))
 
   (check-equal?
    (merge-messages-into-config (term (()
-                              ()
-                              (((init-addr 1 Nat) (* (Addr Nat)) single)
-                               ((init-addr 1 Nat) (obs-ext 0 Nat) single))))
-                       (term (((init-addr 1 Nat) (* (Addr Nat))))))
+                                      ()
+                                      (((init-addr 1) (* (Addr Nat)) single)
+                                       ((init-addr 1) (Nat (obs-ext 0)) single))))
+                               (term (((init-addr 1) (* (Addr Nat))))))
    (term (()
           ()
-          (((init-addr 1 Nat) (* (Addr Nat)) many)
-           ((init-addr 1 Nat) (obs-ext 0 Nat) single))))))
+          (((init-addr 1) (* (Addr Nat)) many)
+           ((init-addr 1) (Nat (obs-ext 0)) single))))))
 
 (define (merge-new-actors config new-actors)
   (redex-let csa# ([((any_actors ...) any_blurred any_messages) config])
@@ -1142,9 +1163,9 @@
 
 (module+ test
   (define new-spawn1
-    (term ((spawn-addr foo NEW Nat) (((define-state (A) (x) (goto A))) (goto A)))))
+    (term ((spawn-addr foo NEW) (((define-state (A) (x) (goto A))) (goto A)))))
   (define init-actor1
-    (term ((init-addr 0 Nat) (((define-state (B) (x) (goto B))) (goto B)))))
+    (term ((init-addr 0) (((define-state (B) (x) (goto B))) (goto B)))))
   (test-equal? "merge-new-actors test"
                (merge-new-actors
                 (make-single-actor-abstract-config init-actor1)
@@ -1189,7 +1210,7 @@
   [(csa#-subst x x_2 v#) x]
   ;; [(csa#-subst n x v) n]
   [(csa#-subst (* τ) _ _) (* τ)]
-  [(csa#-subst a# _ _) a#]
+  [(csa#-subst τa# _ _) τa#]
   [(csa#-subst (spawn any_location τ e# Q# ...) self v#) (spawn any_location τ e# Q# ...)]
   [(csa#-subst (spawn any_location τ e# Q# ...) x v#)
     (spawn any_location τ (csa#-subst e# x v#) (csa#-subst/Q# Q# x v#) ...)]
@@ -1273,7 +1294,7 @@
                                          (goto A self (* Nat))
                                          (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
                                   self
-                                  (init-addr 2 Nat)))
+                                  (Nat (init-addr 2))))
                 (term (spawn loc
                              Nat
                              (goto A self (* Nat))
@@ -1284,7 +1305,7 @@
                                          (goto A self (* Nat))
                                          (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
                                   x
-                                  (init-addr 2 Nat)))
+                                  (Nat (init-addr 2))))
                 (term (spawn loc
                              Nat
                              (goto A self (* Nat))
@@ -1295,11 +1316,11 @@
                                          (goto A self (* Nat))
                                          (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
                                   y
-                                  (init-addr 2 Nat)))
+                                  (Nat (init-addr 2))))
                 (term (spawn loc
                              Nat
                              (goto A self (* Nat))
-                             (define-state (A [s Nat] [a Nat]) (x) (goto A x (init-addr 2 Nat) self))))))
+                             (define-state (A [s Nat] [a Nat]) (x) (goto A x (Nat (init-addr 2)) self))))))
 
 (module+ test
   (check-equal? (term (csa#-subst (variant Foo (* Nat)) a (* Nat))) (term (variant Foo (* Nat)))))
@@ -1358,7 +1379,7 @@
 (define-metafunction csa#
   abstract-actor : (a b) (a_internals ...) natural_depth -> [a# b#]
   [(abstract-actor (a_this ((Q ...) e)) (a ...) natural_depth)
-   ((abstract-e a_this (a ...) natural_depth)
+   ((abstract-address a_this (a ...))
     (((abstract-Q Q (a ...) natural_depth) ...)
      (abstract-e e (a ...) natural_depth)))])
 
@@ -1378,7 +1399,7 @@
   [(abstract-e natural _ _) (* Nat)]
   [(abstract-e string _ _) (* String)]
   [(abstract-e x _ _) x]
-  [(abstract-e a (a_int ...) _) (abstract-address a (a_int ...))]
+  [(abstract-e (τ a) (a_int ...) _) (τ (abstract-address a (a_int ...)))]
   [(abstract-e (goto q e ...) (a ...) natural_depth)
    (goto q (abstract-e e (a ...) natural_depth) ...)]
   [(abstract-e (begin e ...) (a ...) natural_depth) (begin (abstract-e e (a ...) natural_depth) ...)]
@@ -1441,16 +1462,16 @@
 
 (define-metafunction csa#
   abstract-address : a (a ...) -> a#
-  [(abstract-address (addr natural τ) (_ ... (addr natural _) _ ...)) (init-addr natural τ)]
-  [(abstract-address (addr natural τ) _) (obs-ext natural τ)])
+  [(abstract-address (addr natural) (_ ... (addr natural) _ ...)) (init-addr natural)]
+  [(abstract-address (addr natural) _) (obs-ext natural)])
 
 (module+ test
   (check-equal? (term (abstract-e (record [f1 1] [f2 2]) () 1))
                 (term (record [f1 (* Nat)] [f2 (* Nat)])))
   (check-not-false
    (redex-match? csa#
-                 (variant Foo (init-addr 1 Nat) (obs-ext 2 Nat))
-                 (term (abstract-e (variant Foo (addr 1 Nat) (addr 2 Nat)) ((addr 1 Nat)) 10))))
+                 (variant Foo (Nat (init-addr 1)) (Nat (obs-ext 2)))
+                 (term (abstract-e (variant Foo (Nat (addr 1)) (Nat (addr 2))) ((addr 1)) 10))))
   (check-equal? (term (abstract-e (list 1 2) () 10))
                 (term (list-val (* Nat))))
   (check-equal? (term (abstract-e (list 1 (let () 1)) () 10))
@@ -1472,20 +1493,20 @@
   (check-equal? (term (abstract-e (hash [1 (let ([x 1]) x)] [3 4]) () 10))
                 (term (hash [(* Nat) (let ([x (* Nat)]) x)] [(* Nat) (* Nat)])))
   (test-equal? "Abstraction on non-matching addresses"
-               (term (abstract-e (addr 1 (Union [A])) ((addr 1 (Union [B]))) 0))
-               (term (init-addr 1 (Union [A]))))
+               (term (abstract-e ((Union [A]) (addr 1)) ((addr 1)) 0))
+               (term ((Union [A]) (init-addr 1))))
   (test-equal? "Abstraction on non-matching addresses"
-               (term (abstract-e (addr 2 (Union [A])) ((addr 1 (Union [B]))) 0))
-               (term (obs-ext 2 (Union [A]))))
+               (term (abstract-e ((Union [A]) (addr 2)) ((addr 1)) 0))
+               (term ((Union [A]) (obs-ext 2))))
   (test-case "Unable to abstract addresses past max fold depth"
     (define nat-addr-list-type `(minfixpt NatAddrList (Union [Nil] [Cons (Addr Nat) NatAddrList])))
     (check-false
      (csa#-abstract-config
-      `((((addr 1 Nat)
+      `((((addr 1)
           (() (folded ,nat-addr-list-type
-                      (variant Cons (addr 1 Nat)
+                      (variant Cons (Nat (addr 1))
                                (folded ,nat-addr-list-type
-                                       (variant Cons (addr 2 Nat)
+                                       (variant Cons (Nat (addr 2))
                                                 (folded ,nat-addr-list-type
                                                         (variant Nil)))))))))
         () () ())
@@ -1495,13 +1516,13 @@
 ;; Selecting the spawn flag to blur
 
 (define (csa#-spawn-address? a)
-  (redex-match? csa# (spawn-addr _ _ _) a))
+  (redex-match? csa# (spawn-addr _ _) a))
 
 (module+ test
   (test-case "New-span-addr? check"
-    (define a (term (spawn-addr 5 NEW Nat)))
-    (define b (term (spawn-addr 6 OLD Nat)))
-    (define c (term (init-addr 7 Nat)))
+    (define a (term (spawn-addr 5 NEW)))
+    (define b (term (spawn-addr 6 OLD)))
+    (define c (term (init-addr 7)))
     (check-not-false (redex-match csa# a#int a))
     (check-not-false (redex-match csa# a#int b))
     (check-not-false (redex-match csa# a#int c))
@@ -1510,7 +1531,7 @@
     (check-false (csa#-spawn-address? c))))
 
 (define (csa#-spawn-address-flag a)
-  (redex-let csa# ([(spawn-addr _ spawn-flag _) a])
+  (redex-let csa# ([(spawn-addr _ spawn-flag) a])
     (term spawn-flag)))
 
 ;; impl-config (Listof a#ext) -> (Listof spawn-flag)
@@ -1554,9 +1575,9 @@
   ;; actors, and removed messages)
   (define removed-actor-addresses (map csa#-actor-address removed-actors))
   (match-define (list renamed-config renamed-removed-actors)
-    (blur-addresses (list remaining-config removed-actors)
-                    (map csa#-address-strip-type removed-actor-addresses)
-                    (map csa#-address-strip-type relevant-externals)))
+    (csa#-blur-addresses (list remaining-config removed-actors)
+                         removed-actor-addresses
+                         relevant-externals))
   ;; 3. Deduplicate message packets in the packet set that now have the same content (the renaming
   ;; might have caused messages with differing content or address to now be the same)
   (define deduped-packets (deduplicate-packets (csa#-config-message-packets renamed-config)))
@@ -1574,17 +1595,31 @@
     (csa#-blur-config
      (term (()
             ()
-            (((init-addr 2 Nat) (obs-ext 1 Nat) single)
-             ((init-addr 2 Nat) (obs-ext 2 Nat) single)
-             ((init-addr 2 Nat) (obs-ext 3 Nat) single))))
+            (((init-addr 2) (Nat (obs-ext 1)) single)
+             ((init-addr 2) (Nat (obs-ext 2)) single)
+             ((init-addr 2) (Nat (obs-ext 3)) single))))
      'NEW
-     (list '(obs-ext 3 Nat)))
+     (list '(obs-ext 3)))
     (list
      (term (()
             ()
-            (((init-addr 2 Nat) (* (Addr Nat)) many)
-             ((init-addr 2 Nat) (obs-ext 3 Nat) single))))
-     null)))
+            (((init-addr 2) (* (Addr Nat)) many)
+             ((init-addr 2) (Nat (obs-ext 3)) single))))
+     null))
+
+  (test-equal? "Will remove actors by spawn flag"
+    (csa#-blur-config
+     (term (([(spawn-addr 1 OLD) (() (goto A))]
+             [(spawn-addr 1 NEW) (() (goto A))])
+            ()
+            ()))
+     'OLD
+     null)
+    (list
+     (term (([(spawn-addr 1 NEW) (() (goto A))])
+            ([(blurred-spawn-addr 1) ((() (goto A)))])
+            ()))
+     (list '(spawn-addr 1 OLD)))))
 
 ;; impl-config spawn-flag -> impl-config ((a# b#) ...)
 ;;
@@ -1608,87 +1643,82 @@
 
 (define-metafunction csa#
   switch-spawn-flag/mf : a#int -> a#int
-  [(switch-spawn-flag/mf (spawn-addr any_loc NEW any_type)) (spawn-addr any_loc OLD any_type)]
-  [(switch-spawn-flag/mf (spawn-addr any_loc OLD any_type)) (spawn-addr any_loc NEW any_type)])
+  [(switch-spawn-flag/mf (spawn-addr any_loc NEW)) (spawn-addr any_loc OLD)]
+  [(switch-spawn-flag/mf (spawn-addr any_loc OLD)) (spawn-addr any_loc NEW)])
 
 (module+ test
   (test-equal? "remove-actors test"
     (remove-actors-by-flag
      (term
-      ((((spawn-addr 1 OLD Nat) ,test-behavior1)
-        ((spawn-addr 1 NEW Nat) ,test-behavior1)
-        ((spawn-addr 2 OLD Nat) ,test-behavior1)
-        ((spawn-addr 3 NEW Nat) ,test-behavior1))
+      ((((spawn-addr 1 OLD) ,test-behavior1)
+        ((spawn-addr 1 NEW) ,test-behavior1)
+        ((spawn-addr 2 OLD) ,test-behavior1)
+        ((spawn-addr 3 NEW) ,test-behavior1))
        ()
        ()))
      'NEW)
     (list
      (term
-      ((((spawn-addr 1 OLD Nat) ,test-behavior1)
-        ((spawn-addr 2 OLD Nat) ,test-behavior1)
-        ((spawn-addr 3 NEW Nat) ,test-behavior1))
+      ((((spawn-addr 1 OLD) ,test-behavior1)
+        ((spawn-addr 2 OLD) ,test-behavior1)
+        ((spawn-addr 3 NEW) ,test-behavior1))
        ()
        ()))
-     (list (term ((spawn-addr 1 NEW Nat) ,test-behavior1))))))
-
-;; For a term assumed to contain no external addresses, renames the addresses in internals-to-blur as
-;; done in the blurring process.
-(define (csa#-blur-internal-addresses some-term internals-to-blur)
-  (blur-addresses some-term (map csa#-address-strip-type internals-to-blur) null))
+     (list (term ((spawn-addr 1 NEW) ,test-behavior1))))))
 
 ;; term (a#int-without-type ...) (a#ext-without-type ...) -> term
 ;;
 ;; Renames internal addresses in internals-to-bour and external addresses *not* in
 ;; relevant-externals to their respective imprecise forms
-(define (blur-addresses some-term internals-to-blur relevant-externals)
+(define (csa#-blur-addresses some-term internals-to-blur relevant-externals)
   (match some-term
-    [(and addr `(spawn-addr ,loc ,_ ,type))
-     (if (member (csa#-address-strip-type addr) internals-to-blur)
-         (term (blurred-spawn-addr ,loc ,type))
+    [(and addr `(spawn-addr ,loc ,_))
+     (if (member addr internals-to-blur)
+         (term (blurred-spawn-addr ,loc))
          addr)]
-    [(and addr `(obs-ext ,_ ,type))
-     (if (member (csa#-address-strip-type addr) relevant-externals)
-         addr
+    [`(,type ,(and addr `(obs-ext ,_)))
+     (if (member addr relevant-externals)
+         some-term
          (term (* (Addr ,type))))]
     [(list (and keyword (or `vector-val 'list-val 'hash-val)) terms ...)
-     (define blurred-args (map (curryr blur-addresses internals-to-blur relevant-externals) terms))
+     (define blurred-args (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) terms))
      (term (normalize-collection (,keyword ,@blurred-args)))]
     [(list terms ...)
-     (map (curryr blur-addresses internals-to-blur relevant-externals) terms)]
+     (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) terms)]
     [_ some-term]))
 
 (module+ test
   (test-equal? "blur test"
-    (blur-addresses
-     (term (((spawn-addr foo OLD Nat) (spawn-addr foo NEW Nat))
-            (spawn-addr bar NEW Nat)
-            (obs-ext 1 Nat)
-            (obs-ext 2 Nat)
-            (spawn-addr bar OLD Nat)
-            (spawn-addr baz OLD Nat)
-            (spawn-addr quux NEW Nat)))
+    (csa#-blur-addresses
+     (term (((Nat (spawn-addr foo OLD)) (Nat (spawn-addr foo NEW)))
+            (Nat (spawn-addr bar NEW))
+            (Nat (obs-ext 1))
+            (Nat (obs-ext 2))
+            (Nat (spawn-addr bar OLD))
+            (Nat (spawn-addr baz OLD))
+            (Nat (spawn-addr quux NEW))))
      (list (term (spawn-addr foo NEW)) (term (spawn-addr bar NEW)))
      (list '(obs-ext 2)))
-    (term (((spawn-addr foo OLD Nat) (blurred-spawn-addr foo Nat))
-           (blurred-spawn-addr bar Nat)
+    (term (((Nat (spawn-addr foo OLD)) (Nat (blurred-spawn-addr foo)))
+           (Nat (blurred-spawn-addr bar))
            (* (Addr Nat))
-           (obs-ext 2 Nat)
-           (spawn-addr bar OLD Nat)
-           (spawn-addr baz OLD Nat)
-           (spawn-addr quux NEW Nat))))
+           (Nat (obs-ext 2))
+           (Nat (spawn-addr bar OLD))
+           (Nat (spawn-addr baz OLD))
+           (Nat (spawn-addr quux NEW)))))
 
   (test-equal? "blur test 2"
-    (blur-addresses
+    (csa#-blur-addresses
      (redex-let* csa#
                  ([(a# b#)
                    (term
-                       ((init-addr 0 Nat)
+                       ((init-addr 0)
                         (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
                             (begin
-                              (send (obs-ext 1 Nat) (* Nat))
-                              (send (obs-ext 2 Nat) (* Nat))
+                              (send (Nat (obs-ext 1)) (* Nat))
+                              (send (Nat (obs-ext 2)) (* Nat))
                               (goto A x y z))))
-                         (goto A (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat)))))]
+                         (goto A (Nat (obs-ext 2)) (Nat (obs-ext 3)) (Nat (obs-ext 4))))))]
                   [i# (term (([a# b#]) () ()))])
                  (term i#))
      null
@@ -1696,79 +1726,79 @@
     (redex-let* csa#
                 ([(a# b#)
                   (term
-                         ((init-addr 0 Nat)
+                         ((init-addr 0)
                           (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
                               (begin
-                                (send (obs-ext 1 Nat) (* Nat))
+                                (send (Nat (obs-ext 1)) (* Nat))
                                 (send (* (Addr Nat)) (* Nat))
                                 (goto A x y z))))
-                           (goto A (* (Addr Nat)) (obs-ext 3 Nat) (* (Addr Nat))))))]
+                           (goto A (* (Addr Nat)) (Nat (obs-ext 3)) (* (Addr Nat))))))]
                  [i# (term (([a# b#]) () ()))])
                 (term i#)))
 
   ;; Make sure duplicates are removed from vectors, lists, and hashes
   (test-equal? "blur test 3"
-   (blur-addresses
+   (csa#-blur-addresses
     (redex-let csa#
-        ([e# (term (hash-val (obs-ext 1 Nat)
-                             (obs-ext 2 Nat)
-                             (obs-ext 3 Nat)
-                             (obs-ext 4 Nat)))])
-       (term e#))
+        ([e# (term (hash-val (Nat (obs-ext 1))
+                             (Nat (obs-ext 2))
+                             (Nat (obs-ext 3))
+                             (Nat (obs-ext 4))))])
+      (term e#))
     null
     '((obs-ext 1) (obs-ext 3)))
    ;; Some reordering happens as a result of normalize-collection
-   (term (hash-val (* (Addr Nat)) (obs-ext 1 Nat) (obs-ext 3 Nat))))
+   (term (hash-val (* (Addr Nat)) (Nat (obs-ext 1)) (Nat (obs-ext 3)))))
 
   (test-equal? "blur test 4"
-   (blur-addresses
+   (csa#-blur-addresses
     (redex-let csa#
-        ([e# (term (list-val (obs-ext 1 Nat)
-                             (obs-ext 2 Nat)
-                             (obs-ext 3 Nat)
-                             (obs-ext 4 Nat)))])
+        ([e# (term (list-val (Nat (obs-ext 1))
+                             (Nat (obs-ext 2))
+                             (Nat (obs-ext 3))
+                             (Nat (obs-ext 4))))])
       (term e#))
     null
     null)
    (term (list-val (* (Addr Nat)))))
 
   (test-equal? "blur test 5"
-   (blur-addresses
+   (csa#-blur-addresses
     (redex-let csa#
-        ([e# (term (vector-val (obs-ext 1 Nat)
-                               (obs-ext 2 Nat)
-                               (obs-ext 3 Nat)
-                               (obs-ext 4 Nat)))])
+        ([e# (term (vector-val (Nat (obs-ext 1))
+                               (Nat (obs-ext 2))
+                               (Nat (obs-ext 3))
+                               (Nat (obs-ext 4))))])
       (term e#))
     null
     `((obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))
-   (term (vector-val (obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat) (obs-ext 4 Nat))))
+   (term (vector-val (Nat (obs-ext 1)) (Nat (obs-ext 2)) (Nat (obs-ext 3)) (Nat (obs-ext 4)))))
 
   (test-equal? "Blur for addresses with differing types"
-    (blur-addresses `(vector-val (obs-ext 3 (Union [A] [B]))
-                                 (obs-ext 3 (Union [A]))
-                                 (obs-ext 4 (Union [A] [B]))
-                                 (obs-ext 4 (Union [A]))
-                                 (spawn-addr 1 OLD (Union [A] [B]))
-                                 (spawn-addr 1 OLD (Union [A]))
-                                 (spawn-addr 2 OLD (Union [A] [B]))
-                                 (spawn-addr 2 OLD (Union [A])))
-                    `((spawn-addr 1 OLD))
-                    `((obs-ext 3)))
+    (csa#-blur-addresses `(vector-val ((Union [A] [B]) (obs-ext 3))
+                                      ((Union [A] [B]) (obs-ext 4))
+                                      ((Union [A] [B]) (spawn-addr 1 OLD))
+                                      ((Union [A] [B]) (spawn-addr 2 OLD))
+                                      ((Union [A]) (obs-ext 3))
+                                      ((Union [A]) (obs-ext 4))
+                                      ((Union [A]) (spawn-addr 1 OLD))
+                                      ((Union [A]) (spawn-addr 2 OLD)))
+                         `((spawn-addr 1 OLD))
+                         `((obs-ext 3)))
     ;; Some reordering happens as a result of normalize-collection
-    `(vector-val (* (Addr (Union [A] [B])))
-                 (* (Addr (Union [A])))
-                 (blurred-spawn-addr 1 (Union [A] [B]))
-                 (blurred-spawn-addr 1 (Union [A]))
-                 (obs-ext 3 (Union [A] [B]))
-                 (obs-ext 3 (Union [A]))
-                 (spawn-addr 2 OLD (Union [A] [B]))
-                 (spawn-addr 2 OLD (Union [A])))))
+    `(vector-val ((Union [A] [B]) (blurred-spawn-addr 1))
+                 ((Union [A] [B]) (obs-ext 3))
+                 ((Union [A] [B]) (spawn-addr 2 OLD))
+                 ((Union [A]) (blurred-spawn-addr 1))
+                 ((Union [A]) (obs-ext 3))
+                 ((Union [A]) (spawn-addr 2 OLD))
+                 (* (Addr (Union [A] [B])))
+                 (* (Addr (Union [A]))))))
 
 ;; Returns #t if the address is of the form (spawn-addr _ flag _), #f otherwise.
 (define (has-spawn-flag? addr flag)
   (match addr
-    [`(spawn-addr ,_ ,addr-flag ,_)
+    [`(spawn-addr ,_ ,addr-flag)
      (equal? addr-flag flag)]
     [_ #f]))
 
@@ -1802,14 +1832,14 @@
     (check-true (redex-match? csa# b# behavior3)))
 
   (test-equal? "add-blurred-behaviors"
-    (add-blurred-behaviors (term (((blurred-spawn-addr 1 Nat) (,behavior1 ,behavior2))
-                                  ((blurred-spawn-addr 2 Nat) (,behavior3))))
-                           (list (term ((blurred-spawn-addr 1 Nat) ,behavior3))
-                                 (term ((blurred-spawn-addr 3 Nat) ,behavior3))
-                                 (term ((blurred-spawn-addr 1 Nat) ,behavior1))))
-    (term (((blurred-spawn-addr 1 Nat) (,behavior1 ,behavior2 ,behavior3))
-           ((blurred-spawn-addr 2 Nat) (,behavior3))
-           ((blurred-spawn-addr 3 Nat) (,behavior3))))))
+    (add-blurred-behaviors (term (((blurred-spawn-addr 1) (,behavior1 ,behavior2))
+                                  ((blurred-spawn-addr 2) (,behavior3))))
+                           (list (term ((blurred-spawn-addr 1) ,behavior3))
+                                 (term ((blurred-spawn-addr 3) ,behavior3))
+                                 (term ((blurred-spawn-addr 1) ,behavior1))))
+    (term (((blurred-spawn-addr 1) (,behavior1 ,behavior2 ,behavior3))
+           ((blurred-spawn-addr 2) (,behavior3))
+           ((blurred-spawn-addr 3) (,behavior3))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Duplicate message merging
@@ -1844,28 +1874,28 @@
 (module+ test
   (check-equal?
    (deduplicate-packets
-    (term (((obs-ext 1 Nat) (* Nat) single)
-           ((obs-ext 1 Nat) (* Nat) single))))
-   (term (((obs-ext 1 Nat) (* Nat) many))))
+    (term (((obs-ext 1) (* Nat) single)
+           ((obs-ext 1) (* Nat) single))))
+   (term (((obs-ext 1) (* Nat) many))))
 
     (check-equal?
    (deduplicate-packets
-    (term (((obs-ext 1 Nat) (* Nat) single)
-           ((obs-ext 1 Nat) (* Nat) single)
-           ((obs-ext 1 Nat) (* Nat) single))))
-   (term (((obs-ext 1 Nat) (* Nat) many))))
+    (term (((obs-ext 1) (* Nat) single)
+           ((obs-ext 1) (* Nat) single)
+           ((obs-ext 1) (* Nat) single))))
+   (term (((obs-ext 1) (* Nat) many))))
 
   (check-equal?
    (deduplicate-packets
-    (term (((obs-ext 1 Nat) (* Nat) single)
-           ((obs-ext 2 Nat) (* Nat) single)
-           ((obs-ext 3 Nat) (* Nat) many)
+    (term (((obs-ext 1) (* Nat) single)
+           ((obs-ext 2) (* Nat) single)
+           ((obs-ext 3) (* Nat) many)
            ((* (Addr Nat)) (* Nat) many)
-           ((obs-ext 1 Nat) (* Nat) single)
+           ((obs-ext 1) (* Nat) single)
            ((* (Addr Nat)) (* Nat) single))))
-   (term (((obs-ext 1 Nat) (* Nat) many)
-          ((obs-ext 2 Nat) (* Nat) single)
-          ((obs-ext 3 Nat) (* Nat) many)
+   (term (((obs-ext 1) (* Nat) many)
+          ((obs-ext 2) (* Nat) single)
+          ((obs-ext 3) (* Nat) many)
           ((* (Addr Nat)) (* Nat) many)))))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -1903,9 +1933,8 @@
 (define-metafunction csa#
   config-actor-and-rest-by-address/mf : i# a#int -> (([a# b#] ...) [a# b#] ([a# b#] ...))
   [(config-actor-and-rest-by-address/mf ((any_1 ... (name the-actor (a#int _)) any_2 ...) _ ...)
-                                        a#int_target)
-   ((any_1 ...) the-actor (any_2 ...))
-   (judgment-holds (same-internal-address-without-type? a#int a#int_target))])
+                                        a#int)
+   ((any_1 ...) the-actor (any_2 ...))])
 
 ;; Returns the given precise actor with the given address, or #f if it's not in the given config
 (define (csa#-config-actor-by-address config addr)
@@ -1914,51 +1943,30 @@
 (define-metafunction csa#
   actor-by-address/mf : α# a#int -> #f or [a# b#]
   [(actor-by-address/mf () _) #f]
-  [(actor-by-address/mf ((a#int any_behavior) _ ...) a#int_target)
-   (a#int any_behavior)
-   (judgment-holds (same-internal-address-without-type? a#int a#int_target))]
+  [(actor-by-address/mf ((a#int any_behavior) _ ...) a#int)
+   (a#int any_behavior)]
   [(actor-by-address/mf (_ any_rest ...) a#int)
    (actor-by-address/mf (any_rest ...) a#int)])
 
-(define-judgment-form csa#
-  #:mode (same-internal-address-without-type? I I)
-  #:contract (same-internal-address-without-type? a#int a#int)
-  [------
-   (same-internal-address-without-type? (init-addr natural _) (init-addr natural _))]
-  [------
-   (same-internal-address-without-type? (spawn-addr any_loc NEW _) (spawn-addr any_loc NEW _))]
-  [------
-   (same-internal-address-without-type? (spawn-addr any_loc OLD _) (spawn-addr any_loc OLD _))]
-  [------
-   (same-internal-address-without-type? (blurred-spawn-addr any_loc _)
-                                        (blurred-spawn-addr any_loc _))])
-
-(define-judgment-form csa#
-  #:mode (same-external-address-without-type? I I)
-  #:contract (same-external-address-without-type? a#ext a#ext)
-  [------
-   (same-external-address-without-type? (obs-ext natural _) (obs-ext natural _))])
+;; τa# -> τ
+;;
+;; Returns the type for the given typed address
+(define (csa#-address-type ta)
+  (term (address-type/mf ,ta)))
 
 (define-metafunction csa#
-  address-type : a# -> τ
-  [(address-type (* (Addr τ))) τ]
-  [(address-type (init-addr _ τ)) τ]
-  [(address-type (spawn-addr _ _ τ)) τ]
-  [(address-type (blurred-spawn-addr _ τ)) τ]
-  [(address-type (obs-ext _ τ)) τ])
+  address-type/mf : τa# -> τ
+  [(address-type/mf (* (Addr τ))) τ]
+  [(address-type/mf (τ _)) τ])
 
+;; Returns the address portion of an abstract typed address
 (define (csa#-address-strip-type a)
   (term (address-strip-type/mf ,a)))
 
-;; TODO: refactor the code so that addresses are distinct from their types and this function is
-;; unnecessary
 (define-metafunction csa#
-  address-strip-type/mf : a# -> any
-  [(address-strip-type/mf (* (Addr τ))) *]
-  [(address-strip-type/mf (init-addr any_loc _)) (init-addr any_loc)]
-  [(address-strip-type/mf (spawn-addr any_loc any_flag _)) (spawn-addr any_loc any_flag)]
-  [(address-strip-type/mf (blurred-spawn-addr any_loc _)) (blurred-spawn-addr any_loc)]
-  [(address-strip-type/mf (obs-ext any_nat _)) (obs-ext any_nat)])
+  address-strip-type/mf : τa# -> any
+  [(address-strip-type/mf (* (Addr τ))) (* (Addr τ))]
+  [(address-strip-type/mf (_ a#)) a#])
 
 (define (csa#-actor-address a)
   (redex-let* csa# ([(a#int _) a])
@@ -1994,9 +2002,17 @@
 ;; Returns all behaviors assigned to the blurred actor with the given address in the given config
 (define-metafunction csa#
   blurred-actor-behaviors-by-address/mf : i# a#int -> (b# ...)
-  [(blurred-actor-behaviors-by-address/mf (_ (_ ... (a#int any_behaviors) _ ...) _) a#int_target)
-   any_behaviors
-   (judgment-holds (same-internal-address-without-type? a#int a#int_target))])
+  [(blurred-actor-behaviors-by-address/mf (_ (_ ... (a#int any_behaviors) _ ...) _) a#int)
+   any_behaviors])
+
+(module+ test
+  (test-case "Blurred actor behaviors by address"
+    (redex-let csa# ([i# (term (()
+                                (((blurred-spawn-addr 1) ())
+                                 ((blurred-spawn-addr 2) ((() (goto A)))))
+                                ()))])
+      (check-equal? (term (blurred-actor-behaviors-by-address/mf i# (blurred-spawn-addr 2)))
+                    (list (term (() (goto A))))))))
 
 ;; Returns the state definitions of the given behavior
 (define (behavior-state-defs behavior)
@@ -2059,8 +2075,8 @@
   (redex-match? csa# (a#int _) output))
 
 (module+ test
-  (check-true (internal-output? (term ((init-addr 1 Nat) (* Nat)))))
-  (check-false (internal-output? (term ((obs-ext 2 Nat) (* Nat))))))
+  (check-true (internal-output? (term ((init-addr 1) (* Nat)))))
+  (check-false (internal-output? (term ((obs-ext 2) (* Nat))))))
 
 ;; Returns #t if the address is a precise internal address (meaning it represents a single concrete
 ;; address in the concretized configuration), #f otherwise
@@ -2082,14 +2098,15 @@
 
 (module+ test
   (test-true "necessary-action? 1"
-    (necessary-action? (term (timeout/empty-queue (init-addr 1 Nat)))))
+    (necessary-action? (term (timeout/empty-queue (init-addr 1)))))
   (test-false "necessary-action? 2"
-    (necessary-action? (term (timeout/non-empty-queue (init-addr 1 Nat)))))
+    (necessary-action? (term (timeout/non-empty-queue (init-addr 1)))))
   (test-true "necessary-action? 3"
-    (necessary-action? (term (internal-receive (init-addr 1 Nat) (* Nat)))))
+    (necessary-action? (term (internal-receive (init-addr 1) (* Nat)))))
   (test-false "necessary-action? 4"
-    (necessary-action? (term (external-receive (init-addr 1 Nat) (* Nat))))))
+    (necessary-action? (term (external-receive (init-addr 1) (* Nat))))))
 
+;; Returns true if the given expression contains *any* address
 (define (csa#-contains-address? e)
   (term (csa#-contains-address?/mf ,e)))
 
@@ -2102,13 +2119,13 @@
 
 (module+ test
   (test-true "csa#-contains-address?"
-    (csa#-contains-address? (term ((init-addr 1 Nat) (obs-ext 2 Nat)))))
+    (csa#-contains-address? (term ((Nat (init-addr 1)) (Nat (obs-ext 2))))))
 
   (test-false "csa#-contains-address?"
     (csa#-contains-address? (term ((abc 1 Nat) (def 2 Nat)))))
 
   (test-true "csa#-contains-address?"
-    (csa#-contains-address? (term (((abc) (spawn-addr 3 OLD Nat)) ())))))
+    (csa#-contains-address? (term (((abc) (Nat (spawn-addr 3 OLD))) ())))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Types
@@ -2139,14 +2156,14 @@
   ;; wildcard
   [(coerce (* _) τ) (* τ)]
   ;; addresses
-  [(coerce (init-addr natural _) (Addr τ))
-   (init-addr natural τ)]
-  [(coerce (spawn-addr any_loc spawn-flag _) (Addr τ))
-   (spawn-addr any_loc spawn-flag τ)]
-  [(coerce (blurred-spawn-addr any_loc _) (Addr τ))
-   (blurred-spawn-addr any_loc τ)]
-  [(coerce (obs-ext natural _) (Addr τ))
-   (obs-ext natural τ)]
+  [(coerce (_ (init-addr natural)) (Addr τ))
+   (τ (init-addr natural))]
+  [(coerce (_ (spawn-addr any_loc spawn-flag)) (Addr τ))
+   (τ (spawn-addr any_loc spawn-flag))]
+  [(coerce (_ (blurred-spawn-addr any_loc)) (Addr τ))
+   (τ (blurred-spawn-addr any_loc))]
+  [(coerce (_ (obs-ext natural)) (Addr τ))
+   (τ (obs-ext natural))]
   ;; variants and records
   [(coerce (variant t v# ..._n) (Union _ ... [t τ ..._n] _ ...))
    (variant t (coerce v# τ) ...)]
@@ -2169,17 +2186,17 @@
     (term (coerce (* (Addr (Union [A] [B]))) (Addr (Union [A]))))
     (term (* (Addr (Union [A])))))
   (test-equal? "coerce init-addr"
-    (term (coerce (init-addr 1 (Union [A] [B])) (Addr (Union [A]))))
-    (term (init-addr 1 (Union [A]))))
+    (term (coerce ((Union [A] [B]) (init-addr 1)) (Addr (Union [A]))))
+    (term ((Union [A]) (init-addr 1))))
   (test-equal? "coerce spawn-addr"
-    (term (coerce (spawn-addr 1 OLD (Union [A] [B])) (Addr (Union [A]))))
-    (term (spawn-addr 1 OLD (Union [A]))))
+    (term (coerce ((Union [A] [B]) (spawn-addr 1 OLD)) (Addr (Union [A]))))
+    (term ((Union [A]) (spawn-addr 1 OLD))))
   (test-equal? "coerce blurred-spawn-addr"
-    (term (coerce (blurred-spawn-addr 1 (Union [A] [B])) (Addr (Union [A]))))
-    (term (blurred-spawn-addr 1 (Union [A]))))
+    (term (coerce ((Union [A] [B]) (blurred-spawn-addr 1)) (Addr (Union [A]))))
+    (term ((Union [A]) (blurred-spawn-addr 1))))
   (test-equal? "coerce obs-ext"
-    (term (coerce (obs-ext 1 (Union [A] [B])) (Addr (Union [A]))))
-    (term (obs-ext 1 (Union [A]))))
+    (term (coerce ((Union [A] [B]) (obs-ext 1)) (Addr (Union [A]))))
+    (term ((Union [A]) (obs-ext 1))))
   (test-equal? "coerce variant"
     (term (coerce (variant Z (* (Addr (Union [A] [B])))) (Union [Z (Addr (Union [A]))])))
     (term (variant Z (* (Addr (Union [A]))))))
@@ -2226,19 +2243,19 @@
 
 (module+ test
   (check-same-items?
-   (externals-in (term ((obs-ext 1 Nat)
-                      (obs-ext 2 Nat)
-                      (obs-ext 2 Nat)
-                      (foo bar (baz (init-addr 2 Nat) (obs-ext 3 Nat))))))
-   (term ((obs-ext 1 Nat) (obs-ext 2 Nat) (obs-ext 3 Nat)))))
+   (externals-in (term ((Nat (obs-ext 1))
+                        (Nat (obs-ext 2))
+                        (Nat (obs-ext 2))
+                      (foo bar (baz (Nat (init-addr 2)) (Nat (obs-ext 3)))))))
+   (term ((obs-ext 1) (obs-ext 2) (obs-ext 3)))))
 
-;; Returns the list of all internal addresses in the given term
+;; Returns the list of all internal (typed) addresses in the given term
 (define (internals-in the-term)
   (remove-duplicates (term (internals-in/mf ,the-term))))
 
 (define-metafunction csa#
-  internals-in/mf : any -> (a#int ...)
-  [(internals-in/mf a#int) (a#int)]
+  internals-in/mf : any -> (τa# ...)
+  [(internals-in/mf (τ a#int)) ((τ a#int))]
   [(internals-in/mf (any ...))
    (any_addr ... ...)
    (where ((any_addr ...) ...) ((internals-in/mf any) ...))]
@@ -2246,12 +2263,12 @@
 
 (module+ test
   (check-same-items?
-   (internals-in (term ((init-addr 1 Nat)
-                        (init-addr 1 Nat)
-                        (obs-ext 2 Nat)
-                        (spawn-addr 3 NEW Nat)
-                      (foo bar (baz (init-addr 2 Nat) (obs-ext 3 Nat))))))
-   (term ((init-addr 1 Nat) (spawn-addr 3 NEW Nat) (init-addr 2 Nat)))))
+   (internals-in (term ((Nat (init-addr 1))
+                        (Nat (init-addr 1))
+                        (Nat (obs-ext 2))
+                        (Nat (spawn-addr 3 NEW))
+                      (foo bar (baz (Nat (init-addr 2)) (Nat (obs-ext 3)))))))
+   (term ((Nat (init-addr 1)) (Nat (spawn-addr 3 NEW)) (Nat (init-addr 2))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debug helpers
