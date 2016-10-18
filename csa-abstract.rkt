@@ -1919,6 +1919,15 @@
   [(blurred-actor-behaviors-by-address/mf (_ (_ ... (a#int any_behaviors) _ ...) _) a#int)
    any_behaviors])
 
+(module+ test
+  (test-case "Blurred actor behaviors by address"
+    (redex-let csa# ([i# (term (()
+                                (((blurred-spawn-addr 1) ())
+                                 ((blurred-spawn-addr 2) ((() (goto A)))))
+                                ()))])
+      (check-equal? (term (blurred-actor-behaviors-by-address/mf i# (blurred-spawn-addr 2)))
+                    (list (term (() (goto A))))))))
+
 ;; Returns the state definitions of the given behavior
 (define (behavior-state-defs behavior)
   (first behavior))
