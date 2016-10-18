@@ -5,12 +5,14 @@
 (provide
  ;; Required by conformance checker
  (struct-out csa#-transition)
- csa#-messages-of-address-type
+ csa#-messages-of-type
  csa#-handle-external-message
  csa#-handle-all-internal-actions
  csa#-abstract-config
  csa#-blur-config
  necessary-action?
+ csa#-address-type
+ csa#-address-strip-type
 
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
  csa#-spawn-address?
@@ -156,8 +158,8 @@
 (define next-generated-address 100)
 
 ;; Returns an exhaustive list of abstract messages for the type of the given address
-(define (csa#-messages-of-address-type address)
-  (term (messages-of-type/mf (address-type/mf ,address) ,MAX-RECURSION-DEPTH)))
+(define (csa#-messages-of-type type)
+  (term (messages-of-type/mf ,type ,MAX-RECURSION-DEPTH)))
 
 ;; Returns an exhaustive list of abstract messages for the given type with the natural argument
 ;; indicating the maximum number of times to unfold recursive types.
@@ -1828,7 +1830,7 @@
 ;; τa# -> τ
 ;;
 ;; Returns the type for the given typed address
-(define (address-type ta)
+(define (csa#-address-type ta)
   (term (address-type/mf ,ta)))
 
 (define-metafunction csa#

@@ -270,14 +270,14 @@
                     (csa#-transition-loop-outputs transition)
                     (csa#-transition-final-config transition))]))
 
-  (define addr (aps#-config-obs-interface spec-config))
+  (define obs-interface (aps#-config-obs-interface spec-config))
   ;; TODO: (perf. improvement) share the results between the observed and unobserved external
   ;; receives, because often many of the results will be the same (because the same address might
   ;; receive messages from both the observed and unobserved environments)
   (define observed-external-receives
-    (if (aps#-unknown-address? addr)
+    (if (aps#-unknown-address? obs-interface)
         null
-        (external-message-transitions impl-config addr abort)))
+        (external-message-transitions impl-config obs-interface abort)))
   (define unobserved-external-receives
     (append*
      (for/list ([receptionist (aps#-config-receptionists spec-config)])
@@ -291,12 +291,15 @@
 
 ;; Returns all possible transitions of the given implementation config caused by a received message to
 ;; the given receptionist address
-(define (external-message-transitions impl-config receptionist abort)
+(define (external-message-transitions impl-config typed-receptionist abort)
   (display-step-line "Enumerating abstract messages (typed)")
   (append*
-   (for/list ([message (csa#-messages-of-address-type receptionist)])
+   (for/list ([message (csa#-messages-of-type (csa#-address-type typed-receptionist))])
      (display-step-line "Evaluating a handler")
-     (csa#-handle-external-message impl-config receptionist message abort))))
+     (csa#-handle-external-message impl-config
+                                   (csa#-address-strip-type typed-receptionist)
+                                   message
+                                   abort))))
 
 ;; Returns a set of the possible spec steps (see the struct above) from the given spec config that
 ;; match the given implementation step
@@ -712,7 +715,7 @@
 
 (module+ test
   (define-simple-check (check-valid-actor? actual)
-    (redex-match? csa-eval (a b) actual))
+    (redex-match? csa-eval (τa b) actual))
 
   (define-syntax (test-valid-actor? stx)
     (syntax-parse stx
@@ -748,7 +751,7 @@
     (term
      (((define-state (Always) [* -> () (goto Always)]))
       (goto Always)
-      ((,addr-type) (addr 0)))))
+      (,addr-type (addr 0)))))
   (define ignore-all-spec-instance
     (make-ignore-all-spec-instance 'Nat))
   (check-not-false (redex-match csa-eval i ignore-all-config))
@@ -759,11 +762,12 @@
 
   ;;;; Send one message to a statically-known address per request
 
-  (define (make-static-response-address type) (term (addr 2 ,type)))
+  (define (make-static-response-address type) (term (,type (addr 2))))
+  (define untyped-static-response-address `(addr 2))
   (define static-response-address (make-static-response-address (term (Union (Ack Nat)))))
   (define static-response-actor
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
           (begin
             (send response-dest (variant Ack 0))
@@ -771,7 +775,7 @@
        (goto Always ,static-response-address)))))
   (define static-double-response-actor
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
           (begin
             (send response-dest (variant Ack 0))
@@ -782,21 +786,21 @@
     (term
      (((define-state (Always response-dest)
          [* -> ([obligation response-dest *]) (goto Always response-dest)]))
-      (goto Always ,static-response-address)
-      (addr 0 Nat))))
+      (goto Always ,untyped-static-response-address)
+      (Nat (addr 0)))))
   (define ignore-all-with-addr-spec-instance
     (term
      (((define-state (Always response-dest) [* -> () (goto Always response-dest)]))
-      (goto Always ,static-response-address)
-      (addr 0 Nat))))
+      (goto Always ,untyped-static-response-address)
+      (Nat (addr 0)))))
   (define static-double-response-spec
     (term
      (((define-state (Always response-dest)
          [* -> ([obligation response-dest *]
                 [obligation response-dest *])
                (goto Always response-dest)]))
-      (goto Always ,static-response-address)
-      (addr 0 Nat))))
+      (goto Always ,untyped-static-response-address)
+      (Nat (addr 0)))))
 
   (test-valid-actor? static-response-actor)
   (test-valid-actor? static-double-response-actor)
@@ -828,12 +832,12 @@
      (((define-state (Matching r)
          [(variant A *) -> ([obligation r (variant A *)]) (goto Matching r)]
          [(variant B *) -> ([obligation r (variant B *)]) (goto Matching r)]))
-      (goto Matching ,(make-static-response-address `(Union [A Nat] [B Nat])))
+      (goto Matching ,untyped-static-response-address)
       (addr 0 (Union [A Nat] [B Nat])))))
 
   (define pattern-matching-actor
     (term
-     ((addr 0 (Union [A Nat] [B Nat]))
+     (((Union [A Nat] [B Nat]) (addr 0))
       (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
           (case m
             [(A x) (begin (send r (variant A x)) (goto Always r))]
@@ -842,7 +846,7 @@
 
   (define reverse-pattern-matching-actor
     (term
-     ((addr 0 (Union [A Nat] [B Nat]))
+     (((Union [A Nat] [B Nat]) (addr 0))
       (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
           (case m
             [(A x) (begin (send r (variant B 0)) (goto Always r))]
@@ -851,7 +855,7 @@
 
   (define partial-pattern-matching-actor
     (term
-     ((addr 0 (Union [A Nat] [B Nat]))
+     (((Union [A Nat] [B Nat]) (addr 0))
       (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
           (case m
             [(A x) (begin (send r (variant A 0)) (goto Always r))]
