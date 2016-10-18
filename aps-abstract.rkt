@@ -869,8 +869,19 @@
   (term (config-receptionists/mf ,config)))
 
 (define-metafunction aps#
-  config-receptionists/mf : s# -> (a#int ...)
-  [(config-receptionists/mf (_ (a#int ...) _ ...)) (a#int ...)])
+  config-receptionists/mf : s# -> ((τ a#int) ...)
+  [(config-receptionists/mf (_ (any_rec ...) _ ...)) (any_rec ...)])
+
+(module+ test
+  (redex-let aps# ([s# `((Nat (init-addr 2))
+                         ((Nat (init-addr 0))
+                          (Nat (init-addr 1)))
+                         (goto A)
+                         ()
+                         ())])
+    (check-equal? (aps#-config-receptionists (term s#))
+                  `((Nat (init-addr 0))
+                    (Nat (init-addr 1))))))
 
 (define (aps#-config-state-defs config)
   (redex-let aps# ([(_ _ _ any_state-defs _) config])
