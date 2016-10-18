@@ -833,7 +833,7 @@
          [(variant A *) -> ([obligation r (variant A *)]) (goto Matching r)]
          [(variant B *) -> ([obligation r (variant B *)]) (goto Matching r)]))
       (goto Matching ,untyped-static-response-address)
-      (addr 0 (Union [A Nat] [B Nat])))))
+      ((Union [A Nat] [B Nat]) (addr 0)))))
 
   (define pattern-matching-actor
     (term
@@ -882,15 +882,15 @@
     (term
      (((define-state (Matching r)
          [* -> ([obligation r (or (variant A *) (variant B *))]) (goto Matching r)]))
-      (goto Matching ,(make-static-response-address `(Union [A Nat] [B Nat])))
-      (addr 0 (Union [A Nat] [B Nat])))))
+      (goto Matching ,untyped-static-response-address)
+      ((Union [A Nat] [B Nat]) (addr 0)))))
 
   (define or-wrong-pattern-match-spec
     (term
      (((define-state (Matching r)
          [* -> ([obligation r (or (variant A *) (variant C *))]) (goto Matching r)]))
-      (goto Matching ,(make-static-response-address `(Union [A Nat] [B Nat])))
-      (addr 0 (Union [A Nat] [B Nat])))))
+      (goto Matching ,untyped-static-response-address)
+      ((Union [A Nat] [B Nat]) (addr 0)))))
 
   (test-valid-instance? or-pattern-match-spec)
   (test-valid-instance? or-wrong-pattern-match-spec)
@@ -903,7 +903,7 @@
 
   (define send-message-then-another
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (Init [r (Addr (Union [A] [B]))]) (m)
           (begin
             (send r (variant A))
@@ -917,7 +917,7 @@
              (send r (variant B))
              (goto Done))])
         (define-state (Done) (m) (goto Done)))
-       (goto Init (addr 1 (Union [A] [B])))))))
+       (goto Init ((Union [A] [B]) (addr 1)))))))
 
   (define overlapping-patterns-spec
     (term
@@ -927,8 +927,8 @@
             (goto NoMoreSends)])
        (define-state (NoMoreSends)
          [* -> () (goto NoMoreSends)]))
-      (goto Init (addr 1 (Union [A] [B])))
-      (addr 0 Nat))))
+      (goto Init (addr 1))
+      (Nat (addr 0)))))
 
   ;; Non-deterministic/overlap pattern-matching is unsupported: we just pick for each output the first
   ;; pattern that can possibly match
