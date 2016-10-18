@@ -1025,19 +1025,40 @@
   (lambda (config address goto-exp)
     (term (update-behavior/blurred/mf ,config ,address (,state-defs ,goto-exp)))))
 
+;; Adds the given behavior as a possible behavior for the given blurred address in the given config
 (define-metafunction csa#
-  update-behavior/blurred/mf : i# a#int b# -> i#
+  update-behavior/blurred/mf : i# a#int-collective b# -> i#
   [(update-behavior/blurred/mf
     (any_precise-actors
-     (any_blurred1 ... (a#int_blur (b#_old ...)) any_blurred2 ...)
+     (any_blurred1 ... (a#int-collective (b#_old ...)) any_blurred2 ...)
      any_packets)
-    a#int_target
+    a#int-collective
     b#_new)
    (any_precise-actors
-    (any_blurred1 ... (a#int_blur ,(remove-duplicates (term (b#_old ... b#_new)))) any_blurred2 ...)
-    any_packets)
-   (where any_stripped ,(csa#-address-strip-type (term a#int_target)))
-   (where any_stripped ,(csa#-address-strip-type (term a#int_blur)))])
+    (any_blurred1 ...
+     (a#int-collective ,(remove-duplicates (term (b#_old ... b#_new))))
+     any_blurred2 ...)
+    any_packets)])
+
+(module+ test
+  (test-case "update-behavior/blurred/mf"
+  (redex-let* csa# ([b#_1 '(() (goto A))]
+                    [b#_2 '(() (goto B))]
+                    [b#_3 '(() (goto C))]
+                    [b#_4 '(() (goto D))]
+                    [i# (term (()
+                               (((blurred-spawn-addr 1) (b#_1 b#_2))
+                                ((blurred-spawn-addr 2) (b#_3)))
+                               ()))])
+    (check-equal?
+      (term (update-behavior/blurred/mf i# (blurred-spawn-addr 1) b#_2))
+      (term i#))
+    (check-equal?
+     (term (update-behavior/blurred/mf i# (blurred-spawn-addr 1) b#_4))
+     (term (()
+            (((blurred-spawn-addr 1) (b#_1 b#_2 b#_4))
+             ((blurred-spawn-addr 2) (b#_3)))
+           ()))))))
 
 ;; Abstractly adds the set of new packets to the packet set in the given config.
 (define (merge-messages-into-config config new-message-list)
