@@ -6,7 +6,7 @@
  aps-eval
  aps-valid-spec?
  aps-valid-config?
- aps-config-obs-interface
+ aps-config-interface-addresses
 
  ;; Testing helpers
  make-spec
@@ -158,20 +158,43 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
 
-;; Returns the observable interface of the given configuration
-(define (aps-config-obs-interface config)
-  (redex-let* aps-eval ([(σ _ ...) config])
-    (term σ)))
+;; Returns all addresses mentioned in interfaces of the configuration
+(define (aps-config-interface-addresses config)
+  (term (aps-config-interface-addresses/mf ,config)))
+
+(define-metafunction aps-eval
+  aps-config-interface-addresses/mf : s -> (τa ...)
+  [(aps-config-interface-addresses/mf (UNKNOWN (τa ...) _ ...))
+   (τa ...)]
+  [(aps-config-interface-addresses/mf (τa_1 (τa_2 ...) _ ...))
+   (τa_1 τa_2 ...)])
 
 (module+ test
-  (test-case "config observable interface"
-    (define spec (term ((Nat (addr 2))
-                        ()
-                        (goto A)
-                        ((define-state (A)))
-                        ())))
-    (check-not-false (redex-match aps-eval s spec))
-    (check-equal? (aps-config-obs-interface spec) (term (Nat (addr 2))))))
+  (test-case "config interface addresses 1"
+    (redex-let aps-eval ([s (term ((Nat (addr 1))
+                                   ((Nat (addr 2))
+                                    (Nat (addr 3))
+                                    (Nat (addr 4)))
+                                   (goto A)
+                                   ((define-state (A)))
+                                   ()))])
+      (check-equal? (aps-config-interface-addresses (term s))
+                    '((Nat (addr 1))
+                      (Nat (addr 2))
+                      (Nat (addr 3))
+                      (Nat (addr 4))))))
+  (test-case "config interface addresses 2"
+    (redex-let aps-eval ([s (term (UNKNOWN
+                                   ((Nat (addr 2))
+                                    (Nat (addr 3))
+                                    (Nat (addr 4)))
+                                   (goto A)
+                                   ((define-state (A)))
+                                   ()))])
+      (check-equal? (aps-config-interface-addresses (term s))
+                    '((Nat (addr 2))
+                      (Nat (addr 3))
+                      (Nat (addr 4)))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing Helpers

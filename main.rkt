@@ -76,7 +76,7 @@
   (-> csa-valid-config? aps-valid-config? boolean?)
 
   (cond
-    [(spec-address-is-receptionist? initial-impl-config initial-spec-config) #f]
+    [(not (spec-interfaces-available? initial-impl-config initial-spec-config)) #f]
     [else
      (match (get-initial-abstract-pairs initial-impl-config initial-spec-config)
        [#f #f]
@@ -100,13 +100,32 @@
                              unsatisfying-pairs))
         (andmap (curry set-member? conforming-pairs) initial-pairs)])]))
 
-;; Returns #t if the self-address for the specification configuration is a receptionist in the
-;; implementation configuration (an initial requirement for conformance), #f otherwise.
-(define (spec-address-is-receptionist? impl-config spec-config)
-  (define spec-address (aps-config-obs-interface spec-config))
-  (and (not (aps#-unknown-address? spec-address))
-       ;; TODO: move this function into aps-abstract, or something like that
-       (member spec-address (map csa-address-strip-type (csa-config-receptionists impl-config)))))
+;; Returns #t if all addresses mentioned in observable or unobservable interfaces in the spec are
+;; receptionists; #f otherwise.
+(define (spec-interfaces-available? impl-config spec-config)
+  (define spec-receptionists (map csa-address-strip-type (aps-config-interface-addresses spec-config)))
+  (define impl-receptionists (map csa-address-strip-type (csa-config-receptionists impl-config)))
+  (and (andmap (curryr member impl-receptionists) spec-receptionists) #t))
+
+(module+ test
+  (test-false "spec address receptionist check 1"
+    (spec-interfaces-available? (term ((((addr 1) (() (goto A)))) () () ()))
+                                (term ((Nat (addr 1)) () (goto A) () ()))))
+  (test-false "spec address receptionist check 2"
+    (spec-interfaces-available? (term ((((addr 500) (() (goto A)))) () () ()))
+                                (term ((Nat (addr 1)) () (goto A) () ()))))
+  (test-not-false "spec address receptionist check 3"
+    (spec-interfaces-available? (term ((((addr 1) (() (goto A)))) () ((Nat (addr 1))) ()))
+                                (term ((Nat (addr 1)) () (goto A) () ()))))
+  (test-not-false "spec address receptionist check 4"
+    (spec-interfaces-available? (term ((((addr 1) (() (goto A)))) () ((Nat (addr 1))) ()))
+                                (term (UNKNOWN () (goto A) () ()))))
+  (test-false "spec address receptionist: unobserved addresses 1"
+    (spec-interfaces-available? (term ((((addr 1) (() (goto A)))) () () ()))
+                                (term (UNKNOWN ((Nat (addr 1))) (goto A) () ()))))
+  (test-not-false "spec address receptionist: unobserved addresses 2"
+    (spec-interfaces-available? (term ((((addr 1) (() (goto A)))) () ((Nat (addr 1))) ()))
+                                (term (UNKNOWN ((Nat (addr 1))) (goto A) () ())))))
 
 ;; Abstracts and sbc's the initial pair, returning the list of initial abstract pairs, or #f if the
 ;; abstraction was not possible for some reason
