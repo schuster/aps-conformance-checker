@@ -106,7 +106,7 @@
   (define spec-address (aps-config-obs-interface spec-config))
   (and (not (aps#-unknown-address? spec-address))
        ;; TODO: move this function into aps-abstract, or something like that
-       (member spec-address (map csa-strip-address-type (csa-config-receptionists impl-config)))))
+       (member spec-address (map csa-address-strip-type (csa-config-receptionists impl-config)))))
 
 ;; Abstracts and sbc's the initial pair, returning the list of initial abstract pairs, or #f if the
 ;; abstraction was not possible for some reason

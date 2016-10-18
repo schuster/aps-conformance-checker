@@ -13,7 +13,7 @@
  csa-config-internal-addresses
  instantiate-prog
  instantiate-prog+bindings
- csa-strip-address-type
+ csa-address-strip-type
  csa-contains-address?)
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -442,11 +442,11 @@
    τ])
 
 ;; Returns just the address part of a typed address
-(define (csa-strip-address-type a)
+(define (csa-address-strip-type a)
   (second a))
 
 (module+ test
   (check-equal?
    (redex-let csa-eval ([τa (term (Nat (addr 1)))])
-     (csa-strip-address-type (term τa)))
+     (csa-address-strip-type (term τa)))
    (term (addr 1))))
