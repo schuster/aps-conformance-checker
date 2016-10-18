@@ -946,7 +946,7 @@
      (((define-state (Always)
          [response-target -> ([obligation response-target *]) (goto Always)]))
       (goto Always)
-      (addr 0 (Addr Nat)))))
+      ((Addr Nat) (addr 0)))))
 
   (define request-same-response-addr-spec
     (term
@@ -955,10 +955,10 @@
        (define-state (HaveAddr response-target)
          [new-response-target -> ([obligation response-target *]) (goto HaveAddr response-target)]))
       (goto Init)
-      (addr 0 (Addr Nat)))))
+      ((Addr Nat) (addr 0)))))
   (define request-response-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (Always [i Nat]) (response-target)
           (begin
             (send response-target i)
@@ -966,7 +966,7 @@
        (goto Always 0)))))
   (define respond-to-first-addr-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (Init) (response-target)
           (begin
             (send response-target 0)
@@ -978,7 +978,7 @@
        (goto Init)))))
   (define respond-to-first-addr-actor2
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (Always [original-addr (Union (NoAddr) (Original (Addr Nat)))]) (response-target)
           (begin
             (case original-addr
@@ -993,7 +993,7 @@
        (goto Always (variant NoAddr))))))
   (define delay-saving-address-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (Init) (response-target)
           (begin
             (send response-target 0)
@@ -1004,7 +1004,7 @@
             (goto HaveAddr i new-response-target))))
        (goto Init)))))
   (define double-response-actor
-    `((addr 0 (Addr Nat))
+    `(((Addr Nat) (addr 0))
       (((define-state (Always [i Nat]) (response-dest)
           (begin
             (send response-dest i)
@@ -1013,7 +1013,7 @@
        (goto Always 0))))
   (define respond-once-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (Init) (response-target)
           (begin
             (send response-target 0)
@@ -1023,7 +1023,7 @@
        (goto Init)))))
   (define delayed-send-no-timeout-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (NoAddr) (response-target)
           (goto HaveAddr response-target))
         (define-state (HaveAddr [response-target (Addr Nat)]) (new-response-target)
@@ -1033,7 +1033,7 @@
        (goto NoAddr)))))
   (define delayed-send-with-timeout-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (NoAddr) (response-target)
           (goto HaveAddr response-target))
         (define-state (HaveAddr [response-target (Addr Nat)]) (new-response-target)
