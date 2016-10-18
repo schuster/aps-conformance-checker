@@ -1240,12 +1240,24 @@
 ;; to ensure that spawned addresses in the next handler are fresh.
 (define (age-addresses some-term)
   (match some-term
-    [(and addr `(spawn-addr ,loc ,flag ,type))
+    [(and addr `(spawn-addr ,loc ,flag))
      (if (equal? flag 'NEW)
-         (term (spawn-addr ,loc OLD ,type))
+         (term (spawn-addr ,loc OLD))
          addr)]
     [(list terms ...) (map age-addresses terms)]
     [_ some-term]))
+
+(module+ test
+  (test-equal? "Age addresses test"
+    (redex-let aps# ([e# `(list (Nat (spawn-addr 1 NEW))
+                                (Nat (spawn-addr 2 OLD))
+                                (Nat (init-addr 3))
+                                (Nat (obs-ext 4)))])
+        (age-addresses (term e#)))
+    `(list (Nat (spawn-addr 1 OLD))
+           (Nat (spawn-addr 2 OLD))
+           (Nat (init-addr 3))
+           (Nat (obs-ext 4)))))
 
 ;; Renames precise external addresses in the given term by replacing its number natural_old with
 ;; natural_new, according to the given substitution
