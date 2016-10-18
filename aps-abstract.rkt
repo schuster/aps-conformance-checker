@@ -470,26 +470,34 @@
   [-----------------------------------
    (aps#-match/j (τ a#ext) x ([x a#ext]))]
 
-  [(aps#-match/j v# p ([x v#_binding] ...)) ...
+  [(aps#-match/j v# p ([x a#_binding] ...)) ...
    --------------
-   (aps#-match/j (variant t v# ..._n) (variant t p ..._n) ([x v#_binding] ... ...))]
+   (aps#-match/j (variant t v# ..._n) (variant t p ..._n) ([x a#_binding] ... ...))]
 
-  [(aps#-match/j (* τ) p ([x v#_binding] ...)) ...
+  [(aps#-match/j (* τ) p ([x a#_binding] ...)) ...
    --------------
-   (aps#-match/j (* (Union _ ... [t τ ..._n] _ ...)) (variant t p ..._n) ([x v#_binding] ... ...))]
+   (aps#-match/j (* (Union _ ... [t τ ..._n] _ ...)) (variant t p ..._n) ([x a#_binding] ... ...))]
 
-  [(aps#-match/j v# p ([x v#_binding] ...)) ...
+  [(aps#-match/j v# p ([x a#_binding] ...)) ...
    ---------------------------------------------
-   (aps#-match/j (record [l v#] ..._n) (record [l p] ..._n) ([x v#_binding] ... ...))]
+   (aps#-match/j (record [l v#] ..._n) (record [l p] ..._n) ([x a#_binding] ... ...))]
 
-  [(aps#-match/j (* τ) p ([x v#_binding] ...)) ...
+  [(aps#-match/j (* τ) p ([x a#_binding] ...)) ...
    ---------------------------------------------
-   (aps#-match/j (* (Record [l τ] ..._n)) (record [l p] ..._n) ([x v#_binding] ... ...))])
+   (aps#-match/j (* (Record [l τ] ..._n)) (record [l p] ..._n) ([x a#_binding] ... ...))])
 
 (module+ test
   (check-true (judgment-holds (aps#-match/j (* Nat) * ())))
   (check-true (judgment-holds (aps#-match/j (Nat (obs-ext 1)) x ([x (obs-ext 1)]))))
   (check-true (judgment-holds (aps#-match/j (variant A (* String)) (variant A *) ())))
+  (check-true (judgment-holds (aps#-match/j (variant A (Nat (obs-ext 1)))
+                                            (variant A x)
+                                            ([x (obs-ext 1)]))))
+  (check-true (judgment-holds (aps#-match/j (* (Union [A (Addr Nat)])) (variant A *) ())))
+  (check-true (judgment-holds (aps#-match/j (record [a (Nat (obs-ext 1))])
+                                            (record [a x])
+                                            ([x (obs-ext 1)]))))
+  (check-true (judgment-holds (aps#-match/j (* (Record [a (Addr Nat)])) (record [a *]) ())))
   (check-true (judgment-holds (aps#-match/j (* Nat) * any)))
   (check-false (judgment-holds (aps#-match/j (* Nat) x any))))
 
