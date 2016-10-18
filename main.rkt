@@ -2294,14 +2294,14 @@
     (define nat-addr-list-type `(minfixpt NatAddrList (Union [Nil] [Cons (Addr Nat) NatAddrList])))
     (check-false
      (check-conformance/config
-      `((((addr 0 Nat)
-          (() (folded ,nat-addr-list-type
-                      (variant Cons (addr 1 Nat)
-                               (folded ,nat-addr-list-type
-                                       (variant Cons (addr 2 Nat)
-                                                (folded ,nat-addr-list-type
-                                                        (variant Nil)))))))))
-        () ((addr 0 Nat)) ())
+      (make-single-actor-config
+       `((Nat (addr 0))
+         (() (folded ,nat-addr-list-type
+                     (variant Cons (Nat (addr 1))
+                              (folded ,nat-addr-list-type
+                                      (variant Cons (Nat (addr 2))
+                                               (folded ,nat-addr-list-type
+                                                       (variant Nil)))))))))
       (make-exclusive-spec static-response-spec))))
 
   (test-case "Cannot test conformance if address is folded into a wildcard during handler evaluation"
