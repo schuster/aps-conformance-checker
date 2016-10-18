@@ -1499,7 +1499,21 @@
             ()
             (((init-addr 2) (* (Addr Nat)) many)
              ((init-addr 2) (Nat (obs-ext 3)) single))))
-     null)))
+     null))
+
+  (test-equal? "Will remove actors by spawn flag"
+    (csa#-blur-config
+     (term (([(spawn-addr 1 OLD) (() (goto A))]
+             [(spawn-addr 1 NEW) (() (goto A))])
+            ()
+            ()))
+     'OLD
+     null)
+    (list
+     (term (([(spawn-addr 1 NEW) (() (goto A))])
+            ([(blurred-spawn-addr 1) ((() (goto A)))])
+            ()))
+     (list '(spawn-addr 1 OLD)))))
 
 ;; impl-config spawn-flag -> impl-config ((a# b#) ...)
 ;;
