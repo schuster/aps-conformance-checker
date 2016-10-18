@@ -1109,7 +1109,7 @@
                            (make-exclusive-spec request-response-spec)))
 
   (define (make-self-send-response-actor addr-number)
-    (let ([self-addr (term (addr ,addr-number (Union [FromEnv (Addr Nat)] [FromSelf (Addr Nat)])))])
+    (let ([self-addr (term ((Union [FromEnv (Addr Nat)] [FromSelf (Addr Nat)]) (addr ,addr-number)))])
       (term
        (,self-addr
         (((define-state (Always) (msg)
@@ -1129,16 +1129,16 @@
      (((define-state (Always)
          [(variant FromEnv response-target) -> ([obligation response-target *]) (goto Always)]))
       (goto Always)
-      (addr 0 (Union [FromEnv (Addr Nat)])))))
+      ((Union [FromEnv (Addr Nat)]) (addr 0)))))
 
   (define from-env-wrapper
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (Always [sender (Addr (Union [FromEnv (Addr Nat)]))]) (msg)
           (begin
             (send sender (variant FromEnv msg))
             (goto Always sender))))
-       (goto Always (addr 1 (Union [FromEnv (Addr Nat)])))))))
+       (goto Always ((Union [FromEnv (Addr Nat)]) (addr 1)))))))
 
   (test-valid-actor? (make-self-send-response-actor 0))
   (test-valid-instance? from-env-request-response-spec)
@@ -1154,7 +1154,7 @@
   ;; commitments
   (define reply-once-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (A) (r)
           (begin
             (send r 0)
@@ -1169,7 +1169,7 @@
        (define-state (B)
          [* -> () (goto B)]))
       (goto A)
-      (addr 0 (Addr Nat)))))
+      ((Addr Nat) (addr 0)))))
 
   (test-valid-actor? reply-once-actor)
   (test-valid-instance? maybe-reply-spec)
@@ -1183,17 +1183,17 @@
      (((define-state (S1 r)
          [* -> ([obligation r (variant Zero)])    (goto S1 r)]
          [* -> ([obligation r (variant NonZero)]) (goto S1 r)]))
-      (goto S1 ,(make-static-response-address `(Union [NonZero] [Zero])))
-      (addr 0 Nat))))
+      (goto S1 ,untyped-static-response-address)
+      (Nat (addr 0)))))
   (define zero-spec
     (term
      (((define-state (S1 r)
          [* -> ([obligation r (variant Zero)]) (goto S1 r)]))
-      (goto S1 ,static-response-address)
-      (addr 0 Nat))))
+      (goto S1 ,untyped-static-response-address)
+      (Nat (addr 0)))))
   (define primitive-branch-actor
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (S1 [dest (Addr (Union [NonZero] [Zero]))]) (i)
           (begin
             (case (< 0 i)
@@ -1220,8 +1220,8 @@
      (((define-state (Always r)
          [* -> ([obligation r *]) (goto Always r)]
          [* -> () (goto Always r)]))
-      (goto Always (addr 1 (Addr Nat)))
-      (addr 0 Nat))))
+      (goto Always (addr 1))
+      (Nat (addr 0)))))
 
   (test-valid-instance? optional-commitment-spec)
   (check-true (check-conformance/config ignore-all-config (make-exclusive-spec optional-commitment-spec)))
@@ -1232,11 +1232,11 @@
     (term
      (((define-state (Always response-dest)
          [* -> ([obligation response-dest *]) (goto Always response-dest)]))
-      (goto Always ,static-response-address)
-      (addr 0 Nat))))
+      (goto Always ,untyped-static-response-address)
+      (Nat (addr 0)))))
   (define div-by-one-actor
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (Always [response-dest (Addr Nat)]) (n)
           (begin
             (send response-dest (/ n 1))
@@ -1244,7 +1244,7 @@
        (goto Always ,static-response-address)))))
   (define div-by-zero-actor
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (Always [response-dest (Addr Nat)]) (n)
           (begin
             (send response-dest (/ n 0))
@@ -1273,12 +1273,12 @@
   ;; conformance
   (test-true "request response actor and spec, with unobs communication"
              (check-conformance/config (make-single-actor-config request-response-actor)
-                          (make-spec request-response-spec (list '(addr 0 (Addr Nat))))))
+                          (make-spec request-response-spec (list '((Addr Nat) (addr 0))))))
 
   ;; 2. Allowing same messages from unobs perspective violates conformance for static req/resp.
   (test-false "static response with unobs communication"
               (check-conformance/config (make-single-actor-config static-response-actor)
-                           (make-spec static-response-spec (list '(addr 0 Nat)))))
+                           (make-spec static-response-spec (list '(Nat (addr 0))))))
 
   ;; 3. Conformance regained for static req/resp when add an unobs transition
   (define static-response-spec-with-unobs
@@ -1286,13 +1286,13 @@
      (((define-state (Always response-dest)
          [*     -> ([obligation response-dest *]) (goto Always response-dest)]
          [unobs -> ([obligation response-dest *]) (goto Always response-dest)]))
-      (goto Always ,static-response-address)
-      (addr 0 Nat))))
+      (goto Always ,untyped-static-response-address)
+      (Nat (addr 0)))))
   (test-valid-instance? static-response-spec-with-unobs)
 
   (test-true "static response with unobs, incl in spec"
              (check-conformance/config (make-single-actor-config static-response-actor)
-                          (make-spec static-response-spec-with-unobs (list '(addr 0 Nat)))))
+                          (make-spec static-response-spec-with-unobs (list '(Nat (addr 0))))))
 
   ;; 4. unobs causes a particular behavior (like connected/error in TCP)
   (define obs-unobs-static-response-address
@@ -1303,11 +1303,11 @@
             (define-state (On r)
               [* -> () (goto On r)]
               [unobs -> ([obligation r (variant TurningOff)]) (goto Off r)]))
-           (goto Off ,obs-unobs-static-response-address)
-           (addr 0 (Union [FromObserver])))))
+           (goto Off ,untyped-static-response-address)
+           ((Union [FromObserver]) (addr 0)))))
   (define unobs-toggle-actor
     (term
-     ((addr 0 (Union [FromObserver] [FromUnobservedEnvironment]))
+     (((Union [FromObserver] [FromUnobservedEnvironment]) (addr 0))
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver)
@@ -1325,7 +1325,7 @@
        (goto Off ,obs-unobs-static-response-address)))))
   (define unobs-toggle-actor-wrong1
     (term
-     ((addr 0 (Union [FromObserver] [FromUnobservedEnvironment]))
+     (((Union [FromObserver] [FromUnobservedEnvironment]) (addr 0))
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver)
@@ -1344,7 +1344,7 @@
        (goto Off ,obs-unobs-static-response-address)))))
   (define unobs-toggle-actor-wrong2
     (term
-     ((addr 0 (Union [FromObserver] [FromUnobservedEnvironment]))
+     (((Union [FromObserver] [FromUnobservedEnvironment]) (addr 0))
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver)
@@ -1362,7 +1362,7 @@
        (goto Off ,obs-unobs-static-response-address)))))
   (define unobs-toggle-actor-wrong3
     (term
-     ((addr 0 (Union [FromObserver] [FromUnobservedEnvironment]))
+     (((Union [FromObserver] [FromUnobservedEnvironment]) (addr 0))
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver)
@@ -1380,7 +1380,7 @@
        (goto Off ,obs-unobs-static-response-address)))))
   (define unobs-toggle-actor-wrong4
     (term
-     ((addr 0 (Union [FromObserver] [FromUnobservedEnvironment]))
+     (((Union [FromObserver] [FromUnobservedEnvironment]) (addr 0))
       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
           (case m
             [(FromObserver) (goto Off r)]
@@ -1406,7 +1406,7 @@
 
   (test-true "Obs/Unobs test"
              (check-conformance/config (make-single-actor-config unobs-toggle-actor)
-                          (make-spec unobs-toggle-spec (list '(addr 0 (Union [FromUnobservedEnvironment]))))))
+                          (make-spec unobs-toggle-spec (list '((Union [FromUnobservedEnvironment]) (addr 0))))))
 
   (for ([actor (list unobs-toggle-actor-wrong1
                      unobs-toggle-actor-wrong2
@@ -1414,7 +1414,7 @@
                      unobs-toggle-actor-wrong4)])
     (test-false "Obs/Unobs bug-finding test(s)"
                 (check-conformance/config (make-single-actor-config actor)
-                             (make-spec unobs-toggle-spec (list '(addr 0 (Union [FromUnobservedEnvironment])))))))
+                          (make-spec unobs-toggle-spec (list '((Union [FromUnobservedEnvironment]) (addr 0)))))))
 
   ;;;; Records
 
@@ -1424,10 +1424,10 @@
          [(record [dest dest] [msg (variant A)]) -> ([obligation dest (variant A)]) (goto Always)]
          [(record [dest dest] [msg (variant B)]) -> ([obligation dest (variant B)]) (goto Always)]))
       (goto Always)
-      (addr 0 (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])])))))
+      ((Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]) (addr 0)))))
   (define record-req-resp-actor
     (term
-     ((addr 0 (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]))
+     (((Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]) (addr 0))
       (((define-state (Always) (m)
           (begin
             (send (: m dest) (: m msg))
@@ -1435,7 +1435,7 @@
        (goto Always)))))
   (define record-req-wrong-resp-actor
     (term
-     ((addr 0 (Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]))
+     (((Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]) (addr 0))
       (((define-state (Always) (m)
           (begin
             (send (: m dest) (variant A))
@@ -1457,7 +1457,7 @@
   (define log-list-type (term (minfixpt LogList (Union [Null] [Cons Nat LogList]))))
   (define cons-inputs-echo
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (Always [response-address (Addr Nat)]
                               [input-log ,log-list-type]) (m)
           (begin
@@ -1477,7 +1477,7 @@
   ;;;; Let
   (define static-response-let-actor
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
           (let ([new-r response-dest])
             (begin
@@ -1486,7 +1486,7 @@
        (goto Always ,static-response-address)))))
   (define static-double-response-let-actor
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
           (let ([new-r response-dest])
             (begin
@@ -1508,7 +1508,7 @@
   ;; Check that = gives both results
   (define equal-actor-wrong1
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (A [dest (Addr Nat)]) (m)
           (begin
             (send dest 0)
@@ -1519,7 +1519,7 @@
        (goto A ,static-response-address)))))
   (define equal-actor-wrong2
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (A [dest (Addr Nat)]) (m)
           (begin
             (send dest 0)
@@ -1530,7 +1530,7 @@
        (goto A ,static-response-address)))))
     (define equal-actor
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (A [dest (Addr Nat)]) (m)
           (begin
             (send dest 0)
@@ -1560,7 +1560,7 @@
   ;;;; For loops
   (define loop-do-nothing-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (A) (m)
           (begin
             (for/fold ([folded-result 0])
@@ -1570,7 +1570,7 @@
        (goto A)))))
   (define loop-send-unobs-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (A [r (Addr Nat)]) (m)
           (begin
             (for/fold ([folded-result 0])
@@ -1580,7 +1580,7 @@
        (goto A ,static-response-address)))))
   (define send-before-loop-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (A) (r)
           (begin
             (send r 0)
@@ -1591,7 +1591,7 @@
        (goto A)))))
   (define send-inside-loop-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (A) (r)
           (begin
             (for/fold ([folded-result 0])
@@ -1601,7 +1601,7 @@
        (goto A)))))
   (define send-after-loop-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (A) (r)
           (begin
             (for/fold ([folded-result 0])
@@ -1635,17 +1635,17 @@
      (((define-state (A r)
          [* -> ([obligation r (variant GotMessage)]) (goto A r)]
          [unobs -> ([obligation r (variant GotTimeout)]) (goto A r)]))
-      (goto A ,(make-static-response-address `(Union (GotMessage) (GotTimeout))))
-      (addr 0 Nat))))
+      (goto A ,untyped-static-response-address)
+      (Nat (addr 0)))))
   (define got-message-only-spec
     (term
      (((define-state (A r)
          [* -> ([obligation r (variant GotMessage)]) (goto A r)]))
-      (goto A ,(make-static-response-address `(Union (GotMessage) (GotTimeout))))
-      (addr 0 Nat))))
+      (goto A ,untyped-static-response-address)
+      (Nat (addr 0)))))
   (define timeout-and-send-actor
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
           (begin
             (send r (variant GotMessage))
@@ -1657,7 +1657,7 @@
        (goto A ,(make-static-response-address `(Union (GotMessage) (GotTimeout))))))))
   (define timeout-to-send-actor
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
           (goto SendOnTimeout r))
         (define-state (SendOnTimeout [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
@@ -1671,7 +1671,7 @@
        (goto A ,(make-static-response-address `(Union (GotMessage) (GotTimeout))))))))
   (define spawn-timeout-sender-actor
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
           (begin
             (spawn 3 Nat (goto B)
@@ -1708,7 +1708,7 @@
   ;; Multiple Disjoint Actors
   (define static-response-actor2
     (term
-     ((addr 1 Nat)
+     ((Nat (addr 1))
       (((define-state (Always2 [response-dest (Addr (Union [Ack Nat]))]) (m)
              (begin
                (send response-dest (variant Ack 0))
@@ -1716,19 +1716,19 @@
        (goto Always2 ,static-response-address)))))
   (define other-static-response-actor
     (term
-     ((addr 1 Nat)
+     ((Nat (addr 1))
       (((define-state (Always2 [response-dest (Addr (Union [Ack Nat]))]) (m)
              (begin
                (send response-dest (variant Ack 0))
                (goto Always2 response-dest))))
-       (goto Always2 (addr 3 (Union [Ack Nat])))))))
+       (goto Always2 ((Union [Ack Nat]) (addr 3)))))))
   (define static-response-with-extra-spec
     (term
      (((define-state (Always response-dest)
          [* -> ([obligation response-dest *]) (goto Always response-dest)]
          [unobs -> ([obligation response-dest *]) (goto Always response-dest)]))
-      (goto Always ,static-response-address)
-      (addr 0 Nat))))
+      (goto Always ,untyped-static-response-address)
+      (Nat (addr 0)))))
 
   (test-valid-actor? static-response-actor2)
   (test-valid-actor? other-static-response-actor)
@@ -1737,29 +1737,29 @@
   (test-false "Multi actor test 1"
               (check-conformance/config
                 (make-empty-queues-config (list static-response-actor static-response-actor2) null)
-                (make-spec static-response-spec (list '(addr 1 Nat)))))
+                (make-spec static-response-spec (list '(Nat (addr 1))))))
   (test-true "Multi actor test 2"
              (check-conformance/config
               (make-empty-queues-config (list static-response-actor static-response-actor2) null)
-              (make-spec static-response-with-extra-spec (list '(addr 1 Nat)))))
+              (make-spec static-response-with-extra-spec (list '(Nat (addr 1))))))
   (test-true "Multi actor test 3"
              (check-conformance/config
                (make-empty-queues-config (list static-response-actor other-static-response-actor) null)
-               (make-spec static-response-spec (list '(addr 1 Nat)))))
+               (make-spec static-response-spec (list '(Nat (addr 1))))))
 
   ;; Actors working together
   (define statically-delegating-responder-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (A [responder (Addr (Addr Nat))]) (m)
           (begin
             (send responder m)
             (goto A responder))))
-       (goto A (addr 1 (Addr Nat)))))))
+       (goto A ((Addr Nat) (addr 1)))))))
 
   (define request-response-actor2
     (term
-     ((addr 1 (Addr Nat))
+     (((Addr Nat) (addr 1))
       (((define-state (Always) (response-target)
           (begin
             (send response-target 0)
@@ -1790,23 +1790,23 @@
          [unobs -> ([obligation r self]) (goto Running)])
        (define-state (Running)
          [r -> ([obligation r *]) (goto Running)]))
-      (goto Init (addr 1 (Addr (Addr Nat))))
+      (goto Init (addr 1))
       UNKNOWN)))
 
   (define self-reveal-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
           (goto Init r)
           [(timeout 5)
            (begin
-             (send r (addr 0 (Addr Nat)))
+             (send r ((Addr Nat) (addr 0)))
              (goto Running))])
         (define-state (Running) (r)
           (begin
             (send r 1)
             (goto Running))))
-       (goto Init (addr 1 (Addr (Addr Nat))))))))
+       (goto Init ((Addr (Addr Nat)) (addr 1)))))))
 
   ;; TODO: redo this test in a type-correct way, with a second ignore-all actor
   ;; (define reveal-wrong-address-actor
@@ -1826,19 +1826,19 @@
 
   (define reveal-self-double-output-actor
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
           (goto Init r)
           [(timeout 5)
            (begin
-             (send r (addr 0 (Addr Nat)))
+             (send r ((Addr Nat) (addr 0)))
              (goto Running))])
         (define-state (Running) (r)
           (begin
             (send r 1)
             (send r 1)
             (goto Running))))
-       (goto Init (addr 1 (Addr (Addr Nat))))))))
+       (goto Init ((Addr (Addr Nat)) (addr 1)))))))
 
   ;; TODO: do a version of this test with an ignore-all actor rather than double-send
 
@@ -1870,7 +1870,7 @@
   ;;;; Spawn
   (define echo-spawning-actor
     (term
-     ((addr 0 (Addr (Addr (Addr Nat))))
+     (((Addr (Addr (Addr Nat))) (addr 0))
       (((define-state (Always) (response-target)
           (begin
             ;; TODO: refactor this as a new use of the dynamic response actor above
@@ -1890,7 +1890,7 @@
 
   (define double-response-spawning-actor
     (term
-     ((addr 0 (Addr (Addr (Addr Nat))))
+     (((Addr (Addr (Addr Nat))) (addr 0))
       (((define-state (Always) (response-target)
           (begin
             ;; TODO: refactor this as a new use of the dynamic response actor above
@@ -1918,7 +1918,7 @@
                                  [er -> ([obligation er *]) (goto EchoResponse)]))])
                (goto Always)]))
       (goto Always)
-      (addr 0 (Addr (Addr (Addr Nat)))))))
+      ((Addr (Addr (Addr Nat))) (addr 0)))))
 
   (test-valid-actor? echo-spawning-actor)
   (test-valid-actor? double-response-spawning-actor)
@@ -1940,7 +1940,7 @@
      (((define-state (DoAnything)
          [* -> () (goto DoAnything)]))
       (goto DoAnything)
-      (addr 500 Nat))))
+      (Nat (addr 500)))))
   (test-valid-instance? no-matching-address-spec)
 
   (test-false "Spec config address must have matching actor in implementation configuration"
@@ -1950,7 +1950,7 @@
 
   (define spawn-and-retain
     (term
-     ((addr 0 (Addr (Addr (Addr Nat))))
+     (((Addr (Addr (Addr Nat))) (addr 0))
       (((define-state (Always [maybe-child (Union [NoChild] [Child (Addr (Addr Nat))])]) (dest)
           (let ([new-child
                  (spawn
@@ -1974,7 +1974,7 @@
 
   (define spawn-and-retain-but-send-new
     (term
-     ((addr 0 (Addr (Addr (Addr Nat))))
+     (((Addr (Addr (Addr Nat))) (addr 0))
       (((define-state (Always [maybe-child (Union [NoChild] [Child (Addr (Addr Nat))])]) (dest)
           (let ([new-child
                  (spawn
@@ -2013,7 +2013,7 @@
   ;; a later timeout, have spec have one state for child instead of two, etc.
   (define spawn-self-revealing-echo
     (term
-     ((addr 0 (Addr (Addr (Addr Nat))))
+     (((Addr (Addr (Addr Nat))) (addr 0))
       (((define-state (Always) (response-target)
           (begin
             (spawn
@@ -2043,7 +2043,7 @@
                         [er -> ([obligation er *]) (goto EchoResponse)])])
             (goto Always)]))
       (goto Always)
-      (addr 0 (Addr (Addr (Addr Nat)))))))
+      ((Addr (Addr (Addr Nat))) (addr 0)))))
 
   (test-valid-actor? spawn-self-revealing-echo)
   (test-valid-instance? child-self-reveal-spec)
@@ -2057,7 +2057,7 @@
   (define send-to-blurred-internal-actor-and-response
     ;; Third time through, send to that actor
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (Always [static-output (Addr (Union [Ack Nat]))]
                               [saved-internal (Union [None]
                                                      [First (Addr (Addr (Union [Ack Nat])))]
@@ -2092,7 +2092,7 @@
   (define send-to-blurred-internal-actor
     ;; Third time through, send to that actor
     (term
-     ((addr 0 Nat)
+     ((Nat (addr 0))
       (((define-state (Always [static-output (Addr (Union [Ack Nat]))]
                               [saved-internal (Union [None]
                                                      [First (Addr (Addr (Union [Ack Nat])))]
@@ -2119,15 +2119,15 @@
     (term
      (((define-state (Always r)
          [* -> () (goto Always r)]))
-      (goto Always ,static-response-address)
-      (addr 0 Nat))))
+      (goto Always ,untyped-static-response-address)
+      (Nat (addr 0)))))
   (define send-whenever-spec
     (term
      (((define-state (Always r)
          [* -> () (goto Always r)]
          [unobs -> ([obligation r *]) (goto Always r)]))
-      (goto Always ,static-response-address)
-      (addr 0 Nat))))
+      (goto Always ,untyped-static-response-address)
+      (Nat (addr 0)))))
 
   (test-valid-actor? send-to-blurred-internal-actor)
   (test-valid-instance? send-whenever-spec)
@@ -2143,7 +2143,7 @@
 
   (define self-send-responder-spawner
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (Always) (dest)
           (begin
             (spawn child-loc
@@ -2172,12 +2172,12 @@
   (define forwarding-type (term (Record [result Nat] [dest (Addr Nat)])))
   (define (make-down-and-back-server child-behavior)
     (term
-     ((addr 0 (Addr Nat))
+     (((Addr Nat) (addr 0))
       (((define-state (Always [forwarding-server (Addr ,forwarding-type)]) (dest)
           (begin
             (spawn child-loc ,@child-behavior)
             (goto Always forwarding-server))))
-       (goto Always (addr 1 ,forwarding-type))))))
+       (goto Always (,forwarding-type (addr 1)))))))
 
   (define timeout-forwarding-child
     (term
@@ -2205,7 +2205,7 @@
 
   (define forwarding-server
     (term
-     ((addr 1 (Record [result Nat] [dest (Addr Nat)]))
+     (((Record [result Nat] [dest (Addr Nat)]) (addr 1))
       (((define-state (ServerAlways) (rec)
           (begin
             (send (: rec dest) (: rec result))
@@ -2229,7 +2229,7 @@
 
   (define create-later-send-children-actor
     (term
-     ((addr 1 (Addr (Addr Nat)))
+     (((Addr (Addr Nat)) (addr 1))
       (((define-state (Always [r (Addr Nat)]) (other-dest)
           (begin
             (send other-dest
@@ -2242,7 +2242,7 @@
                              (send r 1)
                              (goto Child2)))))
             (goto Always r))))
-       (goto Always (addr 2 Nat))))))
+       (goto Always (Nat (addr 2)))))))
 
   (test-valid-actor? create-later-send-children-actor)
   (test-false "Child that sends response in second state does not match never-send"
@@ -2256,7 +2256,7 @@
   ;; step 3: new agent uses forwarder to fulfill its dynamic request/response (can't do static yet)
   (define conflicts-only-test-actor
     (term
-     ((addr 0 (Addr (Addr (Addr Nat))))
+     (((Addr (Addr (Addr Nat))) (addr 0))
       (((define-state (Always [maybe-forwarder (Union [None] [Forwarder (Addr (Addr Nat))])]) (dest)
           (let ([forwarder
                  (case maybe-forwarder
@@ -2312,7 +2312,7 @@
       ;; to the request/response spec because of the extra send, but would only be caught by checking
       ;; for addresses getting folded into wildcard values.
       (term
-       ((addr 0 Nat)
+       ((Nat (addr 0))
         (((define-state (Always [addrs ,nat-addr-list-type]) (new-addr)
             (let ([addrs (fold ,nat-addr-list-type (variant ConsIt new-addr addrs))])
               (begin
@@ -2339,7 +2339,7 @@
 
   (define ping-coercion-spawner
     (term
-     ((addr 0 (Addr (Addr (Union [Ping (Addr (Union [Pong]))]))))
+     (((Addr (Addr (Union [Ping (Addr (Union [Pong]))]))) (addr 0))
       (((define-state (Always) (dest)
           (begin
             (send dest
@@ -2364,7 +2364,7 @@
                                  [(variant Ping r) -> ([obligation r (variant Pong)]) (goto Ready)]))])
             (goto Always)]))
       (goto Always)
-      (addr 0 (Addr (Addr (Union [Ping (Addr (Union [Pong]))])))))))
+      ((Addr (Addr (Union [Ping (Addr (Union [Pong]))]))) (addr 0)))))
 
   ;; make sure that
   (test-true "Exposed addresses only expose types according to the type of the address they were exposed through"
