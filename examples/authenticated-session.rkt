@@ -294,7 +294,9 @@
 
 (module+ test
   (require
+   racket/async-channel
    rackunit
+   asyncunit
    "../desugar.rkt"
    "../main.rkt"
 
@@ -305,19 +307,37 @@
   (test-true "Valid type for server input"
     (redex-match? csa-eval τ desugared-server-input-type))
 
+  (define the-program (desugar authN-program))
+
   (test-true "Authenticated session verification"
-    (check-conformance (desugar authN-program) authN-specification)
+    (check-conformance the-program authN-specification)
     ;; Use this to test a single worker, in a context with the server and guard
     ;; (check-conformance (desugar authN-program) worker-specification)
     ;; Use this to test just the service
     ;; (check-conformance (desugar authN-program) server-specification)
-    ))
+    )
 
-;; ---------------------------------------------------------------------------------------------------
-;; Dynamic tests needed:
 
-;; * create new session, with proper auth
-;; * auth fails (bad password)
-;; * auth fails (username doesn't exist)
-;; * get existing session
-;; * fresh auth token for each session
+  ;; TODO: turn this into a macro and provide it from csa
+  ;; (define-namespace-anchor outer-module)
+  ;; (define run-program
+  ;;   (parameterize ([current-namespace (namespace-anchor->empty-namespace outer-module)])
+  ;;     (namespace-require 'csa)
+  ;;     (eval the-program)))
+
+  ;; (test-case "auth fails (bad password)"
+  ;;   (define guard (run-program))
+  ;;   (define response-dest (make-async-channel))
+  ;;   ;; (printf "is response-dest an async channel: ~s\n" (async-channel? response-dest))
+  ;;   (printf "is an async channel: ~s\n" (async-channel? guard))
+  ;;   (async-channel-put guard `(list variant GetSession 0 ,response-dest))
+  ;;   (check-unicast response-dest `(list variant NewSession auth-thing)))
+
+  ;; Dynamic tests needed:
+  ;; * create new session, with proper auth
+  ;; * auth fails (bad password)
+  ;; * auth fails (username doesn't exist)
+  ;; * get existing session
+  ;; * fresh auth token for each session
+
+  )
