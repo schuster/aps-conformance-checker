@@ -171,7 +171,7 @@
   (define-actor ServerInput
     (Server)
     ()
-    (goto Running (hash) 0)
+    (goto Running (hash) 1)
     (define-state (Running [sessions (Hash Nat Nat)] [next-auth-token Nat]) (m)
       (case m
         [(GetSessionInternal auth-token reply-to)
