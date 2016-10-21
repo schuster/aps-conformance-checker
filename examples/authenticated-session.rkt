@@ -319,19 +319,58 @@
 
 
   ;; TODO: turn this into a macro and provide it from csa
-  ;; (define-namespace-anchor outer-module)
-  ;; (define run-program
-  ;;   (parameterize ([current-namespace (namespace-anchor->empty-namespace outer-module)])
-  ;;     (namespace-require 'csa)
-  ;;     (eval the-program)))
+  (define-namespace-anchor outer-module)
+  (define run-program
+    (parameterize ([current-namespace (namespace-anchor->empty-namespace outer-module)])
+      (namespace-require 'csa)
+      (eval the-program)))
 
-  ;; (test-case "auth fails (bad password)"
-  ;;   (define guard (run-program))
-  ;;   (define response-dest (make-async-channel))
-  ;;   ;; (printf "is response-dest an async channel: ~s\n" (async-channel? response-dest))
-  ;;   (printf "is an async channel: ~s\n" (async-channel? guard))
-  ;;   (async-channel-put guard `(list variant GetSession 0 ,response-dest))
-  ;;   (check-unicast response-dest `(list variant NewSession auth-thing)))
+  (test-case "auth fails (username doesn't exist)"
+    (define guard (run-program))
+    (define response-dest (make-async-channel))
+    (async-channel-put guard `(variant GetSession 0 ,response-dest))
+    (define auth-channel
+      (check-unicast-match response-dest (list 'variant 'NewSession auth-channel) #:result auth-channel))
+    (define auth-response-dest (make-async-channel))
+    (async-channel-put auth-channel `(variant Authenticate "BadUser" "BadPassword" ,auth-response-dest))
+    (check-unicast auth-response-dest '(variant FailedSession)))
+
+  (test-case "auth fails (bad password)"
+    (define guard (run-program))
+    (define response-dest (make-async-channel))
+    (async-channel-put guard `(variant GetSession 0 ,response-dest))
+    (define auth-channel
+      (check-unicast-match response-dest (list 'variant 'NewSession auth-channel) #:result auth-channel))
+    (define auth-response-dest (make-async-channel))
+    (async-channel-put auth-channel `(variant Authenticate "joe" "xyz" ,auth-response-dest))
+    (check-unicast auth-response-dest '(variant FailedSession)))
+
+  (test-case "auth succeeds"
+    (define guard (run-program))
+    (define response-dest (make-async-channel))
+    (async-channel-put guard `(variant GetSession 0 ,response-dest))
+    (define auth-channel
+      (check-unicast-match response-dest (list 'variant 'NewSession auth-channel) #:result auth-channel))
+    (define auth-response-dest (make-async-channel))
+    (async-channel-put auth-channel `(variant Authenticate "joe" "abc" ,auth-response-dest))
+    (define server (check-unicast-match auth-response-dest (list 'variant 'ActiveNewSession _ server) #:result server))
+    (define ping-response-dest (make-async-channel))
+    (async-channel-put server `(variant Ping ,ping-response-dest))
+    (check-unicast ping-response-dest '(variant Pong)))
+
+  (test-case "fresh token every time"
+    (define guard (run-program))
+
+    (define (get-session)
+      (define response-dest (make-async-channel))
+      (async-channel-put guard `(variant GetSession 0 ,response-dest))
+      (match-define (list 'variant 'NewSession auth-channel) (async-channel-get response-dest))
+      (define auth-response-dest (make-async-channel))
+      (async-channel-put auth-channel `(variant Authenticate "joe" "abc" ,auth-response-dest))
+      (match-define (list 'variant 'ActiveNewSession token _) (async-channel-get auth-response-dest))
+      token)
+
+    (check-not-equal? (get-session) (get-session)))
 
   ;; Dynamic tests needed:
   ;; * create new session, with proper auth
