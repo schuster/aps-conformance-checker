@@ -372,11 +372,47 @@
 
     (check-not-equal? (get-session) (get-session)))
 
-  ;; Dynamic tests needed:
-  ;; * create new session, with proper auth
-  ;; * auth fails (bad password)
-  ;; * auth fails (username doesn't exist)
-  ;; * get existing session
-  ;; * fresh auth token for each session
+  (test-case "no worker responses after first valid authentication"
+    (define guard (run-program))
+    (define response-dest (make-async-channel))
+    (async-channel-put guard `(variant GetSession 0 ,response-dest))
+    (match-define (list 'variant 'NewSession auth-channel) (async-channel-get response-dest))
+    (define auth-response-dest (make-async-channel))
+    (async-channel-put auth-channel `(variant Authenticate "joe" "abc" ,auth-response-dest))
+    (check-unicast-match auth-response-dest _)
+    (define auth-response-dest2 (make-async-channel))
+    (async-channel-put auth-channel `(variant Authenticate "joe" "abc" ,auth-response-dest2))
+    (check-no-message auth-response-dest2))
 
-  )
+  (test-case "no worker responses after first invalid authentication"
+    (define guard (run-program))
+    (define response-dest (make-async-channel))
+    (async-channel-put guard `(variant GetSession 0 ,response-dest))
+    (match-define (list 'variant 'NewSession auth-channel) (async-channel-get response-dest))
+    (define auth-response-dest (make-async-channel))
+    (async-channel-put auth-channel `(variant Authenticate "BadUser" "BadPassword" ,auth-response-dest))
+    (check-unicast-match auth-response-dest _)
+    (define auth-response-dest2 (make-async-channel))
+    (async-channel-put auth-channel `(variant Authenticate "joe" "abc" ,auth-response-dest2))
+    (check-no-message auth-response-dest2))
+
+  (test-case "retrieve existing session"
+    (define guard (run-program))
+
+    ;; First authentication
+    (define response-dest (make-async-channel))
+    (async-channel-put guard `(variant GetSession 0 ,response-dest))
+    (match-define (list 'variant 'NewSession auth-channel) (async-channel-get response-dest))
+    (define auth-response-dest (make-async-channel))
+    (async-channel-put auth-channel `(variant Authenticate "joe" "abc" ,auth-response-dest))
+    (match-define (list 'variant 'ActiveNewSession token _) (async-channel-get auth-response-dest))
+
+    ;; Second authentication
+    (define response-dest2 (make-async-channel))
+    (async-channel-put guard `(variant GetSession ,token ,response-dest2))
+    (define server
+      (check-unicast-match response-dest2 (list 'variant 'ActiveOldSession server) #:result server))
+
+    (define ping-response-dest (make-async-channel))
+    (async-channel-put server `(variant Ping ,ping-response-dest))
+    (check-unicast ping-response-dest '(variant Pong))))
