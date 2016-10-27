@@ -177,8 +177,8 @@
         [(GetSessionInternal auth-token reply-to)
          (cond
            [(hash-has-key? sessions auth-token)
-            (send reply-to (FailureInternal))]
-           [else (send reply-to (SuccessInternal))])
+            (send reply-to (SuccessInternal))]
+           [else (send reply-to (FailureInternal))])
          (goto Running sessions next-auth-token)]
         [(CreateSession username reply-to)
          ;; In a real implementation, creating auth tokens would be more complicated, with very large
