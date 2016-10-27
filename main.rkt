@@ -476,6 +476,92 @@
    (aps#-blur-config spec-config blurred-internals)))
 
 (module+ test
+  (test-equal? "blur OLD"
+    (blur-by-relevant-addresses
+     ;; spec config: lots of spawned actors with similar addresses
+     '((((spawn-addr 2 NEW) (() (goto A)))
+        ((spawn-addr 2 OLD) (() (goto A)))
+        ((spawn-addr 3 NEW) (() (goto A)))
+        ((spawn-addr 3 OLD) (() (goto A)))
+        ((spawn-addr 4 NEW) (() (goto A)))
+        ((spawn-addr 4 OLD) (() (goto A))))
+       ()
+       ())
+     ;; spec config: all addresses in the unobs interface
+     '((Nat (spawn-addr 2 NEW))
+       ((Nat (spawn-addr 2 NEW))
+        (Nat (spawn-addr 2 OLD))
+        (Nat (spawn-addr 3 NEW))
+        (Nat (spawn-addr 3 OLD))
+        (Nat (spawn-addr 4 NEW))
+        (Nat (spawn-addr 4 OLD)))
+       (goto A)
+       ()
+       ()))
+    (list
+     ;; impl config result
+     '((((spawn-addr 2 NEW) (() (goto A)))
+        ((spawn-addr 3 NEW) (() (goto A)))
+        ((spawn-addr 4 NEW) (() (goto A))))
+       (((blurred-spawn-addr 2) ((() (goto A))))
+        ((blurred-spawn-addr 3) ((() (goto A))))
+        ((blurred-spawn-addr 4) ((() (goto A)))))
+       ())
+     ;; spec config result
+     '((Nat (spawn-addr 2 NEW))
+       ((Nat (spawn-addr 2 NEW))
+        (Nat (blurred-spawn-addr 2))
+        (Nat (spawn-addr 3 NEW))
+        (Nat (blurred-spawn-addr 3))
+        (Nat (spawn-addr 4 NEW))
+        (Nat (blurred-spawn-addr 4)))
+       (goto A)
+       ()
+       ())))
+  (test-equal? "blur NEW"
+    (blur-by-relevant-addresses
+     ;; spec config: lots of spawned actors with similar addresses
+     '((((spawn-addr 2 NEW) (() (goto A)))
+        ((spawn-addr 2 OLD) (() (goto A)))
+        ((spawn-addr 3 NEW) (() (goto A)))
+        ((spawn-addr 3 OLD) (() (goto A)))
+        ((spawn-addr 4 NEW) (() (goto A)))
+        ((spawn-addr 4 OLD) (() (goto A))))
+       ()
+       ())
+     ;; spec config: all addresses in the unobs interface
+     '((Nat (spawn-addr 2 OLD))
+       ((Nat (spawn-addr 2 NEW))
+        (Nat (spawn-addr 2 OLD))
+        (Nat (spawn-addr 3 NEW))
+        (Nat (spawn-addr 3 OLD))
+        (Nat (spawn-addr 4 NEW))
+        (Nat (spawn-addr 4 OLD)))
+       (goto A)
+       ()
+       ()))
+    (list
+     ;; impl config result
+     '((((spawn-addr 2 OLD) (() (goto A)))
+        ((spawn-addr 3 OLD) (() (goto A)))
+        ((spawn-addr 4 OLD) (() (goto A))))
+       (((blurred-spawn-addr 2) ((() (goto A))))
+        ((blurred-spawn-addr 3) ((() (goto A))))
+        ((blurred-spawn-addr 4) ((() (goto A)))))
+       ())
+     ;; spec config result
+     '((Nat (spawn-addr 2 OLD))
+       ((Nat (blurred-spawn-addr 2))
+        (Nat (spawn-addr 2 OLD))
+        (Nat (blurred-spawn-addr 3))
+        (Nat (spawn-addr 3 OLD))
+        (Nat (blurred-spawn-addr 4))
+        (Nat (spawn-addr 4 OLD)))
+       (goto A)
+       ()
+       ()))))
+
+(module+ test
   (test-equal? "check that messages with blurred addresses get merged together"
    (blur-by-relevant-addresses
     (term (()
@@ -493,20 +579,36 @@
 ;; Decides whether to blur spawn-addresses with the OLD or NEW flag based on the current impl and spec
 ;; configs, returning the flag for addresses that should be blurred.
 (define (choose-spawn-flag-to-blur impl-config spec-config)
-  ;; 1. if the spec address is a spawn-address, return its flag
-  ;;
-  ;; 2. if the spec address is unknown but only init-addr actors and actors with just one of the flags
+  ;; 1. if the spec address is unknown but only init-addr actors and actors with just one of the flags
   ;; have addresses from the output commitment set, blur the other flag
   ;;
+  ;; 2. if the spec address is a spawn-address, return the opposite of its flag
+  ;;
   ;; 3. otherwise, just return OLD by default
+  (define obs-interface (aps#-config-obs-interface spec-config))
+  (define (other-flag f)
+    (match f
+       ['OLD 'NEW]
+       ['NEW 'OLD]))
   (cond
-    [(csa#-spawn-address? (aps#-config-obs-interface spec-config))
-     (csa#-spawn-address-flag (aps#-config-obs-interface spec-config))]
-    [else ; must be the special "unknown" spec address
+    [(aps#-unknown-address? obs-interface)
      (match (csa#-flags-that-know-externals impl-config (aps#-relevant-external-addrs spec-config))
-       [(list 'OLD) 'NEW]
-       [(list 'NEW) 'OLD]
-       [_ 'OLD])]))
+       [(list flag) (other-flag flag)] ; use "other" flag if exactly one flag knows externals
+       [_ 'OLD])]
+    [(csa#-spawn-address? (csa#-address-strip-type obs-interface))
+     (other-flag (csa#-spawn-address-flag (csa#-address-strip-type obs-interface)))]
+    [else 'OLD]))
+
+(module+ test
+  (test-equal? "choose spawn flag 1"
+    (choose-spawn-flag-to-blur '(() () ()) '((Nat (spawn-addr 2 NEW)) () (goto A) () ()))
+    'OLD)
+  (test-equal? "choose spawn flag 2"
+    (choose-spawn-flag-to-blur '(() () ()) '((Nat (spawn-addr 2 OLD)) () (goto A) () ()))
+    'NEW)
+  (test-equal? "choose spawn flag 3"
+    (choose-spawn-flag-to-blur '(() () ()) '(UNKNOWN () (goto A) () ()))
+    'OLD))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pair-removal back-propagation
@@ -2296,6 +2398,54 @@
     (check-conformance/config
      (make-single-actor-config conflicts-only-test-actor)
      (make-exclusive-spec echo-spawn-spec)))
+
+  ;; TODO: write a test to check my auth theory: worker in done state, unobserved master creates a new
+  ;; worker, spec accidentally switches to watch new worker instead of old (and complains when the
+  ;; worker that the spec thinks should be done actually sends a message)
+
+  ;; Master creates workers, each worker reveals itself after timeout, sends response to next message
+  ;; and dies. The worker is stateful, so this models an error I found in the authN example
+  (define worker-spawner
+    (term
+     (((Addr (Addr (Addr Nat))) (addr 0))
+      (((define-state (MasterLoop) (child-dest)
+         (begin
+           (spawn child-loc
+                  (Addr Nat)
+                  (goto Init)
+                  (define-state (Init) (m)
+                    (goto Init)
+                    [(timeout 0)
+                     (begin
+                       (send child-dest self)
+                       (goto Running))])
+                  (define-state (Running) (m)
+                    (begin
+                      (send m 0)
+                      (goto Done)))
+                  (define-state (Done) (m)
+                    (goto Done)))
+           (goto MasterLoop))))
+       (goto MasterLoop)))))
+  (define worker-spawner-spec
+    (term
+     (((define-state (Always)
+         [r -> ([obligation r (fork
+                               (goto Running)
+                               (define-state (Running)
+                                 [nr -> ([obligation nr *]) (goto Done)])
+                               (define-state (Done)
+                                 [nr -> () (goto Done)]))])
+            (goto Always)]))
+      (goto Always)
+      ((Addr (Addr (Addr Nat))) (addr 0)))))
+
+  (test-valid-actor? worker-spawner)
+  (test-valid-instance? worker-spawner-spec)
+  (test-true "Stateful generated worker satisfies spec"
+    (check-conformance/config
+     (make-single-actor-config worker-spawner)
+     (make-exclusive-spec worker-spawner-spec)))
 
   ;;;; Abstraction past max fold depth
   (test-case "Cannot test conformance if address found below max fold depth"
