@@ -199,7 +199,7 @@
        ;; (printf "Pair config #: ~s\n" visited-pairs-count)
        ;; (printf "Unique impl configs so far: ~s\n" (set-count visited-impl-configs))
        ;; (printf "Unique spec configs so far: ~s\n" (set-count visited-spec-configs))
-       ;; (printf "Queue size: ~s\n" (queue-length to-visit))
+       (printf "Worklist size: ~s\n" (set-count to-visit))
        ;; (printf "The impl config: ~s\n"
        ;;         (impl-config-without-state-defs (config-pair-impl-config pair)))
        ;; (printf "The full impl config: ~s\n" (config-pair-impl-config pair))
