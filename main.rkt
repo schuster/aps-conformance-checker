@@ -211,70 +211,82 @@
        (define i (config-pair-impl-config pair))
        (define s (config-pair-spec-config pair))
 
-       (match (impl-steps-from i s)
-         [#f
-          ;; Evaluation led to an unverifiable configuration, so we deem this pair unrelated, add it
-          ;; to the unrelated-successors list, and move on to explore the next pair in our worklist.
-          (loop related-pairs (set-add unrelated-successors pair))]
-         [i-steps
-          ;; Find the matching s-steps
-          (define found-unmatchable-step? #f)
-          (for ([i-step i-steps])
-            ;; Debugging:
-            ;; (printf "Impl step: ~s\n" (debug-impl-step i-step))
-
-            (define matching-s-steps (matching-spec-steps s i-step))
-            ;; Debugging:
-            ;; (printf "Matching spec steps: ~s\n" matching-s-steps)
-
-            (log-related-spec-steps log-file (list pair i-step) matching-s-steps)
-            (hash-set! related-spec-steps (list pair i-step) matching-s-steps)
-            (when (set-empty? matching-s-steps)
-              (set! found-unmatchable-step? #t)))
-
-          ;; Add this pair to either related or unrelated set; add new worklist items
-          (cond
-            [found-unmatchable-step?
-             ;; Some impl step has no matching spec step, so this pair is unrelated. Therefore we add
-             ;; it to the unrelated-successors list and do not further explore transitions from this
-             ;; pair.
-
-             ;; Debugging
-             ;; (displayln "Unrelated pair")
-             (log-unrelated log-file pair)
+       (cond
+         ;; Performance improvement: If the spec is a no-transition spec whose obligations have all
+         ;; been met, and the impl doesn't even know about the obligation addresses anymore, then the
+         ;; impl is guaranteed to conform to the spec. We can ignore any further steps and just call
+         ;; this a related pair.
+         [(and (aps#-completed-no-transition-config? s)
+               (let ([known-externals (externals-in i)])
+                 (andmap (curryr member known-externals) (aps#-relevant-external-addrs s))))
+          ;; TODO: what's a good test for this improvement?
+          (displayln "Did the optimization")
+          (loop (set-add related-pairs pair) unrelated-successors)]
+         [else
+          (match (impl-steps-from i s)
+            [#f
+             ;; Evaluation led to an unverifiable configuration, so we deem this pair unrelated, add it
+             ;; to the unrelated-successors list, and move on to explore the next pair in our worklist.
              (loop related-pairs (set-add unrelated-successors pair))]
-            [else
-             ;; This pair is in the rank-1 simulation (because all of its impl steps have matching
-             ;; spec steps). We have to add it to the related-pairs set, sbc each of the matching
-             ;; destination pairs and add them to the work-list so that we explore this pair's
-             ;; successors, and add the incoming transitions for those destination pairs to
-             ;; incoming-steps.
-
-             ;; Debugging
-             ;; (displayln "Related pair")
+            [i-steps
+             ;; Find the matching s-steps
+             (define found-unmatchable-step? #f)
              (for ([i-step i-steps])
-               (for ([s-step (hash-ref related-spec-steps (list pair i-step))])
-                 (define successor-pairs
-                   (for/list ([config (cons (spec-step-destination s-step) (spec-step-spawns s-step))])
-                     (config-pair (impl-step-destination i-step) config)))
+               ;; Debugging:
+               ;; (printf "Impl step: ~s\n" (debug-impl-step i-step))
 
-                 ;; Debugging only
-                 ;; (for ([successor-pair successor-pairs])
-                 ;;   (printf "pre-sbc: ~s\n" successor-pair)
-                 ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
-                 (for ([sbc-result (sbc* successor-pairs)])
-                   ;; TODO: add the address binding here, too, and adjust other uses of incoming
-                   ;; (e.g. in prune-unsupported) to take that structure into account
-                   (match-define (list sbc-pair rename-map) sbc-result)
-                   (log-incoming log-file sbc-pair (list pair i-step s-step rename-map))
-                   (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step rename-map))
-                   (unless (or (member sbc-pair (queue->list to-visit))
-                               (set-member? related-pairs sbc-pair)
-                               (set-member? unrelated-successors sbc-pair)
-                               (equal? sbc-pair pair))
-                     (enqueue! to-visit sbc-pair)))))
-             (log-related log-file pair)
-             (loop (set-add related-pairs pair) unrelated-successors)])])])))
+               (define matching-s-steps (matching-spec-steps s i-step))
+               ;; Debugging:
+               ;; (printf "Matching spec steps: ~s\n" matching-s-steps)
+
+               (log-related-spec-steps log-file (list pair i-step) matching-s-steps)
+               (hash-set! related-spec-steps (list pair i-step) matching-s-steps)
+               (when (set-empty? matching-s-steps)
+                 (set! found-unmatchable-step? #t)))
+
+             ;; Add this pair to either related or unrelated set; add new worklist items
+             (cond
+               [found-unmatchable-step?
+                ;; Some impl step has no matching spec step, so this pair is unrelated. Therefore we add
+                ;; it to the unrelated-successors list and do not further explore transitions from this
+                ;; pair.
+
+                ;; Debugging
+                ;; (displayln "Unrelated pair")
+                (log-unrelated log-file pair)
+                (loop related-pairs (set-add unrelated-successors pair))]
+               [else
+                ;; This pair is in the rank-1 simulation (because all of its impl steps have matching
+                ;; spec steps). We have to add it to the related-pairs set, sbc each of the matching
+                ;; destination pairs and add them to the work-list so that we explore this pair's
+                ;; successors, and add the incoming transitions for those destination pairs to
+                ;; incoming-steps.
+
+                ;; Debugging
+                ;; (displayln "Related pair")
+                (for ([i-step i-steps])
+                  (for ([s-step (hash-ref related-spec-steps (list pair i-step))])
+                    (define successor-pairs
+                      (for/list ([config (cons (spec-step-destination s-step) (spec-step-spawns s-step))])
+                        (config-pair (impl-step-destination i-step) config)))
+
+                    ;; Debugging only
+                    ;; (for ([successor-pair successor-pairs])
+                    ;;   (printf "pre-sbc: ~s\n" successor-pair)
+                    ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
+                    (for ([sbc-result (sbc* successor-pairs)])
+                      ;; TODO: add the address binding here, too, and adjust other uses of incoming
+                      ;; (e.g. in prune-unsupported) to take that structure into account
+                      (match-define (list sbc-pair rename-map) sbc-result)
+                      (log-incoming log-file sbc-pair (list pair i-step s-step rename-map))
+                      (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step rename-map))
+                      (unless (or (member sbc-pair (queue->list to-visit))
+                                  (set-member? related-pairs sbc-pair)
+                                  (set-member? unrelated-successors sbc-pair)
+                                  (equal? sbc-pair pair))
+                        (enqueue! to-visit sbc-pair)))))
+                (log-related log-file pair)
+                (loop (set-add related-pairs pair) unrelated-successors)])])])])))
 
 ;; Returns all implementation steps possible from the given impl-config/spec-config pair, or #f if
 ;; some step leads to an unverifiable configuration. The spec config is used to determine whether

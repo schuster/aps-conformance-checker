@@ -19,6 +19,7 @@
  try-rename-address
  reverse-rename-address
  aps#-config-has-commitment?
+ aps#-completed-no-transition-config?
 
  ;; Required by conformance checker for blurring
  aps#-relevant-external-addrs
@@ -1117,6 +1118,32 @@
     (aps#-make-no-transition-config
      '((init-addr 0 Nat))
      '(((obs-ext 0 Nat) (single *) (single (record [a *] [b *])))))))
+
+(define (aps#-completed-no-transition-config? s)
+  (define (aps#-make-no-transition-config receptionists commitments)
+  (term (UNKNOWN
+         ,receptionists
+         (goto DummySpecFsmState)
+         ((define-state (DummySpecFsmState)))
+         ,commitments)))
+  (redex-match? aps# (_ _ (goto DummySpecFsmState) _ ([_] ...)) s))
+
+(module+ test
+  ;; empty config set, non-empty configs, other kind of spec config with empty coms
+  (test-case "completed-no-transition-config?: no commitments"
+    (redex-let aps# ([s# (aps#-make-no-transition-config null (list `((obs-ext 1))))])
+      (check-true (aps#-completed-no-transition-config? (term s#)))))
+  (test-case "completed-no-transition-config?: some commitments"
+    (redex-let aps# ([s# (aps#-make-no-transition-config null (list `((obs-ext 1) (single *))))])
+      (check-false (aps#-completed-no-transition-config? (term s#)))))
+  (test-case "completed-no-transition-config?: spec with transitions, no commitments"
+    (redex-let aps# ([s#
+                      `(UNKNOWN
+                        ()
+                        (goto A)
+                        ((define-state (A) [unobs -> () (goto A)]))
+                        ())])
+      (check-false (aps#-completed-no-transition-config? (term s#))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Blurring
