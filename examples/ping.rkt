@@ -17,18 +17,18 @@
    (specification (receptionists [ping-server (Addr (Union [Pong]))]) (externals)
      [ping-server (Addr (Union [Pong]))]
      ()
+     (goto Always)
      (define-state (Always)
-       [r -> (with-outputs ([r *]) (goto Always))])
-     (goto Always))))
+       [r -> ([obligation r *]) (goto Always)]))))
 
 (define no-send-ping-spec
   (quasiquote
    (specification (receptionists [ping-server (Addr (Union [Pong]))]) (externals)
      [ping-server (Addr (Union [Pong]))]
      ()
+     (goto Always)
      (define-state (Always)
-       [r -> (goto Always)])
-     (goto Always))))
+       [r -> () (goto Always)]))))
 
 (module+ test
   (require
