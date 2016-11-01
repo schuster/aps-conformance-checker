@@ -170,7 +170,9 @@
 ;; the set of specification steps that match the implementation step. See "Type" Definitions above for
 ;; more details.
 (define (find-rank1-simulation initial-pairs)
-  (define to-visit (apply queue initial-pairs))
+  ;; We use a mutable set for the to-visit worklist rather than a queue for (effectively)
+  ;; constant-time membership checks just before adding a new pair
+  (define to-visit (list->mutable-set initial-pairs))
   (define related-spec-steps (make-hash))
   (define incoming-steps (make-hash (map (lambda (t) (cons t (mutable-set))) initial-pairs)))
 
@@ -183,7 +185,7 @@
 
   (let loop ([related-pairs (set)]
              [unrelated-successors (set)])
-    (match (dequeue-if-non-empty! to-visit)
+    (match (set-dequeue-if-non-empty! to-visit)
       [#f
        (close-log log-file)
        (list related-pairs unrelated-successors incoming-steps related-spec-steps)]
@@ -268,11 +270,13 @@
                    (match-define (list sbc-pair rename-map) sbc-result)
                    (log-incoming log-file sbc-pair (list pair i-step s-step rename-map))
                    (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step rename-map))
-                   (unless (or (member sbc-pair (queue->list to-visit))
+                   ;; unless it's already in the queue, or we have already explored it (and therefore
+                   ;; it's in either the related or unrelated set), add the new pair to the worklist
+                   (unless (or (set-member? to-visit sbc-pair)
                                (set-member? related-pairs sbc-pair)
                                (set-member? unrelated-successors sbc-pair)
                                (equal? sbc-pair pair))
-                     (enqueue! to-visit sbc-pair)))))
+                     (set-add! to-visit sbc-pair)))))
              (log-related log-file pair)
              (loop (set-add related-pairs pair) unrelated-successors)])])])))
 
@@ -413,6 +417,17 @@
      (hash-set! dict key (mutable-set val))]
     [the-set
      (set-add! the-set val)]))
+
+;; [mutable-set-of X] -> #f or X
+;;
+;; Removes and returns an arbitrary element of the set, or returns #f if the set is already empty
+(define (set-dequeue-if-non-empty! s)
+  (cond
+    [(set-empty? s) #f]
+    [else
+     (define e (set-first s))
+     (set-remove! s e)
+     e]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Split/Blur/Canonicalize (SBC)
