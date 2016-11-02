@@ -1212,7 +1212,7 @@
       (redex-let aps# ([((obs-ext natural) _ ...) entry])
         (list (term natural) new-number))))
   (match-define (list renamed-impl-config renamed-spec-config)
-    (term (rename-external-addresses ,(list aged-impl-config aged-spec-config) ,@substitutions)))
+    (rename-external-addresses (list aged-impl-config aged-spec-config) substitutions))
   (list renamed-impl-config
         (aps#-sort-receptionists renamed-spec-config)
         substitutions))
@@ -1289,24 +1289,26 @@
            (Nat (init-addr 3))
            (Nat (obs-ext 4)))))
 
-;; Renames precise external addresses in the given term by replacing its number natural_old with
-;; natural_new, according to the given substitution
-(define-metafunction aps#
-  rename-external-addresses : any [natural_old natural_new] ... -> any
-  [(rename-external-addresses (obs-ext natural_old) _ ... [natural_old natural_new] _ ...)
-   (obs-ext natural_new)]
-  [(rename-external-addresses (obs-ext natural_old) _ ...)
-   (obs-ext natural_old)]
-  [(rename-external-addresses (any ...) any_substs ...)
-   ((rename-external-addresses any any_substs ...) ...)]
-  [(rename-external-addresses any _ ...) any])
+;; Any (Listof (List Natural Natural)) -> Any
+;;
+;; Renames precise external addresses in the given term by replacing its number with
+;; the corresponding number in the alist mapping
+(define (rename-external-addresses term number-mapping)
+  (match term
+    [`(obs-ext ,old-num)
+     (match (findf (lambda (entry) (eq? (first entry) old-num)) number-mapping)
+       [#f `(obs-ext ,old-num)]
+       [(list _ new-num) `(obs-ext ,new-num)])]
+    [(list subterms ...)
+     (map (curryr rename-external-addresses number-mapping) subterms)]
+    [_ term]))
 
 (module+ test
   (check-equal?
-   (term (rename-external-addresses
-          (some-term (obs-ext 2) (another-term (obs-ext 5)) (obs-ext 13))
-          [2 1] [13 2] [5 3]))
-   (term (some-term (obs-ext 1) (another-term (obs-ext 3)) (obs-ext 2)))))
+   (rename-external-addresses
+    `(some-term (obs-ext 2) (another-term (obs-ext 5)) (obs-ext 13) (obs-ext 0))
+    `([2 1] [13 2] [5 3]))
+   (term (some-term (obs-ext 1) (another-term (obs-ext 3)) (obs-ext 2) (obs-ext 0)))))
 
 ;; Returns a spec config identical to the given one except that the the receptionist list is sorted
 (define (aps#-sort-receptionists config)
