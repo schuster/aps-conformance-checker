@@ -172,7 +172,9 @@
 (define (find-rank1-simulation initial-pairs)
   ;; We use a mutable set for the to-visit worklist rather than a queue for (effectively)
   ;; constant-time membership checks just before adding a new pair
-  (define to-visit (list->mutable-set initial-pairs))
+  ;;
+  ;; invariant: every item in to-visit should already be widened
+  (define to-visit (list->mutable-set (map widen-pair initial-pairs)))
   (define related-spec-steps (make-hash))
   (define incoming-steps (make-hash (map (lambda (t) (cons t (mutable-set))) initial-pairs)))
 
@@ -225,8 +227,9 @@
          [else
           (match (impl-steps-from i s)
             [#f
-             ;; Evaluation led to an unverifiable configuration, so we deem this pair unrelated, add it
-             ;; to the unrelated-successors list, and move on to explore the next pair in our worklist.
+             ;; Evaluation led to an unverifiable configuration, so we deem this pair unrelated, add
+             ;; it to the unrelated-successors list, and move on to explore the next pair in our
+             ;; worklist.
              (loop related-pairs (set-add unrelated-successors pair))]
             [i-steps
              ;; Find the matching s-steps
@@ -247,9 +250,9 @@
              ;; Add this pair to either related or unrelated set; add new worklist items
              (cond
                [found-unmatchable-step?
-                ;; Some impl step has no matching spec step, so this pair is unrelated. Therefore we add
-                ;; it to the unrelated-successors list and do not further explore transitions from this
-                ;; pair.
+                ;; Some impl step has no matching spec step, so this pair is unrelated. Therefore we
+                ;; add it to the unrelated-successors list and do not further explore transitions from
+                ;; this pair.
 
                 ;; Debugging
                 ;; (displayln "Unrelated pair")
@@ -277,7 +280,8 @@
                     (for ([sbc-result (sbc* successor-pairs)])
                       ;; TODO: add the address binding here, too, and adjust other uses of incoming
                       ;; (e.g. in prune-unsupported) to take that structure into account
-                      (match-define (list sbc-pair rename-map) sbc-result)
+                      (match-define (list unwidened-sbc-pair rename-map) sbc-result)
+                      (define sbc-pair (widen-pair unwidened-sbc-pair))
                       (log-incoming log-file sbc-pair (list pair i-step s-step rename-map))
                       (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step rename-map))
                       ;; unless it's already in the queue, or we have already explored it (and
@@ -635,6 +639,17 @@
   (test-equal? "choose spawn flag 3"
     (choose-spawn-flag-to-blur '(() () ()) '(UNKNOWN () (goto A) () ()))
     'OLD))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Widening
+
+(define (widen-pair the-pair)
+  (define s (config-pair-spec-config the-pair))
+  (config-pair (widen (config-pair-impl-config the-pair) s) s))
+
+;; impl-config spec-config -> impl-config
+(define (widen i s)
+  i)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pair-removal back-propagation
