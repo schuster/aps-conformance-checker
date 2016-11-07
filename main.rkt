@@ -662,6 +662,63 @@
       [_ (error "not implemented")]))
   i)
 
+(module+ test
+  (define init-widen-impl-config
+    (term
+     (
+      (
+       ;; single atomic actor
+       [(init-addr 1)
+        (((define-state (A) (m)
+            (let ([child (spawn child-loc Nat (goto B)
+                                (define-state (B) (m) (goto B)))])
+              (begin
+                (send child (* Nat))
+                (goto A)))))
+         (goto A))])
+      ()
+      ())))
+
+  (define expected-widened-config
+    (term
+     (([(init-addr 1)
+        (((define-state (A) (m)
+            (let ([child (spawn child-loc Nat (goto B)
+                                (define-state (B) (m) (goto B)))])
+              (begin
+                (send child (* Nat))
+                (goto A)))))
+         (goto A))])
+      (
+       ;; a single collective actor
+       (
+        ;; a#int-collective
+        (blurred-spawn-addr child-loc)
+        (
+         ;; just one b#
+         (((define-state (B) (m) (goto B))) (goto B)))
+        ))
+      (
+       ;; the message
+       ((blurred-spawn-addr child-loc) (* Nat) many)))))
+
+  (define widen-spec
+    ;; Just a spec that observes only inputs and says nothing ever happens
+    (term
+     ((Nat (init-addr 1))
+      ()
+      (goto SpecA)
+      ((define-state (SpecA) [* -> () (goto SpecA)]))
+      ())))
+
+  (test-true "Init widen config is valid"     (redex-match? csa# i# init-widen-impl-config))
+  (test-true "Expected widen config is valid" (redex-match? csa# i# expected-widened-config))
+  (test-true "Valid spec for widen test" (redex-match? aps# s# widen-spec))
+  ;; (test-equal? "Basic widening test"
+  ;;   (widen init-widen-impl-config widen-spec)
+  ;;   expected-widened-config)
+  )
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pair-removal back-propagation
 
