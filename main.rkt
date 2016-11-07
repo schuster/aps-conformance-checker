@@ -649,6 +649,17 @@
 
 ;; impl-config spec-config -> impl-config
 (define (widen i s)
+  ;; worklist algorithm: run an action (mark it as used), apply its results. If the action is
+  ;; repeatable, do it again, apply the effects, add new actions to the list, and use new config as
+  ;; the base config. If not repeatable, just move on to the next loop iteration
+
+  (let worklist-loop ([widened-config i]
+                      [possible-actions
+                       (queue ;; (set->list init-unrelated-successors)
+                              )])
+    (match (dequeue-if-non-empty! possible-actions)
+      [#f widened-config]
+      [_ (error "not implemented")]))
   i)
 
 ;; ---------------------------------------------------------------------------------------------------
