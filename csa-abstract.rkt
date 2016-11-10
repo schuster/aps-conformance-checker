@@ -13,6 +13,9 @@
  necessary-action?
  csa#-address-type
  csa#-address-strip-type
+ ;; required for widening
+ csa#-transition-effect-changes-spawn-behavior?
+ csa#-transition-effect-has-nonexistent-addresses?
  csa#-actor-will-have-same-behavior?
 
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
@@ -270,9 +273,17 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
 
+;; TODO: give these structs better names
+
+;; Represents the effects of a single handler-level transition of an actor, before the results are
+;; applied to the pre-handler configuration. Used for the widening optimization.
+(struct csa#-transition-effect (trigger outputs loop-outputs behavior internal-sends spawns))
+
 ;; Represents a single handler-level transition of an actor. Trigger is the event that caused the
 ;; handler to run, outputs is the list of outputs to the external world that happened execution, and
 ;; final-config is the resulting abstract configuration.
+;;
+;; This is the result of applying a csa#-transition-effect
 (struct csa#-transition
   (trigger ; follows trigger# above
    outputs ; list of abstract-addr/abstract-message 2-tuples
@@ -2272,12 +2283,140 @@
    (term ((Nat (init-addr 1)) (Nat (spawn-addr 3 NEW)) (Nat (init-addr 2))))))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Tests for use during widening
+
+;; Returns #t if any of the spawns in the transition result have a behavior different than the
+;; behavior for the existing corresopnding atomic actor in impl config i (if such an actor exists); #f
+;; otherwise.
+(define (csa#-transition-effect-changes-spawn-behavior? transition-result i)
+  (for/or ([spawn (csa#-transition-effect-spawns transition-result)])
+    (define spawn-addr (first spawn))
+    (define existing-addr `(spawn-addr ,(second spawn-addr) OLD))
+    (match (csa#-config-actor-by-address i existing-addr)
+      [#f #f]
+      [(list addr existing-behavior)
+       (not (equal? existing-behavior (second spawn)))])))
+
+(module+ test
+  (define spawn-behavior-change-test-config
+    (redex-let csa# ([i#
+                      (term
+                       (([(spawn-addr the-loc OLD)
+                          (() (goto A))])
+                        ()
+                        ()))])
+      (term i#)))
+  (test-false "effect matches existing spawn behavior"
+   (csa#-transition-effect-changes-spawn-behavior?
+    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+                            null
+                            null
+                            '(goto B)
+                            null
+                            (list '((spawn-addr the-loc NEW) (() (goto A)))))
+    spawn-behavior-change-test-config))
+  (test-true "effect changes existing spawn behavior"
+   (csa#-transition-effect-changes-spawn-behavior?
+    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+                            null
+                            null
+                            '(goto B)
+                            null
+                            (list '((spawn-addr the-loc NEW) (() (goto C)))))
+    spawn-behavior-change-test-config))
+  (test-false "config has no actor for corresponding spawn"
+   (csa#-transition-effect-changes-spawn-behavior?
+    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+                            null
+                            null
+                            '(goto B)
+                            null
+                            (list '((spawn-addr other-loc NEW) (() (goto C)))))
+    spawn-behavior-change-test-config))
+  (test-false "effect has no spawns"
+   (csa#-transition-effect-changes-spawn-behavior?
+    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+                            null
+                            null
+                            '(goto B)
+                            null
+                            null)
+    spawn-behavior-change-test-config)))
+
+;; Returns #t if the transition effect contains any internal addresses that no longer refer
+;; to actors (atomic or collective)
+(define (csa#-transition-effect-has-nonexistent-addresses? effect config)
+  (define effect-term
+    (match-let ([(csa#-transition-effect e1 e2 e3 e4 e5 e6) effect])
+      (list e1 e2 e3 e4 e5 e6)))
+  (define all-effect-addresses (csa#-contained-addresses effect-term))
+  (define all-current-addresses
+    (append
+     (map first (csa#-config-actors config))
+     (map first (csa#-config-blurred-actors config))))
+  (not (andmap (curryr member all-current-addresses) all-effect-addresses)))
+
+(module+ test
+  (define old-address-test-config
+    (redex-let csa# ([i#
+                      (term
+                       (([(spawn-addr the-loc OLD)
+                          (() (goto A))]
+                         [(init-addr 0)
+                          (() (goto A))])
+                        ([(blurred-spawn-addr the-loc)
+                          ((() (goto A)))])
+                        ()))])
+      (term i#)))
+  (test-false "nonexistent address: none"
+    (csa#-transition-effect-has-nonexistent-addresses?
+     (csa#-transition-effect '(timeout/empty-queue (init-addr 0)) null null '(goto A) null null)
+     old-address-test-config))
+  (test-not-false "nonexistent address: atomic"
+    (csa#-transition-effect-has-nonexistent-addresses?
+     (csa#-transition-effect '(timeout/empty-queue (spawn-addr other-loc OLD)) null null '(goto A) null null)
+     old-address-test-config))
+  (test-not-false "nonexistent address: collective"
+    (csa#-transition-effect-has-nonexistent-addresses?
+     (csa#-transition-effect '(timeout/empty-queue (blurred-spawn-addr other-loc)) null null '(goto A) null null)
+     old-address-test-config)))
+
+;; Returns true if the given expression contains *any* address
+(define (csa#-contains-address? e)
+  (not (empty? (csa#-contained-addresses e))))
+
+;; Returns the list of all addresses in the given term (possibly with duplicates)
+(define (csa#-contained-addresses t)
+  (term (csa#-contained-addresses/mf ,t)))
+
+(define-metafunction csa#
+  csa#-contained-addresses/mf : any -> (a# ...)
+  [(csa#-contained-addresses/mf a#) (a#)]
+  [(csa#-contained-addresses/mf (any ...))
+   (any_addr ... ...)
+   (where ((any_addr ...) ...) ((csa#-contained-addresses/mf any) ...))]
+  [(csa#-contained-addresses/mf _) ()])
+
+(module+ test
+  (test-equal? "csa#-contained-addresses"
+    (csa#-contained-addresses (term ((Nat (init-addr 1)) (Nat (obs-ext 2)))))
+    (list `(init-addr 1) `(obs-ext 2)))
+
+  (test-equal? "csa#-contained-addresses"
+    (csa#-contained-addresses (term ((abc 1 Nat) (def 2 Nat))))
+    null)
+
+  (test-equal? "csa#-contained-address?"
+    (csa#-contained-addresses (term (((abc) (Nat (spawn-addr 3 OLD))) ())))
+    (list `(spawn-addr 3 OLD))))
+
 (define (csa#-actor-will-have-same-behavior? config transition-result)
   (define addr (trigger-address (transition-effect-trigger transition-result)))
   (or (not (precise-internal-address? addr))
       (equal? (transition-effect-behavior transition-result)
               (actor-behavior (csa#-config-actor-by-address config address)))))
 
+;; ---------------------------------------------------------------------------------------------------
 ;; Debug helpers
 
 (define (impl-config-without-state-defs config)
