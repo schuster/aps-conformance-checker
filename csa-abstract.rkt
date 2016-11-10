@@ -2080,6 +2080,16 @@
   (check-equal? (term (csa#-not (canonicalize-boolean (* (Union (False) (True))))))
                 (term (* (Union (True) (False))))))
 
+(define (trigger-address trigger)
+  (term (trigger-address/mf trigger)))
+
+(define-metafunction csa#
+  trigger-address/mf : trigger# -> a#int
+  [(trigger-address/mf (timeout/empty-queue a#int)) a#int]
+  [(trigger-address/mf (timeout/non-empty-queue a#int)) a#int]
+  [(trigger-address/mf (internal-receive a#int _)) a#int]
+  [(trigger-address/mf (external-receive a#int _)) a#int])
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Predicates
 
