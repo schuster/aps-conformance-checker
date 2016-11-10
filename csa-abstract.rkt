@@ -2129,27 +2129,6 @@
   (test-false "necessary-action? 4"
     (necessary-action? (term (external-receive (init-addr 1) (* Nat))))))
 
-;; Returns true if the given expression contains *any* address
-(define (csa#-contains-address? e)
-  (term (csa#-contains-address?/mf ,e)))
-
-(define-metafunction csa#
-  csa#-contains-address?/mf : any -> boolean
-  [(csa#-contains-address?/mf a#) #t]
-  [(csa#-contains-address?/mf (any ...))
-   ,(ormap csa#-contains-address? (term (any ...)))]
-  [(csa#-contains-address?/mf _) #f])
-
-(module+ test
-  (test-true "csa#-contains-address?"
-    (csa#-contains-address? (term ((Nat (init-addr 1)) (Nat (obs-ext 2))))))
-
-  (test-false "csa#-contains-address?"
-    (csa#-contains-address? (term ((abc 1 Nat) (def 2 Nat)))))
-
-  (test-true "csa#-contains-address?"
-    (csa#-contains-address? (term (((abc) (Nat (spawn-addr 3 OLD))) ())))))
-
 ;; ---------------------------------------------------------------------------------------------------
 ;; Types
 
@@ -2421,11 +2400,21 @@
     (csa#-contained-addresses (term (((abc) (Nat (spawn-addr 3 OLD))) ())))
     (list `(spawn-addr 3 OLD))))
 
+(define (csa#-internal-address? a)
+  (redex-match? csa# a#int a))
+
+(module+ test
+  (check-true (csa#-internal-address? `(init-addr 0)))
+  (check-true (csa#-internal-address? `(spawn-addr the-loc NEW)))
+  (check-true (csa#-internal-address? `(blurred-spawn-addr the-loc)))
+  (check-false (csa#-internal-address? `(* (Addr Nat))))
+  (check-false (csa#-internal-address? `(obs-ext 1))))
+
 (define (csa#-actor-will-have-same-behavior? config transition-result)
-  (define addr (trigger-address (transition-effect-trigger transition-result)))
+  (define addr (trigger-address (csa#-transition-effect-trigger transition-result)))
   (or (not (precise-internal-address? addr))
-      (equal? (transition-effect-behavior transition-result)
-              (actor-behavior (csa#-config-actor-by-address config address)))))
+      (equal? (csa#-transition-effect-behavior transition-result)
+              (actor-behavior (csa#-config-actor-by-address config addr)))))
 
 ;; Returns #t if the action represented by the effect's trigger can happen again after applying the
 ;; given transition effect to the config, assuming the transition effect transitions the actor to the
