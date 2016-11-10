@@ -13,6 +13,7 @@
  necessary-action?
  csa#-address-type
  csa#-address-strip-type
+ csa#-actor-will-have-same-behavior?
 
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
  csa#-spawn-address?
@@ -2271,6 +2272,12 @@
    (term ((Nat (init-addr 1)) (Nat (spawn-addr 3 NEW)) (Nat (init-addr 2))))))
 
 ;; ---------------------------------------------------------------------------------------------------
+(define (csa#-actor-will-have-same-behavior? config transition-result)
+  (define addr (trigger-address (transition-effect-trigger transition-result)))
+  (or (not (precise-internal-address? addr))
+      (equal? (transition-effect-behavior transition-result)
+              (actor-behavior (csa#-config-actor-by-address config address)))))
+
 ;; Debug helpers
 
 (define (impl-config-without-state-defs config)
