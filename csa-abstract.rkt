@@ -17,6 +17,7 @@
  csa#-transition-effect-changes-spawn-behavior?
  csa#-transition-effect-has-nonexistent-addresses?
  csa#-actor-will-have-same-behavior?
+ csa#-repeatable-action?
 
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
  csa#-spawn-address?
@@ -2415,6 +2416,45 @@
   (or (not (precise-internal-address? addr))
       (equal? (transition-effect-behavior transition-result)
               (actor-behavior (csa#-config-actor-by-address config address)))))
+
+;; Returns #t if the action represented by the effect's trigger can happen again after applying the
+;; given transition effect to the config, assuming the transition effect transitions the actor to the
+;; exact same behavior
+(define (csa#-repeatable-action? config transition-effect)
+  ;; if it's not an internal messsage, or the received message will be available in the new config
+  (match (csa#-transition-effect-trigger transition-effect)
+    [`(internal-receive ,addr ,message)
+     ;; the message is in the effects, or it's in the config with a many-of multiplicity
+     (or (member (list addr message) (append (csa#-transition-effect-outputs transition-effect)
+                                             (csa#-transition-effect-loop-outputs transition-effect)))
+         (member (list addr message 'many) (csa#-config-message-packets config)))]
+    [_ #t]))
+
+(module+ test
+  ;; timeout, internal receive repeatable (in effects), internal repeatable (many-of in config),
+  ;; internal not repeatable
+  (define repeatable-action-test-config
+    (redex-let csa# ([i# `(() () ([(init-addr 0) (* Nat) many] [(init-addr 1) (* Nat) single]))])
+      (term i#)))
+  (define (make-trigger-only-effect trigger)
+    (csa#-transition-effect trigger null null '(() (goto A)) null null))
+  (test-false "Not repeatable action"
+    (csa#-repeatable-action? repeatable-action-test-config
+                             (make-trigger-only-effect '(internal-receive (init-addr 1) (* Nat)))))
+  (test-not-false "Repeatable timeout"
+    (csa#-repeatable-action? repeatable-action-test-config
+                             (make-trigger-only-effect '(timeout/empty-queue (init-addr 1)))))
+  (test-not-false "Repeatable internal receive (many-of message)"
+    (csa#-repeatable-action? repeatable-action-test-config
+                             (make-trigger-only-effect '(internal-receive (init-addr 0) (* Nat)))))
+  (test-not-false "Repeatable internal receive (from effect)"
+    (csa#-repeatable-action? repeatable-action-test-config
+                             (csa#-transition-effect '(internal-receive (init-addr 1) (* Nat))
+                                                     (list `((init-addr 1) (* Nat)))
+                                                     null
+                                                     '(() (goto A))
+                                                     null
+                                                     null))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debug helpers
