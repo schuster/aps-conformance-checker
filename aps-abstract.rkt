@@ -20,6 +20,9 @@
  reverse-rename-address
  aps#-config-has-commitment?
  aps#-completed-no-transition-config?
+ ;; needed for widening
+ aps#-config<=
+
 
  ;; Required by conformance checker for blurring
  aps#-relevant-external-addrs
@@ -1339,6 +1342,83 @@
   (test-equal? "try-rename-address success"
     (reverse-rename-address (term ([1 3] [2 4])) (term (obs-ext 4)))
     (term (obs-ext 2))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Widening helpers
+
+;; s# s# -> Boolean
+;;
+;; A spec config s1 is <= s2 if they are identical except for their unobserved interface, which must
+;; have (at most) strictly grown in s2 compared to s1
+(define (aps#-config<= s1 s2)
+  (match-let ([(list `(,obs1 ,unobs1 ,goto1 ,states1 ,obligations1)
+                     `(,obs2 ,unobs2 ,goto2 ,states2 ,obligations2))
+               (list s1 s2)])
+    (and (equal? (list obs1 goto1 states1 obligations1)
+                 (list obs2 goto2 states2 obligations2))
+         (interface<= unobs1 unobs2))))
+
+(module+ test
+  (test-true "config<= for identical configs"
+    (aps#-config<=
+     `([Nat (init-addr 1)]
+       ()
+       (goto A)
+       ()
+       ())
+     `([Nat (init-addr 1)]
+       ()
+       (goto A)
+       ()
+       ())))
+  (test-true "config<= for configs with <= unobs interfaces"
+    (aps#-config<=
+     `([Nat (init-addr 1)]
+       ([(Union [A]) (init-addr 2)])
+       (goto S)
+       ()
+       ())
+     `([Nat (init-addr 1)]
+       ([(Union [A] [B]) (init-addr 2)])
+       (goto S)
+       ()
+       ())))
+  (test-false "config<= for configs with incomparable unobs interfaces"
+    (aps#-config<=
+     `([Nat (init-addr 1)]
+       ([(Union [A]) (init-addr 2)])
+       (goto S)
+       ()
+       ())
+     `([Nat (init-addr 1)]
+       ([Nat (init-addr 1)])
+       (goto S)
+       ()
+       ()))))
+
+;; (τa ...) (τa ...) -> Boolean
+;;
+;; An interface i1 is <= i2 if i2 contains all addresses from i1 and has a >= type for each address
+(define (interface<= i1 i2)
+  (for/and ([typed-addr1 i1])
+    (match (findf (lambda (typed-addr2) (equal? (second typed-addr1) (second typed-addr2))) i2)
+      [#f #f]
+      [(list type2 _) (type<= (first typed-addr1) type2)])))
+
+(module+ test
+  (test-true "interface<= for equal interfaces"
+    (interface<= `([Nat (init-addr 1)]) `([Nat (init-addr 1)])))
+  (test-false "interface<= for interfaces with different addresses"
+    (interface<= `([Nat (init-addr 1)]) `([Nat (init-addr 2)])))
+  (test-true "interface<= where one interface has a new address"
+    (interface<= `([Nat (init-addr 1)])
+                 `([Nat (init-addr 1)] [Nat (init-addr 2)])))
+  (test-true "interface<= where one interface expands the type"
+    (interface<= `([(Union [A])     (init-addr 1)])
+                 `([(Union [A] [B]) (init-addr 1)])))
+  (test-false "interface<= where one interface shrinks the type"
+    (interface<= `([(Union [A] [B]) (init-addr 1)])
+                 `([(Union [A])     (init-addr 1)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Misc.

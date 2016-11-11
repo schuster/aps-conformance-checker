@@ -35,6 +35,7 @@
  csa#
  csa#-abstract-address
  type-join
+ type<=
 
  ;; Testing helpers
  make-single-actor-abstract-config
@@ -2227,6 +2228,96 @@
     (term (coerce (hash-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
                   (Hash Nat (Addr (Union [A])))))
     (term (hash-val (* (Addr (Union [A])))))))
+
+;; NOTE: this is really a conservative approximation of <= for types. For instance, we don't rename
+;; variables in recursive types to check for alpha-equivalent recursive types
+(define (type<= type1 type2)
+  (judgment-holds (type<=/j ,type1 ,type2)))
+
+(define-judgment-form csa#
+  #:mode (type<=/j I I)
+  #:contract (type<=/j τ τ)
+
+  [-------------------
+   (type<=/j Nat Nat)]
+
+  [-------------------
+   (type<=/j String String)]
+
+  ;; TODO: think abut whether recursive types screw with subtyping in a weird way
+  [--------------
+   (type<=/j X X)]
+
+  [(type<=/j τ_1 τ_2)
+   --------------------------------------------
+   (type<=/j (minfixpt X τ_1) (minfixpt X τ_2))]
+
+  [;; every variant in type 1 must have >= type in type 2
+   (union-variant<=/j [t_1 τ_1 ...] (Union [t_2 τ_2 ...] ...)) ...
+   ---------------------------------------------------------------
+   (type<=/j (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))]
+
+  [(type<=/j τ_1 τ_2) ...
+   ---------------------------------------------------
+   (type<=/j (Record [l τ_1] ...) (Record [l τ_2] ...))]
+
+  [;; Address types are contravariant (they're "sinks")
+   (type<=/j τ_2 τ_1)
+   ---------------------------------
+   (type<=/j (Addr τ_1) (Addr τ_2))]
+
+  [(type<=/j τ_1 τ_2)
+   ---------------------------------
+   (type<=/j (Listof τ_1) (Listof τ_2))]
+
+  [(type<=/j τ_1 τ_2)
+   ---------------------------------
+   (type<=/j (Vectorof τ_1) (Vectorof τ_2))]
+
+  [(type<=/j τ_k1 τ_k2)
+   (type<=/j τ_v1 τ_v2)
+   -------------------------------------------
+   (type<=/j (Hash τ_k1 τ_v1) (Hash τ_k2 τ_v2))])
+
+(module+ test
+  (test-true "type<= same type" (type<= 'Nat 'Nat))
+  (test-true "type<= expanded union" (type<= '(Union [A]) '(Union [A] [B])))
+  (test-false "type<= reduced union" (type<= '(Union [A] [B]) '(Union [A])))
+  (test-false "type<= record 1" (type<= '(Record [a (Union [A] [B])]) '(Record [a (Union [A])])))
+  (test-true "type<= record 2" (type<= '(Record [a (Union [A])]) '(Record [a (Union [A] [B])])))
+  (test-true "type<= address 1" (type<= '(Addr (Union [A] [B])) '(Addr (Union [A]))))
+  (test-false "type<= address 2" (type<= '(Addr (Union [A])) '(Addr (Union [A] [B]))))
+  (define union-a '(Union [A]))
+  (define union-ab '(Union [A] [B]))
+  (test-true "type<= list 1" (type<= `(Listof ,union-a) `(Listof ,union-ab)))
+  (test-false "type<= list 2" (type<= `(Listof ,union-ab) `(Listof ,union-a)))
+  (test-true "type<= vector 1" (type<= `(Vectorof ,union-a) `(Vectorof ,union-ab)))
+  (test-false "type<= vector 2" (type<= `(Vectorof ,union-ab) `(Vectorof ,union-a)))
+  (test-true "type<= hash 1" (type<= `(Hash ,union-a ,union-a) `(Hash ,union-ab ,union-ab)))
+  (test-false "type<= hash 2" (type<= `(Hash ,union-ab ,union-ab)  `(Hash ,union-a ,union-a))))
+
+;; Holds if the variant [t_1 τ_1 ...] has a >= variant in the given union type
+(define-judgment-form csa#
+  #:mode (union-variant<=/j I I)
+  #:contract (union-variant<=/j [t_1 τ_1 ...] (Union [t_2 τ_2 ...] ...))
+
+  [(type<=/j τ_1 τ_2) ...
+   ------------------------------------------------------------------------
+   (union-variant<=/j [t_1 τ_1 ..._n] (Union _ ... [t_1 τ_2 ..._n] _ ...))])
+
+(module+ test
+  (test-true "union-variant<= for union with that variant"
+    (judgment-holds (union-variant<=/j [A] (Union [A]))))
+  (test-true "union-variant<= for bigger union"
+    (judgment-holds (union-variant<=/j [A] (Union [A] [B]))))
+  (test-false "union-variant<= for union without variant"
+    (judgment-holds (union-variant<=/j [A] (Union [B]))))
+  (test-true "union-variant<= for union with bigger type"
+    (judgment-holds (union-variant<=/j [A (Union [C])]
+                                     (Union [A (Union [C] [D])] [B]))))
+  (test-false "union-variant<= for union with smaller type"
+    (judgment-holds (union-variant<=/j [A (Union [C] [D])]
+                                     (Union [A (Union [C])] [B])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Address containment
