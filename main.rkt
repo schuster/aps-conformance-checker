@@ -306,46 +306,53 @@
     ;; continuation to abort the whole evaluation step.
     (define (abort) (return-continuation #f))
 
-    (define (add-observed-flag transition observed?)
-      (match transition
-        [#f #f]
-        [_
-         (impl-step (csa#-transition-trigger transition)
-                    observed?
-                    (csa#-transition-outputs transition)
-                    (csa#-transition-loop-outputs transition)
-                    (csa#-transition-final-config transition))]))
 
-  (define obs-interface (aps#-config-obs-interface spec-config))
-  ;; TODO: (perf. improvement) share the results between the observed and unobserved external
-  ;; receives, because often many of the results will be the same (because the same address might
-  ;; receive messages from both the observed and unobserved environments)
-  (define observed-external-receives
-    (if (aps#-unknown-address? obs-interface)
-        null
-        (external-message-transitions impl-config obs-interface abort)))
-  (define unobserved-external-receives
+
+    ;; TODO: (perf. improvement) share the results between the observed and unobserved external
+    ;; receives, because often many of the results will be the same (because the same address might
+    ;; receive messages from both the observed and unobserved environments)
     (append*
-     (for/list ([receptionist (aps#-config-receptionists spec-config)])
-       (external-message-transitions impl-config receptionist abort))))
+     (for/list ([trigger-with-obs (impl-triggers-from impl-config spec-config)])
+       (define effects (csa#-eval-trigger impl-config (first trigger-with-obs) abort))
+       (for/list ([effect effects])
+         (apply-transition impl-config effect (second trigger-with-obs)))))))
 
-  (append (map (curryr add-observed-flag #t) observed-external-receives)
-          (map (curryr add-observed-flag #f)
-               (append
-                unobserved-external-receives
-                (csa#-handle-all-internal-actions impl-config abort))))))
+;; i# csa#-transition-effect Boolean -> impl-step
+(define (apply-transition config effect observed?)
+  (define transition (csa#-apply-transition config effect))
+  (impl-step (csa#-transition-trigger transition)
+             observed?
+             (csa#-transition-outputs transition)
+             (csa#-transition-loop-outputs transition)
+             (csa#-transition-final-config transition)))
 
-;; Returns all possible transitions of the given implementation config caused by a received message to
-;; the given receptionist address
-(define (external-message-transitions impl-config typed-receptionist abort)
-  (display-step-line "Enumerating abstract messages (typed)")
+;; i# s# -> (Listof (List trigger# Boolean))
+;;
+;; Returns all possible triggers from the given config pair, each paired with a boolean indicating
+;; whether the trigger is observed or not
+(define (impl-triggers-from impl-config spec-config)
+  (define obs-triggers
+    (let ([obs-interface (aps#-config-obs-interface spec-config)])
+      ;; TODO: refactor this interface to be a list of 0 or 1 typed addresses, rather than the UNKNOWN
+      ;; thing
+      (if (aps#-unknown-address? obs-interface)
+          null
+          (map (curryr list #t) (external-triggers-for-interface (list obs-interface))))))
+  (define unobs-triggers
+    (map (curryr list #f)
+         (append (csa#-enabled-internal-actions impl-config)
+                 (external-triggers-for-interface (aps#-config-receptionists spec-config)))))
+  (append obs-triggers unobs-triggers))
+
+;; (Listof τa) -> (Listof trigger#)
+;;
+;; Returns all possible external actions that would be allowed by the interface given by the typed
+;; addresses
+(define (external-triggers-for-interface typed-addrs)
   (append*
-   (for/list ([message (csa#-messages-of-type (csa#-address-type typed-receptionist))])
-     (display-step-line "Evaluating a handler")
-     (csa#-handle-external-message impl-config
-                                   (csa#-address-strip-type typed-receptionist)
-                                   message
-                                   abort))))
+   (for/list ([typed-addr typed-addrs])
+     (for/list ([message (csa#-messages-of-type (csa#-address-type typed-addr))])
+       (csa#-make-external-trigger (csa#-address-strip-type typed-addr) message)))))
 
 ;; Returns a set of the possible spec steps (see the struct above) from the given spec config that
 ;; match the given implementation step
@@ -643,24 +650,89 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Widening
 
+;; config-pair -> config-pair
 (define (widen-pair the-pair)
-  (define s (config-pair-spec-config the-pair))
-  (config-pair (widen (config-pair-impl-config the-pair) s) s))
 
-;; impl-config spec-config -> impl-config
-(define (widen i s)
-  ;; worklist algorithm: run an action (mark it as used), apply its results. If the action is
-  ;; repeatable, do it again, apply the effects, add new actions to the list, and use new config as
-  ;; the base config. If not repeatable, just move on to the next loop iteration
+  ;; NOTE: for now, we only widen into states where the behavior of the existing actors does not
+  ;; change. It's possible that a transition might lead to a configuration that is strictly larger,
+  ;; including larger absract values for the state parameters, but because those are harder to check,
+  ;; we skip them for now.
 
-  (let worklist-loop ([widened-config i]
-                      [possible-actions
-                       (queue ;; (set->list init-unrelated-successors)
-                              )])
-    (match (dequeue-if-non-empty! possible-actions)
-      [#f widened-config]
-      [_ (error "not implemented")]))
-  i)
+  ;; Algorithm:
+  ;;
+  ;; * Evaluate all possible handlers of this configuration and add each result (goto, spawns,
+  ;; internal messages, external messages) to a worklist. A single handler may have many possible
+  ;; results because of the non-determinism of the abstract interpretation.
+  ;;
+  ;; * In the worklist loop, determine whether the "goto" of the effect is exactly the same, whether
+  ;; the action is repeatable, and whether there exists a spec step that leads to the exact same spec
+  ;; config (modulo additions to the observed or unobserved interface). If not, throw this worklist
+  ;; item away (after marking it as applied), and move on to the next loop iteration.
+  ;;
+  ;; * Otherwise, sbc the resulting impl and spec configs, apply the effects to the new impl config
+  ;; again (must be possible because we already checked for repeatability), match it to the spec again
+  ;; (should be the same spec step), sbc the results, and use *that* sbc'ed result as our new base
+  ;; configuration pair. Find all possible transitions from this new config pair and add them to the
+  ;; queue.
+  ;;
+  ;; * When the worklist is empty, return the final "base" configuration pair as the widened pair.
+
+  ;; transition-effects-from should return a list of tuples of the form: (trigger#, goto, outputs,
+  ;; internal-sends, spawns)
+  (define possible-transitions (apply queue (impl-transition-effects-from the-pair)))
+  (define processed-transitions (mutable-set))
+  (let worklist-loop ([widened-pair the-pair])
+    (displayln "inside worklist loop")
+    (printf "set count: ~s\n" (set-count processed-transitions))
+    (printf "queue length: ~s\n" (queue-length possible-transitions))
+    (match (dequeue-if-non-empty! possible-transitions)
+      [#f widened-pair]
+      [transition-result-with-obs
+       (cond
+         [(set-member? processed-transitions transition-result-with-obs)
+          ;; Skip this transition is we already processed it
+          (worklist-loop widened-pair)]
+         [else
+          (set-add! processed-transitions transition-result-with-obs)
+          (define transition-result (first transition-result-with-obs))
+          (define trigger (csa#-transition-effect-trigger transition-result))
+          (define i (config-pair-impl-config widened-pair))
+          (cond
+            [;; If any spawned actor has a behavior different than an existing current atomic actor
+             ;; for the same spawn location, throw this effect out. Blurring makes this step lead to a
+             ;; state that might not be greater than the current one
+             (csa#-transition-effect-changes-spawn-behavior? transition-result i)
+             (worklist-loop widened-pair)]
+            [;; if any address in these effects has been blurred into a collective actor since we ran
+             ;; this transition, just throw the transition away. The same transition on the blurred
+             ;; actor would have been picked up and enqueued after the blurring action
+             (csa#-transition-effect-has-nonexistent-addresses? transition-result i)
+             (worklist-loop widened-pair)]
+            [(and
+              ;; If the transition was on an atomic actor, then the new behavior must be the same as
+              ;; the old one
+              (csa#-actor-will-have-same-behavior? i transition-result)
+              ;; The action must be repeatable (timeouts are always repeatable in the same behavior,
+              ;; but an internal message is only repeatable if there is another in the queue)
+              (csa#-repeatable-action? i transition-result))
+             (define observed? (second transition-result-with-obs))
+             (define new-i-step (apply-transition i transition-result observed?))
+             (match (first-spec-step-to-same-state (config-pair-spec-config widened-pair) new-i-step)
+               [#f (worklist-loop widened-pair)]
+               [new-s
+                ;; TODO: what should I do with the rename map? I don't remember what that was used
+                ;; for. I think maybe to correlate output commitments across multiple steps? So yeah,
+                ;; I probably need to adjust that here... (although if the spec didn't change, then
+                ;; aren't I okay to leave it as is?)
+                (define sbc-pair (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
+                (define repeated-i-step
+                  (apply-transition (config-pair-impl-config sbc-pair) transition-result observed?))
+                (define repeated-s (first-spec-step-to-same-state (config-pair-spec-config sbc-pair) repeated-i-step))
+                (define new-widened-pair (first (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
+                (for-each (curry enqueue! possible-transitions)
+                          (impl-transition-effects-from new-widened-pair))
+                (worklist-loop new-widened-pair)])]
+            [else (worklist-loop widened-pair)])])])))
 
 (module+ test
   (define init-widen-impl-config
@@ -714,18 +786,29 @@
   (test-true "Init widen config is valid"     (redex-match? csa# i# init-widen-impl-config))
   (test-true "Expected widen config is valid" (redex-match? csa# i# expected-widened-config))
   (test-true "Valid spec for widen test" (redex-match? aps# s# widen-spec))
-  ;; (test-equal? "Basic widening test"
-  ;;   (widen init-widen-impl-config widen-spec)
-  ;;   expected-widened-config)
-  )
+  (test-equal? "Basic widening test"
+    (widen-pair (config-pair init-widen-impl-config widen-spec))
+    (config-pair expected-widened-config widen-spec)))
+
+;; config-pair -> (Listof (List csa#-transition-effect Boolean))
+(define (impl-transition-effects-from the-pair)
+  (match-define (config-pair i s) the-pair)
+  (let/cc return-continuation
+    (define (abort) (return-continuation null))
+    (append*
+     (for/list ([trigger-with-obs (impl-triggers-from i s)])
+       (define observed? (second trigger-with-obs))
+       (map (curryr list observed?) (csa#-eval-trigger i (first trigger-with-obs) abort))))))
 
 ;; Returns the first spec step from this spec config that both matches the i-step and ends up in a
 ;; configuration identical to the original one (with the exception of the unobserved interface, which
 ;; is allowed to get bigger in the abstract interpretation sense)
 (define (first-spec-step-to-same-state spec-config i-step)
-  (findf
-   (lambda (s-step) (aps#-config<= spec-config (spec-step-destination s-step)))
-   (set->list (matching-spec-steps spec-config i-step))))
+  (match (findf
+          (lambda (s-step) (aps#-config<= spec-config (spec-step-destination s-step)))
+          (set->list (matching-spec-steps spec-config i-step)))
+    [#f #f]
+    [step (spec-step-destination step)]))
 
 (module+ test
   (define first-spec-step-test-config
@@ -752,7 +835,7 @@
                 `(([(init-addr 1) (() (goto S))])
                   ()
                   ())))
-    (spec-step first-spec-step-test-config null null))
+    first-spec-step-test-config)
 
   (test-false "first-spec-step-to-same-state: no step"
     (first-spec-step-to-same-state

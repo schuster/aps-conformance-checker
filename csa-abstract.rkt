@@ -6,16 +6,19 @@
  ;; Required by conformance checker
  (struct-out csa#-transition)
  csa#-messages-of-type
- csa#-handle-external-message
- csa#-handle-all-internal-actions
+ csa#-enabled-internal-actions
+ csa#-make-external-trigger
  csa#-abstract-config
  csa#-blur-config
  necessary-action?
  csa#-address-type
  csa#-address-strip-type
  ;; required for widening
+ (struct-out csa#-transition-effect)
  csa#-transition-effect-changes-spawn-behavior?
  csa#-transition-effect-has-nonexistent-addresses?
+ csa#-eval-trigger
+ csa#-apply-transition
  csa#-actor-will-have-same-behavior?
  csa#-repeatable-action?
 
@@ -279,7 +282,7 @@
 
 ;; Represents the effects of a single handler-level transition of an actor, before the results are
 ;; applied to the pre-handler configuration. Used for the widening optimization.
-(struct csa#-transition-effect (trigger outputs loop-outputs behavior internal-sends spawns))
+(struct csa#-transition-effect (trigger behavior sends loop-sends spawns))
 
 ;; Represents a single handler-level transition of an actor. Trigger is the event that caused the
 ;; handler to run, outputs is the list of outputs to the external world that happened execution, and
@@ -293,56 +296,69 @@
    final-config) ; an abstract implementation configuration
   #:transparent)
 
-;; impl-config a#int v# -> (Listof csa#-transition)
-;;
-;; Evaluates the handler triggered by sending message to actor-address in impl-config, returning the
-;; list of possible csa#-transitions. Calls the abort continuation instead if a transition leads to an
-;; unverifiable state.
-(define (csa#-handle-external-message impl-config actor-address message abort)
-  (handle-message impl-config
-                  actor-address
-                  message
-                  (term (external-receive ,actor-address ,message))
-                  abort))
+;; impl-config -> (Listof trigger#)
+(define (csa#-enabled-internal-actions config)
+  (define internal-message-triggers
+    (for/list ([packet-entry (csa#-config-message-packets config)])
+      (define packet (csa#-packet-entry->packet packet-entry))
+      (define address (csa#-message-packet-address packet))
+      (define message (csa#-message-packet-value packet))
+      (term (internal-receive ,address ,message))))
+  (define atomic-actor-timeouts
+    (for/fold ([timeout-triggers null])
+              ([actor (csa#-config-actors config)])
+      (define address (csa#-actor-address actor))
+      (if (term (get-timeout-handler-exp/mf ,(actor-behavior actor)))
+          (cons
+           (if (any-messages-for? config address)
+               (term (timeout/non-empty-queue ,address))
+               (term (timeout/empty-queue ,address)))
+           timeout-triggers)
+          timeout-triggers)))
+  (define collective-actor-timeouts
+    (for/fold ([timeout-triggers null])
+              ([blurred-actor (csa#-config-blurred-actors config)])
+      (define address (csa#-blurred-actor-address blurred-actor))
+      (if (ormap (lambda (behavior) (term (get-timeout-handler-exp/mf ,behavior)))
+                 (csa#-blurred-actor-behaviors blurred-actor))
+          (cons
+           (if (any-messages-for? config address)
+               (term (timeout/non-empty-queue ,address))
+               (term (timeout/empty-queue ,address)))
+           timeout-triggers)
+          timeout-triggers)))
+  (append internal-message-triggers atomic-actor-timeouts collective-actor-timeouts))
 
-;; Evaluates the handler triggered by the actor corresponding to actor-address receiving message,
-;; returning the list of possible csa#-transitions. Calls the abort continuation instead if a
-;; transition leads to an unverifiable state.
-(define (handle-message impl-config actor-address message trigger abort)
+(define (csa#-make-external-trigger address message)
+  (term (external-receive ,address ,message)))
+
+;; i# trigger# -> (Listof csa#-transtion-effect)
+(define (csa#-eval-trigger config trigger abort)
+  (match trigger
+    [`(timeout/empty-queue ,addr)
+     (eval-timeout config addr trigger abort)]
+    [`(timeout/non-empty-queue ,addr)
+     (eval-timeout config addr trigger abort)]
+    [`(internal-receive ,addr ,message)
+     (eval-message config addr message trigger abort)]
+    [`(external-receive ,addr ,message)
+     (eval-message config addr message trigger abort)]))
+
+(define (eval-timeout config addr trigger abort)
   (append*
-   (for/list ([behavior (current-behaviors-for-address impl-config actor-address)])
+   (for/list ([behavior (current-behaviors-for-address config addr)])
+     (match (term (get-timeout-handler-exp/mf ,behavior))
+       [#f null]
+       [handler-exp (eval-handler (inject/H# handler-exp)
+                                  trigger
+                                  (behavior-state-defs behavior)
+                                  abort)]))))
+
+(define (eval-message config addr message trigger abort)
+  (append*
+   (for/list ([behavior (current-behaviors-for-address config addr)])
      (define init-handler-machine (handler-machine-for-message behavior message))
-     (define update-behavior
-       (if (precise-internal-address? actor-address)
-           update-behavior/precise
-           (make-update-behavior/blurred (behavior-state-defs behavior))))
-     (eval-handler init-handler-machine trigger actor-address impl-config update-behavior abort))))
-
-;; impl-config -> (Listof #f or csa#-transition)
-;;
-;; Evaluates all handlers triggered by a timeout or the receipt of some in-transit message in
-;; impl-config, returning the list of possible csa#-transitions. Calls the abort continuation instead
-;; if a transition leads to an unverifiable state.
-(define (csa#-handle-all-internal-actions impl-config abort)
-  (append (csa#-handle-all-internal-messages impl-config abort)
-          (csa#-handle-all-timeouts impl-config abort)))
-
-;; impl-config -> (Listof #f or csa#-transition)
-;;
-;; Evaluates all handlers triggered by the receipt of some in-transit message in impl-config,
-;; returning the list of possible csa#-transitions. Calls the abort continuation instead
-;; if a transition leads to an unverifiable state.
-(define (csa#-handle-all-internal-messages impl-config abort)
-  (append*
-   (for/list ([packet-entry (csa#-config-message-packets impl-config)])
-     (define packet (csa#-packet-entry->packet packet-entry))
-     (define address (csa#-message-packet-address packet))
-     (define message (csa#-message-packet-value packet))
-     (handle-message (term (config-remove-packet/mf ,impl-config ,packet))
-                     address
-                     message
-                     (term (internal-receive ,address ,message))
-                     abort))))
+     (eval-handler init-handler-machine trigger (behavior-state-defs behavior) abort))))
 
 ;; Returns a handler machine primed with the handler expression from the given behavior, with all
 ;; state arguments and the message substituted for the appropriate variables
@@ -365,51 +381,6 @@
   ;; Case 2: if the multiplicity is not single, it must be many, so we just return the original config
   ;; because nothing is actually removed
   [(config-remove-packet/mf any_config _) any_config])
-
-;; impl-config -> (Listof csa#-transition)
-;;
-;; Evaluates all handlers triggered by a timeout impl-config, returning the list of possible
-;; csa#-transitions. Calls the abort continuation instead if a transition leads to an unverifiable
-;; state.
-(define (csa#-handle-all-timeouts impl-config abort)
-  (append
-   ;; transitions for precise actors
-   (append*
-    (for/list ([actor (csa#-config-actors impl-config)])
-      (csa#-handle-maybe-timeout (csa#-actor-address actor)
-                                 (actor-behavior actor)
-                                 impl-config
-                                 update-behavior/precise
-                                 abort)))
-   ;; transitions for blurred actors
-   (append*
-    (for/list ([blurred-actor (csa#-config-blurred-actors impl-config)])
-      (append*
-       (for/list ([behavior (csa#-blurred-actor-behaviors blurred-actor)])
-         (define update-behavior (make-update-behavior/blurred (behavior-state-defs behavior)))
-         (csa#-handle-maybe-timeout (csa#-blurred-actor-address blurred-actor)
-                                    behavior
-                                    impl-config
-                                    update-behavior
-                                    abort)))))))
-
-;; a#int b# i# (i# a#int e# -> i#) -> (Listof csa#-transition)
-;;
-;; Returns all possible transitions enabled by taking a timeout on the given behavior for the actor
-;; with the given address (if such a timeout exists). If no such timeout exists, the empty list is
-;; returned. Calls the abort continuation instead if a transition leads to an unverifiable state.
-(define (csa#-handle-maybe-timeout address behavior config update-behavior abort)
-  (match (term (get-timeout-handler-exp/mf ,behavior))
-    [#f null]
-    [handler-exp
-     (eval-handler (inject/H# handler-exp)
-                   (if (any-messages-for? config address)
-                       (term (timeout/non-empty-queue ,address))
-                       (term (timeout/empty-queue ,address)))
-                   address
-                   config
-                   update-behavior
-                   abort)]))
 
 ;; Returns the behavior's current timeout handler expression with all state arguments substituted in
 ;; if the current state has a timeout clause, else #f
@@ -487,13 +458,12 @@
 ;; to a list of (final) handler machines
 (define eval-cache (make-hash))
 
-;; H# trigger# a#int impl-config (impl-config a#int e# -> impl-config) -> (Listof csa#-transition)
+;; H# trigger# a#int impl-config (impl-config a#int e# -> impl-config) -> (Listof csa#-effect)
 ;;
-;; Evaluates the given handler machine for the given trigger at the given actor address, updating the
-;; given configuration with the encoutered effects and using the update-behavior function to update
-;; the actor with its new behavior. Returns a list of csa#-transitions representing each possible
-;; transition. Calls the abort continuation instead if a transition leads to an unverifiable state.
-(define (eval-handler handler-machine trigger address config update-behavior abort)
+;; Evaluates the given handler machine for the given trigger at the given actor address, returning for
+;; each possible handler-level transition the final goto expression as well as all effects (outputs
+;; and spawns). Calls the abort continuation instead if a transition leads to an unverifiable state.
+(define (eval-handler handler-machine trigger state-defs abort)
   (parameterize ([abort-evaluation-param abort])
     (define final-machine-states
       (match (hash-ref eval-cache handler-machine #f)
@@ -517,12 +487,13 @@
       ;; to the configuration
       (match-define (list final-exp outputs loop-outputs spawns) machine-state)
       ;; TODO: check that there are no internal loop outputs, or refactor that code entirely
-      (define new-config
-        (update-config-with-handler-results config address final-exp outputs spawns update-behavior))
-      (csa#-transition trigger
-                       (filter (negate internal-output?) outputs)
-                       (filter (negate internal-output?) loop-outputs)
-                       new-config))))
+      (redex-let csa# ([(in-hole E# (goto q v#_param ...)) final-exp])
+        (csa#-transition-effect
+         trigger
+         (term (,state-defs (goto q v#_param ...)))
+         outputs
+         loop-outputs
+         spawns)))))
 
 ;; Returns #t if the given handler machine state is unable to step because of an over-approximation in
 ;; the abstraction (assumes that there are no empty vector/list/hash references in the actual running
@@ -629,8 +600,7 @@
          ;; sound abstraction if the address is an internal address or an external address observed by
          ;; the spec, so we take the easy way out here and just bail out if the value to be folded
          ;; contains *any* address.
-         (side-condition
-          (when (term (csa#-contains-address?/mf (term v#))) ((abort-evaluation-param))))
+         (side-condition (when (csa#-contains-address? (term v#)) ((abort-evaluation-param))))
          FoldAtMaxDepth)
     (==> (unfold τ (folded τ v#))
          v#
@@ -1074,27 +1044,44 @@
   [(normalize-collection (hash-val v# ...))
    (hash-val ,@(sort (remove-duplicates (term (v# ...))) sexp<?))])
 
-(define (update-config-with-handler-results config address final-exp outputs spawns update-behavior)
-  ;; 1. update the behavior
+;; i# csa#-transition-effect -> csa#-transition
+(define (csa#-apply-transition config transition-effect)
+  (define trigger (csa#-transition-effect-trigger transition-effect))
+  (define addr (trigger-address trigger))
+  ;; 1. If the handler was triggered by an internal message, remove the message
+  (define with-trigger-message-removed
+    (match trigger
+      [`(internal-receive ,_ ,message) (term (config-remove-packet/mf ,config ,(list addr message)))]
+      [_ config]))
+  ;; 2. update the behavior
+  (define new-behavior (csa#-transition-effect-behavior transition-effect))
   (define with-updated-behavior
-    (redex-let csa# ([(in-hole E# (goto q v# ...)) final-exp])
-      (update-behavior config address (term (goto q v# ...)))))
-  ;; 2. add spawned actors
-  (define with-spawns (merge-new-actors with-updated-behavior spawns))
-  ;; 3. add sent messages
-  (merge-messages-into-config with-spawns (filter internal-output? outputs)))
+    (if (precise-internal-address? addr)
+        (update-behavior/precise with-trigger-message-removed addr new-behavior)
+        (update-behavior/blurred with-trigger-message-removed addr new-behavior)))
+  ;; 3. add spawned actors
+  (define with-spawns (merge-new-actors with-updated-behavior (csa#-transition-effect-spawns transition-effect)))
+  ;; 4. add sent messages
+  ;; TODO: merge in the loop outputs, if I'm not checking that there are none
+  (define-values (internal-sends external-sends)
+    (partition internal-output? (csa#-transition-effect-sends transition-effect)))
+  (define-values (internal-loop-sends external-loop-sends)
+    (partition internal-output? (csa#-transition-effect-loop-sends transition-effect)))
+  (csa#-transition trigger
+                   external-sends
+                   external-loop-sends
+                   (merge-messages-into-config with-spawns internal-sends)))
 
 ;; Sets the behavior for the actor with the given precise address to the given expression
-(define (update-behavior/precise config address goto-exp)
-  (redex-let csa# ([((any_actors1 ...) (a# (any_state-defs _)) (any_actors2 ...))
+(define (update-behavior/precise config address behavior)
+  (redex-let csa# ([((any_actors1 ...) (a# _) (any_actors2 ...))
                     (config-actor-and-rest-by-address config address)])
-    (term ((any_actors1 ... (a# (any_state-defs ,goto-exp)) any_actors2 ...)
+    (term ((any_actors1 ... (a# ,behavior) any_actors2 ...)
            ,(csa#-config-blurred-actors config)
            ,(csa#-config-message-packets config)))))
 
-(define (make-update-behavior/blurred state-defs)
-  (lambda (config address goto-exp)
-    (term (update-behavior/blurred/mf ,config ,address (,state-defs ,goto-exp)))))
+(define (update-behavior/blurred config address behavior)
+  (term (update-behavior/blurred/mf ,config ,address ,behavior)))
 
 ;; Adds the given behavior as a possible behavior for the given blurred address in the given config
 (define-metafunction csa#
@@ -2082,7 +2069,7 @@
                 (term (* (Union (True) (False))))))
 
 (define (trigger-address trigger)
-  (term (trigger-address/mf trigger)))
+  (term (trigger-address/mf ,trigger)))
 
 (define-metafunction csa#
   trigger-address/mf : trigger# -> a#int
@@ -2390,36 +2377,32 @@
   (test-false "effect matches existing spawn behavior"
    (csa#-transition-effect-changes-spawn-behavior?
     (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+                            '(() (goto B))
                             null
-                            null
-                            '(goto B)
                             null
                             (list '((spawn-addr the-loc NEW) (() (goto A)))))
     spawn-behavior-change-test-config))
   (test-true "effect changes existing spawn behavior"
    (csa#-transition-effect-changes-spawn-behavior?
     (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+                            '(() (goto B))
                             null
-                            null
-                            '(goto B)
                             null
                             (list '((spawn-addr the-loc NEW) (() (goto C)))))
     spawn-behavior-change-test-config))
   (test-false "config has no actor for corresponding spawn"
    (csa#-transition-effect-changes-spawn-behavior?
     (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+                            '(() (goto B))
                             null
-                            null
-                            '(goto B)
                             null
                             (list '((spawn-addr other-loc NEW) (() (goto C)))))
     spawn-behavior-change-test-config))
   (test-false "effect has no spawns"
    (csa#-transition-effect-changes-spawn-behavior?
     (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+                            '(() (goto B))
                             null
-                            null
-                            '(goto B)
                             null
                             null)
     spawn-behavior-change-test-config)))
@@ -2428,8 +2411,8 @@
 ;; to actors (atomic or collective)
 (define (csa#-transition-effect-has-nonexistent-addresses? effect config)
   (define effect-term
-    (match-let ([(csa#-transition-effect e1 e2 e3 e4 e5 e6) effect])
-      (list e1 e2 e3 e4 e5 e6)))
+    (match-let ([(csa#-transition-effect e1 e2 e3 e4 e5) effect])
+      (list e1 e2 e3 e4 e5)))
   (define all-effect-addresses (csa#-contained-addresses effect-term))
   (define all-current-addresses
     (append
@@ -2451,15 +2434,15 @@
       (term i#)))
   (test-false "nonexistent address: none"
     (csa#-transition-effect-has-nonexistent-addresses?
-     (csa#-transition-effect '(timeout/empty-queue (init-addr 0)) null null '(goto A) null null)
+     (csa#-transition-effect '(timeout/empty-queue (init-addr 0)) '(() (goto A)) null null null)
      old-address-test-config))
   (test-not-false "nonexistent address: atomic"
     (csa#-transition-effect-has-nonexistent-addresses?
-     (csa#-transition-effect '(timeout/empty-queue (spawn-addr other-loc OLD)) null null '(goto A) null null)
+     (csa#-transition-effect '(timeout/empty-queue (spawn-addr other-loc OLD)) '(() (goto A)) null null null)
      old-address-test-config))
   (test-not-false "nonexistent address: collective"
     (csa#-transition-effect-has-nonexistent-addresses?
-     (csa#-transition-effect '(timeout/empty-queue (blurred-spawn-addr other-loc)) null null '(goto A) null null)
+     (csa#-transition-effect '(timeout/empty-queue (blurred-spawn-addr other-loc)) '(goto A) null null null)
      old-address-test-config)))
 
 ;; Returns true if the given expression contains *any* address
@@ -2515,8 +2498,8 @@
   (match (csa#-transition-effect-trigger transition-effect)
     [`(internal-receive ,addr ,message)
      ;; the message is in the effects, or it's in the config with a many-of multiplicity
-     (or (member (list addr message) (append (csa#-transition-effect-outputs transition-effect)
-                                             (csa#-transition-effect-loop-outputs transition-effect)))
+     (or (member (list addr message) (append (csa#-transition-effect-sends transition-effect)
+                                             (csa#-transition-effect-loop-sends transition-effect)))
          (member (list addr message 'many) (csa#-config-message-packets config)))]
     [_ #t]))
 
@@ -2527,7 +2510,7 @@
     (redex-let csa# ([i# `(() () ([(init-addr 0) (* Nat) many] [(init-addr 1) (* Nat) single]))])
       (term i#)))
   (define (make-trigger-only-effect trigger)
-    (csa#-transition-effect trigger null null '(() (goto A)) null null))
+    (csa#-transition-effect trigger '(() (goto A)) null null null))
   (test-false "Not repeatable action"
     (csa#-repeatable-action? repeatable-action-test-config
                              (make-trigger-only-effect '(internal-receive (init-addr 1) (* Nat)))))
@@ -2540,9 +2523,8 @@
   (test-not-false "Repeatable internal receive (from effect)"
     (csa#-repeatable-action? repeatable-action-test-config
                              (csa#-transition-effect '(internal-receive (init-addr 1) (* Nat))
-                                                     (list `((init-addr 1) (* Nat)))
-                                                     null
                                                      '(() (goto A))
+                                                     (list `((init-addr 1) (* Nat)))
                                                      null
                                                      null))))
 
