@@ -719,6 +719,62 @@
   ;;   expected-widened-config)
   )
 
+;; Returns the first spec step from this spec config that both matches the i-step and ends up in a
+;; configuration identical to the original one (with the exception of the unobserved interface, which
+;; is allowed to get bigger in the abstract interpretation sense)
+(define (first-spec-step-to-same-state spec-config i-step)
+  (findf
+   (lambda (s-step) (aps#-config<= spec-config (spec-step-destination s-step)))
+   (set->list (matching-spec-steps spec-config i-step))))
+
+(module+ test
+  (define first-spec-step-test-config
+    (redex-let aps# ([s#
+                      `([Nat (init-addr 1)]
+                        ([Nat (init-addr 1)])
+                        (goto A)
+                        ((define-state (A)
+                           [* -> () (goto A)]
+                           [unobs -> () (goto B)])
+                         (define-state (B)
+                           [* -> () (goto A)]))
+                        ())])
+      (term s#)))
+
+  (test-equal? "first-spec-step-to-same-state"
+    (first-spec-step-to-same-state
+     first-spec-step-test-config
+     (impl-step `(external-receive (init-addr 1) (* Nat))
+                #f
+                null
+                null
+                ;; impl config
+                `(([(init-addr 1) (() (goto S))])
+                  ()
+                  ())))
+    (spec-step first-spec-step-test-config null null))
+
+  (test-false "first-spec-step-to-same-state: no step"
+    (first-spec-step-to-same-state
+     ;; spec config:
+     `([Nat (init-addr 1)]
+       ([Nat (init-addr 1)])
+       (goto A)
+       ((define-state (A)
+          [* -> () (goto B)]
+          [unobs -> () (goto B)])
+        (define-state (B)
+          [* -> () (goto A)]))
+       ())
+     (impl-step `(external-receive (init-addr 1) (* Nat))
+                #t
+                null
+                null
+                ;; impl config
+                `(([(init-addr 1) (() (goto S))])
+                  ()
+                  ())))))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pair-removal back-propagation
 
