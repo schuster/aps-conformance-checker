@@ -725,10 +725,13 @@
                 ;; I probably need to adjust that here... (although if the spec didn't change, then
                 ;; aren't I okay to leave it as is?)
                 (define sbc-pair (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
-                (define repeated-i-step
-                  (apply-transition (config-pair-impl-config sbc-pair) transition-result observed?))
+                (define repeated-i-step (apply-transition (config-pair-impl-config sbc-pair) transition-result observed?))
                 (define repeated-s (first-spec-step-to-same-state (config-pair-spec-config sbc-pair) repeated-i-step))
-                (define new-widened-pair (first (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
+                (define twice-applied-pair (first (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
+                ;; if this transition both spawns a new actor and sends a message to it, the message
+                ;; will not get duplicated until a third application of the transition. To make up for
+                ;; this, we instead just create extra messages to the new blurred actor
+                (define new-widened-pair (duplicate-messages-to-new-spawns twice-applied-pair transition-result))
                 (for-each (curry enqueue! possible-transitions)
                           (impl-transition-effects-from new-widened-pair))
                 (worklist-loop new-widened-pair)])]
@@ -760,7 +763,10 @@
               (begin
                 (send child (* Nat))
                 (goto A)))))
-         (goto A))])
+         (goto A))]
+       ;; a one-of of the spawned child
+       [(spawn-addr child-loc OLD)
+        (((define-state (B) (m) (goto B))) (goto B))])
       (
        ;; a single collective actor
        (
@@ -771,8 +777,9 @@
          (((define-state (B) (m) (goto B))) (goto B)))
         ))
       (
-       ;; the message
-       ((blurred-spawn-addr child-loc) (* Nat) many)))))
+       ;; the messages
+       ((blurred-spawn-addr child-loc) (* Nat) many)
+       ((spawn-addr child-loc OLD) (* Nat) single)))))
 
   (define widen-spec
     ;; Just a spec that observes only inputs and says nothing ever happens
@@ -857,6 +864,22 @@
                 `(([(init-addr 1) (() (goto S))])
                   ()
                   ())))))
+
+;; config-pair csa#-transition-effect -> config-pair
+;;
+;; For each message-send in the effect sent to an actor spawned by this effect, sets the number of
+;; messages to the collective version of that actor as "many-of"
+(define (duplicate-messages-to-new-spawns the-pair effect)
+  (define original-impl-config (config-pair-impl-config the-pair))
+  (define new-spawn-addrs (map first (csa#-transition-effect-spawns effect)))
+  (define sends-to-new-spawn-addrs
+    (filter (lambda (packet) (member (first packet) new-spawn-addrs))
+            (csa#-transition-effect-sends effect)))
+  (define new-impl
+    (for/fold ([impl original-impl-config])
+              ([packet sends-to-new-spawn-addrs])
+      (csa#-blur-and-duplicate-message impl packet)))
+  (config-pair new-impl (config-pair-spec-config the-pair)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pair-removal back-propagation

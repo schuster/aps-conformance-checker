@@ -21,6 +21,7 @@
  csa#-apply-transition
  csa#-actor-will-have-same-behavior?
  csa#-repeatable-action?
+ csa#-blur-and-duplicate-message
 
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
  csa#-spawn-address?
@@ -2536,6 +2537,25 @@
                                                      (list `((init-addr 1) (* Nat)))
                                                      null
                                                      null))))
+
+;; Blurs the destination address of the given message and ensures it is represented as a "many-of"
+;; value in the config (assuming at least one instance of the message already exists)
+(define (csa#-blur-and-duplicate-message impl message)
+  (term (csa#-blur-and-duplicate-message/mf ,impl ,message)))
+
+(define-metafunction csa#
+  csa#-blur-and-duplicate-message/mf : i# [a# v#] -> i#
+  [(csa#-blur-and-duplicate-message/mf
+    (any_atomic any_collective (any_msg1 ... [(blurred-spawn-addr any_loc) v# _] any_msg2 ...))
+    [(spawn-addr any_loc _) v#])
+   (any_atomic any_collective (any_msg1 ... [(blurred-spawn-addr any_loc) v# many] any_msg2 ...))])
+
+(module+ test
+  (test-equal? "blur and duplicate message"
+    (csa#-blur-and-duplicate-message
+     (term (() () ([(blurred-spawn-addr the-loc) (* Nat) single])))
+     (term [(spawn-addr the-loc NEW) (* Nat)]))
+    (term (() () ([(blurred-spawn-addr the-loc) (* Nat) many])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debug helpers
