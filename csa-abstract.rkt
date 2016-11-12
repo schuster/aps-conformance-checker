@@ -282,7 +282,7 @@
 
 ;; Represents the effects of a single handler-level transition of an actor, before the results are
 ;; applied to the pre-handler configuration. Used for the widening optimization.
-(struct csa#-transition-effect (trigger behavior sends loop-sends spawns))
+(struct csa#-transition-effect (trigger behavior sends loop-sends spawns) #:transparent)
 
 ;; Represents a single handler-level transition of an actor. Trigger is the event that caused the
 ;; handler to run, outputs is the list of outputs to the external world that happened execution, and
