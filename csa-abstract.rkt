@@ -2408,17 +2408,18 @@
     spawn-behavior-change-test-config)))
 
 ;; Returns #t if the transition effect contains any internal addresses that no longer refer
-;; to actors (atomic or collective)
+;; to actors (atomic or collective), other than those referring to spawns of the effect
 (define (csa#-transition-effect-has-nonexistent-addresses? effect config)
   (define effect-term
     (match-let ([(csa#-transition-effect e1 e2 e3 e4 e5) effect])
       (list e1 e2 e3 e4 e5)))
   (define all-effect-addresses (csa#-contained-addresses effect-term))
-  (define all-current-addresses
+  (define all-current-and-new-spawn-addresses
     (append
      (map first (csa#-config-actors config))
-     (map first (csa#-config-blurred-actors config))))
-  (not (andmap (curryr member all-current-addresses) all-effect-addresses)))
+     (map first (csa#-config-blurred-actors config))
+     (map first (csa#-transition-effect-spawns effect))))
+  (not (andmap (curryr member all-current-and-new-spawn-addresses) all-effect-addresses)))
 
 (module+ test
   (define old-address-test-config
@@ -2443,6 +2444,14 @@
   (test-not-false "nonexistent address: collective"
     (csa#-transition-effect-has-nonexistent-addresses?
      (csa#-transition-effect '(timeout/empty-queue (blurred-spawn-addr other-loc)) '(goto A) null null null)
+     old-address-test-config))
+  (test-false "nonexistent address: address from a new spawn"
+    (csa#-transition-effect-has-nonexistent-addresses?
+     (csa#-transition-effect '(timeout/empty-queue (blurred-spawn-addr the-loc))
+                             '(goto A)
+                             null
+                             null
+                             '([(spawn-addr the-loc NEW) (() (goto A (spawn-addr the-loc NEW)))]))
      old-address-test-config)))
 
 ;; Returns true if the given expression contains *any* address
