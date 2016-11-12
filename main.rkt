@@ -682,9 +682,6 @@
   (define possible-transitions (apply queue (impl-transition-effects-from the-pair)))
   (define processed-transitions (mutable-set))
   (let worklist-loop ([widened-pair the-pair])
-    (displayln "inside worklist loop")
-    (printf "set count: ~s\n" (set-count processed-transitions))
-    (printf "queue length: ~s\n" (queue-length possible-transitions))
     (match (dequeue-if-non-empty! possible-transitions)
       [#f widened-pair]
       [transition-result-with-obs
