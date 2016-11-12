@@ -23,6 +23,8 @@
  ;; needed for widening
  aps#-config<=
 
+ ;; Required only for testing
+ aps#
 
  ;; Required by conformance checker for blurring
  aps#-relevant-external-addrs
