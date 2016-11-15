@@ -80,7 +80,8 @@
     [else
      (match (get-initial-abstract-pairs initial-impl-config initial-spec-config)
        [#f #f]
-       [initial-pairs
+       [unwidened-initial-pairs
+        (define initial-pairs (map widen-pair unwidened-initial-pairs))
         (match-define (list rank1-pairs
                             rank1-unrelated-successors
                             incoming-steps
@@ -174,7 +175,7 @@
   ;; constant-time membership checks just before adding a new pair
   ;;
   ;; invariant: every item in to-visit should already be widened
-  (define to-visit (list->mutable-set (map widen-pair initial-pairs)))
+  (define to-visit (list->mutable-set initial-pairs))
   (define related-spec-steps (make-hash))
   (define incoming-steps (make-hash (map (lambda (t) (cons t (mutable-set))) initial-pairs)))
 
