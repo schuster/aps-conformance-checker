@@ -815,11 +815,11 @@
 ;; configuration identical to the original one (with the exception of the unobserved interface, which
 ;; is allowed to get bigger in the abstract interpretation sense)
 (define (first-spec-step-to-same-state spec-config i-step)
-  (match (findf
-          (lambda (s-step) (aps#-config<= spec-config (spec-step-destination s-step)))
-          (set->list (matching-spec-steps spec-config i-step)))
-    [#f #f]
-    [step (spec-step-destination step)]))
+  (define matching-configs-after-split
+    (for/list ([step (matching-spec-steps spec-config i-step)])
+      (spec-step-destination step)
+      (first (split-spec (spec-step-destination step)))))
+  (findf (curry aps#-config<= spec-config) matching-configs-after-split))
 
 (module+ test
   (define first-spec-step-test-config
