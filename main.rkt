@@ -701,9 +701,10 @@
              ;; state that might not be greater than the current one
              (csa#-transition-effect-changes-spawn-behavior? transition-result i)
              (worklist-loop widened-pair)]
-            [;; if any address in these effects has been blurred into a collective actor since we ran
-             ;; this transition, just throw the transition away. The same transition on the blurred
-             ;; actor would have been picked up and enqueued after the blurring action
+            [;; if any internal address mentioned in these effects has been blurred into a collective
+             ;; actor since we ran this transition, just throw the transition away. The same
+             ;; transition with the blurred instance of that address would have been picked up and
+             ;; enqueued after the blurring action
              (csa#-transition-effect-has-nonexistent-addresses? transition-result i)
              (worklist-loop widened-pair)]
             [(and

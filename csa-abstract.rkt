@@ -2414,13 +2414,14 @@
   (define effect-term
     (match-let ([(csa#-transition-effect e1 e2 e3 e4 e5) effect])
       (list e1 e2 e3 e4 e5)))
-  (define all-effect-addresses (csa#-contained-addresses effect-term))
+  (define all-internal-effect-addresses
+    (filter csa#-internal-address? (csa#-contained-addresses effect-term)))
   (define all-current-and-new-spawn-addresses
     (append
      (map first (csa#-config-actors config))
      (map first (csa#-config-blurred-actors config))
      (map first (csa#-transition-effect-spawns effect))))
-  (not (andmap (curryr member all-current-and-new-spawn-addresses) all-effect-addresses)))
+  (not (andmap (curryr member all-current-and-new-spawn-addresses) all-internal-effect-addresses)))
 
 (module+ test
   (define old-address-test-config
@@ -2453,6 +2454,10 @@
                              null
                              null
                              '([(spawn-addr the-loc NEW) (() (goto A (spawn-addr the-loc NEW)))]))
+     old-address-test-config))
+  (test-false "nonexistent address: external address"
+    (csa#-transition-effect-has-nonexistent-addresses?
+     (csa#-transition-effect '(external-receive (init-addr 0) (Nat (obs-ext 1))) '(goto A) null null null)
      old-address-test-config)))
 
 ;; Returns true if the given expression contains *any* address
