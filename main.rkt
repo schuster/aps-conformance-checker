@@ -716,9 +716,14 @@
               (csa#-repeatable-action? i transition-result))
              (define observed? (second transition-result-with-obs))
              (define new-i-step (apply-transition i transition-result observed?))
+             ;; TODO: I actually want to check that it's the same state *after* the split, right?
              (match (first-spec-step-to-same-state (config-pair-spec-config widened-pair) new-i-step)
                [#f (worklist-loop widened-pair)]
                [new-s
+                ;; TODO: there's an inefficiency in here in that some transitions might take us to the
+                ;; exact same state rather than a larger state. It still terminates (because once an
+                ;; action is run, we never run it again), but ideally we should be able to avoid that
+
                 ;; TODO: what should I do with the rename map? I don't remember what that was used
                 ;; for. I think maybe to correlate output commitments across multiple steps? So yeah,
                 ;; I probably need to adjust that here... (although if the spec didn't change, then
