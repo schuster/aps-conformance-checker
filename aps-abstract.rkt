@@ -982,6 +982,17 @@
   (redex-let aps# ([(a#ext _ ...)  entry])
              (term a#ext)))
 
+(define (aps#-commitment-entry-patterns entry)
+  (redex-let aps# ([(_ (_ po) ...)  entry])
+    (term (po ...))))
+
+(module+ test
+  (test-case "aps#-commitment-entry-patterns"
+    (redex-let* aps# ([any_entry (term [(obs-ext 1) [single *] [many (record)]])]
+                      [O# (term (any_entry))])
+      (check-equal? (aps#-commitment-entry-patterns (term any_entry))
+                    (list '* '(record))))))
+
 (define (commitments-for-address commitment-map address)
   (term (commitments-for-address/mf ,commitment-map ,address)))
 
@@ -1057,11 +1068,13 @@
      (list config)]
     [else
      (define receptionists (aps#-config-receptionists config))
-     ;; A commitment map entry is "relevant" if it is used as a state argument
+     ;; A commitment map entry is "relevant" if it's address is used as a state argument or any of its
+     ;; patterns contain the "self" pattern
      (define-values (relevant-entries irrelevant-entries)
        (partition (lambda (entry)
-                    (member (aps#-commitment-entry-address entry)
-                            (aps#-config-current-state-args config)))
+                    (or (member (aps#-commitment-entry-address entry)
+                                (aps#-config-current-state-args config))
+                        (member 'self (flatten (aps#-commitment-entry-patterns entry)))))
                   (aps#-config-commitment-map config)))
      (define commitment-only-configs
        (map (curryr aps#-config-from-commitment-entry
@@ -1099,7 +1112,19 @@
 
   (test-equal? "split a dummy state"
     (split-spec (aps#-make-no-transition-config null `(((obs-ext 1) (single *)))))
-    (list (aps#-make-no-transition-config null `(((obs-ext 1) (single *)))))))
+    (list (aps#-make-no-transition-config null `(((obs-ext 1) (single *))))))
+
+  (test-equal? "split a spec with a 'self' commitment"
+    (split-spec (term (UNKNOWN
+                       ()
+                       (goto A)
+                       ()
+                       (((obs-ext 1) (single self))))))
+    (list (term (UNKNOWN
+                 ()
+                 (goto A)
+                 ()
+                 (((obs-ext 1) (single self))))))))
 
 ;; Makes a specification config with an UNKNOWN address and an FSM with no transitions. Used for
 ;; specifications where only the commitments are important.
