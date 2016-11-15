@@ -1051,24 +1051,29 @@
 ;; removing those commitment map entries, the remaining config is also returned. The unobserved
 ;; environment's interface does not change in any of the new configs.
 (define (split-spec config)
-  (define receptionists (aps#-config-receptionists config))
-  ;; A commitment map entry is "relevant" if it is used as a state argument
-  (define-values (relevant-entries irrelevant-entries)
-    (partition (lambda (entry)
-                 (member (aps#-commitment-entry-address entry)
-                         (aps#-config-current-state-args config)))
-               (aps#-config-commitment-map config)))
-  (define commitment-only-configs
-    (map (curryr aps#-config-from-commitment-entry
-                 (aps#-config-obs-interface config)
-                 receptionists)
-         irrelevant-entries))
-  (cons (term (,(aps#-config-obs-interface config)
-               ,receptionists
-               ,(aps#-config-current-state config)
-               ,(aps#-config-state-defs config)
-               ,relevant-entries))
-        commitment-only-configs))
+  ;; Don't bother splitting if this is already a commitment-only config
+  (cond
+    [(equal? (aps#-config-current-state config) `(goto DummySpecFsmState))
+     (list config)]
+    [else
+     (define receptionists (aps#-config-receptionists config))
+     ;; A commitment map entry is "relevant" if it is used as a state argument
+     (define-values (relevant-entries irrelevant-entries)
+       (partition (lambda (entry)
+                    (member (aps#-commitment-entry-address entry)
+                            (aps#-config-current-state-args config)))
+                  (aps#-config-commitment-map config)))
+     (define commitment-only-configs
+       (map (curryr aps#-config-from-commitment-entry
+                    (aps#-config-obs-interface config)
+                    receptionists)
+            irrelevant-entries))
+     (cons (term (,(aps#-config-obs-interface config)
+                  ,receptionists
+                  ,(aps#-config-current-state config)
+                  ,(aps#-config-state-defs config)
+                  ,relevant-entries))
+           commitment-only-configs)]))
 
 (module+ test
   (define (make-simple-spec-for-split-test commitments)
@@ -1090,7 +1095,11 @@
   (test-same-items? "split with unrelated commit"
    (split-spec (make-simple-spec-for-split-test `(((obs-ext 1) (single *)))))
    (list (make-simple-spec-for-split-test `())
-         (aps#-make-no-transition-config `((Nat (init-addr 0))) `(((obs-ext 1) (single *)))))))
+         (aps#-make-no-transition-config `((Nat (init-addr 0))) `(((obs-ext 1) (single *))))))
+
+  (test-equal? "split a dummy state"
+    (split-spec (aps#-make-no-transition-config null `(((obs-ext 1) (single *)))))
+    (list (aps#-make-no-transition-config null `(((obs-ext 1) (single *)))))))
 
 ;; Makes a specification config with an UNKNOWN address and an FSM with no transitions. Used for
 ;; specifications where only the commitments are important.
