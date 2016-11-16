@@ -694,18 +694,21 @@
           (set-add! processed-transitions transition-result-with-obs)
           (define transition-result (first transition-result-with-obs))
           (define trigger (csa#-transition-effect-trigger transition-result))
+          ;; (printf "trigger for widen: ~s\n" trigger)
           (define i (config-pair-impl-config widened-pair))
           (cond
             [;; If any spawned actor has a behavior different than an existing current atomic actor
              ;; for the same spawn location, throw this effect out. Blurring makes this step lead to a
              ;; state that might not be greater than the current one
              (csa#-transition-effect-changes-spawn-behavior? transition-result i)
+             ;; (displayln "bail out 1")
              (worklist-loop widened-pair)]
             [;; if any internal address mentioned in these effects has been blurred into a collective
              ;; actor since we ran this transition, just throw the transition away. The same
              ;; transition with the blurred instance of that address would have been picked up and
              ;; enqueued after the blurring action
              (csa#-transition-effect-has-nonexistent-addresses? transition-result i)
+             ;; (displayln "bail out 2")
              (worklist-loop widened-pair)]
             [(and
               ;; If the transition was on an atomic actor, then the new behavior must be the same as
@@ -718,8 +721,11 @@
              (define new-i-step (apply-transition i transition-result observed?))
              ;; TODO: I actually want to check that it's the same state *after* the split, right?
              (match (first-spec-step-to-same-state (config-pair-spec-config widened-pair) new-i-step)
-               [#f (worklist-loop widened-pair)]
+               [#f
+                ;; (displayln "bail out 3")
+                (worklist-loop widened-pair)]
                [new-s
+                ;; (displayln "not bailing out")
                 ;; TODO: there's an inefficiency in here in that some transitions might take us to the
                 ;; exact same state rather than a larger state. It still terminates (because once an
                 ;; action is run, we never run it again), but ideally we should be able to avoid that
@@ -739,7 +745,9 @@
                 (for-each (curry enqueue! possible-transitions)
                           (impl-transition-effects-from new-widened-pair))
                 (worklist-loop new-widened-pair)])]
-            [else (worklist-loop widened-pair)])])])))
+            [else
+             ;; (displayln "bail out 4")
+             (worklist-loop widened-pair)])])])))
 
 (module+ test
   (define init-widen-impl-config
