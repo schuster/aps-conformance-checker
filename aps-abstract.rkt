@@ -6,8 +6,8 @@
  ;; Required by conformance checker
  ;; TODO: consider having this one return the address or #f
  aps#-config-obs-interface
- aps#-unknown-address?
- aps#-config-receptionists
+ aps#-unknown-address? ; TODO: get rid of this; this file should instead just return lists of τa's for interfaces
+ aps#-config-receptionists ; TODO: rename this
  aps#-config-singleton-commitments
  aps#-config-many-of-commitments
  aps#-matching-steps
@@ -468,6 +468,8 @@
    --------------
    (aps#-match/j (variant t v# ..._n) (variant t p ..._n) ([x a#_binding] ... ...))]
 
+  ;; TODO: this should *not* match, because we can't be sure the impl and spec both treat it as the
+  ;; same thing
   [(aps#-match/j (* τ) p ([x a#_binding] ...)) ...
    --------------
    (aps#-match/j (* (Union _ ... [t τ ..._n] _ ...)) (variant t p ..._n) ([x a#_binding] ... ...))]
@@ -553,6 +555,8 @@
                        any_spawns
                        any_receptionists)]
 
+  ;; TODO: this should NOT match, because we can't be sure it's really an instance of the correct
+  ;; variant
   [(aps#-list-matches-po?/j (((* τ) po) ...) σ# any_self-addr any_spawns any_receptionists)
    -----
    (aps#-matches-po?/j (* (Union _ ... [t τ ..._n] _ ...))
@@ -882,6 +886,7 @@
   (redex-let aps# ([(σ# _ ...) config])
     (term σ#)))
 
+;; TODO: rename this to unobs-interface
 (define (aps#-config-receptionists config)
   (term (config-receptionists/mf ,config)))
 
