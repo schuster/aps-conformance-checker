@@ -853,7 +853,7 @@
        (Nat (spawn-addr 3 OLD)))))
     (term
      ((Nat (init-addr 1))
-      ((Union [B] [A]) (spawn-addr 2 NEW))
+      ((Union [A] [B]) (spawn-addr 2 NEW))
       ((Union [C] [D]) (init-addr 2))
       (Nat (spawn-addr 3 OLD))))))
 

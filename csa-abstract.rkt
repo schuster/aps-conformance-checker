@@ -2126,7 +2126,7 @@
   [(type-join (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))
    (Union [t_3 τ_3 ...] ...)
    (where ([t_3 τ_3 ...] ...)
-          ,(remove-duplicates (term ([t_1 τ_1 ...] ... [t_2 τ_2 ...] ...))))]
+          ,(sort (remove-duplicates (term ([t_1 τ_1 ...] ... [t_2 τ_2 ...] ...))) sexp<?))]
   ;; TODO: allow for more sophisticated joins that look at the inner types of records, variants,
   ;; etc. and go recur into Union fields
   [(type-join τ τ) τ])
@@ -2135,6 +2135,9 @@
   (test-equal? "type-join 1" (term (type-join Nat Nat)) 'Nat)
   (test-equal? "type-join 2"
                (term (type-join (Union [A]) (Union [B])))
+               '(Union [A] [B]))
+  (test-equal? "type-join 2, other direction"
+               (term (type-join (Union [B]) (Union [A])))
                '(Union [A] [B]))
   (test-equal? "type-join 3"
                (term (type-join (Union [A] [B]) (Union [B])))
