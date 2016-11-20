@@ -287,6 +287,8 @@
 ;; the current configuration off to form the new configurations
 (define (fork-configs current-config spawn-infos)
   (redex-let aps# ([(σ# any_receptionists any_goto any_states O#) current-config])
+    (define fork-unobs-base (term (interface-add-address/mf any_receptionists σ#)))
+    (define all-fork-obs-interfaces (map first spawn-infos))
     (define-values (commitment-map spawned-configs)
       (for/fold ([current-commitment-map (term O#)]
                  [spawned-configs null])
@@ -294,18 +296,18 @@
         (match-define (list address goto state-defs) spawn-info)
         (match-define (list remaining-map spawned-map)
           (fork-commitment-map current-commitment-map (externals-in (list state-defs goto))))
-        ;; TODO: figure out what to do with this old receptionist code
-        ;; (define new-receptionists
-        ;;   (remove-duplicates (append (term any_receptionists)
-        ;;                              (if (equal? (aps#-config-only-instance-address current-config) 'UNKNOWN)
-        ;;                                  '()
-        ;;                                  (list (aps#-config-only-instance-address current-config))))))
+        (define unobs-interface
+          (for/fold ([interface fork-unobs-base])
+                    ([other-addr (filter (lambda (other-addr) (not (equal? other-addr address))) all-fork-obs-interfaces)])
+            (term (interface-add-address/mf ,interface ,other-addr))))
         (values remaining-map
-                ;; TODO: add parent to this receptionist list
-                (cons (term (,address any_receptionists ,goto ,state-defs ,spawned-map))
+                (cons (term (,address ,unobs-interface ,goto ,state-defs ,spawned-map))
                       spawned-configs))))
-    ;; TODO: add all forked addresses to this receptionist list
-    (list (term (σ# any_receptionists any_goto any_states ,commitment-map)) spawned-configs)))
+    (define new-unobs-interface
+      (for/fold ([interface (term any_receptionists)])
+                ([fork-obs-interface all-fork-obs-interfaces])
+        (term (interface-add-address/mf ,interface ,fork-obs-interface))))
+    (list (term (σ# ,new-unobs-interface any_goto any_states ,commitment-map)) spawned-configs)))
 
 (module+ test
   (test-equal? "Degenerate fork config case"
@@ -316,7 +318,37 @@
     (fork-configs (term (UNKNOWN () (goto A) ((define-state (A))) ([(obs-ext 1) (single *)] [(obs-ext 2) (single (record))])))
                   (term ([UNKNOWN (goto B (obs-ext 2)) ((define-state (B r)))])))
     (list (term (UNKNOWN () (goto A) ((define-state (A))) ([(obs-ext 1) (single *)])))
-          (list (term (UNKNOWN () (goto B (obs-ext 2)) ((define-state (B r))) ([(obs-ext 2) (single (record))])))))))
+          (list (term (UNKNOWN () (goto B (obs-ext 2)) ((define-state (B r))) ([(obs-ext 2) (single (record))]))))))
+
+  (test-equal? "Add two spawns"
+    (fork-configs (term (UNKNOWN () (goto A) () ()))
+                  ;; ((σ# goto-exp (Φ ...)) ...)
+                  `(((Nat (spawn-addr 1 OLD)) (goto B) ())
+                    ((Nat (spawn-addr 2 OLD)) (goto C) ())))
+    `((UNKNOWN ((Nat (spawn-addr 1 OLD)) (Nat (spawn-addr 2 OLD))) (goto A) () ())
+      (((Nat (spawn-addr 2 OLD)) ((Nat (spawn-addr 1 OLD))) (goto C) () ())
+       ((Nat (spawn-addr 1 OLD)) ((Nat (spawn-addr 2 OLD))) (goto B) () ())))))
+
+;; Moves the given observed interface into the unobserved interface (used for forks)
+(define-metafunction aps#
+  ;; TODO: should I do a canonicalization here?
+  interface-add-address/mf : any_unobs-interface σ# -> any
+  [(interface-add-address/mf any_unobs UNKNOWN) any_unobs]
+  [(interface-add-address/mf (any_1 ... (τ_unobs a#) any_2 ...) (τ_obs a#))
+   (any_1 ... ((type-join τ_obs τ_unobs) a#) any_2 ...)]
+  [(interface-add-address/mf (any_1 ...) (τ_obs a#))
+   (any_1 ... (τ_obs a#))])
+
+(module+ test
+  (test-equal? "interface-add-address unknown"
+    (term (interface-add-address/mf ((Nat (init-addr 1))) UNKNOWN))
+    (term ((Nat (init-addr 1)))))
+  (test-equal? "interface-add-address known, join type"
+    (term (interface-add-address/mf (((Union [A]) (init-addr 1))) ((Union [B]) (init-addr 1))))
+    (term  (((Union [A] [B]) (init-addr 1)))))
+  (test-equal? "interface-add-address known, join type"
+    (term (interface-add-address/mf (((Union [A]) (init-addr 1))) ((Union [B]) (init-addr 2))))
+    (term  (((Union [A]) (init-addr 1)) ((Union [B]) (init-addr 2))))))
 
 (define (fork-commitment-map commitment-map addresses)
   (term (fork-commitment-map/mf ,commitment-map () ,addresses)))

@@ -2328,6 +2328,43 @@
                (make-single-actor-config double-response-spawning-actor)
                (make-exclusive-spec echo-spawn-spec)))
 
+  ;; Check that spec-fork addresses are added to unobs interface
+  (define unobs-fork-actor
+    (term
+     (((Addr Nat) (addr 0))
+      (((define-state (Always [child-response (Addr (Addr Nat))] [never-use (Addr Nat)]) (m)
+          (let ([new-child
+                 (spawn
+                  child-loc
+                  (Addr Nat)
+                  (goto ChildAlways)
+                  (define-state (ChildAlways) (m)
+                    (begin
+                      (send never-use 1)
+                      (goto ChildAlways))))])
+            (begin
+              (send child-response new-child)
+              (goto Always child-response never-use)))))
+       (goto Always ((Addr (Addr Nat)) (addr 1)) ((Addr Nat) (addr 2)))))))
+
+  (define unobs-fork-spec
+    (term
+     (((define-state (Always child-response never-use)
+         [* -> ([obligation child-response
+                            (fork (goto ChildAlways)
+                                  (define-state (ChildAlways)
+                                    [* -> () (goto ChildAlways)]))])
+            (goto Always child-response never-use)]))
+      (goto Always (addr 1) (addr 2))
+      (Nat (addr 0)))))
+
+  (test-valid-actor? unobs-fork-actor)
+  (test-valid-instance? unobs-fork-spec)
+  (test-false "Forked specified actor in unobs interface can cause non-conformance"
+    (check-conformance/config
+     (make-single-actor-config unobs-fork-actor)
+     (make-exclusive-spec unobs-fork-spec)))
+
   ;;;; Initial spec address must have actor in the implmentation
   (define no-matching-address-spec
     (term
