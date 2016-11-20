@@ -2297,7 +2297,7 @@
                       (begin
                         (send echo-target 1)
                         (send echo-target 1)
-                        (goto NoResponse))))])
+                        (goto DoubleResponse))))])
               (begin
                 (send response-target child)
                 (goto Always))))))
@@ -2414,11 +2414,11 @@
              echo-spawn
              (Addr Nat)
              (goto Init response-target)
-             (define-state (Init [response-target (Addr (Addr (Addr Nat)))]) (response-target)
-               (goto Init response-target)
+             (define-state (Init [self-target (Addr (Addr (Addr Nat)))]) (response-target)
+               (goto Init self-target)
                [(timeout 0)
                 (begin
-                  (send response-target self)
+                  (send self-target self)
                   (goto EchoResponse))])
              (define-state (EchoResponse) (echo-target)
                (begin
