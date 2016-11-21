@@ -15,12 +15,9 @@
  csa#-address-strip-type
  ;; required for widening
  (struct-out csa#-transition-effect)
- csa#-transition-effect-changes-spawn-behavior?
- csa#-transition-effect-has-nonexistent-addresses?
+ csa#-transition-to-greater-config?
  csa#-eval-trigger
  csa#-apply-transition
- csa#-actor-will-have-same-behavior?
- csa#-repeatable-action?
  csa#-blur-and-duplicate-message
 
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
@@ -2356,6 +2353,40 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Tests for use during widening
+
+;; i# csa#-transition-effect -> Boolean
+;;
+;; Returns #t if the transition effect results in a configuration strictly larger than the given one
+(define (csa#-transition-to-greater-config? i transition-result)
+  ;; TODO: step 1: refactor into this function and test. Step 2: speed it up by checking the
+  ;; additional > things
+
+  ;; TODO: general idea is for each part to get a <, >, =, or 'incomparable, then check that none are
+  ;; incomparable or < and at least one is >
+
+  ;; NOTE: each condition is separated into its own cond clause for easier printf debugging
+  (cond
+    [;; If any spawned actor has a behavior different than an existing current atomic actor for the
+     ;; same spawn location, throw this effect out. Blurring makes this step lead to a state that
+     ;; might not be greater than the current one
+     (csa#-transition-effect-changes-spawn-behavior? transition-result i)
+     #f]
+    [;; if any internal address mentioned in these effects has been blurred into a collective actor
+     ;; since we ran this transition, just throw the transition away. The same transition with the
+     ;; blurred instance of that address would have been picked up and enqueued after the blurring
+     ;; action
+     (csa#-transition-effect-has-nonexistent-addresses? transition-result i)
+     #f]
+    [;; If the transition was on an atomic actor, then the new behavior must be the same as the old
+     ;; one
+     (not (csa#-actor-will-have-same-behavior? i transition-result))
+     #f]
+    [;; The action must be repeatable (timeouts are always repeatable in the same behavior,
+     ;; but an internal message is only repeatable if there is another in the queue)
+     (not (csa#-repeatable-action? i transition-result))
+     #f]
+    [else
+     #t]))
 
 ;; Returns #t if any of the spawns in the transition result have a behavior different than the
 ;; behavior for the existing corresopnding atomic actor in impl config i (if such an actor exists); #f
