@@ -65,7 +65,8 @@
 
 (define (aps#-abstract-config spec-config internal-addresses)
   ;; Doing a redex-let here just to add a codomain contract
-  (redex-let aps# ([s# (term (aps#-abstract-config/mf ,spec-config ,internal-addresses))])
+  (redex-let* aps# ([any_1 (term (aps#-abstract-config/mf ,spec-config ,internal-addresses))]
+                    [s# (abstract-obligations (term any_1))])
              (term s#)))
 
 (define-metafunction aps#
@@ -82,13 +83,29 @@
                                 ()
                                 (goto A (addr 1))
                                 ((define-state (A x) (* -> () (goto A x))))
-                                ()))
+                                (((addr 2) * * (record)))))
                          (term ((addr 0))))
    (term ((Nat (init-addr 0))
           ()
           (goto A (obs-ext 1))
           ((define-state (A x) (* -> () (goto A x))))
-          ()))))
+          (((obs-ext 2) [many *] [single (record)]))))))
+
+(define (abstract-obligations config)
+  (match-define (list obs unobs goto states obligation-map) config)
+  (define abstracted-obligations
+    (for/list ([entry obligation-map])
+      (let loop ([patterns (cdr entry)]
+                 [abstracted-patterns null])
+        (match patterns
+          [(list) (cons (first entry) (reverse abstracted-patterns))]
+          [(list this-pattern other-patterns ...)
+           (if (member this-pattern other-patterns)
+               (loop (filter (negate (curry equal? this-pattern)) other-patterns)
+                     (cons `(many ,this-pattern) abstracted-patterns))
+               (loop other-patterns
+                     (cons `(single ,this-pattern) abstracted-patterns)))]))))
+  (list obs unobs goto states abstracted-obligations))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
