@@ -742,7 +742,9 @@
               (begin
                 (send child (* Nat))
                 (goto A)))))
-         (goto A))])
+         (goto A))]
+       [(spawn-addr child-loc OLD)
+        (((define-state (B) (m) (goto B))) (goto B))])
       ()
       ())))
 
@@ -2828,4 +2830,50 @@
   (test-true "Exposed addresses only expose types according to the type of the address they were exposed through"
     (check-conformance/config
      (make-single-actor-config ping-coercion-spawner)
-     (make-exclusive-spec ping-coercion-spawner-spec))))
+     (make-exclusive-spec ping-coercion-spawner-spec)))
+
+  ;;;; Widening
+
+  ;; A counterexample that shows why widening with a spawn that didn't exist before is unsound: On
+  ;; receiving an external message, the main actor spawns a child. The child, on timeout, sends a
+  ;; message back to its parent, and the parent sends a message to fulfill the obligation. If the
+  ;; external message is never sent, the obligation is never fulfilled.
+  (define new-spawn-impl-config
+    (term (([(addr 1)
+             (((define-state (Start [target (Addr Nat)]) (m)
+                 (case m
+                   [(FromEnv)
+                    (let ([parent ((Union [FromEnv] [FromChild]) (addr 1))])
+                      (begin
+                        (spawn child-loc
+                               (Addr (Union [FromChild]))
+                               (goto Waiting)
+                               (define-state (Waiting) (m)
+                                 (goto Waiting)
+                                 [(timeout 5)
+                                  (begin
+                                    (send parent (variant FromChild))
+                                    (goto Done))])
+                               (define-state (Done) (m) (goto Done)))
+                        (goto Start target)))]
+                   [(FromChild)
+                    (begin
+                      (send target 1)
+                      (goto ParentDone))]))
+               (define-state (ParentDone) (m) (goto ParentDone)))
+              (goto Start (Nat (addr 2))))])
+           ()
+           (((Union [FromEnv]) (addr 1)))
+           ((Nat (addr 2))))))
+  ;; Spec with no real transitions, but a commitment on address 2
+  (define new-spawn-spec-config
+    (term (((Union [FromEnv]) (addr 1))
+           ()
+           (goto Always)
+           ((define-state (Always)
+              [* -> () (goto Always)]))
+           (((addr 2) *)))))
+  (check-true (redex-match? csa-eval i new-spawn-impl-config))
+  (check-true (redex-match? aps-eval s new-spawn-spec-config))
+  (test-false "Widen new-spawn counterexample"
+    (check-conformance/config new-spawn-impl-config new-spawn-spec-config)))
