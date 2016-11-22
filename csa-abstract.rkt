@@ -1998,6 +1998,32 @@
 (define (actor-behavior actor)
   (second actor))
 
+(define (csa#-behaviors-of config addr)
+  (term (csa#-behaviors-of/mf ,config ,addr)))
+
+(define-metafunction csa#
+  csa#-behaviors-of/mf : i# a#int -> (b# ...)
+  [(csa#-behaviors-of/mf i# a#int-precise)
+   ,(list (actor-behavior (csa#-config-actor-by-address (term i#) (term a#int-precise))))]
+  [(csa#-behaviors-of/mf i# a#int-collective)
+   ,(csa#-blurred-actor-behaviors
+     (findf (lambda (a) (equal? (csa#-blurred-actor-address a) (term a#int-collective)))
+            (csa#-config-blurred-actors (term i#))))])
+
+(module+ test
+  (define behavior-test-config
+    (term (([(init-addr 1) (() (goto A))])
+           ([(blurred-spawn-addr 2)
+             ((() (goto B))
+              (() (goto C)))])
+           ())))
+  (test-equal? "csa#-behaviors-of atomic"
+    (csa#-behaviors-of behavior-test-config `(init-addr 1))
+    (list '(() (goto A))))
+  (test-equal? "csa#-behaviors-of collective"
+    (csa#-behaviors-of behavior-test-config `(blurred-spawn-addr 2))
+    (list '(() (goto B)) '(() (goto C)))))
+
 ;; Returns all behaviors assigned to the blurred actor with the given address in the given config
 (define-metafunction csa#
   blurred-actor-behaviors-by-address/mf : i# a#int -> (b# ...)
@@ -2354,51 +2380,53 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Tests for use during widening
 
+;; NOTE: for various comparisons here, I need to record if a transition takes the config to a new
+;; configuration that is greater than the old one (in terms of the abstract interpretation), the same
+;; as the old one, or neither of those. I represent those results with 'gt, 'eq, and 'not-gteq,
+;; respectively
+
 ;; i# csa#-transition-effect -> Boolean
 ;;
 ;; Returns #t if the transition effect results in a configuration strictly larger than the given one
 (define (csa#-transition-to-greater-config? i transition-result)
-  ;; TODO: step 1: refactor into this function and test. Step 2: speed it up by checking the
-  ;; additional > things
+  ;; If any spawned actor has a behavior different than an existing current atomic actor for the
+  ;; same spawn location, throw this effect out. Blurring makes this step lead to a state that
+  ;; might not be greater than the current one
+  (define spawn-behavior-comp (csa#-transition-effect-compare-spawn-behavior transition-result i))
 
-  ;; TODO: general idea is for each part to get a <, >, =, or 'incomparable, then check that none are
-  ;; incomparable or < and at least one is >
+  ;; if any internal address mentioned in these effects has been blurred into a collective actor
+  ;; since we ran this transition, just throw the transition away. The same transition with the
+  ;; blurred instance of that address would have been picked up and enqueued after the blurring
+  ;; action
+  (define nonex-address
+    (if (csa#-transition-effect-has-nonexistent-addresses? transition-result i) 'not-gteq 'eq))
 
-  ;; NOTE: each condition is separated into its own cond clause for easier printf debugging
-  (cond
-    [;; If any spawned actor has a behavior different than an existing current atomic actor for the
-     ;; same spawn location, throw this effect out. Blurring makes this step lead to a state that
-     ;; might not be greater than the current one
-     (csa#-transition-effect-changes-spawn-behavior? transition-result i)
-     #f]
-    [;; if any internal address mentioned in these effects has been blurred into a collective actor
-     ;; since we ran this transition, just throw the transition away. The same transition with the
-     ;; blurred instance of that address would have been picked up and enqueued after the blurring
-     ;; action
-     (csa#-transition-effect-has-nonexistent-addresses? transition-result i)
-     #f]
-    [;; If the transition was on an atomic actor, then the new behavior must be the same as the old
-     ;; one
-     (not (csa#-actor-will-have-same-behavior? i transition-result))
-     #f]
-    [;; The action must be repeatable (timeouts are always repeatable in the same behavior,
-     ;; but an internal message is only repeatable if there is another in the queue)
-     (not (csa#-repeatable-action? i transition-result))
-     #f]
-    [else
-     #t]))
+  ;; If the transition was on an atomic actor, then the new behavior must be the same as the old
+  ;; one
+  (define self-behavior-comp (csa#-actor-compare-behavior i transition-result))
 
-;; Returns #t if any of the spawns in the transition result have a behavior different than the
-;; behavior for the existing corresopnding atomic actor in impl config i (if such an actor exists); #f
-;; otherwise.
-(define (csa#-transition-effect-changes-spawn-behavior? transition-result i)
-  (for/or ([spawn (csa#-transition-effect-spawns transition-result)])
+  ;; The action must be repeatable (timeouts are always repeatable in the same behavior, but an
+  ;; internal message is only repeatable if there is another in the queue)
+  (define repeatable-comp (if (csa#-repeatable-action? i transition-result) 'eq 'not-gteq))
+
+  (define all-comparisons (list spawn-behavior-comp nonex-address self-behavior-comp repeatable-comp))
+  ;; nothing is not-gteq, at least one is gt
+  (and (andmap (negate (curry eq? 'not-gteq)) all-comparisons)
+       (ormap (curry eq? 'gt) all-comparisons)))
+
+;; Returns 'gt if the behaviors of the effect's spawn would make for a greater config, 'eq for the
+;; same config (i.e. no effect), and 'not-gteq otherwise
+(define (csa#-transition-effect-compare-spawn-behavior transition-result i)
+  (for/fold ([comp-result 'eq])
+            ([spawn (csa#-transition-effect-spawns transition-result)])
     (define spawn-addr (first spawn))
     (define existing-addr `(spawn-addr ,(second spawn-addr) OLD))
-    (match (csa#-config-actor-by-address i existing-addr)
-      [#f #f]
-      [(list addr existing-behavior)
-       (not (equal? existing-behavior (second spawn)))])))
+    (comp-result-and
+     comp-result
+     (match (csa#-config-actor-by-address i existing-addr)
+       [#f 'gt]
+       [(list addr existing-behavior)
+        (if (equal? existing-behavior (second spawn)) 'eq 'not-gteq)]))))
 
 (module+ test
   (define spawn-behavior-change-test-config
@@ -2409,38 +2437,59 @@
                         ()
                         ()))])
       (term i#)))
-  (test-false "effect matches existing spawn behavior"
-   (csa#-transition-effect-changes-spawn-behavior?
+  (test-equal? "effect matches existing spawn behavior"
+   (csa#-transition-effect-compare-spawn-behavior
     (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
                             '(() (goto B))
                             null
                             null
                             (list '((spawn-addr the-loc NEW) (() (goto A)))))
-    spawn-behavior-change-test-config))
-  (test-true "effect changes existing spawn behavior"
-   (csa#-transition-effect-changes-spawn-behavior?
+    spawn-behavior-change-test-config)
+   'eq)
+  (test-equal? "effect changes existing spawn behavior"
+   (csa#-transition-effect-compare-spawn-behavior
     (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
                             '(() (goto B))
                             null
                             null
                             (list '((spawn-addr the-loc NEW) (() (goto C)))))
-    spawn-behavior-change-test-config))
-  (test-false "config has no actor for corresponding spawn"
-   (csa#-transition-effect-changes-spawn-behavior?
+    spawn-behavior-change-test-config)
+   'not-gteq)
+  (test-equal? "config has no actor for corresponding spawn"
+   (csa#-transition-effect-compare-spawn-behavior
     (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
                             '(() (goto B))
                             null
                             null
                             (list '((spawn-addr other-loc NEW) (() (goto C)))))
-    spawn-behavior-change-test-config))
-  (test-false "effect has no spawns"
-   (csa#-transition-effect-changes-spawn-behavior?
+    spawn-behavior-change-test-config)
+   'gt)
+  (test-equal? "effect has no spawns"
+   (csa#-transition-effect-compare-spawn-behavior
     (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
                             '(() (goto B))
                             null
                             null
                             null)
-    spawn-behavior-change-test-config)))
+    spawn-behavior-change-test-config)
+   'eq))
+
+;; comparison-result comparison-result -> comparison-result
+(define (comp-result-and c1 c2)
+  (cond
+    [(or (eq? c1 'not-gteq) (eq? c2 'not-gteq))
+     'not-gteq]
+    [(or (eq? c1 'gt) (eq? c2 'gt))
+     'gt]
+    [else 'eq]))
+
+(module+ test
+  (test-equal? "comp-result-and gt eq" (comp-result-and 'gt 'eq) 'gt)
+  (test-equal? "comp-result-and not-gteq eq" (comp-result-and 'not-gteq 'eq) 'not-gteq)
+  (test-equal? "comp-result-and not-gteq gt" (comp-result-and 'not-gteq 'gt) 'not-gteq)
+  (test-equal? "comp-result-and gt eq 2" (comp-result-and 'eq 'gt) 'gt)
+  (test-equal? "comp-result-and not-gteq eq 2" (comp-result-and 'eq 'not-gteq) 'not-gteq)
+  (test-equal? "comp-result-and not-gteq gt 2" (comp-result-and 'gt 'not-gteq) 'not-gteq))
 
 ;; Returns #t if the transition effect contains any internal addresses that no longer refer
 ;; to actors (atomic or collective), other than those referring to spawns of the effect
@@ -2533,11 +2582,38 @@
   (check-false (csa#-internal-address? `(* (Addr Nat))))
   (check-false (csa#-internal-address? `(obs-ext 1))))
 
-(define (csa#-actor-will-have-same-behavior? config transition-result)
+(define (csa#-actor-compare-behavior config transition-result)
   (define addr (trigger-address (csa#-transition-effect-trigger transition-result)))
-  (or (not (precise-internal-address? addr))
-      (equal? (csa#-transition-effect-behavior transition-result)
-              (actor-behavior (csa#-config-actor-by-address config addr)))))
+  (define new-behavior (csa#-transition-effect-behavior transition-result))
+  (define old-behaviors (csa#-behaviors-of config addr))
+
+  (if (member new-behavior old-behaviors)
+      'eq
+      (if (precise-internal-address? addr)
+          'not-gteq
+          'gt)))
+
+(module+ test
+  (test-equal? "actor-compare-behavior: new atomic behavior"
+    (csa#-actor-compare-behavior
+     behavior-test-config
+     (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto D)) null null null))
+    'not-gteq)
+  (test-equal? "actor-compare-behavior: old atomic behavior"
+    (csa#-actor-compare-behavior
+     behavior-test-config
+     (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto A)) null null null))
+    'eq)
+  (test-equal? "actor-compare-behavior: new collective behavior"
+    (csa#-actor-compare-behavior
+     behavior-test-config
+     (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto D)) null null null))
+    'gt)
+  (test-equal? "actor-compare-behavior: old collective behavior"
+    (csa#-actor-compare-behavior
+     behavior-test-config
+     (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto B)) null null null))
+    'eq))
 
 ;; Returns #t if the action represented by the effect's trigger can happen again after applying the
 ;; given transition effect to the config, assuming the transition effect transitions the actor to the
