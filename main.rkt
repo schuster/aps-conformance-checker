@@ -696,26 +696,25 @@
           (define trigger (csa#-transition-effect-trigger transition-result))
           ;; (printf "trigger for widen: ~s\n" trigger)
           (define i (config-pair-impl-config widened-pair))
-          (cond
-            [(csa#-transition-to-greater-config? i transition-result)
-             (define observed? (second transition-result-with-obs))
-             (define new-i-step (apply-transition i transition-result observed?))
-             ;; TODO: I actually want to check that it's the same state *after* the split, right?
-             (match (first-spec-step-to-same-state (config-pair-spec-config widened-pair) new-i-step)
-               [#f
-                ;; (displayln "bail out 3")
-                (worklist-loop widened-pair)]
-               [new-s
+          (define observed? (second transition-result-with-obs))
+          ;; NOTE: I think we have to apply and sbc the transition here so that when we compare old
+          ;; and new behaviors, we compare the post-canonicalization versions so that the addresses
+          ;; are truly equal (otherwise we need to come up with some sort of name-matching scheme for
+          ;; external addresses in the old and new configs)
+          (define new-i-step (apply-transition i transition-result observed?))
+          (match (first-spec-step-to-same-state (config-pair-spec-config widened-pair) new-i-step)
+            [#f
+             ;; (displayln "bail out 3")
+             (worklist-loop widened-pair)]
+            [new-s
+             ;; TODO: what should I do with the rename map? I don't remember what that was used for. I
+             ;; think maybe to correlate output commitments across multiple steps? So yeah, I probably
+             ;; need to adjust that here... (although if the spec didn't change, then aren't I okay to
+             ;; leave it as is?)
+             (define sbc-pair (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
+             (cond
+               [(csa#-transition-to-greater-config? i transition-result (config-pair-impl-config sbc-pair))
                 ;; (displayln "not bailing out")
-                ;; TODO: there's an inefficiency in here in that some transitions might take us to the
-                ;; exact same state rather than a larger state. It still terminates (because once an
-                ;; action is run, we never run it again), but ideally we should be able to avoid that
-
-                ;; TODO: what should I do with the rename map? I don't remember what that was used
-                ;; for. I think maybe to correlate output commitments across multiple steps? So yeah,
-                ;; I probably need to adjust that here... (although if the spec didn't change, then
-                ;; aren't I okay to leave it as is?)
-                (define sbc-pair (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
                 (define repeated-i-step (apply-transition (config-pair-impl-config sbc-pair) transition-result observed?))
                 (define repeated-s (first-spec-step-to-same-state (config-pair-spec-config sbc-pair) repeated-i-step))
                 (define twice-applied-pair (first (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
@@ -726,8 +725,8 @@
                 (define new-widened-pair (first (first (sbc (config-pair (impl-step-destination thrice-applied-i-step) repeated-s)))))
                 (for-each (curry enqueue! possible-transitions)
                           (impl-transition-effects-from new-widened-pair))
-                (worklist-loop new-widened-pair)])]
-            [else (worklist-loop widened-pair)])])])))
+                (worklist-loop new-widened-pair)]
+               [else (worklist-loop widened-pair)])])])])))
 
 (module+ test
   (define init-widen-impl-config
