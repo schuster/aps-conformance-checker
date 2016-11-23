@@ -2470,61 +2470,136 @@
                           ((() (goto B)))])
                         ()))])
       (term i#)))
-  ;; (test-equal? "effect matches existing spawn behavior, no blurred version"
-  ;;  (csa#-transition-effect-compare-spawn-behavior
-  ;;   (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
-  ;;                           '(() (goto B))
-  ;;                           null
-  ;;                           null
-  ;;                           (list '((spawn-addr third-loc NEW) (() (goto A)))))
-  ;;   spawn-behavior-change-test-config)
-  ;;  'gt)
-  ;; (test-equal? "effect matches existing spawn behavior, blurred behavior also exists"
-  ;;  (csa#-transition-effect-compare-spawn-behavior
-  ;;   (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
-  ;;                           '(() (goto B))
-  ;;                           null
-  ;;                           null
-  ;;                           (list '((spawn-addr the-loc NEW) (() (goto A)))))
-  ;;   spawn-behavior-change-test-config)
-  ;;  'eq)
-  ;; (test-equal? "effect matches existing spawn behavior, blurred actor with other behavior exists"
-  ;;  (csa#-transition-effect-compare-spawn-behavior
-  ;;   (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
-  ;;                           '(() (goto B))
-  ;;                           null
-  ;;                           null
-  ;;                           (list '((spawn-addr second-loc NEW) (() (goto A)))))
-  ;;   spawn-behavior-change-test-config)
-  ;;  'gt)
-  ;; (test-equal? "effect changes existing spawn behavior"
-  ;;  (csa#-transition-effect-compare-spawn-behavior
-  ;;   (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
-  ;;                           '(() (goto B))
-  ;;                           null
-  ;;                           null
-  ;;                           (list '((spawn-addr the-loc NEW) (() (goto C)))))
-  ;;   spawn-behavior-change-test-config)
-  ;;  'not-gteq)
-  ;; (test-equal? "config has no actor for corresponding spawn"
-  ;;  (csa#-transition-effect-compare-spawn-behavior
-  ;;   (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
-  ;;                           '(() (goto B))
-  ;;                           null
-  ;;                           null
-  ;;                           (list '((spawn-addr other-loc NEW) (() (goto C)))))
-  ;;   spawn-behavior-change-test-config)
-  ;;  'not-gteq)
-  ;; (test-equal? "effect has no spawns"
-  ;;  (csa#-transition-effect-compare-spawn-behavior
-  ;;   (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
-  ;;                           '(() (goto B))
-  ;;                           null
-  ;;                           null
-  ;;                           null)
-  ;;   spawn-behavior-change-test-config)
-  ;;  'eq)
-  )
+  (test-equal? "effect matches existing spawn behavior, no blurred version"
+   (csa#-transition-effect-compare-spawn-behavior
+    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+                            '(() (goto B))
+                            null
+                            null
+                            (list '((spawn-addr third-loc NEW) (() (goto A)))))
+    spawn-behavior-change-test-config
+    (term
+     (([(spawn-addr the-loc OLD)
+        (() (goto A))]
+       [(spawn-addr second-loc OLD)
+        (() (goto A))]
+       [(spawn-addr third-loc OLD)
+        (() (goto A))])
+      ([(blurred-spawn-addr the-loc)
+        ((() (goto A)))]
+       [(blurred-spawn-addr second-loc)
+        ((() (goto B)))]
+       [(spawn-addr third-loc)
+        (() (goto A))])
+      ())))
+   'gt)
+  (test-equal? "effect matches existing spawn behavior, blurred behavior also exists"
+   (csa#-transition-effect-compare-spawn-behavior
+    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+                            '(() (goto B))
+                            null
+                            null
+                            (list '((spawn-addr the-loc NEW) (() (goto A)))))
+    spawn-behavior-change-test-config
+    (term
+     (([(spawn-addr the-loc OLD)
+        (() (goto A))]
+       [(spawn-addr second-loc OLD)
+        (() (goto A))]
+       [(spawn-addr third-loc OLD)
+        (() (goto A))])
+      ([(blurred-spawn-addr the-loc)
+        ((() (goto A)))]
+       [(blurred-spawn-addr second-loc)
+        ((() (goto B)))])
+      ())))
+   'eq)
+  (test-equal? "effect matches existing spawn behavior, blurred actor with other behavior exists"
+   (csa#-transition-effect-compare-spawn-behavior
+    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+                            '(() (goto B))
+                            null
+                            null
+                            (list '((spawn-addr second-loc NEW) (() (goto A)))))
+    spawn-behavior-change-test-config
+    (term
+     (([(spawn-addr the-loc OLD)
+        (() (goto A))]
+       [(spawn-addr second-loc OLD)
+        (() (goto A))]
+       [(spawn-addr third-loc OLD)
+        (() (goto A))])
+      ([(blurred-spawn-addr the-loc)
+        ((() (goto A)))]
+       [(blurred-spawn-addr second-loc)
+        ((() (goto A)) (() (goto B)))])
+      ())))
+   'gt)
+  (test-equal? "effect changes existing spawn behavior"
+   (csa#-transition-effect-compare-spawn-behavior
+    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+                            '(() (goto B))
+                            null
+                            null
+                            (list '((spawn-addr the-loc NEW) (() (goto C)))))
+    spawn-behavior-change-test-config
+    (term
+     (([(spawn-addr the-loc OLD)
+        (() (goto C))]
+       [(spawn-addr second-loc OLD)
+        (() (goto A))]
+       [(spawn-addr third-loc OLD)
+        (() (goto A))])
+      ([(blurred-spawn-addr the-loc)
+        ((() (goto A)))]
+       [(blurred-spawn-addr second-loc)
+        ((() (goto B)))])
+      ())))
+   'not-gteq)
+  (test-equal? "config has no actor for corresponding spawn"
+   (csa#-transition-effect-compare-spawn-behavior
+    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+                            '(() (goto B))
+                            null
+                            null
+                            (list '((spawn-addr other-loc NEW) (() (goto C)))))
+    spawn-behavior-change-test-config
+    (term
+     (([(spawn-addr the-loc OLD)
+        (() (goto A))]
+       [(spawn-addr second-loc OLD)
+        (() (goto A))]
+       [(spawn-addr third-loc OLD)
+        (() (goto A))]
+       [(spawn-addr other-loc OLD)
+        (() (goto C))])
+      ([(blurred-spawn-addr the-loc)
+        ((() (goto A)))]
+       [(blurred-spawn-addr second-loc)
+        ((() (goto B)))])
+      ())))
+   'not-gteq)
+  (test-equal? "effect has no spawns"
+   (csa#-transition-effect-compare-spawn-behavior
+    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+                            '(() (goto B))
+                            null
+                            null
+                            null)
+    spawn-behavior-change-test-config
+    (term
+     (([(spawn-addr the-loc OLD)
+        (() (goto A))]
+       [(spawn-addr second-loc OLD)
+        (() (goto A))]
+       [(spawn-addr third-loc OLD)
+        (() (goto A))])
+      ([(blurred-spawn-addr the-loc)
+        ((() (goto A)))]
+       [(blurred-spawn-addr second-loc)
+        ((() (goto B)))])
+      ())))
+   'eq))
 
 ;; comparison-result comparison-result -> comparison-result
 (define (comp-result-and c1 c2)
@@ -2696,29 +2771,39 @@
              'gt)))))
 
 (module+ test
-  ;; TODO: update these tests
-
-  ;; (test-equal? "actor-compare-behavior: new atomic behavior"
-  ;;   (csa#-actor-compare-behavior
-  ;;    behavior-test-config
-  ;;    (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto D)) null null null))
-  ;;   'not-gteq)
-  ;; (test-equal? "actor-compare-behavior: old atomic behavior"
-  ;;   (csa#-actor-compare-behavior
-  ;;    behavior-test-config
-  ;;    (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto A)) null null null))
-  ;;   'eq)
-  ;; (test-equal? "actor-compare-behavior: new collective behavior"
-  ;;   (csa#-actor-compare-behavior
-  ;;    behavior-test-config
-  ;;    (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto D)) null null null))
-  ;;   'gt)
-  ;; (test-equal? "actor-compare-behavior: old collective behavior"
-  ;;   (csa#-actor-compare-behavior
-  ;;    behavior-test-config
-  ;;    (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto B)) null null null))
-  ;;   'eq)
-  )
+  (test-equal? "actor-compare-behavior: new atomic behavior"
+    (csa#-actor-compare-behavior
+     behavior-test-config
+     (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto D)) null null null)
+     (term (([(init-addr 1) (() (goto D))])
+           ([(blurred-spawn-addr 2)
+             ((() (goto B))
+              (() (goto C)))])
+           ())))
+    'not-gteq)
+  (test-equal? "actor-compare-behavior: old atomic behavior"
+    (csa#-actor-compare-behavior
+     behavior-test-config
+     (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto A)) null null null)
+     behavior-test-config)
+    'eq)
+  (test-equal? "actor-compare-behavior: new collective behavior"
+    (csa#-actor-compare-behavior
+     behavior-test-config
+     (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto D)) null null null)
+     (term (([(init-addr 1) (() (goto A))])
+            ([(blurred-spawn-addr 2)
+              ((() (goto B))
+               (() (goto C))
+               (() (goto D)))])
+            ())))
+    'gt)
+  (test-equal? "actor-compare-behavior: old collective behavior"
+    (csa#-actor-compare-behavior
+     behavior-test-config
+     (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto B)) null null null)
+     behavior-test-config)
+    'eq))
 
 ;; Returns #t if the action represented by the effect's trigger can happen again after applying the
 ;; given transition effect to the config, assuming the transition effect transitions the actor to the
