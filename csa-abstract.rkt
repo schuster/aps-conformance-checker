@@ -2676,15 +2676,15 @@
 
 ;; Returns the list of all addresses in the given term (possibly with duplicates)
 (define (csa#-contained-addresses t)
-  (term (csa#-contained-addresses/mf ,t)))
-
-(define-metafunction csa#
-  csa#-contained-addresses/mf : any -> (a# ...)
-  [(csa#-contained-addresses/mf a#) (a#)]
-  [(csa#-contained-addresses/mf (any ...))
-   (any_addr ... ...)
-   (where ((any_addr ...) ...) ((csa#-contained-addresses/mf any) ...))]
-  [(csa#-contained-addresses/mf _) ()])
+  (match t
+    [(or `(init-addr ,_)
+         `(spawn-addr ,_ ,_)
+         `(blurred-spawn-addr ,_)
+         `(* (Addr ,_))
+         `(obs-ext ,_))
+     (list t)]
+    [(list subterms ...) (append* (map csa#-contained-addresses subterms))]
+    [_ null]))
 
 (module+ test
   (test-equal? "csa#-contained-addresses"
