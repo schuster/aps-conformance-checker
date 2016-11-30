@@ -366,7 +366,7 @@
          (goto q v# ..._n))
         behavior])
     ;; TODO: deal with the case where x_m shadows an x_q
-    (inject/H# (term (csa#-subst-n e# [x_m ,message] [x_q v#] ...)))))
+    (inject/H# (apply csa#-subst-n (term e#) (term [x_m ,message]) (term ([x_q v#] ...))))))
 
 ;; Abstractly removes the entry in i# corresponding to the packet (a# v#), which will actually remove
 ;; it if its multiplicity is single, else leave it there if its multiplicity is many (because removing
@@ -386,7 +386,7 @@
   get-timeout-handler-exp/mf : b# -> e# or #f
   [(get-timeout-handler-exp/mf ((_ ... (define-state (q [x_q τ_q] ..._n) _ _ [(timeout _) e#]) _ ...)
                                 (goto q v# ..._n)))
-   (csa#-subst-n e# [x_q v#] ...)]
+   (csa#-subst-n/mf e# [x_q v#] ...)]
   [(get-timeout-handler-exp/mf _) #f])
 
 ;; Returns #t if the configuration has any in-transit messages for the given internal address; #f
@@ -536,7 +536,7 @@
     (==> (case (* (Union _ ... [t τ ..._n] _ ...))
            [(t x ..._n) e#]
            _ ...)
-         (csa#-subst-n e# [x (* τ)] ...)
+         (csa#-subst-n/mf e# [x (* τ)] ...)
          CaseWildcardSuccess)
     (==> (case (* (Union [t_val τ_val ...] ...))
            ;; Only fail if there is at least one more clause; type safety guarantees that at least one
@@ -551,7 +551,7 @@
     (==> (case (variant t v# ..._n)
            [(t x ..._n) e#]
            _ ...)
-         (csa#-subst-n e# [x v#] ...)
+         (csa#-subst-n/mf e# [x v#] ...)
          CaseVariantSuccess)
     (==> (case (variant t v# ...)
            [(t_other x ...) e#]
@@ -563,7 +563,7 @@
 
     ;; Let
     (==> (let ([x v#] ...) e#)
-         (csa#-subst-n e# [x v#] ...)
+         (csa#-subst-n/mf e# [x v#] ...)
          Let)
 
     ;; Records
@@ -765,7 +765,7 @@
            e#_body)
          (side-condition (member (term any_constructor) (list 'list 'vector)))
          (where e#_unrolled-body
-                (loop-context (csa#-subst-n e#_body [x_fold v#_fold] [x_item v#_item])))
+                (loop-context (csa#-subst-n/mf e#_body [x_fold v#_fold] [x_item v#_item])))
          ForLoop1)
     (==> (for/fold ([x_fold v#_fold])
                    ;; the "any" here lets us abstract over Listof/Vectorof
@@ -776,7 +776,7 @@
            e#_body)
          (side-condition (member (term any_type) (list 'Listof 'Vectorof)))
          (where e#_unrolled-body
-                (loop-context (csa#-subst-n e#_body [x_fold v#_fold] [x_item (* τ)])))
+                (loop-context (csa#-subst-n/mf e#_body [x_fold v#_fold] [x_item (* τ)])))
          ForLoopWildcard1)
     (==> (for/fold ([x_fold v#_fold]) _ _)
          v#_fold
@@ -814,7 +814,7 @@
 
     ;; Spawn
     (==> (spawn any_location τ e# Q# ...)
-         (spawning a#int τ (csa#-subst-n e# [self (τ a#int)]) (csa#-subst/Q# Q# self (τ a#int)) ...)
+         (spawning a#int τ (csa#-subst-n/mf e# [self (τ a#int)]) (csa#-subst/Q# Q# self (τ a#int)) ...)
          (where a#int (spawn-addr any_location NEW))
          SpawnStart)
     (--> ((in-hole E# (spawning a#int τ (in-hole E#_2 (goto q v# ...)) Q# ...))
@@ -1197,65 +1197,76 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
 
-(define-metafunction csa#
-  csa#-subst-n : e# (x v#) ... -> e#
-  [(csa#-subst-n e#) e#]
-  [(csa#-subst-n e# (x v#) any_rest ...)
-   (csa#-subst-n (csa#-subst e# x v#) any_rest ...)])
+(define (csa#-subst-n exp . bindings)
+  (for/fold ([exp-so-far exp])
+            ([binding bindings])
+    (csa#-subst exp-so-far (first binding) (second binding))))
 
 (define-metafunction csa#
-  csa#-subst : e# x v# -> e#
-  [(csa#-subst x x v#) v#]
-  [(csa#-subst x x_2 v#) x]
-  ;; [(csa#-subst n x v) n]
-  [(csa#-subst (* τ) _ _) (* τ)]
-  [(csa#-subst τa# _ _) τa#]
-  [(csa#-subst (spawn any_location τ e# Q# ...) self v#) (spawn any_location τ e# Q# ...)]
-  [(csa#-subst (spawn any_location τ e# Q# ...) x v#)
-    (spawn any_location τ (csa#-subst e# x v#) (csa#-subst/Q# Q# x v#) ...)]
-  [(csa#-subst (goto q e# ...) x v#) (goto q (csa#-subst e# x v#) ...)]
-  [(csa#-subst (send e#_1 e#_2) x v#)
-   (send (csa#-subst e#_1 x v#) (csa#-subst e#_2 x v#))]
-  [(csa#-subst (begin e# ...) x v#) (begin (csa#-subst e# x v#) ...)]
-  [(csa#-subst (let ([x_let e#] ...) e#_body) x v#)
-   (let ([x_let (csa#-subst e# x v#)] ...) e#_body)
-   (where (_ ... x _ ...) (x_let ...))] ; check that x is in the list of bound vars
-  [(csa#-subst (let ([x_let e#] ...) e#_body) x v#)
-   (let ([x_let (csa#-subst e# x v#)] ...) (csa#-subst e#_body x v#))]
-  [(csa#-subst (case e# [(t x_clause ...) e#_clause] ...) x v#)
-   (case (csa#-subst e# x v#) (csa#-subst/case-clause [(t x_clause ...) e#_clause] x v#) ...)]
-  [(csa#-subst (variant t e# ...) x v#) (variant t (csa#-subst e# x v#) ...)]
-  [(csa#-subst (printf string e# ...) x v#) (printf string (csa#-subst e# x v#) ...)]
-  [(csa#-subst (primop e# ...) x v#) (primop (csa#-subst e# x v#) ...)]
-  [(csa#-subst (record [l e#] ...) x v#) (record [l (csa#-subst e# x v#)] ...)]
-  [(csa#-subst (: e# l) x v#) (: (csa#-subst e# x v#) l)]
-  [(csa#-subst (! e#_1 [l e#_2]) x v#)
-   (! (csa#-subst e#_1 x v#) [l (csa#-subst e#_2 x v#)])]
-  [(csa#-subst (fold τ e#) x v#) (fold τ (csa#-subst e# x v#))]
-  [(csa#-subst (folded τ e#) x v#) (folded τ (csa#-subst e# x v#))]
-  [(csa#-subst (unfold τ e#) x v#) (unfold τ (csa#-subst e# x v#))]
-  [(csa#-subst (list e# ...) x v#) (list (csa#-subst e# x v#) ...)]
-  [(csa#-subst (list-val e# ...) x v#) (list-val (csa#-subst e# x v#) ...)]
-  [(csa#-subst (vector e# ...) x v#) (vector (csa#-subst e# x v#) ...)]
-  [(csa#-subst (vector-val e# ...) x v#) (vector-val (csa#-subst e# x v#) ...)]
-  [(csa#-subst (hash [e#_key e#_val] ...) x v#)
-   (hash [(csa#-subst e#_key x v#) (csa#-subst e#_val x v#)] ...)]
-  [(csa#-subst (hash-val v#_element ...) x v#) (hash-val (csa#-subst v#_element x v#) ...)]
-  [(csa#-subst (hash-val v#_element ...) x v#) (hash-val (csa#-subst v#_element x v#) ...)]
-  [(csa#-subst (for/fold ([x_1 e#_1]) ([x_2 e#_2]) e#_3) x_1 v#)
-   (for/fold ([x_1 (csa#-subst e#_1 x_1 v#)]) ([x_2 (csa#-subst e#_2 x_1 v#)]) e#_3)]
-  [(csa#-subst (for/fold ([x_1 e#_1]) ([x_2 e#_2]) e#_3) x_2 v#)
-   (for/fold ([x_1 (csa#-subst e#_1 x_2 v#)]) ([x_2 (csa#-subst e#_2 x_2 v#)]) e#_3)]
-  [(csa#-subst (for/fold ([x_1 e#_1]) ([x_2 e#_2]) e#_3) x v#)
-   (for/fold ([x_1 (csa#-subst e#_1 x v#)]) ([x_2 (csa#-subst e#_2 x v#)]) (csa#-subst e#_3 x v#))]
-  [(csa#-subst (loop-context e#) x v#) (loop-context (csa#-subst e# x v#))])
+  ;; TODO: look into whether making this contract more precise causes performance issues
+  csa#-subst-n/mf : any_1 any_2 ... -> any_3
+  [(csa#-subst-n/mf any_exp any_bindings ...)
+   ,(apply csa#-subst-n (term any_exp) (term (any_bindings ...)))])
+
+(define typed-address? (redex-match csa# τa#))
+(define primop? (redex-match csa# primop))
+
+(module+ test
+  (check-not-false (typed-address? '(Nat (obs-ext 1))))
+  (check-equal? (typed-address? '(foobar)) #f))
+
+(define (csa#-subst exp var val)
+  ;; NOTE: substitution written in Racket rather than Redex for performance
+  (define (do-subst other-exp) (csa#-subst other-exp var val))
+  (match exp
+    [(? symbol?) (if (eq? exp var) val exp)]
+    ;; NOTE: if multiplication is added, this pattern must be more precise
+    [`(* ,type) exp]
+    [(? typed-address?) exp]
+    [`(spawn ,loc ,type ,init ,states ...)
+     (if (eq? var 'self)
+         exp
+         `(spawn ,loc ,type ,(csa#-subst init var val) ,@(map (lambda (s)
+                                                                (term (csa#-subst/Q# ,s ,var ,val)))
+                                                              states)))]
+    [`(goto ,s ,args ...) `(goto ,s ,@(map do-subst args))]
+    [(list (and kw (or 'send 'begin 'printf (? primop?) 'list 'list-val 'vector 'vector-val 'hash-val 'loop-context)) args ...)
+     `(,kw ,@(map do-subst args))]
+    [`(let ([,new-vars ,new-vals] ...) ,body)
+     (define bindings (map (lambda (nvar nval) `(,nvar ,(do-subst nval))) new-vars new-vals))
+     (if (member var new-vars)
+         `(let ,bindings ,body)
+         `(let ,bindings ,(do-subst body)))]
+    [`(case ,body ,clauses ...)
+     `(case ,(do-subst body) ,@(map (lambda (cl) (term (csa#-subst/case-clause ,cl ,var ,val))) clauses))]
+    [`(variant ,tag ,args ...) `(variant ,tag ,@(map do-subst args))]
+    [`(record [,labels ,fields] ...)
+     `(record ,@(map (lambda (l f) `(,l ,(do-subst f))) labels fields))]
+    [`(: ,e ,l) `(: ,(do-subst e) ,l)]
+    [`(! ,e [,l ,e2]) `(! ,(do-subst e) [,l ,(do-subst e2)])]
+    [(list (and kw (or 'fold 'unfold 'folded)) type args ...)
+     `(,kw ,type ,@(map do-subst args))]
+    [`(hash [,keys ,vals] ...)
+     `(hash ,@(map (lambda (k v) `[,(do-subst k) ,(do-subst v)]) keys vals))]
+    [`(for/fold ([,x1 ,e1]) ([,x2 ,e2]) ,body)
+     `(for/fold ([,x1 ,(do-subst e1)])
+                ([,x2 ,(do-subst e2)])
+        ,(if (member var (list x1 x2))
+             body
+             (do-subst body)))]))
+
+;; TODO: refactor this out
+(define-metafunction csa#
+  csa#-subst/mf : e# x v# -> e#
+  [(csa#-subst/mf any_1 any_2 any_3)
+   ,(csa#-subst (term any_1) (term any_2) (term any_3))])
 
 (define-metafunction csa#
   csa#-subst/case-clause : [(t x ...) e#] x v# -> [(t x ...) e#]
   [(csa#-subst/case-clause [(t x_1 ... x x_2 ...) e#] x v#)
    [(t x_1 ... x x_2 ...) e#]]
   [(csa#-subst/case-clause [(t x_other ...) e#] x v#)
-   [(t x_other ...) (csa#-subst e# x v#)]])
+   [(t x_other ...) ,(csa#-subst (term e#) (term x) (term v#))]])
 
 (define-metafunction csa#
   csa#-subst/Q# : Q# x v# -> Q#
@@ -1269,26 +1280,33 @@
    (where (_ ... x _ ...) (x_q ...))]
   ;; Case 3: timeout, var shadowed by message param
   [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e# [(timeout v#_t) e#_t]) x_m v#)
-   (define-state (q [x_q τ] ...) (x_m) e# [(timeout v#_t) (csa#-subst e#_t x_m v#)])]
+   (define-state (q [x_q τ] ...) (x_m) e# [(timeout v#_t) ,(csa#-subst (term e#_t) (term x_m) (term v#))])]
   ;; Case 4: timeout, no shadowing
   [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e# [(timeout v#_t) e#_t]) x v#)
    (define-state (q [x_q τ] ...) (x_m)
-     (csa#-subst e# x v#)
-     [(timeout v#_t) (csa#-subst e#_t x v#)])]
+     ,(csa#-subst (term e#) (term x) (term v#))
+     [(timeout v#_t) ,(csa#-subst (term e#_t) (term x) (term v#))])]
   ;; Case 5: no timeout, no shadowing
   [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e#) x v#)
-   (define-state (q [x_q τ] ...) (x_m) (csa#-subst e# x v#))])
+   (define-state (q [x_q τ] ...) (x_m) ,(csa#-subst (term e#) (term x) (term v#)))])
 
 (module+ test
+  (check-equal? (csa#-subst '(begin x) 'x '(* Nat)) '(begin (* Nat)))
+  (check-equal? (csa#-subst '(send x y) 'y '(* Nat)) '(send x (* Nat)))
+  (check-equal? (csa#-subst '(Nat (obs-ext 1)) 'x '(* Nat)) '(Nat (obs-ext 1)))
+  (check-equal? (csa#-subst '(= x y) 'x '(* Nat)) '(= (* Nat) y))
+  (check-equal? (csa#-subst '(! (record [a x]) [a (* Nat)]) 'x '(* Nat))
+                '(! (record [a (* Nat)]) [a (* Nat)]))
   (check-equal? (term (csa#-subst/case-clause [(Cons p) (begin p x)] p (* Nat)))
                 (term [(Cons p) (begin p x)]))
   (check-equal? (term (csa#-subst/case-clause [(Cons p) (begin p x)] x (* Nat)))
                 (term [(Cons p) (begin p (* Nat))]))
-  (check-equal? (term (csa#-subst (list (* Nat) x) x (* Nat)))
+  (check-equal? (term (csa#-subst/mf (list (* Nat) x) x (* Nat)))
                 (term (list (* Nat) (* Nat))))
-  (check-equal? (term (csa#-subst (vector (* Nat) x) x (* Nat)))
+  (check-equal? (term (csa#-subst/mf (vector (* Nat) x) x (* Nat)))
                 (term (vector (* Nat) (* Nat))))
-  (test-equal? "spawn subst 1" (term (csa#-subst (spawn loc
+  (check-equal? (term (csa#-subst/mf (variant Foo (* Nat)) a (* Nat))) (term (variant Foo (* Nat))))
+  (test-equal? "spawn subst 1" (term (csa#-subst/mf (spawn loc
                                          Nat
                                          (goto A self (* Nat))
                                          (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
@@ -1299,7 +1317,7 @@
                              (goto A self (* Nat))
                              (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))))
   (test-equal? "spawn subst 2"
-               (term (csa#-subst (spawn loc
+               (term (csa#-subst/mf (spawn loc
                                          Nat
                                          (goto A self (* Nat))
                                          (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
@@ -1310,7 +1328,7 @@
                              (goto A self (* Nat))
                              (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))))
   (test-equal? "spawn subst 3"
-               (term (csa#-subst (spawn loc
+               (term (csa#-subst/mf (spawn loc
                                          Nat
                                          (goto A self (* Nat))
                                          (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
@@ -1320,9 +1338,6 @@
                              Nat
                              (goto A self (* Nat))
                              (define-state (A [s Nat] [a Nat]) (x) (goto A x (Nat (init-addr 2)) self))))))
-
-(module+ test
-  (check-equal? (term (csa#-subst (variant Foo (* Nat)) a (* Nat))) (term (variant Foo (* Nat)))))
 
 ;; Substitutes the second type for X in the first type
 (define-metafunction csa#
