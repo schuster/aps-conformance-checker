@@ -1061,7 +1061,7 @@
 ;; Change LOG-RUN to #t to write relevant checking data to a file so that the process of the check can
 ;; be recreated after the fact without creating the simulation graph all over again.
 (define LOG-RUN #f)
-(define LOG-FILE-PATH "checker_run_log.dat")
+(define LOG-FILE-PATH "checker_run_log.fasl")
 
 (define (open-log)
   (if LOG-RUN (open-output-file LOG-FILE-PATH #:exists 'replace) #f))
