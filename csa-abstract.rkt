@@ -335,7 +335,7 @@
 ;; i# trigger# -> (Listof csa#-transtion-effect)
 (define (csa#-eval-trigger config trigger abort)
   (define cache-key (cons config trigger))
-  (match #f ;; (hash-ref trigger-eval-cache cache-key #f)
+  (match (hash-ref trigger-eval-cache cache-key #f)
     [#f
      (define result
        (match trigger
