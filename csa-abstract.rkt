@@ -330,17 +330,26 @@
 (define (csa#-make-external-trigger address message)
   (term (external-receive ,address ,message)))
 
+(define trigger-eval-cache (make-hash))
+
 ;; i# trigger# -> (Listof csa#-transtion-effect)
 (define (csa#-eval-trigger config trigger abort)
-  (match trigger
-    [`(timeout/empty-queue ,addr)
-     (eval-timeout config addr trigger abort)]
-    [`(timeout/non-empty-queue ,addr)
-     (eval-timeout config addr trigger abort)]
-    [`(internal-receive ,addr ,message)
-     (eval-message config addr message trigger abort)]
-    [`(external-receive ,addr ,message)
-     (eval-message config addr message trigger abort)]))
+  (define cache-key (cons config trigger))
+  (match #f ;; (hash-ref trigger-eval-cache cache-key #f)
+    [#f
+     (define result
+       (match trigger
+         [`(timeout/empty-queue ,addr)
+          (eval-timeout config addr trigger abort)]
+         [`(timeout/non-empty-queue ,addr)
+          (eval-timeout config addr trigger abort)]
+         [`(internal-receive ,addr ,message)
+          (eval-message config addr message trigger abort)]
+         [`(external-receive ,addr ,message)
+          (eval-message config addr message trigger abort)]))
+     (hash-set! trigger-eval-cache cache-key result)
+     result]
+    [cached cached]))
 
 (define (eval-timeout config addr trigger abort)
   (append*
