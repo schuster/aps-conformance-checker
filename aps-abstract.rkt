@@ -604,17 +604,6 @@
                        any_spawns
                        any_receptionists)]
 
-  ;; TODO: this should NOT match, because we can't be sure it's really an instance of the correct
-  ;; variant
-  [(aps#-list-matches-po?/j (((* τ) po) ...) σ# any_self-addr any_spawns any_receptionists)
-   -----
-   (aps#-matches-po?/j (* (Union _ ... [t τ ..._n] _ ...))
-                       σ#
-                       (variant t po ..._n)
-                       any_self-addr
-                       any_spawns
-                       any_receptionists)]
-
   ;; Records
 
   [(aps#-list-matches-po?/j ((v# po) ...) σ# any_self-addr any_spawns any_receptionists)
