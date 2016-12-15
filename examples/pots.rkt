@@ -69,7 +69,10 @@
   (Busy))
 
 (define-variant LimMessage
-  (Connect [peer (Addr (Union))]) ; the Connect message's usage of the peer address isn't specified in the protocol
+  ; the Connect/Disconnect messages' usage of the peer address is not specified in any source I've
+  ; found, so we leave it as an empty union address here
+  (Connect [peer (Addr (Union))])
+  (Disconnect [peer (Addr (Union))])
   (StartTone [tone Tone])
   (StopTone)
   (StartRing)
@@ -77,7 +80,8 @@
 
 ;; recursive variants aren't supported in the sugared language right now
 (define-type PeerMessage ,desugared-peer-message-type)
-(define-function (Seize [peer (Addr (Union [PeerMessage PeerMessage]))]) (variant Seize peer))
+(define-type PeerMessageAddress (Addr (Union [PeerMessage PeerMessage])))
+(define-function (Seize [peer PeerMessageAddress]) (variant Seize peer))
 (define-function (Seized) (variant Seized))
 (define-function (Rejected) (variant Rejected))
 (define-function (Answered) (variant Answered))
@@ -85,17 +89,22 @@
 
 ;; Recursive types require a lot of extra annotations/folding, so we abstract that into one function
 ;; here
-(define-function (send-peer [peer (Addr (Union [PeerMessage PeerMessage]))] [message PeerMessage])
-  (send peer (fold PeerMessage (variant PeerMessage message))))
+(define-function (send-peer [peer PeerMessageAddress] [message PeerMessage])
+  (send peer (variant PeerMessage (fold PeerMessage message))))
 
 (define-type ListOfDigits
   (minfixpt TheList
             (Union (NoDigits)
                    (Cons Nat TheList))))
+(define-function (NoDigits)
+  (variant NoDigits))
+
+(define-function (Cons [n Nat] [l ListOfDigits])
+  (variant Cons l))
 
 (define-variant AnalyzerResult
   (Invalid)
-  (Valid [peer (Addr (Union [PeerMessage PeerMessage]))])
+  (Valid [peer PeerMessageAddress])
   (GetMoreDigits))
 
 (define-variant AnalyzerMessage
@@ -109,7 +118,7 @@
    [Digit Nat]
    ;; analyzer messages
    [Invalid]
-   [Valid (Addr (Union [PeerMessage PeerMessage]))]
+   [Valid PeerMessageAddress]
    [GetMoreDigits]
    ;; peer messages (have to add a tag around these because of the recursive type
    [PeerMessage PeerMessage]))
@@ -121,7 +130,7 @@
 (define-actor ControllerMessage (PotsController [lim (Addr LimMessage)] [analyzer (Addr AnalyzerMessage)])
   () ; no actor-specific functions
 
-  (goto Idle lim analyzer)
+  (goto Idle)
 
   (define-state (Idle) (m)
     (case m
@@ -146,208 +155,207 @@
       [(Valid a) (goto Idle)]
       [(GetMoreDigits) (goto Idle)]))
 
-  ;; (define-state (GettingFirstDigit) (m)
-  ;;   (case m
-  ;;     [(OnHook)
-  ;;      (send lim (StopTone))
-  ;;      (goto Idle)]
-  ;;     [(Digit n)
-  ;;      (let ([digits (fold ListOfDigits (Cons n (fold ListOfDigits (NoDigits))))])
-  ;;        (send lim (StopTone))
-  ;;        (send analyzer (AnalysisRequest digits self))
-  ;;        (goto WaitOnAnalysis digits))]
-  ;;     [(PeerMessage p)
-  ;;      (case (unfold PeerMessage p)
-  ;;        [(Seize peer)
-  ;;         (send-peer peer (Rejected))
-  ;;         (goto GettingFirstDigit)]
-  ;;        ;; ignore other peer messages
-  ;;        [(Seized) (goto GettingFirstDigit)]
-  ;;        [(Rejected) (goto GettingFirstDigit)]
-  ;;        [(Answered) (goto GettingFirstDigit)]
-  ;;        [(Cleared) (goto GettingFirstDigit)])]
-  ;;     ;; ignore other messages
-  ;;     [(OffHook) (goto GettingFirstDigit)]
-  ;;     [(Invalid) (goto GettingFirstDigit)]
-  ;;     [(Valid a) (goto GettingFirstDigit)]
-  ;;     [(GetMoreDigits) (goto GettingFirstDigit)]))
+  (define-state (GettingFirstDigit) (m)
+    (case m
+      [(OnHook)
+       (send lim (StopTone))
+       (goto Idle)]
+      [(Digit n)
+       (let ([digits (fold ListOfDigits (Cons n (fold ListOfDigits (NoDigits))))])
+         (send lim (StopTone))
+         (send analyzer (AnalysisRequest digits self))
+         (goto WaitOnAnalysis digits))]
+      [(PeerMessage p)
+       (case (unfold PeerMessage p)
+         [(Seize peer)
+          (send-peer peer (Rejected))
+          (goto GettingFirstDigit)]
+         ;; ignore other peer messages
+         [(Seized) (goto GettingFirstDigit)]
+         [(Rejected) (goto GettingFirstDigit)]
+         [(Answered) (goto GettingFirstDigit)]
+         [(Cleared) (goto GettingFirstDigit)])]
+      ;; ignore other messages
+      [(OffHook) (goto GettingFirstDigit)]
+      [(Invalid) (goto GettingFirstDigit)]
+      [(Valid a) (goto GettingFirstDigit)]
+      [(GetMoreDigits) (goto GettingFirstDigit)]))
 
-  ;; (define-state (GettingNumber number) (m)
-  ;;   (case m
-  ;;     [(OnHook) (goto Idle)]
-  ;;     [(Digit n)
-  ;;      (let ([digits (fold ListOfDigits (Cons n number))]))
-  ;;      (send analyzer (AnalysisRequest digits self))
-  ;;      (goto WaitOnAnalysis digits)]
-  ;;     [(PeerMessage p)
-  ;;      (case (unfold PeerMessage p)
-  ;;        [(Seize peer)
-  ;;         (send-peer peer (Rejected))
-  ;;         (goto GettingNumber number)]
-  ;;        ;; ignore other peer messages
-  ;;        [(Seized) (goto GettingNumber number)]
-  ;;        [(Rejected) (goto GettingNumber number)]
-  ;;        [(Answered) (goto GettingNumber number)]
-  ;;        [(Cleared) (goto GettingNumber number)])]
-  ;;     ;; ignore other messages
-  ;;     [(OffHook) (goto GettingNumber number)]
-  ;;     [(Invalid) (goto GettingNumber number)]
-  ;;     [(Valid a) (goto GettingNumber number)]
-  ;;     [(GetMoreDigits) (goto GettingNumber number)]))
+  (define-state (GettingNumber [number ListOfDigits]) (m)
+    (case m
+      [(OnHook) (goto Idle)]
+      [(Digit n)
+       (let ([digits (fold ListOfDigits (Cons n number))])
+         (send analyzer (AnalysisRequest digits self))
+         (goto WaitOnAnalysis digits))]
+      [(PeerMessage p)
+       (case (unfold PeerMessage p)
+         [(Seize peer)
+          (send-peer peer (Rejected))
+          (goto GettingNumber number)]
+         ;; ignore other peer messages
+         [(Seized) (goto GettingNumber number)]
+         [(Rejected) (goto GettingNumber number)]
+         [(Answered) (goto GettingNumber number)]
+         [(Cleared) (goto GettingNumber number)])]
+      ;; ignore other messages
+      [(OffHook) (goto GettingNumber number)]
+      [(Invalid) (goto GettingNumber number)]
+      [(Valid a) (goto GettingNumber number)]
+      [(GetMoreDigits) (goto GettingNumber number)]))
 
-  ;; (define-state (WaitOnAnalysis number) (m)
-  ;;   (case m
-  ;;     [(OnHook) (goto Idle)]
-  ;;     [(PeerMessage p)
-  ;;      (case (unfold PeerMessage p)
-  ;;        [(Seize peer)
-  ;;         (send-peer peer (Rejected))
-  ;;         (goto WaitOnAnalysis lim analyzer number)]
-  ;;        ;; ignore other peer messages
-  ;;        [(Seized) (goto WaitOnAnalysis number)]
-  ;;        [(Rejected) (goto WaitOnAnalysis number)]
-  ;;        [(Answered) (goto WaitOnAnalysis number)]
-  ;;        [(Cleared) (goto WaitOnAnalysis number)])]
-  ;;     [(Invalid)
-  ;;      (send lim (StartTone (Fault)))
-  ;;      (goto WaitOnHook (HaveTone))]
-  ;;     [(Valid peer)
-  ;;      (send-peer peer (Seize self))
-  ;;      (goto MakeCallToB peer)]
-  ;;     [(GetMoreDigits) (goto GettingNumber number)]
-  ;;     ;; ignore other messages
-  ;;     ;;
-  ;;     ;; Note: because we don't have selective receive, we throw away any numbers dialed while
-  ;;     ;; waiting on the analysis. Ideally we would save them in some sort of stack instead
-  ;;     [(OffHook) (goto WaitOnAnalysis number)]
-  ;;     [(Digit n) (goto WaitOnAnalysis number)]))
+  (define-state (WaitOnAnalysis [number ListOfDigits]) (m)
+    (case m
+      [(OnHook) (goto Idle)]
+      [(PeerMessage p)
+       (case (unfold PeerMessage p)
+         [(Seize peer)
+          (send-peer peer (Rejected))
+          (goto WaitOnAnalysis lim analyzer number)]
+         ;; ignore other peer messages
+         [(Seized) (goto WaitOnAnalysis number)]
+         [(Rejected) (goto WaitOnAnalysis number)]
+         [(Answered) (goto WaitOnAnalysis number)]
+         [(Cleared) (goto WaitOnAnalysis number)])]
+      [(Invalid)
+       (send lim (StartTone (Fault)))
+       (goto WaitOnHook (HaveTone))]
+      [(Valid peer)
+       (send-peer peer (Seize self))
+       (goto MakeCallToB peer)]
+      [(GetMoreDigits) (goto GettingNumber number)]
+      ;; ignore other messages
+      ;;
+      ;; Note: because we don't have selective receive, we throw away any numbers dialed while
+      ;; waiting on the analysis. Ideally we would save them in some sort of stack instead
+      [(OffHook) (goto WaitOnAnalysis number)]
+      [(Digit n) (goto WaitOnAnalysis number)]))
 
-  ;; ;; Called "calling_B" in Ulf's version
-  ;; (define-state (MakeCallToB peer) (m)
-  ;;   (case m
-  ;;     [(OnHook) (goto Idle)]
-  ;;     [(PeerMessage p)
-  ;;      (case (unfold PeerMessage p)
-  ;;        [(Seize new-peer)
-  ;;         (send-peer new-peer (Rejected))
-  ;;         (goto MakeCallToB peer)]
-  ;;        [(Seized)
-  ;;         (send lim (StartTone (Ring)))
-  ;;         (goto RingingASide peer)]
-  ;;        [(Rejected)
-  ;;         (send lim (StartTone (Busy)))
-  ;;         (goto WaitOnHook (HaveTone))]
-  ;;        ;; ignore the Cleared message; shouldn't happen here
-  ;;        [(Cleared)
-  ;;         (goto MakeCallToB peer)])]
-  ;;     ;; ignore other messages
-  ;;     [(OffHook) (goto MakeCallToB peer)]
-  ;;     [(Digit n) (goto MakeCallToB peer)]
-  ;;     [(Invalid) (goto MakeCallToB peer)]
-  ;;     [(Valid a) (goto MakeCallToB peer)]
-  ;;     [(GetMoreDigits) (goto MakeCallToB peer)]))
+  ;; Called "calling_B" in Ulf's version
+  (define-state (MakeCallToB [peer PeerMessageAddress]) (m)
+    (case m
+      [(OnHook) (goto Idle)]
+      [(PeerMessage p)
+       (case (unfold PeerMessage p)
+         [(Seize new-peer)
+          (send-peer new-peer (Rejected))
+          (goto MakeCallToB peer)]
+         [(Seized)
+          (send lim (StartTone (Ring)))
+          (goto RingingASide peer)]
+         [(Rejected)
+          (send lim (StartTone (Busy)))
+          (goto WaitOnHook (HaveTone))]
+         ;; ignore the Cleared message; shouldn't happen here
+         [(Cleared)
+          (goto MakeCallToB peer)])]
+      ;; ignore other messages
+      [(OffHook) (goto MakeCallToB peer)]
+      [(Digit n) (goto MakeCallToB peer)]
+      [(Invalid) (goto MakeCallToB peer)]
+      [(Valid a) (goto MakeCallToB peer)]
+      [(GetMoreDigits) (goto MakeCallToB peer)]))
 
-  ;; ;; the other phone is ringing
-  ;; (define-state (RingingASide peer) (m)
-  ;;   (case m
-  ;;     [(PeerMessage p)
-  ;;      (case (unfold PeerMessage p)
-  ;;        [(Seize new-peer)
-  ;;         (send-peer new-peer Rejected)
-  ;;         (goto RingingASide peer)]
-  ;;        [(Answered)
-  ;;         (send lim (StopTone))
-  ;;         (send lim (Connect peer))
-  ;;         (goto Speech peer)]
-  ;;        ;; ignore other peer messages
-  ;;        [(Seized) (goto RingingASide peer)]
-  ;;        [(Rejected) (goto RingingASide peer)]
-  ;;        [(Cleared) (goto RingingASide peer)])]
-  ;;     [(OnHook)
-  ;;      (send-peer peer (Cleared))
-  ;;      (send lim (StopTone))
-  ;;      (goto Idle)]
-  ;;     ;; ignore other messages
-  ;;     [(OffHook) (goto RingingASide peer)]
-  ;;     [(Digit n) (goto RingingASide peer)]
-  ;;     [(Invalid) (goto RingingASide peer)]
-  ;;     [(Valid a) (goto RingingASide peer)]
-  ;;     [(GetMoreDigits) (goto RingingASide peer)]))
+  ;; the other phone is ringing
+  (define-state (RingingASide [peer PeerMessageAddress]) (m)
+    (case m
+      [(PeerMessage p)
+       (case (unfold PeerMessage p)
+         [(Seize new-peer)
+          (send-peer new-peer Rejected)
+          (goto RingingASide peer)]
+         [(Answered)
+          (send lim (StopTone))
+          (send lim (Connect peer))
+          (goto Speech peer)]
+         ;; ignore other peer messages
+         [(Seized) (goto RingingASide peer)]
+         [(Rejected) (goto RingingASide peer)]
+         [(Cleared) (goto RingingASide peer)])]
+      [(OnHook)
+       (send-peer peer (Cleared))
+       (send lim (StopTone))
+       (goto Idle)]
+      ;; ignore other messages
+      [(OffHook) (goto RingingASide peer)]
+      [(Digit n) (goto RingingASide peer)]
+      [(Invalid) (goto RingingASide peer)]
+      [(Valid a) (goto RingingASide peer)]
+      [(GetMoreDigits) (goto RingingASide peer)]))
 
-  ;; ;; this phone is ringing
-  ;; (define-state (RingingBSide peer) (m)
-  ;;   (case m
-  ;;     [(PeerMessage p)
-  ;;      (case (unfold PeerMessage p)
-  ;;        [(Seize new-peer)
-  ;;         (send-peer new-peer (Rejected))
-  ;;         (goto RingingBSide peer)]
-  ;;        [(Cleared)
-  ;;         (send lim (StopRing))
-  ;;         (goto Idle)]
-  ;;        ;; ignore other peer messages
-  ;;        [(Seized) (goto RingingBSide peer)]
-  ;;        [(Rejected) (goto RingingBSide peer)]
-  ;;        [(Answered) (goto RingingBSide peer)])]
-  ;;     [(OffHook)
-  ;;      (send lim (StopRing))
-  ;;      (send-peer peer (Answered))
-  ;;      (goto Speech peer)]
-  ;;     ;; ignore other messages
-  ;;     [(OnHook) (goto RingingBSide peer)]
-  ;;     [(Digit n) (goto RingingBSide peer)]
-  ;;     [(Invalid) (goto RingingBSide peer)]
-  ;;     [(Valid a) (goto RingingBSide peer)]
-  ;;     [(GetMoreDigits) (goto RingingBSide peer)]))
+  ;; this phone is ringing
+  (define-state (RingingBSide [peer PeerMessageAddress]) (m)
+    (case m
+      [(PeerMessage p)
+       (case (unfold PeerMessage p)
+         [(Seize new-peer)
+          (send-peer new-peer (Rejected))
+          (goto RingingBSide peer)]
+         [(Cleared)
+          (send lim (StopRing))
+          (goto Idle)]
+         ;; ignore other peer messages
+         [(Seized) (goto RingingBSide peer)]
+         [(Rejected) (goto RingingBSide peer)]
+         [(Answered) (goto RingingBSide peer)])]
+      [(OffHook)
+       (send lim (StopRing))
+       (send-peer peer (Answered))
+       (goto Speech peer)]
+      ;; ignore other messages
+      [(OnHook) (goto RingingBSide peer)]
+      [(Digit n) (goto RingingBSide peer)]
+      [(Invalid) (goto RingingBSide peer)]
+      [(Valid a) (goto RingingBSide peer)]
+      [(GetMoreDigits) (goto RingingBSide peer)]))
 
-  ;; (define-state (Speech peer) (m)
-  ;;   (case m
-  ;;     [(PeerMessage p)
-  ;;      (case (unfold PeerMessage p)
-  ;;        [(Seize new-peer)
-  ;;         (send-peer new-peer (Rejected))
-  ;;         (goto Speech peer)]
-  ;;        [(Cleared) (goto WaitOnHook (NoTone))]
-  ;;        ;; ignore other peer messages
-  ;;        [(Seized) (goto Speech peer)]
-  ;;        [(Rejected) (goto Speech peer)]
-  ;;        [(Answered) (goto Speech peer)])]
-  ;;     [(OnHook)
-  ;;      (send lim (Disconnect peer))
-  ;;      (send-peer peer (Cleared))
-  ;;      (goto Idle)]
-  ;;     ;; ignore other messages
-  ;;     [(OffHook) (goto Speech peer)]
-  ;;     [(Digit n) (goto Speech peer)]
-  ;;     [(Invalid) (goto Speech peer)]
-  ;;     [(Valid a) (goto Speech peer)]
-  ;;     [(GetMoreDigits) (goto Speech peer)]))
+  (define-state (Speech [peer PeerMessageAddress]) (m)
+    (case m
+      [(PeerMessage p)
+       (case (unfold PeerMessage p)
+         [(Seize new-peer)
+          (send-peer new-peer (Rejected))
+          (goto Speech peer)]
+         [(Cleared) (goto WaitOnHook (NoTone))]
+         ;; ignore other peer messages
+         [(Seized) (goto Speech peer)]
+         [(Rejected) (goto Speech peer)]
+         [(Answered) (goto Speech peer)])]
+      [(OnHook)
+       (send lim (Disconnect peer))
+       (send-peer peer (Cleared))
+       (goto Idle)]
+      ;; ignore other messages
+      [(OffHook) (goto Speech peer)]
+      [(Digit n) (goto Speech peer)]
+      [(Invalid) (goto Speech peer)]
+      [(Valid a) (goto Speech peer)]
+      [(GetMoreDigits) (goto Speech peer)]))
 
-  ;; (define-state (WaitOnHook have-tone?) (m)
-  ;;   (case m
-  ;;     [(PeerMessage p)
-  ;;      (case (unfold PeerMessage p)
-  ;;        [(Seize new-peer)
-  ;;         (send-peer new-peer (Rejected))
-  ;;         (goto WaitOnHook have-tone?)]
-  ;;        ;; ignore other peer messages
-  ;;        [(Seized) (goto WaitOnHook have-tone?)]
-  ;;        [(Rejected) (goto WaitOnHook have-tone?)]
-  ;;        [(Answered) (goto WaitOnHook have-tone?)]
-  ;;        [(Cleared) (goto WaitOnHook have-tone?)])]
-  ;;     [(OnHook)
-  ;;      (case have-tone?
-  ;;        [(HaveTone)
-  ;;         (send lim 'StopTone)
-  ;;         (goto Idle)]
-  ;;        [(NoTone) (goto Idle)])]
-  ;;     ;; ignore other messages
-  ;;     [(OffHook) (goto WaitOnHook have-tone?)]
-  ;;     [(Digit n) (goto WaitOnHook have-tone?)]
-  ;;     [(Invalid) (goto WaitOnHook have-tone?)]
-  ;;     [(Valid a) (goto WaitOnHook have-tone?)]
-  ;;     [(GetMoreDigits) (goto WaitOnHook have-tone?)]))
-  )
+  (define-state (WaitOnHook [have-tone? HaveTone?]) (m)
+    (case m
+      [(PeerMessage p)
+       (case (unfold PeerMessage p)
+         [(Seize new-peer)
+          (send-peer new-peer (Rejected))
+          (goto WaitOnHook have-tone?)]
+         ;; ignore other peer messages
+         [(Seized) (goto WaitOnHook have-tone?)]
+         [(Rejected) (goto WaitOnHook have-tone?)]
+         [(Answered) (goto WaitOnHook have-tone?)]
+         [(Cleared) (goto WaitOnHook have-tone?)])]
+      [(OnHook)
+       (case have-tone?
+         [(HaveTone)
+          (send lim (StopTone))
+          (goto Idle)]
+         [(NoTone) (goto Idle)])]
+      ;; ignore other messages
+      [(OffHook) (goto WaitOnHook have-tone?)]
+      [(Digit n) (goto WaitOnHook have-tone?)]
+      [(Invalid) (goto WaitOnHook have-tone?)]
+      [(Valid a) (goto WaitOnHook have-tone?)]
+      [(GetMoreDigits) (goto WaitOnHook have-tone?)])))
 
 (actors [controller (spawn 1 PotsController lim analyzer)])))
 
