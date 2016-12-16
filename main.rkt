@@ -100,6 +100,11 @@
           (partition-by-satisfaction simulation-pairs incoming-steps simulation-related-spec-steps))
         ;; (printf "Finished obligation fulfillment check at: ~a\n"
         ;;         (date->string (seconds->date (current-seconds)) #t))
+        ;; (printf "Unsatisfying pairs: ~s\n"
+        ;;         (for/list ([p unsatisfying-pairs])
+        ;;           (cons
+        ;;            (impl-config-without-state-defs (config-pair-impl-config p))
+        ;;            (spec-config-without-state-defs (config-pair-spec-config p)))))
         (match-define (list conforming-pairs _)
           (prune-unsupported commitment-satisfying-pairs
                              incoming-steps
