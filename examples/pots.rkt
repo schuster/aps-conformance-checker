@@ -100,7 +100,7 @@
   (variant NoDigits))
 
 (define-function (Cons [n Nat] [l ListOfDigits])
-  (variant Cons l))
+  (variant Cons n l))
 
 (define-variant AnalyzerResult
   (Invalid)
@@ -211,7 +211,7 @@
        (case (unfold PeerMessage p)
          [(Seize peer)
           (send-peer peer (Rejected))
-          (goto WaitOnAnalysis lim analyzer number)]
+          (goto WaitOnAnalysis number)]
          ;; ignore other peer messages
          [(Seized) (goto WaitOnAnalysis number)]
          [(Rejected) (goto WaitOnAnalysis number)]
@@ -248,6 +248,8 @@
           (goto WaitOnHook (HaveTone))]
          ;; ignore the Cleared message; shouldn't happen here
          [(Cleared)
+          (goto MakeCallToB peer)]
+         [(Answered)
           (goto MakeCallToB peer)])]
       ;; ignore other messages
       [(OffHook) (goto MakeCallToB peer)]
@@ -262,7 +264,7 @@
       [(PeerMessage p)
        (case (unfold PeerMessage p)
          [(Seize new-peer)
-          (send-peer new-peer Rejected)
+          (send-peer new-peer (Rejected))
           (goto RingingASide peer)]
          [(Answered)
           (send lim (StopTone))
@@ -364,7 +366,6 @@
 
 ;; Specification from POV of another phone
 (define pots-spec
-  ;; TODO: list all peer messages here
   `(specification (receptionists [controller ,desugared-controller-message-type])
                   (externals [lim ,desugared-lim-message-type]
                              [analyzer ,desugared-analyzer-message-type])
@@ -373,31 +374,45 @@
      (goto Idle)
 
      (define-state (Idle)
-       [(variant Seize peer) ->
-        ([obligation peer (variant Seized)])
+       [(variant PeerMessage (fold (variant Seize peer))) ->
+        ([obligation peer (variant PeerMessage (fold (variant Seized)))])
         (goto Ringing peer)]
-       [(variant Seize peer) ->
-        ([obligation peer (variant Rejected)])
+       [(variant PeerMessage (fold (variant Seize peer))) ->
+        ([obligation peer (variant PeerMessage (fold (variant Rejected)))])
         (goto Idle)]
-       [(variant Cleared) -> () (goto Idle)])
+       [(variant PeerMessage (fold (variant Seized))) -> () (goto Idle)]
+       [(variant PeerMessage (fold (variant Rejected))) -> () (goto Idle)]
+       [(variant PeerMessage (fold (variant Answered))) -> () (goto Idle)]
+       [(variant PeerMessage (fold (variant Cleared))) -> () (goto Idle)])
 
      (define-state (Ringing peer)
-       ; can answer, can respond to a Cleared, can respond to Seized
+       ; can answer, can react to a Cleared, can respond to Seized
        [unobs ->
-        ([obligation peer (variant Answered)])
+        ([obligation peer (variant PeerMessage (fold (variant Answered)))])
         (goto InCall peer)]
-       [(variant Seize other-peer) ->
-        ([obligation other-peer (variant Rejected)])
+       [(variant PeerMessage (fold (variant Seize other-peer))) ->
+        ([obligation other-peer (variant PeerMessage (fold (variant Rejected)))])
         (goto Ringing peer)]
-       [(variant Cleared) -> () (goto Idle)])
+       [(variant PeerMessage (fold (variant Cleared))) -> () (goto Idle)]
+       ;; An unobserved actor could *also* send us Cleared, which still causes us to go to Idle
+       [unobs -> () (goto Idle)]
+       [(variant PeerMessage (fold (variant Seized))) -> () (goto Ringing peer)]
+       [(variant PeerMessage (fold (variant Rejected))) -> () (goto Ringing peer)]
+       [(variant PeerMessage (fold (variant Answered))) -> () (goto Ringing peer)])
 
      (define-state (InCall peer)
-       [unobs -> ([obligation peer (variant Cleared)]) (goto Idle)]
-       [(variant Seize other-peer) ->
-        ([obligation other-peer (variant Rejected)])
+       [unobs -> ([obligation peer (variant PeerMessage (fold (variant Cleared)))]) (goto Idle)]
+       [(variant PeerMessage (fold (variant Seize other-peer))) ->
+        ([obligation other-peer (variant PeerMessage (fold (variant Rejected)))])
         (goto InCall peer)]
-       [(variant Cleared) -> () (goto Idle)])
-     ))
+       [(variant PeerMessage (fold (variant Cleared))) -> () (goto Idle)]
+       ;; An unobserved actor could *also* send us Cleared, which still causes us to go to Idle,
+       ;; without us sending a Cleared message back
+       [unobs -> () (goto Idle)]
+       ;; ignore all others
+       [(variant PeerMessage (fold (variant Seized))) -> () (goto InCall peer)]
+       [(variant PeerMessage (fold (variant Rejected))) -> () (goto InCall peer)]
+       [(variant PeerMessage (fold (variant Answered))) -> () (goto InCall peer)])))
 
 (module+ test
   (require
