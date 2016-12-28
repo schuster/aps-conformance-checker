@@ -295,6 +295,7 @@
 (module+ test
   (require
    racket/async-channel
+   csa/eval
    rackunit
    asyncunit
    "../desugar.rkt"
@@ -317,16 +318,8 @@
     ;; (check-conformance (desugar authN-program) server-specification)
     )
 
-
-  ;; TODO: turn this into a macro and provide it from csa
-  (define-namespace-anchor outer-module)
-  (define run-program
-    (parameterize ([current-namespace (namespace-anchor->empty-namespace outer-module)])
-      (namespace-require 'csa)
-      (eval the-program)))
-
   (test-case "auth fails (username doesn't exist)"
-    (define guard (run-program))
+    (define guard (csa-run the-program))
     (define response-dest (make-async-channel))
     (async-channel-put guard `(variant GetSession 0 ,response-dest))
     (define auth-channel
@@ -336,7 +329,7 @@
     (check-unicast auth-response-dest '(variant FailedSession)))
 
   (test-case "auth fails (bad password)"
-    (define guard (run-program))
+    (define guard (csa-run the-program))
     (define response-dest (make-async-channel))
     (async-channel-put guard `(variant GetSession 0 ,response-dest))
     (define auth-channel
@@ -346,7 +339,7 @@
     (check-unicast auth-response-dest '(variant FailedSession)))
 
   (test-case "auth succeeds"
-    (define guard (run-program))
+    (define guard (csa-run the-program))
     (define response-dest (make-async-channel))
     (async-channel-put guard `(variant GetSession 0 ,response-dest))
     (define auth-channel
@@ -359,7 +352,7 @@
     (check-unicast ping-response-dest '(variant Pong)))
 
   (test-case "fresh token every time"
-    (define guard (run-program))
+    (define guard (csa-run the-program))
 
     (define (get-session)
       (define response-dest (make-async-channel))
@@ -373,7 +366,7 @@
     (check-not-equal? (get-session) (get-session)))
 
   (test-case "no worker responses after first valid authentication"
-    (define guard (run-program))
+    (define guard (csa-run the-program))
     (define response-dest (make-async-channel))
     (async-channel-put guard `(variant GetSession 0 ,response-dest))
     (match-define (list 'variant 'NewSession auth-channel) (async-channel-get response-dest))
@@ -385,7 +378,7 @@
     (check-no-message auth-response-dest2))
 
   (test-case "no worker responses after first invalid authentication"
-    (define guard (run-program))
+    (define guard (csa-run the-program))
     (define response-dest (make-async-channel))
     (async-channel-put guard `(variant GetSession 0 ,response-dest))
     (match-define (list 'variant 'NewSession auth-channel) (async-channel-get response-dest))
@@ -397,7 +390,7 @@
     (check-no-message auth-response-dest2))
 
   (test-case "retrieve existing session"
-    (define guard (run-program))
+    (define guard (csa-run the-program))
 
     ;; First authentication
     (define response-dest (make-async-channel))
