@@ -71,6 +71,7 @@
    /
    +
    -
+   arithmetic-shift
    and
    or
    not

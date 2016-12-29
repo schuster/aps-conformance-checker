@@ -628,7 +628,7 @@
 
     (==> (primop (* Nat) (* Nat))
          (* Nat)
-         (side-condition (member (term primop) (list '+ '- '* '/)))
+         (side-condition (member (term primop) (list '+ '- '* '/ 'arithmetic-shift)))
          Arith)
 
     (==> (primop (* Nat))
