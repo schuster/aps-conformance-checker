@@ -37,7 +37,7 @@
     [window Nat]
     [payload (Vectorof Byte)])
 
-  (define-function (make-rst [received-packet TcpPacket])
+  (define-function (make-rst/global [received-packet TcpPacket])
     (TcpPacket (: received-packet destination-port)
                (: received-packet source-port)
                0
@@ -169,7 +169,7 @@
                   ,DEFAULT-WINDOW-SIZE
                   (vector)))
 
-     (define-function (make-my-rst [seq integer])
+     (define-function (make-rst [seq integer])
        (TcpPacket (: id local-port)
                   (: (: id remote-address) port)
                   seq
@@ -252,7 +252,7 @@
                   (goto SynSent snd-nxt)])]
               [else ;; ACK present but not acceptable
                ;; TODO: test this branch?
-               (send-to-ip (make-my-rst (: packet ack)))
+               (send-to-ip (make-rst (: packet ack)))
                (send status-updates (CommandFailed))
                (halt-with-notification)])]
            [else ;; no ACK present
@@ -323,7 +323,7 @@
                ;; just drop the packet
                (goto Ready session-table binding-table)]
               [(packet-ack? packet)
-               (send packets-out (variant OutPacket source-ip (make-rst packet)))
+               (send packets-out (variant OutPacket source-ip (make-rst/global packet)))
                (goto Ready session-table binding-table)]
               [(packet-syn? packet)
                (case (hash-ref binding-table (: packet destination-port))
@@ -351,7 +351,7 @@
                    ;; checking their SEQ-fields.  A reset is valid if its sequence number is in the
                    ;; window.  In the SYN-SENT state (a RST received in response to an initial SYN),
                    ;; the RST is acceptable if the ACK field acknowledges the SYN.
-                   (send packets-out (variant OutPacket source-ip (make-rst packet)))
+                   (send packets-out (variant OutPacket source-ip (make-rst/global packet)))
                    (goto Ready session-table binding-table)])]
               [else
                ;; don't send resets for non-ACK packets
