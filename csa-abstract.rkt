@@ -751,6 +751,12 @@
     (==> (hash-set (* Hash τ_1 τ_2) v#_key v#_value)
          (* Hash τ_1 τ_2)
          HashWildcardSet)
+    (==> (hash-remove (hash-val v# ...) v#_remove)
+         (hash-val v# ...)
+         HashRemove)
+    (==> (hash-remove (* (Hash τ_1 τ_2)) v#_remove)
+         (* (Hash τ_1 τ_2))
+         HashRemoveWildcard)
     (==> (hash-has-key? (hash-val v# ...) v#_key)
          (variant True)
          HashHasKeyTrue)
@@ -981,6 +987,9 @@
    (term (hash-val (variant B) (variant C) (variant D))))
   (check-exp-steps-to?
    (term (hash-set (hash-val (variant B) (variant C)) (* Nat) (variant B)))
+   (term (hash-val (variant B) (variant C))))
+  (check-exp-steps-to?
+   (term (hash-remove (hash-val (variant B) (variant C)) (variant B)))
    (term (hash-val (variant B) (variant C))))
 
   ;; Check for sorting of loop sends

@@ -86,6 +86,7 @@
    vector-copy
    vector-append
    hash-ref
+   hash-remove
    hash-set
    hash-has-key?
    sort-numbers-descending

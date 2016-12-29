@@ -127,6 +127,7 @@
        (hash [e1 e2] ...)
        (hash-ref e1 e2)
        (hash-set e1 e2 e3)
+       (hash-remove e1 e2)
        (hash-has-key? e1 e2)
        (sort-numbers-descending e)
        (printf e1 e* ...)
