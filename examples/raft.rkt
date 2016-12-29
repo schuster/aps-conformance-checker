@@ -607,7 +607,7 @@
                                 (replicated-log-last-term replicated-log)
                                 (replicated-log-last-index replicated-log))])
       (for ([member (members-except-self config self)])
-        (send member request))
+        (send member (variant PeerMessage (fold RaftMessage request))))
       (let* ([m (reset-election-deadline/candidate timer-manager self m)]
              [including-this-vote (inc-vote m self)]) ; this is the self vote
         (goto Candidate
@@ -722,12 +722,15 @@
                                   [replicated-log ReplicatedLog]
                                   [config ClusterConfiguration])
     (for ([member (members-except-self config self)])
-      (send member (AppendEntries-apply (: m current-term)
-                                        replicated-log
-                                        (log-index-map-value-for next-index member)
-                                        (: replicated-log committed-index)
-                                        self
-                                        self))))
+      (send member
+            (variant PeerMessage
+                     (fold RaftMessage
+                           (AppendEntries-apply (: m current-term)
+                                                replicated-log
+                                                (log-index-map-value-for next-index member)
+                                                (: replicated-log committed-index)
+                                                self
+                                                self))))))
 
   (define-function (send-heartbeat [m LeaderMeta]
                                    [next-index (Hash (Addr SendableRaftMessage) Nat)]
