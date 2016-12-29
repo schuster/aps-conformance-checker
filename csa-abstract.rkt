@@ -63,7 +63,7 @@
   (μ# ((a#int v# m) ...)) ; message packets
   (m single many) ; m for "multiplicity"
   (Q# (define-state (q [x τ] ...) (x) e#)
-      (define-state (q [x τ] ...) (x) e# [(timeout v#) e#]))
+      (define-state (q [x τ] ...) (x) e# [(timeout e#) e#]))
   (v# τa#
       (variant t v# ...)
       (record [l v#] ...)
@@ -1294,17 +1294,21 @@
    (define-state (q [x_q τ] ...) (x_m) e#)
    (where (_ ... x _ ...) (x_q ... x_m))]
   ;; Case 2: timeout, var shadowed by state param
-  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e# [(timeout v#_t) e#_t]) x v#)
-   (define-state (q [x_q τ] ...) (x_m) e# [(timeout v#_t) e#_t])
+  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e# [(timeout e#_tv) e#_t]) x v#)
+   (define-state (q [x_q τ] ...) (x_m) e# [(timeout e#_tv) e#_t])
    (where (_ ... x _ ...) (x_q ...))]
   ;; Case 3: timeout, var shadowed by message param
-  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e# [(timeout v#_t) e#_t]) x_m v#)
-   (define-state (q [x_q τ] ...) (x_m) e# [(timeout v#_t) ,(csa#-subst (term e#_t) (term x_m) (term v#))])]
+  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e# [(timeout e#_tv) e#_t]) x_m v#)
+   (define-state (q [x_q τ] ...) (x_m)
+     e#
+     [(timeout ,(csa#-subst (term v#_t) (term x_m) (term v#)))
+      ,(csa#-subst (term e#_t) (term x_m) (term v#))])]
   ;; Case 4: timeout, no shadowing
-  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e# [(timeout v#_t) e#_t]) x v#)
+  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e# [(timeout e#_tv) e#_t]) x v#)
    (define-state (q [x_q τ] ...) (x_m)
      ,(csa#-subst (term e#) (term x) (term v#))
-     [(timeout v#_t) ,(csa#-subst (term e#_t) (term x) (term v#))])]
+     [(timeout ,(csa#-subst (term e#_tv) (term x) (term v#)))
+      ,(csa#-subst (term e#_t) (term x) (term v#))])]
   ;; Case 5: no timeout, no shadowing
   [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e#) x v#)
    (define-state (q [x_q τ] ...) (x_m) ,(csa#-subst (term e#) (term x) (term v#)))])
@@ -1420,10 +1424,21 @@
   abstract-Q : Q (a_internals ...) natural_depth -> Q#
   [(abstract-Q (define-state (q [x τ] ...) (x_m) e) (a ...) natural_depth)
    (define-state (q [x τ] ...) (x_m) (abstract-e e (a ...) natural_depth))]
-  [(abstract-Q (define-state (q [x τ] ...) (x_m) e [(timeout n) e_timeout]) (a ...) natural_depth)
+  [(abstract-Q (define-state (q [x τ] ...) (x_m) e [(timeout e_timeout) e_t-handler])
+               (a ...)
+               natural_depth)
    (define-state (q [x τ] ...) (x_m)
      (abstract-e e (a ...) natural_depth)
-     [(timeout (* Nat)) (abstract-e e_timeout (a ...) natural_depth)])])
+     [(timeout (abstract-e e_timeout (a ...) natural_depth))
+      (abstract-e e_t-handler (a ...) natural_depth)])])
+
+(module+ test
+  (check-equal? (term (abstract-Q (define-state (S) (m) (goto S) [(timeout 5) (goto S)]) () 1))
+                (term (define-state (S) (m) (goto S) [(timeout (* Nat)) (goto S)])))
+  (check-equal? (term (abstract-Q (define-state (S) (m) (goto S)
+                                    [(timeout (case x [(A) 1] [(B) 2])) (goto S)]) () 1))
+                (term (define-state (S) (m) (goto S)
+                        [(timeout (case x [(A) (* Nat)] [(B) (* Nat)])) (goto S)]))))
 
 ;; Abstracts the given expression to the given depth, with the given address list indicating the set
 ;; of internal addresses

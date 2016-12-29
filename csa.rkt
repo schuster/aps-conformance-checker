@@ -61,7 +61,7 @@
      (hash [e e] ...)
      (for/fold ([x e]) ([x e]) e))
   (Q (define-state (q [x τ] ...) (x) e)
-     (define-state (q [x τ] ...) (x) e [(timeout n) e]))
+     (define-state (q [x τ] ...) (x) e [(timeout e) e]))
   (primop
    <
    <=
@@ -320,12 +320,7 @@
   [(subst (for/fold ([x_1 e_1]) ([x_2 e_2]) e_3) x_2 v)
    (for/fold ([x_1 (subst e_1 x_2 v)]) ([x_2 (subst e_2 x_2 v)]) e_3)]
   [(subst (for/fold ([x_1 e_1]) ([x_2 e_2]) e_3) x v)
-   (for/fold ([x_1 (subst e_1 x v)]) ([x_2 (subst e_2 x v)]) (subst e_3 x v))]
-  [(subst (rcv (x) e) x v) (rcv (x) e)]
-  [(subst (rcv (x_h) e) x v) (rcv (x_h) (subst e x v))]
-  [(subst (rcv (x) e [(timeout n) e_timeout]) x v) (rcv (x) e [(timeout n) e_timeout])]
-  [(subst (rcv (x_h) e [(timeout n) e_timeout]) x v)
-   (rcv (x_h) (subst e x v) [(timeout n) (subst e_timeout x v)])])
+   (for/fold ([x_1 (subst e_1 x v)]) ([x_2 (subst e_2 x v)]) (subst e_3 x v))])
 
 (define-metafunction csa-eval
   subst/case-clause : [(t x ...) e] x v -> [(t x ...) e]
@@ -350,11 +345,11 @@
    (where (_ ... x _ ...) (x_q ... x_h))]
   [(subst/Q (define-state (q [x_q τ_q] ...) (x_h) e) x v)
    (define-state (q [x_q τ_q] ...) (x_h) (subst e x v))]
-  [(subst/Q (define-state (q [x_q τ_q] ...) (x_h) e_1 [(timeout n) e_2]) x v)
-   (define-state (q [x_q τ_q] ...) (x_h) e_1 [(timeout n) e_2])
+  [(subst/Q (define-state (q [x_q τ_q] ...) (x_h) e_1 [(timeout e_3) e_2]) x v)
+   (define-state (q [x_q τ_q] ...) (x_h) e_1 [(timeout e_3) e_2])
    (where (_ ... x _ ...) (x_q ... x_h))]
-  [(subst/Q (define-state (q [x_q τ_q] ...) (x_h) e_1 [(timeout n) e_2]) x v)
-   (define-state (q [x_q τ_q] ...) (x_h) (subst e_1 x v) [(timeout n) (subst e_2 x v)])])
+  [(subst/Q (define-state (q [x_q τ_q] ...) (x_h) e_1 [(timeout e_3) e_2]) x v)
+   (define-state (q [x_q τ_q] ...) (x_h) (subst e_1 x v) [(timeout e_3) (subst e_2 x v)])])
 
 (define-metafunction csa-eval
   subst-n/Q : Q [x v] ... -> Q
