@@ -966,8 +966,8 @@
   (match t
     [`(define-state/timeout ,exps ...)
      `(define-state ,@(map fix-timeout-syntax exps))]
-    [`(timeout ,exps ...)
-     `(timeout ,@(map fix-timeout-syntax exps))]
+    [`(timeout ,exp1 ,exps ...)
+     `([timeout ,(fix-timeout-syntax exp1)] ,@(map fix-timeout-syntax exps))]
     [(list exps ...)
      (map fix-timeout-syntax exps)]
     [_ t]))
