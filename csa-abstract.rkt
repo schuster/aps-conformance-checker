@@ -1239,7 +1239,8 @@
                                                                 (term (csa#-subst/Q# ,s ,var ,val)))
                                                               states)))]
     [`(goto ,s ,args ...) `(goto ,s ,@(map do-subst args))]
-    [(list (and kw (or 'send 'begin 'printf (? primop?) 'list 'list-val 'vector 'vector-val 'hash-val 'loop-context)) args ...)
+    [`(printf ,str ,args ...) `(printf ,str ,@(map do-subst args))]
+    [(list (and kw (or 'send 'begin (? primop?) 'list 'list-val 'vector 'vector-val 'hash-val 'loop-context)) args ...)
      `(,kw ,@(map do-subst args))]
     [`(let ([,new-vars ,new-vals] ...) ,body)
      (define bindings (map (lambda (nvar nval) `(,nvar ,(do-subst nval))) new-vars new-vals))
