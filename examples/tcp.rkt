@@ -262,15 +262,15 @@
                ;; session
                (goto SynSent snd-nxt)]
               [(packet-syn? packet)
-               ;; TODO: handle this case
-
                ;; we got a SYN but no ACK: this is the simultaneous open case
-               ;; (define iss (- snd-nxt 1))
-               ;; (define rcv-nxt (+ (: packet seq) 1))
-               ;; (send-to-ip (make-syn-ack iss rcv-nxt))
-               ;; (next-state
-               ;;  (SynReceived (+ iss 1) rcv-nxt (create-empty-buffer) status-updates octet-stream))
-               (goto SynSent snd-nxt)]
+               (let ([iss (- snd-nxt 1)]
+                     [rcv-nxt (+ (: packet seq) 1)])
+                 (send-to-ip (make-syn-ack iss rcv-nxt))
+                 (send status-updates (Connected id self))
+                 (goto SynReceived (+ iss 1) rcv-nxt
+                             ;; TODO: implement these parameters
+                             ;; (create-empty-buffer) status-updates octet-stream
+                             ))]
               [else
                ;; not an important segment, so just drop it. Probably won't happen in reality
                (goto SynSent snd-nxt)])])])
@@ -523,6 +523,19 @@
   ;;     [window DEFAULT-WINDOW-SIZE]
   ;;     [payload (vector)])))
 
+  (define (make-normal-packet source-port dest-port seq ack payload)
+    (record
+     [source-port source-port]
+     [destination-port dest-port]
+     [seq seq]
+     [ack ack]
+     [ack-flag (variant Ack)]
+     [rst (variant NoRst)]
+     [syn (variant NoSyn)]
+     [fin (variant NoFin)]
+     [window DEFAULT-WINDOW-SIZE]
+     [payload payload]))
+
   (define (InetSocketAddress ip port)
     (record [ip ip] [port port]))
   (define (Connect remote-addr response-dest)
@@ -576,4 +589,25 @@
     ;; check for SYN/ACK and Connected message
     (check-unicast-match bind-handler (csa-variant Connected _ _))
     (check-unicast-match packets-out
-      (OutPacket (== remote-ip) (tcp-syn-ack server-port client-port _ (add1 remote-iss))))))
+      (OutPacket (== remote-ip) (tcp-syn-ack server-port client-port _ (add1 remote-iss)))))
+
+  (test-case "Proper handshake/upper layer notification on simultaneous open"
+    ;; Overall sequence is:
+    ;; 1. SYN ->
+    ;; 2. SYN <-
+    ;; 3. SYN/ACK ->
+    ;; 4. ACK <-
+    (define-values (packets-out tcp) (start-prog))
+    (define status-updates (make-async-channel))
+    (define remote-port client-port)
+    (send-command tcp (Connect (InetSocketAddress remote-ip remote-port) status-updates))
+    (match-define (list local-iss local-port)
+      (check-unicast-match packets-out
+                           (OutPacket (== remote-ip)
+                                      (csa-record* [seq local-iss] [source-port remote-port]))
+                           #:result (list local-iss remote-port)))
+    (send-packet tcp remote-ip (make-syn remote-port local-port remote-iss))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-syn-ack local-port remote-port _ (add1 remote-iss))))
+    (check-unicast-match status-updates (csa-variant Connected _ _))))
