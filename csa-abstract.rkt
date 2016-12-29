@@ -772,7 +772,7 @@
          (for/fold ([x_fold e#_unrolled-body])
                    ([x_item (any_constructor v#_1 ... v#_item v#_2 ...)])
            e#_body)
-         (side-condition (member (term any_constructor) (list 'list 'vector)))
+         (side-condition (member (term any_constructor) (list 'list-val 'vector-val)))
          (where e#_unrolled-body
                 (loop-context (csa#-subst-n/mf e#_body [x_fold v#_fold] [x_item v#_item])))
          ForLoop1)
