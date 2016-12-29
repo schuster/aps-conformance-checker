@@ -464,6 +464,7 @@
   (define remote-ip 500) ; we're faking IPs with natural numbers, so the actual number doesn't matter
   (define server-port 80)
   (define client-port 55555)
+  (define remote-iss 1024)
 
   (define (send-packet addr ip packet)
     (async-channel-put addr `(variant InPacket ,ip ,packet)))
@@ -556,7 +557,6 @@
                                      #:result syn))
     (define local-port (: syn source-port))
     (define local-iss (: syn seq))
-    (define remote-iss (random #x10000)) ; only explores part of the ISS space, but good enough
     (send-packet tcp remote-ip (make-syn-ack server-port local-port remote-iss (add1 local-iss)))
     (check-unicast-match packets-out
                          (OutPacket (== remote-ip)
@@ -572,9 +572,8 @@
     (define bind-handler (make-async-channel))
     (send-command tcp (Bind server-port bind-status-dest bind-handler))
     (check-unicast bind-status-dest (Bound))
-    (define client-iss 0)
-    (send-packet tcp remote-ip (make-syn client-port server-port client-iss))
+    (send-packet tcp remote-ip (make-syn client-port server-port remote-iss))
     ;; check for SYN/ACK and Connected message
     (check-unicast-match bind-handler (csa-variant Connected _ _))
     (check-unicast-match packets-out
-      (OutPacket (== remote-ip) (tcp-syn-ack server-port client-port _ (add1 client-iss))))))
+      (OutPacket (== remote-ip) (tcp-syn-ack server-port client-port _ (add1 remote-iss))))))
