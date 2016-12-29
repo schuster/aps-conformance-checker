@@ -38,6 +38,7 @@
     [payload (Vectorof Byte)])
 
   (define-variant ConnectionStatus
+    (CommandFailed)
     ;; TODO: add these as necessary
     ;; (ConnectionTimedOut)
     ;; (ConnectionReset)
@@ -105,6 +106,10 @@
     ((define-function (send-to-ip [packet TcpPacket])
        (send packets-out (variant OutPacket (: (: id remote-address) ip) packet)))
 
+     (define-function (halt-with-notification)
+       (send close-notifications (SessionCloseNotification id))
+       (goto Halt))
+
      ;;;; Packet helpers
      (define-function (make-syn [seq Nat])
        (TcpPacket (: id local-port)
@@ -145,7 +150,7 @@
 
       )
 
-    (define-state (SynSent [snd-nxt Nat] [status-updates (Addr ConnectionStatus)]) (m)
+    (define-state/timeout (SynSent [snd-nxt Nat] [status-updates (Addr ConnectionStatus)]) (m)
       ;; TODO: implement this state
       (goto SynSent snd-nxt status-updates)
     ;; [packets-in (packet)
@@ -190,12 +195,15 @@
     ;;      [else
     ;;       ;; not an important segment, so just drop it. Probably won't happen in reality
     ;;       (next-state (SynSent snd-nxt status-updates octet-stream))])])]
-    ;; [after wait-time-in-milliseconds
-    ;;   (send connection-status (ConnectionTimedOut))
-    ;;   (halt-with-notification)]
-      )
+
+      ;; TODO: set a proper timeout here, update it in other messages
+      [timeout wait-time-in-milliseconds
+        (send status-updates (CommandFailed))
+        (halt-with-notification)])
 
   ;; TODO: the rest of the states
+
+    (define-state (Halt) (m) (goto Halt))
 
   )
 
@@ -291,10 +299,8 @@
            ;; [Bind (port connection-channel)
            ;;       (next-state (Ready session-table (hash-set binding-table port connection-channel)))]
            )]
-        ;; TODO: do session-close notifications
-        ;; [session-close-notifications (session-id)
-        ;;                              (next-state (Ready (hash-remove session-table session-id) binding-table))]
-        )))
+        [(SessionCloseNotification session-id)
+         (goto Ready (hash-remove session-table session-id) binding-table)])))
 
   (actors [tcp (spawn 1 Tcp packets-out
                             ,wait-time-in-milliseconds
@@ -371,8 +377,8 @@
     (record [ip ip] [port port]))
   (define (Connect remote-addr response-dest)
     (variant Connect remote-addr response-dest))
-  (define (ConnectionTimedOut)
-    (variant ConnectionTimedOut))
+  (define (CommandFailed)
+    (variant CommandFailed))
 
   ;; The tests themselves
   (test-case "Reset packet is dropped"
@@ -386,4 +392,4 @@
     (send-command tcp (Connect (InetSocketAddress remote-ip server-port) connection-response))
     (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-syn server-port)))
     (sleep (/ wait-time-in-milliseconds 1000))
-    (check-unicast connection-response (ConnectionTimedOut))))
+    (check-unicast connection-response (CommandFailed))))
