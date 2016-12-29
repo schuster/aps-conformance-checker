@@ -37,8 +37,28 @@
     [window Nat]
     [payload (Vectorof Byte)])
 
+  (define-function (packet-ack? [packet TcpPacket])
+    (case (: packet ack-flag)
+      [(Ack) (variant True)]
+      [(NoAck) (variant False)]))
+
+  (define-function (packet-rst? [packet TcpPacket])
+    (case (: packet rst)
+      [(Rst) (variant True)]
+      [(NoRst) (variant False)]))
+
+  (define-function (packet-syn? [packet TcpPacket])
+    (case (: packet syn)
+      [(Syn) (variant True)]
+      [(NoSyn) (variant False)]))
+
+  (define-variant TcpSessionCommand
+    ;; TODO: write these branches
+    )
+
   (define-variant ConnectionStatus
     (CommandFailed)
+    (Connected [session-id SessionId] [session (Addr TcpSessionCommand)])
     ;; TODO: add these as necessary
     ;; (ConnectionTimedOut)
     ;; (ConnectionReset)
@@ -81,8 +101,8 @@
     ;; (PassiveOpen [remote-seq Nat] [new-connections (Addr (Addr ConnectionResponse))])
     )
 
-  (define-type TcpSessionInput
-    (Union
+  (define-variant TcpSessionInput
+    (InTcpPacket [packet TcpPacket])
      ;; TODO: add these as needed
      ;; [connection-response ConnectionResponse]
      ;; [retransmission-timer Unit]
@@ -91,7 +111,9 @@
      ;; [octets-to-send (Vectorof Byte)]
      ;; [close-request]
      ;; [time-wait-timer Unit]
-     ))
+     )
+
+  ;;; The TCP session actor
 
   (define-actor TcpSessionInput
     (TcpSession [id SessionId]
@@ -123,18 +145,43 @@
                   ,DEFAULT-WINDOW-SIZE
                   (vector)))
 
-  ;; (define-function (make-syn-ack [seq integer] [ack integer])
-  ;;   (TcpPacket (: id local-port) (: id remote-port) seq ack 1 0 1 0 DEFAULT-WINDOW-SIZE (vector)))
+     ;; (define-function (make-syn-ack [seq integer] [ack integer])
+     ;;   (TcpPacket (: id local-port) (: id remote-port) seq ack 1 0 1 0 DEFAULT-WINDOW-SIZE (vector)))
 
-  ;; (define-function (make-rst [seq integer])
-  ;;   (TcpPacket (: id local-port) (: id remote-port) seq 0 0 1 0 0 DEFAULT-WINDOW-SIZE (vector)))
+     (define-function (make-rst [seq integer])
+       (TcpPacket (: id local-port)
+                  (: (: id remote-address) port)
+                  seq
+                  0
+                  (NoAck)
+                  (Rst)
+                  (NoSyn)
+                  (NoFin)
+                  ,DEFAULT-WINDOW-SIZE
+                  (vector)))
 
-  ;; (define-function (make-fin [seq integer] [ack integer])
-  ;;   (TcpPacket (: id local-port) (: id remote-port) seq ack 1 0 0 1 DEFAULT-WINDOW-SIZE (vector)))
+     ;; (define-function (make-fin [seq integer] [ack integer])
+     ;;   (TcpPacket (: id local-port) (: id remote-port) seq ack 1 0 0 1 DEFAULT-WINDOW-SIZE (vector)))
 
-  ;; (define-function (make-normal-packet [seq integer] [ack integer] [payload (Vectorof Byte)])
-  ;;   (TcpPacket (: id local-port) (: id remote-port) seq ack 1 0 0 0 DEFAULT-WINDOW-SIZE payload))
-     )
+     (define-function (make-normal-packet [seq Nat] [ack Nat] [payload (Vectorof Byte)])
+       (TcpPacket (: id local-port)
+                  (: (: id remote-address) port)
+                  seq
+                  ack
+                  (Ack)
+                  (NoRst)
+                  (NoSyn)
+                  (NoFin)
+                  ,DEFAULT-WINDOW-SIZE
+                  payload))
+
+     ;; Computes the rcv-nxt value caused by the given packet, assuming that the packet is the
+     ;; furthest-forward acceptable ACK.
+     (define-function (compute-receive-next [packet TcpPacket])
+       (+ (: packet seq)
+          (+ (case (: packet syn) [(Syn) 1] [(NoSyn) 0])
+             (+ (case (: packet fin) [(Fin) 1] [(NoFin) 0])
+                (vector-length (: packet payload)))))))
 
     ;; initialization
     (let ([iss (get-iss)])
@@ -151,62 +198,74 @@
       )
 
     (define-state/timeout (SynSent [snd-nxt Nat] [status-updates (Addr ConnectionStatus)]) (m)
-      ;; TODO: implement this state
-      (goto SynSent snd-nxt status-updates)
-    ;; [packets-in (packet)
-    ;;   (cond
-    ;;    [(= (: packet ack-flag) 1)
-    ;;     (cond
-    ;;      [(= (: packet ack) snd-nxt) ; this is the only acceptable ACK
-    ;;       (cond
-    ;;        [(= (: packet rst) 1)
-    ;;         (send connection-status (ConnectionReset))
-    ;;         (halt-with-notification)]
-    ;;        [(= (: packet syn) 1)
-    ;;         ;; this is the typical SYN/ACK case (step 2 of the 3-way handshake)
-    ;;         (define rcv-nxt (compute-receive-next packet))
-    ;;         (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
-    ;;         (send status-updates (ConnectionEstablished octets-to-send close-request))
-    ;;         (next-state (Established (SendBuffer 0 snd-nxt (: packet window) snd-nxt (vector))
-    ;;                                  rcv-nxt
-    ;;                                  (create-empty-buffer)
-    ;;                                  status-updates
-    ;;                                  octet-stream
-    ;;                                  (create-timer (void) retransmission-timer)))]
-    ;;        [else ;; ACK acceptable but no other interesting fields set. Probably won't happen in
-    ;;              ;; reality.
-    ;;         (next-state (SynSent snd-nxt status-updates octet-stream))])]
-    ;;      [else ;; ACK present but not acceptable
-    ;;       (send-to-ip (make-rst (: packet ack)))
-    ;;       (send connection-status (ConnectionReset))
-    ;;       (halt-with-notification)])]
-    ;;    [else ;; no ACK present
-    ;;     (cond
-    ;;      [(= (: packet rst) 1)
-    ;;       ;; drop the packet, because the RST probably comes from a previous instance of the session
-    ;;       (next-state (SynSent snd-nxt status-updates octet-stream))]
-    ;;      [(= (: packet syn) 1)
-    ;;       ;; we got a SYN but no ACK: this is the simultaneous open case
-    ;;       (define iss (- snd-nxt 1))
-    ;;       (define rcv-nxt (+ (: packet seq) 1))
-    ;;       (send-to-ip (make-syn-ack iss rcv-nxt))
-    ;;       (next-state
-    ;;        (SynReceived (+ iss 1) rcv-nxt (create-empty-buffer) status-updates octet-stream))]
-    ;;      [else
-    ;;       ;; not an important segment, so just drop it. Probably won't happen in reality
-    ;;       (next-state (SynSent snd-nxt status-updates octet-stream))])])]
+      (case m
+        [(InTcpPacket packet)
+         (cond
+           [(packet-ack? packet)
+            (cond
+              [(= (: packet ack) snd-nxt) ; this is the only acceptable ACK
+               (cond
+                 [(packet-rst? packet)
+                  ;; TODO: test this branch
+                  (send status-updates (CommandFailed))
+                  (halt-with-notification)]
+                 [(packet-syn? packet)
+                  ;; this is the typical SYN/ACK case (step 2 of the 3-way handshake)
+                  (let ([rcv-nxt (compute-receive-next packet)])
+                    (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
+                    (send status-updates (Connected id self))
+                    (goto Established
+                          ;; TODO: implement these parameters
+                          ;; (SendBuffer 0 snd-nxt (: packet window) snd-nxt (vector))
+                          ;; rcv-nxt
+                          ;; (create-empty-buffer)
+                          ;; status-updates
+                          ;; octet-stream
+                          ;; (create-timer (void) retransmission-timer)
+                          ))]
+                 [else
+                  ;; ACK acceptable but no other interesting fields set. Probably won't happen in
+                  ;; reality.
+                  (goto SynSent snd-nxt status-updates)])]
+              [else ;; ACK present but not acceptable
+               ;; TODO: test this branch?
+               (send-to-ip (make-rst (: packet ack)))
+               (send status-updates (CommandFailed))
+               (halt-with-notification)])]
+           [else ;; no ACK present
+            (cond
+              [(packet-rst? packet)
+               ;; drop the packet, because the RST probably comes from a previous instance of the
+               ;; session
+               (goto SynSent snd-nxt status-updates)]
+              [(packet-syn? packet)
+               ;; TODO: handle this case
 
+               ;; we got a SYN but no ACK: this is the simultaneous open case
+               ;; (define iss (- snd-nxt 1))
+               ;; (define rcv-nxt (+ (: packet seq) 1))
+               ;; (send-to-ip (make-syn-ack iss rcv-nxt))
+               ;; (next-state
+               ;;  (SynReceived (+ iss 1) rcv-nxt (create-empty-buffer) status-updates octet-stream))
+               (goto SynSent snd-nxt status-updates)]
+              [else
+               ;; not an important segment, so just drop it. Probably won't happen in reality
+               (goto SynSent snd-nxt status-updates)])])])
       ;; TODO: set a proper timeout here, update it in other messages
       [timeout wait-time-in-milliseconds
         (send status-updates (CommandFailed))
         (halt-with-notification)])
 
-  ;; TODO: the rest of the states
+    (define-state (Established) (m)
+      ;; TODO: define this state
+      (goto Established)
+      )
 
-    (define-state (Halt) (m) (goto Halt))
+    ;; TODO: the rest of the states
 
-  )
+    (define-state (Halt) (m) (goto Halt)))
 
+  ;;;; The main TCP actor
 
   (define-actor TcpInput
     (Tcp [packets-out (Addr (Union [OutPacket IpAddress TcpPacket]))]
@@ -220,65 +279,63 @@
                          [binding-table (Hash integer (Addr PacketInputMessage))]) (m)
       (case m
         [(InPacket source-ip packet)
-         (goto Ready session-table binding-table)
-         
-         ;; TODO: implement this
+         (case (hash-ref session-table
+                         (SessionId (InetSocketAddress source-ip (: packet source-port)) (: packet destination-port)))
+           [(Just to-session)
+             (send to-session (InTcpPacket packet))
+             (goto Ready session-table binding-table)]
+           [(Nothing)
+                    ;; TODO: implement this
+                    (goto Ready session-table binding-table)
+                    ;; (cond
+                    ;;   [(= (: packet rst) 1)
+                    ;;    ;; just drop the packet
+                    ;;    (next-state (Ready session-table binding-table))]
+                    ;;   [(= (: packet ack-flag) 1)
+                    ;;    ;; NOTE: we should normally send a RST here, but since this code is used for demos on a
+                    ;;    ;; normal desktop machine, we just drop packets that might be headed for other processes
+                    ;;    ;; on the current host
+                    ;;    (next-state (Ready session-table binding-table))]
+                    ;;   [(= (: packet syn) 1)
+                    ;;    (case (hash-ref binding-table (: packet destination-port))
+                    ;;      [Just (connection-channel)
+                    ;;            (define session-id
+                    ;;              (SessionId source-ip (: packet destination-port) (: packet source-port)))
+                    ;;            (let-agent (_ _ session-packets-in _ _ _ _)
+                    ;;              ((TcpSession session-id
+                    ;;                           (PassiveOpen (: packet seq) connection-channel)
+                    ;;                           wait-time-in-milliseconds
+                    ;;                           max-retries
+                    ;;                           max-segment-lifetime-in-ms
+                    ;;                           user-response-wait-time)
+                    ;;               [packets-out packets-out]
+                    ;;               [connection-status connection-channel]
+                    ;;               [close-notifications session-close-notifications])
+                    ;;              (next-state (Ready (hash-set session-table session-id session-packets-in)
+                    ;;                                 binding-table)))]
+                    ;;      [Nothing ()
+                    ;;               ;; RFC 793 on resets:
+                    ;;               ;;
+                    ;;               ;; In all states except SYN-SENT, all reset (RST) segments are validated by checking
+                    ;;               ;; their SEQ-fields.  A reset is valid if its sequence number is in the window.  In
+                    ;;               ;; the SYN-SENT state (a RST received in response to an initial SYN), the RST is
+                    ;;               ;; acceptable if the ACK field acknowledges the SYN.
+                    ;;               (send packets-out
+                    ;;                     source-ip
+                    ;;                     TCP-PROTOCOL-NUMBER
+                    ;;                     (TcpPacket (: packet destination-port)
+                    ;;                                (: packet source-port)
+                    ;;                                0
+                    ;;                                (: packet seq)
+                    ;;                                1 1 0 0
+                    ;;                                DEFAULT-WINDOW-SIZE
+                    ;;                                (vector)))
+                    ;;               (next-state (Ready session-table binding-table))])]
 
-         ;; (case (hash-ref session-table
-         ;;                 (SessionId source-ip (: packet destination-port) (: packet source-port)))
-         ;;   [Just (to-session)
-         ;;         (send to-session packet)
-         ;;         (next-state (Ready session-table binding-table))]
-         ;;   [Nothing ()
-         ;;            (cond
-         ;;              [(= (: packet rst) 1)
-         ;;               ;; just drop the packet
-         ;;               (next-state (Ready session-table binding-table))]
-         ;;              [(= (: packet ack-flag) 1)
-         ;;               ;; NOTE: we should normally send a RST here, but since this code is used for demos on a
-         ;;               ;; normal desktop machine, we just drop packets that might be headed for other processes
-         ;;               ;; on the current host
-         ;;               (next-state (Ready session-table binding-table))]
-         ;;              [(= (: packet syn) 1)
-         ;;               (case (hash-ref binding-table (: packet destination-port))
-         ;;                 [Just (connection-channel)
-         ;;                       (define session-id
-         ;;                         (SessionId source-ip (: packet destination-port) (: packet source-port)))
-         ;;                       (let-agent (_ _ session-packets-in _ _ _ _)
-         ;;                         ((TcpSession session-id
-         ;;                                      (PassiveOpen (: packet seq) connection-channel)
-         ;;                                      wait-time-in-milliseconds
-         ;;                                      max-retries
-         ;;                                      max-segment-lifetime-in-ms
-         ;;                                      user-response-wait-time)
-         ;;                          [packets-out packets-out]
-         ;;                          [connection-status connection-channel]
-         ;;                          [close-notifications session-close-notifications])
-         ;;                         (next-state (Ready (hash-set session-table session-id session-packets-in)
-         ;;                                            binding-table)))]
-         ;;                 [Nothing ()
-         ;;                          ;; RFC 793 on resets:
-         ;;                          ;;
-         ;;                          ;; In all states except SYN-SENT, all reset (RST) segments are validated by checking
-         ;;                          ;; their SEQ-fields.  A reset is valid if its sequence number is in the window.  In
-         ;;                          ;; the SYN-SENT state (a RST received in response to an initial SYN), the RST is
-         ;;                          ;; acceptable if the ACK field acknowledges the SYN.
-         ;;                          (send packets-out
-         ;;                                source-ip
-         ;;                                TCP-PROTOCOL-NUMBER
-         ;;                                (TcpPacket (: packet destination-port)
-         ;;                                           (: packet source-port)
-         ;;                                           0
-         ;;                                           (: packet seq)
-         ;;                                           1 1 0 0
-         ;;                                           DEFAULT-WINDOW-SIZE
-         ;;                                           (vector)))
-         ;;                          (next-state (Ready session-table binding-table))])]
-
-         ;;              [else
-         ;;               ;; don't send resets for non-ACK packets
-         ;;               (next-state (Ready session-table binding-table))])])
-         ]
+                    ;;   [else
+                    ;;    ;; don't send resets for non-ACK packets
+                    ;;    (next-state (Ready session-table binding-table))])
+                    ])]
         [(UserCommand cmd)
          (case cmd
            [(Connect dest status-updates)
@@ -314,7 +371,7 @@
 (module+ test
   (require
    asyncunit
-   (only-in csa record variant)
+   (only-in csa record variant :)
    csa/eval
    csa/testing
    racket/async-channel
@@ -339,6 +396,24 @@
             (window _)
             (payload (vector)))])))
 
+  (define-match-expander tcp-ack
+    (lambda (stx)
+      (syntax-parse stx
+        [(_ src-port dest-port seqno ackno)
+         #`(csa-record
+            (source-port (== src-port))
+            (destination-port (== dest-port))
+            (seq (== seqno))
+            (ack (== ackno))
+            ;; ;; TODO: note bug: had a NoSyn here the first time instead of NoAck
+            (ack-flag (csa-variant Ack))
+            (rst (csa-variant NoRst))
+            (syn (csa-variant NoSyn))
+            (fin (csa-variant NoFin))
+            (window _)
+            (payload (vector)))])))
+
+
   (define-match-expander OutPacket
     (lambda (stx)
       (syntax-parse stx
@@ -362,16 +437,43 @@
     (async-channel-put addr `(variant UserCommand ,cmd)))
 
   (define (make-rst source-port dest-port seq)
-    `([source-port ,source-port]
-      [destination-port ,dest-port]
-      [seq ,seq]
-      [ack 0]
-      [ack-flag NoAck]
-      [rst Rst]
-      [syn NoSyn]
-      [fin NoFin]
-      [window DEFAULT-WINDOW-SIZE]
-      [payload (vector)]))
+    (record
+     [source-port source-port]
+     [destination-port dest-port]
+     [seq seq]
+     [ack 0]
+     [ack-flag (variant NoAck)]
+     [rst (variant Rst)]
+     [syn (variant NoSyn)]
+     [fin (variant NoFin)]
+     [window DEFAULT-WINDOW-SIZE]
+     [payload (vector)]))
+
+  (define (make-syn-ack source-port dest-port seq ack)
+    (record
+     [source-port source-port]
+     [destination-port dest-port]
+     [seq seq]
+     [ack ack]
+     [ack-flag (variant Ack)]
+     [rst (variant NoRst)]
+     [syn (variant Syn)]
+     [fin (variant NoFin)]
+     [window DEFAULT-WINDOW-SIZE]
+     [payload (vector)]))
+
+  ;; (define (make-ack source-port dest-port seqno ackno)
+  ;;   (record
+  ;;    ([source-port ,source-port]
+  ;;     [destination-port ,dest-port]
+  ;;     [seq ,seqno]
+  ;;     [ack ,ackno]
+  ;;     [ack-flag Ack]
+  ;;     [rst NoRst]
+  ;;     [syn NoSyn]
+  ;;     [fin NoFin]
+  ;;     [window DEFAULT-WINDOW-SIZE]
+  ;;     [payload (vector)])))
 
   (define (InetSocketAddress ip port)
     (record [ip ip] [port port]))
@@ -392,4 +494,23 @@
     (send-command tcp (Connect (InetSocketAddress remote-ip server-port) connection-response))
     (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-syn server-port)))
     (sleep (/ wait-time-in-milliseconds 1000))
-    (check-unicast connection-response (CommandFailed))))
+    (check-unicast connection-response (CommandFailed)))
+
+  (test-case "SYN/ACK to SYN makes session send ACK, notifies user"
+    (define-values (packets-out tcp) (start-prog))
+    (define connection-response (make-async-channel))
+    (send-command tcp (Connect (InetSocketAddress remote-ip server-port) connection-response))
+    (define syn (check-unicast-match packets-out
+                                     (OutPacket (== remote-ip) (and syn (tcp-syn server-port)))
+                                     #:result syn))
+    (define local-port (: syn source-port))
+    (define local-iss (: syn seq))
+    (define remote-iss (random #x10000)) ; only explores part of the ISS space, but good enough
+    (send-packet tcp remote-ip (make-syn-ack server-port local-port remote-iss (add1 local-iss)))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-ack local-port
+                                             server-port
+                                             (add1 local-iss)
+                                             (add1 remote-iss))))
+    (check-unicast-match connection-response (csa-variant Connected _ _))))
