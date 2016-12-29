@@ -70,7 +70,9 @@
   (ActorDef (ad)
     (define-actor τ (a [x τ2] ...) (AI ...) e S ...))
   (StateDef (S)
-    (define-state (s [x τ] ...) (x2) e1 e* ...))
+    (define-state (s [x τ] ...) (x2) e1 e* ...)
+    (define-state (s [x τ] ...) (x2) e1 e* ... tc))
+  (TimeoutClause (tc) [timeout e2 e3 e4 ...])
   (ActorItem (AI)
     fd
     cd)
@@ -185,8 +187,13 @@
 (define-language csa/single-exp-bodies
   (extends csa/wrapped-calls)
   (StateDef (S)
-            (- (define-state (s [x τ] ...) (x2) e1 e* ...))
-            (+ (define-state (s [x τ] ...) (x2) e)))
+            (- (define-state (s [x τ] ...) (x2) e1 e* ...)
+               (define-state (s [x τ] ...) (x2) e1 e* ... tc))
+            (+ (define-state (s [x τ] ...) (x2) e)
+               (define-state (s [x τ] ...) (x2) e1 tc)))
+  (TimeoutClause (tc)
+                 (- [timeout e2 e3 e4 ...])
+                 (+ [timeout e2 e3]))
   (FuncDef (fd)
            (- (define-function (f [x τ] ...) e1 e* ...))
            (+ (define-function (f [x τ] ...) e)))
@@ -214,7 +221,12 @@
 (define-pass wrap-multi-exp-bodies : csa/wrapped-calls (P) -> csa/single-exp-bodies ()
   (StateDef : StateDef (S) -> StateDef ()
             [(define-state (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e*] ...)
-             `(define-state (,s [,x ,τ] ...) (,x2) (begin ,e1 ,e* ...))])
+             `(define-state (,s [,x ,τ] ...) (,x2) (begin ,e1 ,e* ...))]
+            [(define-state (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e*] ... ,[tc])
+             `(define-state (,s [,x ,τ] ...) (,x2) (begin ,e1 ,e* ...) ,tc)])
+  (TimeoutClause : TimeoutClause (tc) -> TimeoutClause ()
+                 [(timeout ,[e2] ,[e3] ,[e4] ...)
+                  `(timeout ,e2 (begin ,e3 ,e4 ...))])
   (FuncDef : FuncDef (fd) -> FuncDef ()
            [(define-function (,f [,x ,[τ]] ...) ,[e1] ,[e*] ...)
             `(define-function (,f [,x ,τ] ...) (begin ,e1 ,e* ...))])
@@ -813,7 +825,14 @@
            (,actors-kw [,x3 ,e] ...))])
   (StateDef : StateDef (S defs-so-far) -> StateDef ()
     [(define-state (,s [,x ,[τ]] ...) (,x2) ,[Exp : e0 defs-so-far -> e])
-     `(define-state (,s [,x ,τ] ...) (,x2) ,e)])
+     `(define-state (,s [,x ,τ] ...) (,x2) ,e)]
+    [(define-state (,s [,x ,[τ]] ...) (,x2) ,[Exp : e0 defs-so-far -> e]
+       ,[TimeoutClause : tc0 defs-so-far -> tc])
+     `(define-state (,s [,x ,τ] ...) (,x2) ,e ,tc)])
+  (TimeoutClause : TimeoutClause (tc defs-so-far) -> TimeoutClause ()
+                 [(timeout ,[Exp : e1 defs-so-far -> e2]
+                           ,[Exp : e3 defs-so-far -> e4])
+                  `(timeout ,e2 ,e4)])
   (Exp : Exp (e defs-so-far) -> Exp ()
        [(spawn ,l ,a ,[Exp : e0 defs-so-far -> e] ...)
         (match (hash-ref defs-so-far a #f)
@@ -936,6 +955,20 @@
     `(program (receptionists [rec1 (Record)]) (externals [ext1 Nat]) (actors))))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Fixed timeout syntax
+
+;; Nanopass needs keywords at the beginning of each clause, so we do a non-Nanopass transform here to
+;; fix the timeout syntax
+
+(define (fix-timeout-syntax t)
+  (match t
+    [`(timeout ,exps ...)
+     `(timeout ,@(map fix-timeout-syntax exps))]
+    [(list exps ...)
+     (map fix-timeout-syntax exps)]
+    [_ t]))
+
+;; ---------------------------------------------------------------------------------------------------
 
 (define-parser parse-actor-def-csa/surface csa/surface)
 
@@ -953,6 +986,7 @@
 
   (define pass
     (compose
+     fix-timeout-syntax
      unparse-csa/inlined-actors
      inline-actors
      inline-actor-definitions
