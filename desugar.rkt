@@ -18,7 +18,8 @@
 
 (define (name? x)
   (and (symbol? x)
-       (not (PrimitiveType? x))))
+       (not (PrimitiveType? x))
+       (not (eq? x 'timeout))))
 
 (define (PrimitiveType? x)
   (not (not (member x (list 'Nat 'String)))))
@@ -70,8 +71,8 @@
   (ActorDef (ad)
     (define-actor τ (a [x τ2] ...) (AI ...) e S ...))
   (StateDef (S)
-    (define-state (s [x τ] ...) (x2) e1 e* ...)
-    (define-state (s [x τ] ...) (x2) e1 e* ... tc))
+            (define-state (s [x τ] ...) (x2) e1 e* ...)
+            (define-state/timeout (s [x τ] ...) (x2) e1 e* ... tc))
   (TimeoutClause (tc) [timeout e2 e3 e4 ...])
   (ActorItem (AI)
     fd
@@ -188,9 +189,9 @@
   (extends csa/wrapped-calls)
   (StateDef (S)
             (- (define-state (s [x τ] ...) (x2) e1 e* ...)
-               (define-state (s [x τ] ...) (x2) e1 e* ... tc))
+               (define-state/timeout (s [x τ] ...) (x2) e1 e* ... tc))
             (+ (define-state (s [x τ] ...) (x2) e)
-               (define-state (s [x τ] ...) (x2) e1 tc)))
+               (define-state/timeout (s [x τ] ...) (x2) e1 tc)))
   (TimeoutClause (tc)
                  (- [timeout e2 e3 e4 ...])
                  (+ [timeout e2 e3]))
@@ -222,8 +223,8 @@
   (StateDef : StateDef (S) -> StateDef ()
             [(define-state (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e*] ...)
              `(define-state (,s [,x ,τ] ...) (,x2) (begin ,e1 ,e* ...))]
-            [(define-state (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e*] ... ,[tc])
-             `(define-state (,s [,x ,τ] ...) (,x2) (begin ,e1 ,e* ...) ,tc)])
+            [(define-state/timeout (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e*] ... ,[tc])
+             `(define-state/timeout (,s [,x ,τ] ...) (,x2) (begin ,e1 ,e* ...) ,tc)])
   (TimeoutClause : TimeoutClause (tc) -> TimeoutClause ()
                  [(timeout ,[e2] ,[e3] ,[e4] ...)
                   `(timeout ,e2 (begin ,e3 ,e4 ...))])
@@ -826,9 +827,9 @@
   (StateDef : StateDef (S defs-so-far) -> StateDef ()
     [(define-state (,s [,x ,[τ]] ...) (,x2) ,[Exp : e0 defs-so-far -> e])
      `(define-state (,s [,x ,τ] ...) (,x2) ,e)]
-    [(define-state (,s [,x ,[τ]] ...) (,x2) ,[Exp : e0 defs-so-far -> e]
+    [(define-state/timeout (,s [,x ,[τ]] ...) (,x2) ,[Exp : e0 defs-so-far -> e]
        ,[TimeoutClause : tc0 defs-so-far -> tc])
-     `(define-state (,s [,x ,τ] ...) (,x2) ,e ,tc)])
+     `(define-state/timeout (,s [,x ,τ] ...) (,x2) ,e ,tc)])
   (TimeoutClause : TimeoutClause (tc defs-so-far) -> TimeoutClause ()
                  [(timeout ,[Exp : e1 defs-so-far -> e2]
                            ,[Exp : e3 defs-so-far -> e4])
@@ -958,10 +959,13 @@
 ;; Fixed timeout syntax
 
 ;; Nanopass needs keywords at the beginning of each clause, so we do a non-Nanopass transform here to
-;; fix the timeout syntax
+;; fix the timeout syntax. Also separated define-state into two forms to avoid some sort of parsing
+;; ambiguity error that I can't otherwise seem to fix.
 
 (define (fix-timeout-syntax t)
   (match t
+    [`(define-state/timeout ,exps ...)
+     `(define-state ,@(map fix-timeout-syntax exps))]
     [`(timeout ,exps ...)
      `(timeout ,@(map fix-timeout-syntax exps))]
     [(list exps ...)
