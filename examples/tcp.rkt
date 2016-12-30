@@ -14,6 +14,9 @@
   (quasiquote
 (program (receptionists [tcp TcpInput]) (externals [packets-out OutPacket])
 
+;;---------------------------------------------------------------------------------------------------
+;; TCP Packets
+
   (define-type IpAddress Nat) ; fake IP addresses with Nats
   (define-record InetSocketAddress [ip IpAddress] [port Nat])
   (define-record SessionId
@@ -63,6 +66,102 @@
     (case (: packet syn)
       [(Syn) (variant True)]
       [(NoSyn) (variant False)]))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Receive Buffer
+
+  ;; The receive buffer buffers packets that have been received by a socket but are not yet ready to
+  ;; be processed (because some other packet earlier in the stream is still missing).
+
+  (define-type ReceiveBuffer (Vectorof TcpPacket))
+
+  (define-record ReceiveBufferRetrieval
+    [retrieved (Vectorof TcpPacket)]
+    [remaining ReceiveBuffer])
+
+  ;; Returns a ReceiveBuffer
+  (define-function (create-empty-rbuffer)
+    (vector))
+
+  ;; Helper for rbuffer-add
+  (define-record RBufferAddRec
+    [buffer ReceiveBuffer]
+    [added? (Union [True] [False])])
+
+  ;; Returns a ReceiveBuffer that adds the packet to the correct portion of the sequence
+  (define-function (rbuffer-add [buffer ReceiveBuffer] [packet TcpPacket])
+    (let ([final-add-rec
+           (for/fold ([add-rec (RBufferAddRec buffer (False))])
+                     ([buffered-packet buffer])
+             (cond
+               [(and (< (: packet seq) (: buffered-packet seq))
+                     (not (: add-rec added?)))
+                (RBufferAddRec (vector-append (: add-rec buffer) (vector packet buffered-packet))
+                               (variant True))]
+               [else (RBufferAddRec (vector-append (: add-rec buffer) (vector buffered-packet))
+                                    (: add-rec added?))]))])
+      (cond
+        [(: final-add-rec added?) (: final-add-rec buffer)]
+        [else (vector-append (: final-add-rec buffer) (vector packet))])))
+
+  ;; Gets all packets from the receive buffer whose SEQ is less than stop-seq. Returns a
+  ;; ReceiveBufferRetrieval that also includes the remaining buffer.
+  (define-function (rbuffer-retrieve-up-to [buffer ReceiveBuffer] [stop-seq SequenceNumber])
+    (for/fold ([result (ReceiveBufferRetrieval (vector) buffer)])
+              ([packet buffer])
+      (cond
+        [(<= (: packet seq) starting-seq)
+         (ReceiveBufferRetrieval (vector-append (: result retrieved) (vector packet))
+                                 (vector-drop (: result remaining) 1))]
+        [else result])))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Send Buffer
+
+  ;; The send buffer holds the segment of our outgoing byte stream that has not yet been
+  ;; acknowledged. It tracks how many times items have been retransmitted without a new ACK, the
+  ;; sequence numbers at the beginning and end of the buffer, and the current window size.,
+
+  (define-record SendBuffer
+    [retransmit-count Nat]
+    [unacked-seq Nat]
+    [window Nat] ; window size in octets
+    [send-next Nat]
+    [buffer (Vectorof Byte)])
+
+  ;; Returns true if the send buffer contains no more bytes to send
+  (define-function (send-buffer-empty? [s SendBuffer])
+    (= 0 (send-buffer-length s)))
+
+  ;; Returns the total number of octets to send stored in the buffer
+  (define-function (send-buffer-length [s SendBuffer])
+    (vector-length (: s buffer)))
+
+  (define-function (increment-retransmit-count [s SendBuffer])
+    (SendBuffer (+ (: s retransmit-count) 1)
+                (: s unacked-seq)
+                (: s window)
+                (: s send-next)
+                (: s buffer)))
+
+  ;; Adds the given octets to the send buffer and updates the send-next pointer
+  (define-function (send-buffer-add-octets [s SendBuffer]
+                                           [data (Vectorof Byte)]
+                                           [send-next SequenceNumber])
+    (SendBuffer (: s retransmit-count)
+                (: s unacked-seq)
+                (: s window)
+                send-next
+                (vector-append (: s buffer) data)))
+
+  (define-function (send-buffer-add-fin [s SendBuffer])
+    (SendBuffer (: s retransmit-count)
+                (: s unacked-seq)
+                (: s window)
+                (+ (: s send-next) 1)
+                (: s buffer)))
+
+;; ---------------------------------------------------------------------------------------------------
 
   (define-variant TcpSessionCommand
     ;; TODO: write these branches
@@ -210,15 +309,11 @@
         [(ActiveOpen)
          (send-to-ip (make-syn iss))
          (goto SynSent (+ iss 1))]
-        ;; TODO: implement the passive open logic
         [(PassiveOpen remote-iss)
           (let ([rcv-nxt (+ 1 remote-iss)])
             (send-to-ip (make-syn-ack iss rcv-nxt))
             (send status-updates (Connected id self))
-            (goto SynReceived (+ 1 iss) rcv-nxt
-                  ;; TODO:  create the rest of these parameters
-                  ;; (create-empty-buffer) status-updates octet-stream
-                  ))]))
+            (goto SynReceived (+ 1 iss) rcv-nxt (create-empty-rbuffer)))]))
 
     (define-state/timeout (SynSent [snd-nxt Nat]) (m)
       (case m
@@ -267,10 +362,7 @@
                      [rcv-nxt (+ (: packet seq) 1)])
                  (send-to-ip (make-syn-ack iss rcv-nxt))
                  (send status-updates (Connected id self))
-                 (goto SynReceived (+ iss 1) rcv-nxt
-                             ;; TODO: implement these parameters
-                             ;; (create-empty-buffer) status-updates octet-stream
-                             ))]
+                 (goto SynReceived (+ iss 1) rcv-nxt (create-empty-rbuffer)))]
               [else
                ;; not an important segment, so just drop it. Probably won't happen in reality
                (goto SynSent snd-nxt)])])])
@@ -279,15 +371,9 @@
         (send status-updates (CommandFailed))
         (halt-with-notification)])
 
-    (define-state (SynReceived [snd-nxt Nat]
-                               [rcv-nxt Nat]
-                               ;; TODO: use these parameters
-                               ;; [receive-buffer ReceiveBuffer]
-                               ;; [status-updates (Channel ConnectionStatus)]
-                               ;; [octet-stream (Channel bytes)]
-                               ) (m)
-                                 ;; TODO: implement this state
-                                 (goto SynReceived snd-nxt rcv-nxt))
+    (define-state (SynReceived [snd-nxt Nat] [rcv-nxt Nat] [receive-buffer ReceiveBuffer]) (m)
+      ;; TODO: implement this state
+      (goto SynReceived snd-nxt rcv-nxt receive-buffer))
 
     (define-state (Established) (m)
       ;; TODO: define this state
