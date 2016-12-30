@@ -15,6 +15,12 @@
 (program (receptionists [tcp TcpInput]) (externals [packets-out OutPacket])
 
 ;;---------------------------------------------------------------------------------------------------
+;; Math
+
+  (define-function (max [a Nat] [b Nat])
+    (if (> a b) a b))
+
+;;---------------------------------------------------------------------------------------------------
 ;; TCP Packets
 
   (define-type IpAddress Nat) ; fake IP addresses with Nats
@@ -67,6 +73,12 @@
       [(Syn) (variant True)]
       [(NoSyn) (variant False)]))
 
+  ;; Returns the sequence number for the last octet in the segment, or the sequence number if the
+  ;; segment carries no octets.
+  (define-function (segment-last-seq [packet TcpPacket])
+    (+ (: packet seq)
+       (max 0 (- (vector-length (: packet payload)) 1))))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Receive Buffer
 
@@ -91,7 +103,7 @@
   ;; Returns a ReceiveBuffer that adds the packet to the correct portion of the sequence
   (define-function (rbuffer-add [buffer ReceiveBuffer] [packet TcpPacket])
     (let ([final-add-rec
-           (for/fold ([add-rec (RBufferAddRec buffer (False))])
+           (for/fold ([add-rec (RBufferAddRec buffer (variant False))])
                      ([buffered-packet buffer])
              (cond
                [(and (< (: packet seq) (: buffered-packet seq))
@@ -214,11 +226,13 @@
 
   (define-variant TcpSessionInput
     (InTcpPacket [packet TcpPacket])
+    ;; a "private" variant, used only internally for an ordered queue of packets. We assume that they
+    ;; are in order since the messages are sent to and from the same actor. The semantics doesn't
+    ;; technically guarantee this, but any real implementation would order them.
+    (OrderedTcpPacket [packet TcpPacket])
      ;; TODO: add these as needed
      ;; [connection-response ConnectionResponse]
      ;; [retransmission-timer Unit]
-     ;; [packets-in TcpPacket]
-     ;; [ordered-packets TcpPacket] ; NOTE: this one should not be exposed outside this actor
      ;; [octets-to-send (Vectorof Byte)]
      ;; [close-request]
      ;; [time-wait-timer Unit]
@@ -301,7 +315,74 @@
        (+ (: packet seq)
           (+ (case (: packet syn) [(Syn) 1] [(NoSyn) 0])
              (+ (case (: packet fin) [(Fin) 1] [(NoFin) 0])
-                (vector-length (: packet payload)))))))
+                (vector-length (: packet payload))))))
+
+     (define-function (finish-connecting)
+       (send status-updates (Connected id self))
+       ;; TODO: start a registration timer
+       (goto Established
+             ;; TODO: implement these parameters
+             ;; (SendBuffer 0 snd-nxt (: packet window) snd-nxt (vector))
+             ;; rcv-nxt
+             ;; (create-empty-buffer)
+             ;; status-updates
+             ;; octet-stream
+             ;; (create-timer (void) retransmission-timer)
+             ))
+
+     ;; Returns true if the segment is "acceptable", where a segment is acceptable if its start falls
+     ;; somewhere in the current receive window
+     (define-function (segment-acceptable? [packet TcpPacket] [next-receive Nat])
+       ;; NOTE: this is where receive window checking would go if we did that
+       (>= (segment-last-seq packet) next-receive))
+
+     ;; Returns true if the given sequence number is conceptually "part" of the given segment.
+     (define-function (segment-contains-seq? [packet TcpPacket] [seq Nat])
+       (and (>= seq (: packet seq)) (<= seq (segment-last-seq packet))))
+
+     ;; Checks to see if the packet is acceptable, and if it is the next one, queues up segments for
+     ;; full processing. Also drops packets with unset or in-the-future ACK. Returns the new receive
+     ;; buffer.
+     (define-function (process-incoming [packet TcpPacket]
+                                        [rcv-nxt Nat]
+                                        [receive-buffer ReceiveBuffer]
+                                        [snd-nxt Nat])
+                (printf "1 ~s\n" rcv-nxt)
+       (cond
+         [(segment-acceptable? packet rcv-nxt)
+                   (printf "2\n")
+          ;; check if this contains the next expected thing
+          (cond
+            [(or (not (packet-ack? packet)) (> (: packet ack) snd-nxt))
+             ;; Just drop packets with the ACK flag unset or that ACK something not yet sent
+                      (printf "3\n")
+             receive-buffer]
+            [(segment-contains-seq? packet rcv-nxt)
+             ;; TODO: don't I need to ACK this packet?
+         (printf "4\n")
+             ;; queue up this segment
+             (send self (OrderedTcpPacket packet))
+             ;; queue up any received segments from the receive buffer that immediately follow this
+             ;; segment
+             (let ([retrieval (rbuffer-retrieve-up-to receive-buffer (compute-receive-next packet))])
+               (for/fold ([dummy 0])
+                         ([packet (: retrieval retrieved)])
+                 (send self (OrderedTcpPacket packet))
+                 0)
+               (: retrieval remaining))]
+            [else
+             ;; segment does not contain rcv-next, so add it to buffer
+                      (printf "5\n")
+             (rbuffer-add receive-buffer packet)])]
+         [(packet-rst? packet)
+                   (printf "6\n")
+          ;; don't send an ACK for RST segments; presumably b/c it's from a previous connection
+          receive-buffer]
+         [else
+          ;; not acceptable and not an RST, so send back the current ACK
+          (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
+                   (printf "7\n")
+          receive-buffer])))
 
     ;; initialization
     (let ([iss (get-iss)])
@@ -312,7 +393,6 @@
         [(PassiveOpen remote-iss)
           (let ([rcv-nxt (+ 1 remote-iss)])
             (send-to-ip (make-syn-ack iss rcv-nxt))
-            (send status-updates (Connected id self))
             (goto SynReceived (+ 1 iss) rcv-nxt (create-empty-rbuffer)))]))
 
     (define-state/timeout (SynSent [snd-nxt Nat]) (m)
@@ -331,16 +411,7 @@
                   ;; this is the typical SYN/ACK case (step 2 of the 3-way handshake)
                   (let ([rcv-nxt (compute-receive-next packet)])
                     (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
-                    (send status-updates (Connected id self))
-                    (goto Established
-                          ;; TODO: implement these parameters
-                          ;; (SendBuffer 0 snd-nxt (: packet window) snd-nxt (vector))
-                          ;; rcv-nxt
-                          ;; (create-empty-buffer)
-                          ;; status-updates
-                          ;; octet-stream
-                          ;; (create-timer (void) retransmission-timer)
-                          ))]
+                    (finish-connecting))]
                  [else
                   ;; ACK acceptable but no other interesting fields set. Probably won't happen in
                   ;; reality.
@@ -361,28 +432,71 @@
                (let ([iss (- snd-nxt 1)]
                      [rcv-nxt (+ (: packet seq) 1)])
                  (send-to-ip (make-syn-ack iss rcv-nxt))
-                 (send status-updates (Connected id self))
                  (goto SynReceived (+ iss 1) rcv-nxt (create-empty-rbuffer)))]
               [else
                ;; not an important segment, so just drop it. Probably won't happen in reality
-               (goto SynSent snd-nxt)])])])
-      ;; TODO: set a proper timeout here, update it in other messages
+               (goto SynSent snd-nxt)])])]
+        [(OrderedTcpPacket packet)
+         ;; shouldn't happen at this point; ignore it
+         (goto SynSent snd-nxt)])
+
       [timeout wait-time-in-milliseconds
         (send status-updates (CommandFailed))
         (halt-with-notification)])
 
     (define-state (SynReceived [snd-nxt Nat] [rcv-nxt Nat] [receive-buffer ReceiveBuffer]) (m)
-      ;; TODO: implement this state
-      (goto SynReceived snd-nxt rcv-nxt receive-buffer))
+      (printf "processing in synreceived\n")
+      (case m
+        [(InTcpPacket packet)
+         (printf "got net packet: ~s\n" packet)
+         (goto SynReceived
+               snd-nxt
+               rcv-nxt
+               (process-incoming packet rcv-nxt receive-buffer snd-nxt))]
+        [(OrderedTcpPacket packet)
+         (printf "got ordered packet: ~s\n" packet)
+         (cond
+           [(packet-rst? packet)
+            (case open
+              [(ActiveOpen)
+               ;; Can get here with a simultaneous open
+               (send status-updates (CommandFailed))
+               0]
+              [(PassiveOpen r) 0])
+            (halt-with-notification)]
+           ;; We differ here slightly from the RFC, b/c the RFC doesn't make sense. To allow
+           ;; simultaneous open, we should send a RST for SYN, but not SYN/ACK
+           [(and (packet-syn? packet) (not (packet-ack? packet)))
+            (send-to-ip (make-rst snd-nxt))
+            (case open
+              [(ActiveOpen) (send status-updates (CommandFailed)) 0]
+              [(PassiveOpen r) 0])
+            (halt-with-notification)]
+           [(packet-ack? packet)
+            (finish-connecting)
+            ;; TODO: check if the ACK is okay
+
+            ;; TODO: use these parameters
+            ;; (next-state (Established (SendBuffer 0 snd-nxt (: packet window) snd-nxt (bytes))
+            ;;                          (compute-receive-next packet)
+            ;;                          (create-empty-buffer)
+            ;;                          status-updates
+            ;;                          octet-stream
+            ;;                          (create-timer (void) retransmission-timer)))
+            ]
+           [else (goto SynReceived snd-nxt rcv-nxt receive-buffer)])]))
 
     (define-state (Established) (m)
+      (printf "in established\n")
       ;; TODO: define this state
       (goto Established)
       )
 
     ;; TODO: the rest of the states
 
-    (define-state (Halt) (m) (goto Halt)))
+    (define-state (Halt) (m)
+      (printf "in halt\n")
+      (goto Halt)))
 
   ;;;; The main TCP actor
 
@@ -672,10 +786,16 @@
     (send-command tcp (Bind server-port bind-status-dest bind-handler))
     (check-unicast bind-status-dest (Bound))
     (send-packet tcp remote-ip (make-syn client-port server-port remote-iss))
-    ;; check for SYN/ACK and Connected message
-    (check-unicast-match bind-handler (csa-variant Connected _ _))
-    (check-unicast-match packets-out
-      (OutPacket (== remote-ip) (tcp-syn-ack server-port client-port _ (add1 remote-iss)))))
+    (define local-iss
+      (check-unicast-match packets-out
+        (OutPacket (== remote-ip) (tcp-syn-ack server-port client-port local-iss (add1 remote-iss)))
+        #:result local-iss))
+    (send-packet tcp remote-ip (make-normal-packet client-port
+                                                   server-port
+                                                   (add1 remote-iss)
+                                                   (add1 local-iss)
+                                                   (vector)))
+    (check-unicast-match bind-handler (csa-variant Connected _ _)))
 
   (test-case "Proper handshake/upper layer notification on simultaneous open"
     ;; Overall sequence is:
@@ -694,6 +814,12 @@
                            #:result (list local-iss remote-port)))
     (send-packet tcp remote-ip (make-syn remote-port local-port remote-iss))
     (check-unicast-match packets-out
-                         (OutPacket (== remote-ip)
-                                    (tcp-syn-ack local-port remote-port _ (add1 remote-iss))))
-    (check-unicast-match status-updates (csa-variant Connected _ _))))
+      (OutPacket (== remote-ip) (tcp-syn-ack local-port remote-port local-iss (add1 remote-iss))))
+    (send-packet tcp remote-ip (make-normal-packet remote-port
+                                                   local-port
+                                                   (add1 remote-iss)
+                                                   (add1 local-iss)
+                                                   (vector)))
+    (check-unicast-match status-updates (csa-variant Connected _ _)))
+
+  )
