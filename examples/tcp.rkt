@@ -125,7 +125,7 @@
 
   ;; Gets all packets from the receive buffer whose SEQ is less than stop-seq. Returns a
   ;; ReceiveBufferRetrieval that also includes the remaining buffer.
-  (define-function (rbuffer-retrieve-up-to [buffer ReceiveBuffer] [stop-seq SequenceNumber])
+  (define-function (rbuffer-retrieve-up-to [buffer ReceiveBuffer] [stop-seq Nat])
     (for/fold ([result (ReceiveBufferRetrieval (vector) buffer)])
               ([packet buffer])
       (cond
@@ -166,7 +166,7 @@
   ;; Adds the given octets to the send buffer and updates the send-next pointer
   (define-function (send-buffer-add-octets [s SendBuffer]
                                            [data (Vectorof Byte)]
-                                           [send-next SequenceNumber])
+                                           [send-next Nat])
     (SendBuffer (: s retransmit-count)
                 (: s unacked-seq)
                 (: s window)
