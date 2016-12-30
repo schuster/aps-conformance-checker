@@ -347,19 +347,16 @@
                                         [rcv-nxt Nat]
                                         [receive-buffer ReceiveBuffer]
                                         [snd-nxt Nat])
-                (printf "1 ~s\n" rcv-nxt)
        (cond
          [(segment-acceptable? packet rcv-nxt)
-                   (printf "2\n")
           ;; check if this contains the next expected thing
           (cond
             [(or (not (packet-ack? packet)) (> (: packet ack) snd-nxt))
              ;; Just drop packets with the ACK flag unset or that ACK something not yet sent
-                      (printf "3\n")
              receive-buffer]
             [(segment-contains-seq? packet rcv-nxt)
              ;; TODO: don't I need to ACK this packet?
-         (printf "4\n")
+
              ;; queue up this segment
              (send self (OrderedTcpPacket packet))
              ;; queue up any received segments from the receive buffer that immediately follow this
@@ -372,16 +369,13 @@
                (: retrieval remaining))]
             [else
              ;; segment does not contain rcv-next, so add it to buffer
-                      (printf "5\n")
              (rbuffer-add receive-buffer packet)])]
          [(packet-rst? packet)
-                   (printf "6\n")
           ;; don't send an ACK for RST segments; presumably b/c it's from a previous connection
           receive-buffer]
          [else
           ;; not acceptable and not an RST, so send back the current ACK
           (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
-                   (printf "7\n")
           receive-buffer])))
 
     ;; initialization
@@ -445,16 +439,21 @@
         (halt-with-notification)])
 
     (define-state (SynReceived [snd-nxt Nat] [rcv-nxt Nat] [receive-buffer ReceiveBuffer]) (m)
-      (printf "processing in synreceived\n")
       (case m
         [(InTcpPacket packet)
-         (printf "got net packet: ~s\n" packet)
-         (goto SynReceived
-               snd-nxt
-               rcv-nxt
-               (process-incoming packet rcv-nxt receive-buffer snd-nxt))]
+         ;; RFC Errata 3305 notes that this acceptability test doesn't support all of the simultaneous
+         ;; open cases, so I'm adding a special case for that instance
+         (cond
+           [(and (packet-syn? packet)
+                 (= (: packet seq) (- rcv-nxt 1)))
+            (send self (OrderedTcpPacket packet))
+            (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
+           [else
+            (goto SynReceived
+                  snd-nxt
+                  rcv-nxt
+                  (process-incoming packet rcv-nxt receive-buffer snd-nxt))])]
         [(OrderedTcpPacket packet)
-         (printf "got ordered packet: ~s\n" packet)
          (cond
            [(packet-rst? packet)
             (case open
@@ -473,21 +472,31 @@
               [(PassiveOpen r) 0])
             (halt-with-notification)]
            [(packet-ack? packet)
-            (finish-connecting)
-            ;; TODO: check if the ACK is okay
-
-            ;; TODO: use these parameters
-            ;; (next-state (Established (SendBuffer 0 snd-nxt (: packet window) snd-nxt (bytes))
-            ;;                          (compute-receive-next packet)
-            ;;                          (create-empty-buffer)
-            ;;                          status-updates
-            ;;                          octet-stream
-            ;;                          (create-timer (void) retransmission-timer)))
-            ]
+            (cond
+              [(= (: packet ack) snd-nxt)
+               ;; If the packet had a SYN (part of the simultaneous open case), send an ACK
+               (cond
+                 [(packet-syn? packet)
+                  (let ([rcv-nxt (compute-receive-next packet)])
+                    (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector))))
+                  0]
+                 [else 0])
+               (finish-connecting)
+               ;; TODO: use these parameters
+               ;; (next-state (Established (SendBuffer 0 snd-nxt (: packet window) snd-nxt (bytes))
+               ;;                          (compute-receive-next packet)
+               ;;                          (create-empty-buffer)
+               ;;                          status-updates
+               ;;                          octet-stream
+               ;;                          (create-timer (void) retransmission-timer)))
+               ]
+              [else
+               ;; TODO: test this branch
+               (send-to-ip (make-rst (: packet ack)))
+               (goto SynReceived snd-nxt rcv-nxt receive-buffer)])]
            [else (goto SynReceived snd-nxt rcv-nxt receive-buffer)])]))
 
     (define-state (Established) (m)
-      (printf "in established\n")
       ;; TODO: define this state
       (goto Established)
       )
@@ -495,7 +504,6 @@
     ;; TODO: the rest of the states
 
     (define-state (Halt) (m)
-      (printf "in halt\n")
       (goto Halt)))
 
   ;;;; The main TCP actor
@@ -822,4 +830,28 @@
                                                    (vector)))
     (check-unicast-match status-updates (csa-variant Connected _ _)))
 
-  )
+  (test-case "Proper handshake/upper layer notification on simultaneous open with simultaneous SYN/ACK"
+    ;; Overall sequence is:
+    ;; 1. SYN ->
+    ;; 2. SYN <-
+    ;; 3. SYN/ACK ->
+    ;; 3. SYN/ACK <-
+    ;; 4. ACK ->
+    (define-values (packets-out tcp) (start-prog))
+    (define status-updates (make-async-channel))
+    (define remote-port client-port)
+    (send-command tcp (Connect (InetSocketAddress remote-ip remote-port) status-updates))
+    (match-define (list local-iss local-port)
+      (check-unicast-match packets-out
+                           (OutPacket (== remote-ip)
+                                      (csa-record* [seq local-iss] [source-port remote-port]))
+                           #:result (list local-iss remote-port)))
+    (send-packet tcp remote-ip (make-syn remote-port local-port remote-iss))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-syn-ack local-port remote-port _ (add1 remote-iss))))
+    (send-packet tcp remote-ip (make-syn-ack remote-port local-port remote-iss (add1 local-iss)))
+    (check-unicast-match packets-out
+      (OutPacket (== remote-ip)
+                 (tcp-ack local-port remote-port (+ local-iss 1) (+ remote-iss 1))))
+    (check-unicast-match status-updates (csa-variant Connected _ _))))
