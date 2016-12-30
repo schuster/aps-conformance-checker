@@ -4,11 +4,13 @@
 ;; (http://doc.akka.io/docs/akka/current/scala/io-tcp.html)
 
 (define DEFAULT-WINDOW-SIZE 29200)
+(define MAXIMUM-SEGMENT-SIZE-IN-BYTES 536)
 (define wait-time-in-milliseconds 1000)
 (define max-retries 3)
 ;; NOTE: real MSL value is 2 minutes
 (define max-segment-lifetime (* 1000 2)) ; defined in milliseconds
 (define user-response-wait-time 3000)
+(define register-timeout 5000) ; in milliseconds (5 seconds is the Akka default)
 
 (define tcp-program
   (quasiquote
@@ -19,6 +21,9 @@
 
   (define-function (max [a Nat] [b Nat])
     (if (> a b) a b))
+
+  (define-function (min [a Nat] [b Nat])
+    (if (< a b) a b))
 
 ;;---------------------------------------------------------------------------------------------------
 ;; TCP Packets
@@ -187,10 +192,18 @@
   (define-type TimerCommand Nat)
 
 ;; ---------------------------------------------------------------------------------------------------
-  (define-variant TcpSessionCommand
-    [Register (handler (Addr (Vectorof Byte)))]
-    ;; TODO: should have Write, Close, ConfirmedClose, Abort
-    )
+
+  (define-type WriteResponse
+    (Union (CommandFailed) ; CommandFailed defined below
+           (WriteAck)))
+  (define-function (WriteAck) (variant WriteAck))
+
+  (define-type TcpSessionCommand
+    (Union
+     (Register (Addr (Vectorof Byte)))
+     (Write (Vectorof Byte) (Addr WriteResponse))
+     ;; TODO: should have Write, Close, ConfirmedClose, Abort
+     ))
 
   (define-variant ConnectionStatus
     (CommandFailed)
@@ -243,6 +256,9 @@
     ;; are in order since the messages are sent to and from the same actor. The semantics doesn't
     ;; technically guarantee this, but any real implementation would order them.
     (OrderedTcpPacket [packet TcpPacket])
+    (Register [handler (Addr (Vectorof Byte))])
+    (Write [data (Vectorof Byte)] [handler (Addr WriteResponse)])
+
     ;; TODO: add the user commands (register, write, various closes)
     ;;
     ;; TODO: add the various timeouts
@@ -432,7 +448,44 @@
             (send octet-stream (: segment payload))
             0]
            [else 0])
-         new-rcv-nxt)))
+         new-rcv-nxt))
+
+     ;; Splits a byte string into a list of byte strings with each one no longer than the given
+     ;; size. We assume that the given byte string is non-empty, and that the size is greater than
+     ;; zero.
+     (define-function (segmentize [data (Vectorof Byte)] [size Nat])
+       (for/fold ([segments (vector (vector))])
+                 ([b data])
+         ;; get the last segment out of the list
+         ;; if that segment is full, start a new one
+         ;; else, add to that segment
+         (let ([last-segment (vector-ref segments (- (vector-length segments) 1))])
+           (if (<= (vector-length last-segment) size)
+               (vector-append (vector-copy segments 0 (- (vector-length segments) 1))
+                              (vector-append last-segment (vector b)))
+               (vector-append segments (vector b))))))
+
+     ;; Accepts new octets to send from the user, sends the ones it can, and returns the new send
+     ;; buffer with the new octets
+     (define-function (accept-new-octets [octets (Vectorof Byte)]
+                                         [send-buffer SendBuffer]
+                                         [rcv-nxt Nat]
+                                         [timer Timer])
+       (let* ([first-seq-past-window (+ (: send-buffer unacked-seq) (: send-buffer window))]
+              [octets-in-window
+               (vector-copy octets
+                            0
+                            (min (vector-length octets)
+                                 (- first-seq-past-window (: send-buffer send-next))))]
+              [new-snd-nxt
+               (for/fold ([snd-nxt (: send-buffer send-next)])
+                         ;; TODO: pick up here
+                         ([data (segmentize octets-in-window MAXIMUM-SEGMENT-SIZE-IN-BYTES)])
+                 (send-to-ip (make-normal-packet (: send-buffer send-next) rcv-nxt data))
+                 (+ (: send-buffer send-next) (vector-length data)))])
+         ;; TODO: restart the rxmt-timer
+         ;; (timer-start timer wait-time-in-milliseconds)
+         (send-buffer-add-octets send-buffer octets new-snd-nxt))))
 
     ;; initialization
     (let ([iss (get-iss)])
@@ -488,7 +541,8 @@
                (goto SynSent snd-nxt)])])]
         ;; None of these should happen at this point; ignore them
         [(OrderedTcpPacket packet) (goto SynSent snd-nxt)]
-        [(Register h) (goto SynSent snd-nxt)])
+        [(Register h) (goto SynSent snd-nxt)]
+        [(Write d h) (goto SynSent snd-nxt)])
 
       [timeout wait-time-in-milliseconds
         (send status-updates (CommandFailed))
@@ -553,7 +607,8 @@
                (goto SynReceived snd-nxt rcv-nxt receive-buffer)])]
            [else (goto SynReceived snd-nxt rcv-nxt receive-buffer)])]
         ;; None of these should happen at this point; ignore them
-        [(Register h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]))
+        [(Register h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
+        [(Write d h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]))
 
     ;; We're waiting for the user to register an actor to send received octets to
     (define-state (AwaitingRegistration  [send-buffer SendBuffer]
@@ -572,7 +627,11 @@
          ;; TODO: stop the registration timer
          (goto Established send-buffer rcv-nxt receive-buffer octet-handler
                0 ;; TODO: make the real timer here: (create-timer (void) retransmission-timer)
-               )]))
+               )]
+        [(Write data handler)
+         ;; can't yet write
+         (send handler (CommandFailed))
+         (goto AwaitingRegistration send-buffer rcv-nxt receive-buffer registration-timer)]))
 
     ;; REFACTOR: move these various receive-related params into the receive buffer
     (define-state (Established [send-buffer SendBuffer]
@@ -628,7 +687,16 @@
                             rxmt-timer)]))])]
         [(Reigster h)
          ;; ignore registrations here
-         (goto Established send-buffer rcv-nxt receive-buffer octet-stream rxmt-timer)]))
+         (goto Established send-buffer rcv-nxt receive-buffer octet-stream rxmt-timer)]
+        [(Write data handler)
+         (send handler (WriteAck))
+         (goto Established
+               (accept-new-octets data send-buffer rcv-nxt timer)
+               rcv-nxt
+               receive-buffer
+               status-updates
+               octet-stream
+               timer)]))
 
     (define-state (Closing) (m)
       ;; TODO: define this state
@@ -638,7 +706,13 @@
     ;; TODO: the rest of the states
 
     (define-state (Halt) (m)
-      (goto Halt)))
+      (case m
+        [(Write data handler)
+         ;; can't write anymore
+         (send handler (CommandFailed))
+         (goto Halt)]
+        ;; TODO: handle other cases
+        )))
 
   ;;;; The main TCP actor
 
@@ -892,6 +966,8 @@
     (variant Bound))
   (define (Register handler)
     (variant Register handler))
+  (define (Write data handler)
+    (variant Write data handler))
 
   ;; Helpers to get to various states
   (define (connect connection-response)
@@ -904,6 +980,11 @@
     (async-channel-get packets-out)
     (match (async-channel-get connection-response)
       [(csa-variant Connected _ session) (list packets-out tcp local-port local-iss session)]))
+
+  (define (establish octet-handler)
+    (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
+    (send-session-command session (Register octet-handler))
+    (list packets-out tcp local-port local-iss session))
 
   ;; The tests themselves
   (test-case "Reset packet is dropped"
@@ -1015,4 +1096,15 @@
                                                    (add1 remote-iss)
                                                    (add1 local-iss)
                                                    (vector 1 2 3)))
-    (check-unicast-match octet-dest (vector 1 2 3))))
+    (check-unicast-match octet-dest (vector 1 2 3)))
+
+  (test-case "Octet stream receives data"
+    (define octet-handler (make-async-channel))
+    (match-define (list packets-out tcp local-port local-iss session) (establish octet-handler))
+    (define write-handler (make-async-channel))
+    (send-packet tcp remote-ip (make-normal-packet server-port
+                                                   local-port
+                                                   (add1 remote-iss)
+                                                   (add1 local-iss)
+                                                   (vector 1 2 3)))
+    (check-unicast octet-handler (vector 1 2 3))))
