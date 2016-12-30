@@ -157,7 +157,7 @@
                   ,DEFAULT-WINDOW-SIZE
                   (vector)))
 
-     (define-function (make-syn-ack [seq integer] [ack integer])
+     (define-function (make-syn-ack [seq Nat] [ack Nat])
        (TcpPacket (: id local-port)
                   (: (: id remote-address) port)
                   seq
@@ -169,7 +169,7 @@
                   ,DEFAULT-WINDOW-SIZE
                   (vector)))
 
-     (define-function (make-rst [seq integer])
+     (define-function (make-rst [seq Nat])
        (TcpPacket (: id local-port)
                   (: (: id remote-address) port)
                   seq
@@ -181,7 +181,7 @@
                   ,DEFAULT-WINDOW-SIZE
                   (vector)))
 
-     ;; (define-function (make-fin [seq integer] [ack integer])
+     ;; (define-function (make-fin [seq Nat] [ack Nat])
      ;;   (TcpPacket (: id local-port) (: id remote-port) seq ack 1 0 0 1 DEFAULT-WINDOW-SIZE (vector)))
 
      (define-function (make-normal-packet [seq Nat] [ack Nat] [payload (Vectorof Byte)])
@@ -309,7 +309,7 @@
     ()
     (goto Ready (hash) (hash))
     (define-state (Ready [session-table (Hash SessionId (Addr PacketInputMessage))]
-                         [binding-table (Hash integer (Addr PacketInputMessage))]) (m)
+                         [binding-table (Hash Nat (Addr PacketInputMessage))]) (m)
       (case m
         [(InPacket source-ip packet)
          (case (hash-ref session-table
