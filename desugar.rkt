@@ -122,6 +122,7 @@
        (vector-length e)
        (vector-ref e1 e2)
        (vector-take e1 e2)
+       (vector-drop e1 e2)
        (vector-copy e1 e2 e3)
        (vector-append e1 e2)
        (hash [e1 e2] ...)

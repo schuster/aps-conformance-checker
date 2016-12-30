@@ -83,6 +83,7 @@
    vector-length
    vector-ref
    vector-take
+   vector-drop
    vector-copy
    vector-append
    hash-ref
