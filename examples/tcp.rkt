@@ -23,6 +23,8 @@
 ;;---------------------------------------------------------------------------------------------------
 ;; TCP Packets
 
+  (define-type Byte Nat) ; fake bytes with natural numbers
+
   (define-type IpAddress Nat) ; fake IP addresses with Nats
   (define-record InetSocketAddress [ip IpAddress] [port Nat])
   (define-record SessionId
