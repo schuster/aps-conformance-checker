@@ -75,6 +75,11 @@
       [(Syn) (variant True)]
       [(NoSyn) (variant False)]))
 
+    (define-function (packet-fin? [packet TcpPacket])
+    (case (: packet fin)
+      [(Fin) (variant True)]
+      [(NoFin) (variant False)]))
+
   ;; Returns the sequence number for the last octet in the segment, or the sequence number if the
   ;; segment carries no octets.
   (define-function (segment-last-seq [packet TcpPacket])
@@ -176,9 +181,15 @@
                 (: s buffer)))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Timer
 
+  ;; for now, fake the timer type
+  (define-type TimerCommand Nat)
+
+;; ---------------------------------------------------------------------------------------------------
   (define-variant TcpSessionCommand
-    ;; TODO: write these branches
+    [Register (handler (Addr (Vectorof Byte)))]
+    ;; TODO: should have Write, Close, ConfirmedClose, Abort
     )
 
   (define-variant ConnectionStatus
@@ -232,6 +243,10 @@
     ;; are in order since the messages are sent to and from the same actor. The semantics doesn't
     ;; technically guarantee this, but any real implementation would order them.
     (OrderedTcpPacket [packet TcpPacket])
+    ;; TODO: add the user commands (register, write, various closes)
+    ;;
+    ;; TODO: add the various timeouts
+
      ;; TODO: add these as needed
      ;; [connection-response ConnectionResponse]
      ;; [retransmission-timer Unit]
@@ -319,17 +334,14 @@
              (+ (case (: packet fin) [(Fin) 1] [(NoFin) 0])
                 (vector-length (: packet payload))))))
 
-     (define-function (finish-connecting)
+     (define-function (finish-connecting [snd-nxt Nat] [rcv-nxt Nat] [window Nat])
        (send status-updates (Connected id self))
        ;; TODO: start a registration timer
-       (goto Established
-             ;; TODO: implement these parameters
-             ;; (SendBuffer 0 snd-nxt (: packet window) snd-nxt (vector))
-             ;; rcv-nxt
-             ;; (create-empty-buffer)
-             ;; status-updates
-             ;; octet-stream
-             ;; (create-timer (void) retransmission-timer)
+       (goto AwaitingRegistration
+             (SendBuffer 0 snd-nxt window snd-nxt (vector))
+             rcv-nxt
+             (create-empty-rbuffer)
+             0 ; TODO: put the real registration timer here
              ))
 
      ;; Returns true if the segment is "acceptable", where a segment is acceptable if its start falls
@@ -378,7 +390,49 @@
          [else
           ;; not acceptable and not an RST, so send back the current ACK
           (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
-          receive-buffer])))
+          receive-buffer]))
+
+     ;; Adjust the send buffer as required by the ACK
+     (define-function (process-ack [send-buffer SendBuffer]
+                                   [ack Nat]
+                                   [segment-window Nat]
+                                   [rxmt-timer (Addr TimerCommand)])
+       (let ([acked-new-data? (> ack (: send-buffer unacked-seq))]
+             [new-snd-una (max ack (: send-buffer unacked-seq))])
+         (cond
+           [(and acked-new-data? (< (: send-buffer unacked-seq) (: send-buffer send-next)))
+            ;; have more data to send
+            ;; TODO: restart the timer
+            ;; (timer-restart rxmt-timer wait-time-in-milliseconds)
+            0]
+           [else 0])
+         (SendBuffer (if acked-new-data? 0 (: send-buffer retransmit-count))
+                     new-snd-una
+                     ;; NOTE: p. 71 of the RFC has information about when to update the send window,
+                     ;; but I'm just going to update it when we get a new ACK
+                     (if acked-new-data? segment-window (: send-buffer window))
+                     (: send-buffer send-next)
+                     (vector-copy (: send-buffer buffer)
+                                  (- new-snd-una (: send-buffer unacked-seq))
+                                  (vector-length (: send-buffer buffer))))))
+
+     ;; Does the necessary handling for segment text on the next in-order packet, returning the new
+     ;; receive-next
+     (define-function (process-segment-text [segment TcpPacket]
+                                            [send-next Nat]
+                                            [rcv-nxt Nat]
+                                            [octet-stream (Addr (Vectorof Byte))])
+       (let ([unseen-payload (vector-copy (: segment payload)
+                                          (- rcv-nxt (: segment seq))
+                                          (vector-length (: segment payload)))]
+             [new-rcv-nxt (compute-receive-next segment)])
+         (cond
+           [(> (vector-length unseen-payload) 0)
+            (send-to-ip (make-normal-packet send-next new-rcv-nxt (vector)))
+            (send octet-stream (: segment payload))
+            0]
+           [else 0])
+         new-rcv-nxt)))
 
     ;; initialization
     (let ([iss (get-iss)])
@@ -407,7 +461,7 @@
                   ;; this is the typical SYN/ACK case (step 2 of the 3-way handshake)
                   (let ([rcv-nxt (compute-receive-next packet)])
                     (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
-                    (finish-connecting))]
+                    (finish-connecting snd-nxt rcv-nxt (: packet window)))]
                  [else
                   ;; ACK acceptable but no other interesting fields set. Probably won't happen in
                   ;; reality.
@@ -432,9 +486,9 @@
               [else
                ;; not an important segment, so just drop it. Probably won't happen in reality
                (goto SynSent snd-nxt)])])]
-        [(OrderedTcpPacket packet)
-         ;; shouldn't happen at this point; ignore it
-         (goto SynSent snd-nxt)])
+        ;; None of these should happen at this point; ignore them
+        [(OrderedTcpPacket packet) (goto SynSent snd-nxt)]
+        [(Register h) (goto SynSent snd-nxt)])
 
       [timeout wait-time-in-milliseconds
         (send status-updates (CommandFailed))
@@ -474,16 +528,17 @@
               [(PassiveOpen r) 0])
             (halt-with-notification)]
            [(packet-ack? packet)
+            ;; NOTE: I assume here that this packet does not have a payload (perhaps not always the
+            ;; case, but good enough for this small sample program)
             (cond
               [(= (: packet ack) snd-nxt)
                ;; If the packet had a SYN (part of the simultaneous open case), send an ACK
                (cond
                  [(packet-syn? packet)
                   (let ([rcv-nxt (compute-receive-next packet)])
-                    (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector))))
-                  0]
-                 [else 0])
-               (finish-connecting)
+                    (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
+                    (finish-connecting snd-nxt rcv-nxt (: packet window)))]
+                 [else (finish-connecting snd-nxt rcv-nxt (: packet window))])
                ;; TODO: use these parameters
                ;; (next-state (Established (SendBuffer 0 snd-nxt (: packet window) snd-nxt (bytes))
                ;;                          (compute-receive-next packet)
@@ -496,11 +551,88 @@
                ;; TODO: test this branch
                (send-to-ip (make-rst (: packet ack)))
                (goto SynReceived snd-nxt rcv-nxt receive-buffer)])]
-           [else (goto SynReceived snd-nxt rcv-nxt receive-buffer)])]))
+           [else (goto SynReceived snd-nxt rcv-nxt receive-buffer)])]
+        ;; None of these should happen at this point; ignore them
+        [(Register h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]))
 
-    (define-state (Established) (m)
+    ;; We're waiting for the user to register an actor to send received octets to
+    (define-state (AwaitingRegistration  [send-buffer SendBuffer]
+                                         [rcv-nxt Nat]
+                                         [receive-buffer ReceiveBuffer]
+                                         [registration-timer (Addr TimerCommand)]) (m)
+      (case m
+        [(InTcpPacket packet)
+         ;; we don't need the handler just to process incoming packets, so we do it just like in Established
+         (let ([new-receive-buffer (process-incoming packet rcv-nxt receive-buffer (: send-buffer send-next))])
+           (goto AwaitingRegistration send-buffer rcv-nxt new-receive-buffer registration-timer))]
+        [(OrderedTcpPacket packet)
+         ;; TODO: do the queuing here
+         (goto AwaitingRegistration)]
+        [(Register octet-handler)
+         ;; TODO: stop the registration timer
+         (goto Established send-buffer rcv-nxt receive-buffer octet-handler
+               0 ;; TODO: make the real timer here: (create-timer (void) retransmission-timer)
+               )]))
+
+    ;; REFACTOR: move these various receive-related params into the receive buffer
+    (define-state (Established [send-buffer SendBuffer]
+                               [rcv-nxt Nat]
+                               [receive-buffer ReceiveBuffer]
+                               [octet-stream (Addr (Vectorof Byte))]
+                               [rxmt-timer (Addr TimerCommand)]) (m)
+      (case m
+        [(InTcpPacket packet)
+         (let ([new-receive-buffer
+                (process-incoming packet rcv-nxt receive-buffer (: send-buffer send-next))])
+           (goto Established
+                 send-buffer
+                 rcv-nxt
+                 new-receive-buffer
+                 octet-stream
+                 rxmt-timer))]
+        [(OrderedTcpPacket packet)
+         (cond
+           [(or (packet-rst? packet) (packet-syn? packet))
+            ;; TODO: figure out what message to send to close the connection
+            ; (send status-updates (ConnectionReset))
+            (halt-with-notification)]
+           [else
+            (let ([new-send-buffer
+                   (process-ack send-buffer (: packet ack) (: packet window) rxmt-timer)]
+                  [new-rcv-nxt
+                   (process-segment-text packet (: send-buffer send-next) rcv-nxt octet-stream)])
+              ;; NOTE: we could optimize here by going into fast recovery mode if this is the 3rd
+              ;; duplicate ACK
+
+              ;; Finally, check for the FIN bit
+              (cond
+                [(packet-fin? packet)
+                 ;; TODO: figure out what notification to send here
+                 ;; from original: (send status-updates (ConnectionClosing))
+                 (send-to-ip (make-normal-packet (: send-buffer send-next) new-rcv-nxt (vector)))
+                 (goto Closing
+                              ;; TODO: use these parameters:
+                              ;; send-buffer
+                                      ;; new-rcv-nxt
+                                      ;; receive-buffer
+                                      ;; (ReceivedFin)
+                                      ;; status-updates
+                                      ;; octet-stream
+                                      ;; timer
+                                      )]
+                [else (goto Established
+                            new-send-buffer
+                            new-rcv-nxt
+                            receive-buffer
+                            octet-stream
+                            rxmt-timer)]))])]
+        [(Reigster h)
+         ;; ignore registrations here
+         (goto Established send-buffer rcv-nxt receive-buffer octet-stream rxmt-timer)]))
+
+    (define-state (Closing) (m)
       ;; TODO: define this state
-      (goto Established)
+      (goto Closing)
       )
 
     ;; TODO: the rest of the states
@@ -680,6 +812,8 @@
     (async-channel-put addr `(variant InPacket ,ip ,packet)))
   (define (send-command addr cmd)
     (async-channel-put addr `(variant UserCommand ,cmd)))
+  (define (send-session-command addr cmd)
+    (async-channel-put addr cmd))
 
   (define (make-rst source-port dest-port seq)
     (record
@@ -756,6 +890,20 @@
     (variant CommandFailed))
   (define (Bound)
     (variant Bound))
+  (define (Register handler)
+    (variant Register handler))
+
+  ;; Helpers to get to various states
+  (define (connect connection-response)
+    (define-values (packets-out tcp) (start-prog))
+    (send-command tcp (Connect (InetSocketAddress remote-ip server-port) connection-response))
+    (match-define (OutPacket _ (csa-record* (source-port local-port) (seq local-iss)))
+      (async-channel-get packets-out))
+    (send-packet tcp remote-ip (make-syn-ack server-port local-port remote-iss (add1 local-iss)))
+    ;; eat the ACK
+    (async-channel-get packets-out)
+    (match (async-channel-get connection-response)
+      [(csa-variant Connected _ session) (list packets-out tcp local-port local-iss session)]))
 
   ;; The tests themselves
   (test-case "Reset packet is dropped"
@@ -856,4 +1004,15 @@
     (check-unicast-match packets-out
       (OutPacket (== remote-ip)
                  (tcp-ack local-port remote-port (+ local-iss 1) (+ remote-iss 1))))
-    (check-unicast-match status-updates (csa-variant Connected _ _))))
+    (check-unicast-match status-updates (csa-variant Connected _ _)))
+
+  (test-case "Registered address receives the received octets"
+    (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
+    (define octet-dest (make-async-channel))
+    (send-session-command session (Register octet-dest))
+    (send-packet tcp remote-ip (make-normal-packet server-port
+                                                   local-port
+                                                   (add1 remote-iss)
+                                                   (add1 local-iss)
+                                                   (vector 1 2 3)))
+    (check-unicast-match octet-dest (vector 1 2 3))))
