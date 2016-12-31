@@ -715,12 +715,13 @@
 ;;
 ;; NOTE: assuming there is at most one way to satisfy the given config's commitments with these
 ;; outputs, which may not necessarily be true (but usually should be)
-(define (aps#-resolve-outputs spec-config outputs loop-outputs)
+(define (aps#-resolve-outputs spec-config outputs)
   (define initial-commitment-map (aps#-config-commitment-map spec-config))
   (cond
-    ;; We assume a send to an observed address from a loop context *always* breaks conformance. This
-    ;; is overly conservative, but is good enough for our purposes right now.
-    [(ormap (curry commitments-for-address initial-commitment-map) (map first loop-outputs))
+    ;; We assume a many-of send to an observed address *always* breaks conformance. This is overly
+    ;; conservative, but is good enough for our purposes right now.
+    [(ormap (curry commitments-for-address initial-commitment-map)
+            (map first (filter (lambda (send) (eq? (third send) 'many)) outputs)))
      #f]
     [else
      (let loop ([commitment-map (aps#-config-commitment-map spec-config)]
@@ -785,37 +786,32 @@
   (test-false "resolve test 1"
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1))))
-     (term (((obs-ext 1) (* Nat))))
-     null))
+     (term (((obs-ext 1) (* Nat) single)))))
   (test-equal? "resolve test 2"
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1) (single *))))
-     (term (((obs-ext 1) (* Nat))))
-     null)
+     (term (((obs-ext 1) (* Nat) single))))
     (list (make-dummy-spec `(((obs-ext 1))))
           `()
           `(((obs-ext 1) *))))
   (test-equal? "resolve test 3"
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1) (single *) (single (record)))))
-     (term (((obs-ext 1) (* Nat))))
-     null)
+     (term (((obs-ext 1) (* Nat) single))))
     (list (make-dummy-spec `(((obs-ext 1) (single (record)))))
           `()
           `(((obs-ext 1) *))))
   (test-equal? "resolve test 4"
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1) (many *) (single (record)))))
-     (term (((obs-ext 1) (* Nat))))
-     null)
+     (term (((obs-ext 1) (* Nat) single))))
     (list (make-dummy-spec `(((obs-ext 1) (many *) (single (record)))))
           `()
           `(((obs-ext 1) *))))
   (test-false "resolve loop test"
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1) (many *) (single (record)))))
-     null
-     (term ([(obs-ext 1) (* Nat)]))))
+     (term ([(obs-ext 1) (* Nat) many]))))
 
   ;; TODO: test aps#-resolve-outputs for (along with normal cases):
   ;; * spec that observes an address but neither saves it nor has output commtiments for it

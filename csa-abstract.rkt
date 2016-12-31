@@ -58,8 +58,7 @@
   (α# ((a#int-precise b#) ...))
   (β# ((a#int-collective (b# ...)) ...)) ; blurred actors, represented by a set of abstract behaviors
   (b# ((Q# ...) e#)) ; behavior
-  ;; TODO: refactor the packets to hold *un*typed addresses - will solve most of my address comparison
-  ;; issues
+  ;; REFACTOR: make a general structure for abstract multisets: values with multiplicities attached
   (μ# ((a#int v# m) ...)) ; message packets
   (m single many) ; m for "multiplicity"
   (Q# (define-state (q [x τ] ...) (x) e#)
@@ -109,8 +108,8 @@
   (τa# (τ a#int)
        (τ (obs-ext natural))
        (* (Addr τ)))
-  ;; H# = handler machine state (exp + outputs + loop outputs + spawns so far)
-  (H# (e# ([a# v#] ...) ([a# v#] ...) ((a#int b#) ...)))
+  ;; H# = handler machine state (exp + outputs + spawns so far)
+  (H# (e# ([a# v# m] ...) ((a#int b#) ...)))
   (E# hole
       (spawning a#int τ E# Q# ...)
       (goto q v# ... E# e# ...)
@@ -280,17 +279,19 @@
 
 ;; Represents the effects of a single handler-level transition of an actor, before the results are
 ;; applied to the pre-handler configuration. Used for the widening optimization.
-(struct csa#-transition-effect (trigger behavior sends loop-sends spawns) #:transparent)
+;;
+;; sends is a list of abstract-addr/abstract-value/multiplicity 3-tuples. spawns is a list
+;; of address/behavior 2-tuples (the address is a collective address for actors spawned inside loops)
+(struct csa#-transition-effect (trigger behavior sends spawns) #:transparent)
 
 ;; Represents a single handler-level transition of an actor. Trigger is the event that caused the
-;; handler to run, outputs is the list of outputs to the external world that happened execution, and
-;; final-config is the resulting abstract configuration.
+;; handler to run, outputs is the list of outputs to the external world that happened during execution
+;; (as formatted in csa#-transition-effect), and final-config is the resulting abstract configuration.
 ;;
 ;; This is the result of applying a csa#-transition-effect
 (struct csa#-transition
   (trigger ; follows trigger# above
-   outputs ; list of abstract-addr/abstract-message 2-tuples
-   loop-outputs ; list of abstract-addr/abstract-message 2-tuples
+   outputs ; list of abstract-addr/abstract-message/multiplicity 3-tuples
    final-config) ; an abstract implementation configuration
   #:transparent)
 
@@ -492,21 +493,20 @@
     (for/list ([machine-state final-machine-states])
       ;; TODO: rename outputs to something like "transmissions", because some of them stay internal
       ;; to the configuration
-      (match-define (list final-exp outputs loop-outputs spawns) machine-state)
+      (match-define (list final-exp outputs spawns) machine-state)
       ;; TODO: check that there are no internal loop outputs, or refactor that code entirely
       (redex-let csa# ([(in-hole E# (goto q v#_param ...)) final-exp])
         (csa#-transition-effect
          trigger
          (term (,state-defs (goto q v#_param ...)))
          outputs
-         loop-outputs
          spawns)))))
 
 ;; Returns #t if the given handler machine state is unable to step because of an over-approximation in
 ;; the abstraction (assumes that there are no empty vector/list/hash references in the actual running
 ;; progrm)
 (define (stuck-at-empty-list-ref? h)
-  (redex-let csa# ([(e# _ _ _) h])
+  (redex-let csa# ([(e# _ _) h])
     (or (redex-match? csa# (in-hole E# (list-ref   (list-val)   v#)) (term e#))
         (redex-match? csa# (in-hole E# (vector-ref (vector-val) v#)) (term e#))
         (redex-match? csa# (in-hole E# (hash-ref   (hash-val)   v#)) (term e#)))))
@@ -520,12 +520,12 @@
     (stuck-at-empty-list-ref? (inject/H# (term (hash-ref (hash-val) (* Nat)))))))
 
 (define (complete-handler-config? c)
-  (redex-match csa# ((in-hole E# (goto q v#_param ...)) any_output any_loop-output any_spawns) c))
+  (redex-match csa# ((in-hole E# (goto q v#_param ...)) any_output any_spawns) c))
 
 (define (inject/H# exp)
   (redex-let csa#
              ([e# exp]
-              [H# (term (,exp () () ()))])
+              [H# (term (,exp () ()))])
              (term H#)))
 
 (define abort-evaluation-param (make-parameter #f))
@@ -813,8 +813,8 @@
 
     ;; Communication
 
-    (--> ((in-hole E# (send τa# v#)) (any_outputs ...) any_loop-outputs any_spawns)
-         ((in-hole E# v#)            (any_outputs ... [a# (coerce v# τ)]) any_loop-outputs any_spawns)
+    (--> ((in-hole E# (send τa# v#)) any_outputs any_spawns)
+         ((in-hole E# v#)            (add-output any_outputs [a# (coerce v# τ) single]) any_spawns)
          ;; regular send only occurs outside of loop contexts
          (side-condition (not (redex-match csa# (in-hole E# (loop-context E#_2)) (term E#))))
          (where τ (address-type/mf τa#))
@@ -822,30 +822,35 @@
          Send)
     (--> ((in-hole E# (loop-context (in-hole E#_2 (send τa# v#))))
           any_outputs
-          any_loop-outputs
           any_spawns)
          ((in-hole E# (loop-context (in-hole E#_2 v#)))
-          any_outputs
-          ,(sort (remove-duplicates (append (term any_loop-outputs) (list (term [a# (coerce v# τ)]))))
-                 sexp<?)
+          ;; NOTE: I used to have a sort here on the loop-outputs; is it still necessary for good
+          ;; performance? My hunch is the sexp comparison in sort takes more time than the sort saves
+          (add-output any_outputs [a# (coerce v# τ) many])
           any_spawns)
          (where τ (address-type/mf τa#))
          (where a# (address-strip-type/mf τa#))
          LoopSend)
 
     ;; Spawn
-    (==> (spawn any_location τ e# Q# ...)
-         (spawning a#int τ (csa#-subst-n/mf e# [self (τ a#int)]) (csa#-subst/Q# Q# self (τ a#int)) ...)
+    (--> ((in-hole E# (spawn any_location τ e# Q# ...)) any_outputs any_spawns)
+         ((in-hole E# (spawning a#int τ (csa#-subst-n/mf e# [self (τ a#int)]) (csa#-subst/Q# Q# self (τ a#int)) ...))
+          any_outputs
+          any_spawns)
+         (side-condition (not (redex-match csa# (in-hole E# (loop-context E#_2)) (term E#))))
          (where a#int (spawn-addr any_location NEW))
          SpawnStart)
+    ;; actors spawned inside a loop are immediately converted to collective actors
+    (--> ((in-hole E# (loop-context (in-hole E#_2 (spawn any_location τ e# Q# ...)))) any_outputs any_spawns)
+         ((in-hole E# (loop-context (in-hole E#_2 (spawning a#int τ (csa#-subst-n/mf e# [self (τ a#int)]) (csa#-subst/Q# Q# self (τ a#int)) ...)))) any_outputs any_spawns)
+         (where a#int (blurred-spawn-addr any_location))
+         LoopSpawnStart)
     (--> ((in-hole E# (spawning a#int τ (in-hole E#_2 (goto q v# ...)) Q# ...))
           any_outputs
-          any_loop-outputs
-          (any_spawns ...))
+          any_spawns)
          ((in-hole E# (τ a#int))
           any_outputs
-          any_loop-outputs
-          (any_spawns ... (a#int ((Q# ...) (goto q v# ...)))))
+          (add-spawn any_spawns [a#int ((Q# ...) (goto q v# ...))]))
          SpawnFinish)
 
     ;; Debugging
@@ -873,8 +878,8 @@
          PrintLenVectorWildcard)
 
     with
-    [(--> ((in-hole E# old) any_outputs any_loop-outputs any_spawns)
-          ((in-hole E# new) any_outputs any_loop-outputs any_spawns))
+    [(--> ((in-hole E# old) any_outputs any_spawns)
+          ((in-hole E# new) any_outputs any_spawns))
      (==> old new)]))
 
 (module+ test
@@ -998,62 +1003,79 @@
    (term (hash-remove (hash-val (variant B) (variant C)) (variant B)))
    (term (hash-val (variant B) (variant C))))
 
+  ;; NOTE: these are the old tests for checking sorting of loop-sent messages, which I don't do
+  ;; anymore. Keeping them around in case I change my mind
+  ;;
   ;; Check for sorting of loop sends
-  (check-equal?
-   (apply-reduction-relation handler-step#
-                             (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant A)))
-                                    ()
-                                    ([(obs-ext 1) (variant B)])
-                                    ())))
-   (list (term ((loop-context (variant A))
-                ()
-                ([(obs-ext 1) (variant A)]
-                 [(obs-ext 1) (variant B)])
-                ()))))
-  (check-equal?
-   (apply-reduction-relation handler-step#
-                             (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant B)))
-                                    ()
-                                    ([(obs-ext 1) (variant A)])
-                                    ())))
-   (list (term ((loop-context (variant B))
-                ()
-                ([(obs-ext 1) (variant A)]
-                 [(obs-ext 1) (variant B)])
-                ()))))
-  (check-equal?
-   (apply-reduction-relation handler-step#
-                             (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant B)))
-                                    ()
-                                    ([(obs-ext 1) (variant A)]
-                                     [(obs-ext 1) (variant B)])
-                                    ())))
-   (list (term ((loop-context (variant B))
-                ()
-                ([(obs-ext 1) (variant A)]
-                 [(obs-ext 1) (variant B)])
-                ()))))
-  (check-equal?
-   (apply-reduction-relation handler-step#
-                             (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant B)))
-                                    ()
-                                    ()
-                                    ())))
-   (list (term ((loop-context (variant B))
-                ()
-                ([(obs-ext 1) (variant B)])
-                ()))))
+  ;; (check-equal?
+  ;;  (apply-reduction-relation handler-step#
+  ;;                            (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant A)))
+  ;;                                   ()
+  ;;                                   ([(obs-ext 1) (variant B)])
+  ;;                                   ())))
+  ;;  (list (term ((loop-context (variant A))
+  ;;               ()
+  ;;               ([(obs-ext 1) (variant A)]
+  ;;                [(obs-ext 1) (variant B)])
+  ;;               ()))))
+  ;; (check-equal?
+  ;;  (apply-reduction-relation handler-step#
+  ;;                            (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant B)))
+  ;;                                   ()
+  ;;                                   ([(obs-ext 1) (variant A)])
+  ;;                                   ())))
+  ;;  (list (term ((loop-context (variant B))
+  ;;               ()
+  ;;               ([(obs-ext 1) (variant A)]
+  ;;                [(obs-ext 1) (variant B)])
+  ;;               ()))))
+  ;; (check-equal?
+  ;;  (apply-reduction-relation handler-step#
+  ;;                            (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant B)))
+  ;;                                   ()
+  ;;                                   ([(obs-ext 1) (variant A)]
+  ;;                                    [(obs-ext 1) (variant B)])
+  ;;                                   ())))
+  ;;  (list (term ((loop-context (variant B))
+  ;;               ()
+  ;;               ([(obs-ext 1) (variant A)]
+  ;;                [(obs-ext 1) (variant B)])
+  ;;               ()))))
+  ;; (check-equal?
+  ;;  (apply-reduction-relation handler-step#
+  ;;                            (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant B)))
+  ;;                                   ()
+  ;;                                   ()
+  ;;                                   ())))
+  ;;  (list (term ((loop-context (variant B))
+  ;;               ()
+  ;;               ([(obs-ext 1) (variant B)])
+  ;;               ()))))
 
   ;; Check that internal addresses in the transmissions do not change the evaluation (had a problem
   ;; with this before)
   (check-equal?
    (apply-reduction-relation* handler-step# (inject/H# (term (begin (send (Nat (init-addr 1)) (* Nat)) (goto A)))))
-   (list (term ((begin (goto A)) (((init-addr 1) (* Nat))) () ()))))
+   (list (term ((begin (goto A)) (((init-addr 1) (* Nat) single)) ()))))
 
   (check-equal?
    (apply-reduction-relation* handler-step#
      (inject/H# (term (begin (spawn L Nat (goto A) (define-state (A) (x) (goto A))) (goto B)))))
-   (list (term ((begin (goto B)) () () ([(spawn-addr L NEW) [((define-state (A) (x) (goto A))) (goto A)]]))))))
+   (list (term ((begin (goto B)) () ([(spawn-addr L NEW) [((define-state (A) (x) (goto A))) (goto A)]])))))
+
+  ;; loop spawn test
+  (check-equal?
+   (list->set
+    (apply-reduction-relation* handler-step#
+                               (inject/H#
+                                (term
+                                 (begin
+                                   (for/fold ([x (* Nat)])
+                                             ([y (list-val (* Nat))])
+                                     (spawn L Nat (goto A) (define-state (A) (x) (goto A))))
+                                   (goto B))))))
+   (set (term ((begin (goto B)) () ()))
+        (term ((begin (goto B)) () ([(blurred-spawn-addr L) [((define-state (A) (x) (goto A))) (goto A)]]))))))
 
 ;; Puts the given abstract collection value (a list, vector, or hash) and puts it into a canonical
 ;; form
@@ -1065,6 +1087,20 @@
    (vector-val ,@(sort (remove-duplicates (term (v# ...))) sexp<?))]
   [(normalize-collection (hash-val v# ...))
    (hash-val ,@(sort (remove-duplicates (term (v# ...))) sexp<?))])
+
+(define-metafunction csa#
+  add-output : ([a# v# m] ...) [a# v# m] -> ([a# v# m] ...)
+  [(add-output (any_1 ... [a# v# _] any_2 ...) [a# v# _])
+   (any_1 ... [a# v# many] any_2 ...)]
+  [(add-output (any ...) [a# v# m])
+   (any ... [a# v# m])])
+
+(define-metafunction csa#
+  add-spawn : ([a# b#] ...) [a# b#] -> ([a# b#] ...)
+  [(add-spawn (any_1 ... [a# b#] any_2 ...) [a# b#])
+   (any_1 ... [a# b#] any_2 ...)]
+  [(add-spawn (any ...) [a# b#])
+   (any ... [a# b#])])
 
 ;; i# csa#-transition-effect -> csa#-transition
 (define (csa#-apply-transition config transition-effect)
@@ -1084,14 +1120,10 @@
   ;; 3. add spawned actors
   (define with-spawns (merge-new-actors with-updated-behavior (csa#-transition-effect-spawns transition-effect)))
   ;; 4. add sent messages
-  ;; TODO: merge in the loop outputs, if I'm not checking that there are none
   (define-values (internal-sends external-sends)
     (partition internal-output? (csa#-transition-effect-sends transition-effect)))
-  (define-values (internal-loop-sends external-loop-sends)
-    (partition internal-output? (csa#-transition-effect-loop-sends transition-effect)))
   (csa#-transition trigger
                    external-sends
-                   external-loop-sends
                    (merge-messages-into-config with-spawns internal-sends)))
 
 ;; Sets the behavior for the actor with the given precise address to the given expression
@@ -1149,51 +1181,69 @@
 
 ;; Abstractly adds the set of new packets to the given set.
 (define (merge-messages-into-packet-set packet-set new-message-list)
-  (redex-let csa# ([((a# v#) ...) new-message-list])
-    (term ,(deduplicate-packets (append packet-set (term ((a# v# single) ...)))))))
+  (deduplicate-packets (append packet-set new-message-list)))
 
 (module+ test
   (check-equal?
-   (merge-messages-into-config (term (() () ())) (list (term ((init-addr 0) (* Nat)))))
+   (merge-messages-into-config (term (() () ())) (list (term ((init-addr 0) (* Nat) single))))
    (term (() () (((init-addr 0) (* Nat) single)))))
 
   (check-equal?
-   (merge-messages-into-config (term (() () (((init-addr 0) (* Nat) single))))
-                       (list (term ((init-addr 0) (* Nat)))))
+   (merge-messages-into-config (term (() () ())) (list (term ((init-addr 0) (* Nat) many))))
    (term (() () (((init-addr 0) (* Nat) many)))))
 
   (check-equal?
    (merge-messages-into-config (term (() () (((init-addr 0) (* Nat) single))))
-                       (list (term ((init-addr 1) (* Nat)))))
-   (term (() () (((init-addr 0) (* Nat) single) ((init-addr 1) (* Nat) single)))))
+                       (list (term ((init-addr 0) (* Nat) single))))
+   (term (() () (((init-addr 0) (* Nat) many)))))
+
+  (check-equal?
+   (merge-messages-into-config (term (() () (((init-addr 0) (* Nat) single))))
+                       (list (term ((init-addr 0) (* Nat) many))))
+   (term (() () (((init-addr 0) (* Nat) many)))))
+
+  (check-equal?
+   (merge-messages-into-config (term (() () (((init-addr 0) (* Nat) single))))
+                               (list (term ((init-addr 1) (* Nat) many))))
+   (term (() () (((init-addr 0) (* Nat) single) ((init-addr 1) (* Nat) many)))))
 
   (check-equal?
    (merge-messages-into-config (term (()
                                       ()
                                       (((init-addr 1) (* (Addr Nat)) single)
                                        ((init-addr 1) (Nat (obs-ext 0)) single))))
-                               (term (((init-addr 1) (* (Addr Nat))))))
+                               (term (((init-addr 1) (* (Addr Nat)) single))))
    (term (()
           ()
           (((init-addr 1) (* (Addr Nat)) many)
            ((init-addr 1) (Nat (obs-ext 0)) single))))))
 
 (define (merge-new-actors config new-actors)
-  (redex-let csa# ([((any_actors ...) any_blurred any_messages) config])
-             (term (,(append (term (any_actors ...)) new-actors)
-                    any_blurred
-                    any_messages))))
+  (for/fold ([config config])
+            ([actor new-actors])
+    (match-define (list atomic-actors collective-actors messages) config)
+    (match-define (list new-addr new-behavior) actor)
+    (if (precise-internal-address? new-addr)
+        (list (append atomic-actors (list (list new-addr new-behavior))) collective-actors messages)
+        (list atomic-actors
+              (term (add-blurred-behavior/mf ,collective-actors [,new-addr ,new-behavior]))
+              messages))))
 
 (module+ test
   (define new-spawn1
     (term ((spawn-addr foo NEW) (((define-state (A) (x) (goto A))) (goto A)))))
+  (define new-spawn2
+    (term ((blurred-spawn-addr foo) (((define-state (A) (x) (goto A))) (goto A)))))
   (define init-actor1
     (term ((init-addr 0) (((define-state (B) (x) (goto B))) (goto B)))))
   (test-equal? "merge-new-actors test"
                (merge-new-actors
                 (make-single-actor-abstract-config init-actor1)
-                (list new-spawn1))
-               (term ((,init-actor1 ,new-spawn1) () ()))))
+                (list new-spawn1 new-spawn2))
+               (term ((,init-actor1 ,new-spawn1)
+                      (((blurred-spawn-addr foo)
+                        ((((define-state (A) (x) (goto A))) (goto A)))))
+                      ()))))
 
 ;; Returns a natural number indicating the maximum number of folds that may be crossed in a path from
 ;; the root of the given AST to a leaf
@@ -1866,7 +1916,7 @@
 
 ;; Adds the given address/behavior pair as a possible behavior in the given set of blurred actors.
 (define-metafunction csa#
-  add-blurred-behavior/mf : β# (a#int b#) -> β#
+  add-blurred-behavior/mf : β# (a#int-collective b#) -> β#
   [(add-blurred-behavior/mf (any_1 ... (a#int (b#_old ...)) any_2 ...) (a#int b#_new))
    (any_1 ... (a#int ,(remove-duplicates (term (b#_old ... b#_new)))) any_2 ...)]
   [(add-blurred-behavior/mf (any ...) (a#int b#))
@@ -2168,11 +2218,11 @@
 
 ;; Returns true if the output is to an internal address, false otherwise
 (define (internal-output? output)
-  (redex-match? csa# (a#int _) output))
+  (redex-match? csa# (a#int _ _) output))
 
 (module+ test
-  (check-true (internal-output? (term ((init-addr 1) (* Nat)))))
-  (check-false (internal-output? (term ((obs-ext 2) (* Nat))))))
+  (check-true (internal-output? (term ((init-addr 1) (* Nat) single))))
+  (check-false (internal-output? (term ((obs-ext 2) (* Nat) single)))))
 
 ;; Returns #t if the address is a precise internal address (meaning it represents a single concrete
 ;; address in the concretized configuration), #f otherwise
@@ -2530,7 +2580,6 @@
     (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
                             '(() (goto B))
                             null
-                            null
                             (list '((spawn-addr third-loc NEW) (() (goto A)))))
     spawn-behavior-change-test-config
     (term
@@ -2553,7 +2602,6 @@
     (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
                             '(() (goto B))
                             null
-                            null
                             (list '((spawn-addr the-loc NEW) (() (goto A)))))
     spawn-behavior-change-test-config
     (term
@@ -2573,7 +2621,6 @@
    (csa#-transition-effect-compare-spawn-behavior
     (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
                             '(() (goto B))
-                            null
                             null
                             (list '((spawn-addr second-loc NEW) (() (goto A)))))
     spawn-behavior-change-test-config
@@ -2595,7 +2642,6 @@
     (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
                             '(() (goto B))
                             null
-                            null
                             (list '((spawn-addr the-loc NEW) (() (goto C)))))
     spawn-behavior-change-test-config
     (term
@@ -2615,7 +2661,6 @@
    (csa#-transition-effect-compare-spawn-behavior
     (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
                             '(() (goto B))
-                            null
                             null
                             (list '((spawn-addr other-loc NEW) (() (goto C)))))
     spawn-behavior-change-test-config
@@ -2638,7 +2683,6 @@
    (csa#-transition-effect-compare-spawn-behavior
     (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
                             '(() (goto B))
-                            null
                             null
                             null)
     spawn-behavior-change-test-config
@@ -2677,8 +2721,8 @@
 ;; to actors (atomic or collective), other than those referring to spawns of the effect
 (define (csa#-transition-effect-has-nonexistent-addresses? effect config)
   (define effect-term
-    (match-let ([(csa#-transition-effect e1 e2 e3 e4 e5) effect])
-      (list e1 e2 e3 e4 e5)))
+    (match-let ([(csa#-transition-effect e1 e2 e3 e4) effect])
+      (list e1 e2 e3 e4)))
   (define all-internal-effect-addresses
     (filter csa#-internal-address? (csa#-contained-addresses effect-term)))
   (define all-current-and-new-spawn-addresses
@@ -2702,27 +2746,26 @@
       (term i#)))
   (test-false "nonexistent address: none"
     (csa#-transition-effect-has-nonexistent-addresses?
-     (csa#-transition-effect '(timeout/empty-queue (init-addr 0)) '(() (goto A)) null null null)
+     (csa#-transition-effect '(timeout/empty-queue (init-addr 0)) '(() (goto A)) null null)
      old-address-test-config))
   (test-not-false "nonexistent address: atomic"
     (csa#-transition-effect-has-nonexistent-addresses?
-     (csa#-transition-effect '(timeout/empty-queue (spawn-addr other-loc OLD)) '(() (goto A)) null null null)
+     (csa#-transition-effect '(timeout/empty-queue (spawn-addr other-loc OLD)) '(() (goto A)) null null)
      old-address-test-config))
   (test-not-false "nonexistent address: collective"
     (csa#-transition-effect-has-nonexistent-addresses?
-     (csa#-transition-effect '(timeout/empty-queue (blurred-spawn-addr other-loc)) '(goto A) null null null)
+     (csa#-transition-effect '(timeout/empty-queue (blurred-spawn-addr other-loc)) '(goto A) null null)
      old-address-test-config))
   (test-false "nonexistent address: address from a new spawn"
     (csa#-transition-effect-has-nonexistent-addresses?
      (csa#-transition-effect '(timeout/empty-queue (blurred-spawn-addr the-loc))
                              '(goto A)
                              null
-                             null
                              '([(spawn-addr the-loc NEW) (() (goto A (spawn-addr the-loc NEW)))]))
      old-address-test-config))
   (test-false "nonexistent address: external address"
     (csa#-transition-effect-has-nonexistent-addresses?
-     (csa#-transition-effect '(external-receive (init-addr 0) (Nat (obs-ext 1))) '(goto A) null null null)
+     (csa#-transition-effect '(external-receive (init-addr 0) (Nat (obs-ext 1))) '(goto A) null null)
      old-address-test-config)))
 
 ;; Returns true if the given expression contains *any* address
@@ -2770,8 +2813,7 @@
 (define (csa#-compare-new-messages i transition-result)
   (define existing-packets (csa#-config-message-packets i))
   (if
-   (for/or ([transmission (append (csa#-transition-effect-sends transition-result)
-                                  (csa#-transition-effect-loop-sends transition-result))])
+   (for/or ([transmission (append (csa#-transition-effect-sends transition-result))])
      (define many-of-packet `(,(first transmission) ,(second transmission) many))
      (not (member many-of-packet existing-packets)))
    'gt
@@ -2786,28 +2828,37 @@
   (test-equal? "new message from regular sends"
     (csa#-compare-new-messages
      new-message-test-config
-     (csa#-transition-effect #f #f (list `((init-addr 3) (* Nat))) null null))
+     (csa#-transition-effect #f #f (list `((init-addr 3) (* Nat) single)) null))
     'gt)
-  (test-equal? "new message from loop sends"
-    (csa#-compare-new-messages
-     new-message-test-config
-     (csa#-transition-effect #f #f null (list `((init-addr 3) (* Nat))) null))
-    'gt)
+  ;; TODO: replace this with a many-of message
+  ;; (test-equal? "new message from loop sends"
+  ;;   (csa#-compare-new-messages
+  ;;    new-message-test-config
+  ;;    (csa#-transition-effect #f #f null (list `((init-addr 3) (* Nat))) null))
+  ;;   'gt)
   (test-equal? "many-of message from regular sends"
     (csa#-compare-new-messages
      new-message-test-config
-     (csa#-transition-effect #f #f (list `((init-addr 1) (* Nat))) null null))
+     (csa#-transition-effect #f #f (list `((init-addr 1) (* Nat) single)) null))
     'gt)
-  (test-equal? "many-of message from loop sends"
-    (csa#-compare-new-messages
-     new-message-test-config
-     (csa#-transition-effect #f #f null (list `((init-addr 1) (* Nat))) null))
-    'gt)
-  (test-equal? "no new messages message from loop sends"
-    (csa#-compare-new-messages
-     new-message-test-config
-     (csa#-transition-effect #f #f (list `((init-addr 2) (* Nat)))  (list `((init-addr 2) (* Nat))) null))
-    'eq))
+  ;; TODO: replace this
+  ;; (test-equal? "many-of message from loop sends"
+  ;;   (csa#-compare-new-messages
+  ;;    new-message-test-config
+  ;;    (csa#-transition-effect #f #f null (list `((init-addr 1) (* Nat))) null))
+  ;;   'gt)
+  ;; TODO: replace this
+  ;; (test-equal? "no new messages message from loop sends"
+  ;;   (csa#-compare-new-messages
+  ;;    new-message-test-config
+  ;;    (csa#-transition-effect #f #f (list `((init-addr 2) (* Nat)))  (list `((init-addr 2) (* Nat))) null))
+  ;;   'eq)
+
+  ;; tests I need:
+  ;; had zero to OLD, have zero/one/many to NEW
+  ;; had one to OLD, at least one to NEW
+  ;; had many to OLD, multiple v's to NEW
+)
 
 (define (csa#-actor-compare-behavior config transition-result new-i)
   (define addr (trigger-address (csa#-transition-effect-trigger transition-result)))
@@ -2829,7 +2880,7 @@
   (test-equal? "actor-compare-behavior: new atomic behavior"
     (csa#-actor-compare-behavior
      behavior-test-config
-     (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto D)) null null null)
+     (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto D)) null null)
      (term (([(init-addr 1) (() (goto D))])
            ([(blurred-spawn-addr 2)
              ((() (goto B))
@@ -2839,13 +2890,13 @@
   (test-equal? "actor-compare-behavior: old atomic behavior"
     (csa#-actor-compare-behavior
      behavior-test-config
-     (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto A)) null null null)
+     (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto A)) null null)
      behavior-test-config)
     'eq)
   (test-equal? "actor-compare-behavior: new collective behavior"
     (csa#-actor-compare-behavior
      behavior-test-config
-     (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto D)) null null null)
+     (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto D)) null null)
      (term (([(init-addr 1) (() (goto A))])
             ([(blurred-spawn-addr 2)
               ((() (goto B))
@@ -2856,7 +2907,7 @@
   (test-equal? "actor-compare-behavior: old collective behavior"
     (csa#-actor-compare-behavior
      behavior-test-config
-     (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto B)) null null null)
+     (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto B)) null null)
      behavior-test-config)
     'eq))
 
@@ -2868,8 +2919,9 @@
   (match (csa#-transition-effect-trigger transition-effect)
     [`(internal-receive ,addr ,message)
      ;; the message is in the effects, or it's in the config with a many-of multiplicity
-     (or (member (list addr message) (append (csa#-transition-effect-sends transition-effect)
-                                             (csa#-transition-effect-loop-sends transition-effect)))
+     (or (for/or ([effect-send (csa#-transition-effect-sends transition-effect)])
+           (match-define (list effect-addr effect-message _) effect-send)
+           (and (equal? effect-addr addr) (equal? message effect-message)))
          (member (list addr message 'many) (csa#-config-message-packets config)))]
     [_ #t]))
 
@@ -2880,7 +2932,7 @@
     (redex-let csa# ([i# `(() () ([(init-addr 0) (* Nat) many] [(init-addr 1) (* Nat) single]))])
       (term i#)))
   (define (make-trigger-only-effect trigger)
-    (csa#-transition-effect trigger '(() (goto A)) null null null))
+    (csa#-transition-effect trigger '(() (goto A)) null null))
   (test-false "Not repeatable action"
     (csa#-repeatable-action? repeatable-action-test-config
                              (make-trigger-only-effect '(internal-receive (init-addr 1) (* Nat)))))
@@ -2894,8 +2946,7 @@
     (csa#-repeatable-action? repeatable-action-test-config
                              (csa#-transition-effect '(internal-receive (init-addr 1) (* Nat))
                                                      '(() (goto A))
-                                                     (list `((init-addr 1) (* Nat)))
-                                                     null
+                                                     (list `((init-addr 1) (* Nat) single))
                                                      null))))
 
 ;; Blurs the destination address of the given message and ensures it is represented as a "many-of"

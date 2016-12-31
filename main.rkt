@@ -329,7 +329,6 @@
   (impl-step (csa#-transition-trigger transition)
              observed?
              (csa#-transition-outputs transition)
-             (csa#-transition-loop-outputs transition)
              (csa#-transition-final-config transition)))
 
 ;; i# s# -> (Listof (List trigger# Boolean))
@@ -368,7 +367,7 @@
                                              (impl-step-from-observer? i-step)
                                              (impl-step-trigger i-step))])
     (match-define (list config spawns1) trigger-result)
-    (match (aps#-resolve-outputs config (impl-step-outputs i-step) (impl-step-loop-outputs i-step))
+    (match (aps#-resolve-outputs config (impl-step-outputs i-step))
       [#f (void)]
       [(list stepped-spec-config spawns2 satisfied-commitments)
        (set-add! matched-stepped-configs
@@ -382,37 +381,37 @@
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f null null #f))
+      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f null #f))
      (mutable-set (spec-step null-spec-config null null))))
   (test-case "Null transition not okay for observed input"
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(external-receive (init-addr 0) (* Nat)) #t null null #f))
+      (impl-step '(external-receive (init-addr 0) (* Nat)) #t null #f))
      (mutable-set)))
   (test-case "No match if trigger does not match"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A) [x -> () (goto A)])) '(goto A) null null)
-      (impl-step '(external-receive (init-addr 0) (* Nat)) #t null null #f))
+      (impl-step '(external-receive (init-addr 0) (* Nat)) #t null #f))
      (mutable-set)))
   (test-case "Unobserved outputs don't need to match"
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f (list '((obs-ext 1) (* Nat))) null #f))
+      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f (list '((obs-ext 1) (* Nat) single)) #f))
      (mutable-set (spec-step null-spec-config null null))))
   (test-case "No match if outputs do not match"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1))))
-      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f (list '((obs-ext 1) (* Nat))) null #f))
+      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f (list '((obs-ext 1) (* Nat) single)) #f))
      (mutable-set)))
   (test-case "Output can be matched by previous commitment"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1) (single *))))
-      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f (list '((obs-ext 1) (* Nat))) null #f))
+      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f (list '((obs-ext 1) (* Nat) single)) #f))
      (mutable-set (spec-step (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1))))
                              null
                              (list `[(obs-ext 1) *])))))
@@ -420,7 +419,7 @@
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)])) '(goto A) null null)
-      (impl-step '(external-receive (init-addr 0) (Nat (obs-ext 1))) #t (list '((obs-ext 1) (* Nat))) null #f))
+      (impl-step '(external-receive (init-addr 0) (Nat (obs-ext 1))) #t (list '((obs-ext 1) (* Nat) single)) #f))
      (mutable-set (spec-step (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)]))
                                       '(goto A)
                                       null
@@ -431,7 +430,7 @@
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1)) null (list '[(obs-ext 1) (single *)]))
-      (impl-step '(external-receive (init-addr 0) (* Nat)) #t null null #f))
+      (impl-step '(external-receive (init-addr 0) (* Nat)) #t null #f))
      (mutable-set
       (spec-step (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1)) null (list '[(obs-ext 1) (many *)]))
                  null
@@ -835,7 +834,6 @@
      (impl-step `(external-receive (init-addr 1) (* Nat))
                 #f
                 null
-                null
                 ;; impl config
                 `(([(init-addr 1) (() (goto S))])
                   ()
@@ -856,7 +854,6 @@
        ())
      (impl-step `(external-receive (init-addr 1) (* Nat))
                 #t
-                null
                 null
                 ;; impl config
                 `(([(init-addr 1) (() (goto S))])
@@ -964,12 +961,12 @@
   (define bz-pair (config-pair 'B 'Z))
   (define cw-pair (config-pair 'C 'W))
 
-  (define aa-step (impl-step '(timeout (init-addr 0)) #f null null 'A))
+  (define aa-step (impl-step '(timeout (init-addr 0)) #f null 'A))
   (define xx-step (spec-step 'X null null))
-  (define ab-step (impl-step '(timeout (init-addr 0)) #f null null 'B))
+  (define ab-step (impl-step '(timeout (init-addr 0)) #f null 'B))
   (define xy-step (spec-step 'Y null null))
   (define xz-step (spec-step 'Z null null))
-  (define bc-step (impl-step '(timeout (init-addr 0)) #f null null 'C))
+  (define bc-step (impl-step '(timeout (init-addr 0)) #f null 'C))
   (define yw-step (spec-step 'W null null))
 
   (test-equal? "Remove no pairs, because no list"
@@ -2880,4 +2877,39 @@
   (check-true (redex-match? csa-eval i new-spawn-impl-config))
   (check-true (redex-match? aps-eval s new-spawn-spec-config))
   (test-false "Widen new-spawn counterexample"
-    (check-conformance/config new-spawn-impl-config new-spawn-spec-config)))
+    (check-conformance/config new-spawn-impl-config new-spawn-spec-config))
+
+  ;;;; Loop Spawns
+
+  (define loop-spawn-actor
+    (term
+     (((Addr Nat) (addr 0))
+      (((define-state (Always) (response-target)
+          (begin
+            (for/fold ([x 0])
+                      ([y (list 1)])
+              (spawn child
+                     Nat
+                     (goto ChildAlways)
+                     (define-state (ChildAlways) (x)
+                       (goto ChildAlways)
+                       ([timeout 0]
+                        (begin
+                          (send response-target 0)
+                          (goto ChildAlways))))))
+            (goto Always))))
+       (goto Always)))))
+
+  (define dynamic-never-respond-spec
+    (term
+     (((define-state (Always)
+         [r -> ([obligation r *]) (goto Always)]))
+      (goto Always)
+      ((Addr Nat) (addr 0)))))
+
+  (test-valid-actor? loop-spawn-actor)
+  (test-valid-instance? dynamic-never-respond-spec)
+  (test-false "Loop spawn actor sends too many responses"
+    (check-conformance/config
+     (make-single-actor-config loop-spawn-actor)
+     (make-exclusive-spec dynamic-never-respond-spec))))
