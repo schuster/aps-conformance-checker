@@ -275,6 +275,25 @@
               ,updated-commitment-map)))
      (fork-configs stepped-current-config spawn-infos)]))
 
+(module+ test
+  (test-equal? "Transition should put observed no-commitment addresses in commitment map"
+    (attempt-transition
+     `(((Addr Nat) (init-addr 0))
+       ()
+       (goto A)
+       ((define-state (A) [r -> () (goto A)]))
+       ())
+     `[r -> () (goto A)]
+     #t
+     `(external-receive (init-addr 0) (Nat (obs-ext 1))))
+    (list
+     `(((Addr Nat) (init-addr 0))
+       ()
+       (goto A)
+       ((define-state (A) [r -> () (goto A)]))
+       ([(obs-ext 1)]))
+     `())))
+
 ;; transition ([x a#] ...) -> goto-exp ([a# po] ...) (<σ#, goto-exp, (Φ ...)> ...)
 ;;
 ;; Evaluates the given spec transition with the given variable bindings and returns the results (a

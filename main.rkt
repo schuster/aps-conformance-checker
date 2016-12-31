@@ -228,7 +228,8 @@
          ;; this a related pair.
          [(and (aps#-completed-no-transition-config? s)
                (let ([known-externals (externals-in i)])
-                 (andmap (curryr member known-externals) (aps#-relevant-external-addrs s))))
+                 (for/and ([relevant-external (aps#-relevant-external-addrs s)])
+                   (not (member relevant-external known-externals)))))
           (loop (set-add related-pairs pair) unrelated-successors)]
          [else
           (match (impl-steps-from i s)
@@ -2903,7 +2904,7 @@
   (define dynamic-never-respond-spec
     (term
      (((define-state (Always)
-         [r -> ([obligation r *]) (goto Always)]))
+         [r -> () (goto Always)]))
       (goto Always)
       ((Addr Nat) (addr 0)))))
 
@@ -2912,4 +2913,27 @@
   (test-false "Loop spawn actor sends too many responses"
     (check-conformance/config
      (make-single-actor-config loop-spawn-actor)
+     (make-exclusive-spec dynamic-never-respond-spec)))
+
+  ;;;; Test for dead-observable optimization (this had a bug at one point)
+  (define send-in-next-state-actor
+    (term
+     (((Addr Nat) (addr 0))
+      (((define-state (NoAddr) (response-target)
+          (goto HaveAddr response-target))
+        (define-state (HaveAddr [response-target (Addr Nat)]) (x)
+          (begin
+            (send response-target 0)
+            (goto Done))
+          [(timeout 0)
+           (begin
+             (send response-target 0)
+             (goto Done))])
+        (define-state (Done) (x) (goto Done)))
+       (goto NoAddr)))))
+
+  (test-valid-actor? send-in-next-state-actor)
+  (test-false "Dead-observable optimization does not kick in if address still exists"
+    (check-conformance/config
+     (make-single-actor-config send-in-next-state-actor)
      (make-exclusive-spec dynamic-never-respond-spec))))
