@@ -750,7 +750,7 @@
        [(spawn-addr child-loc OLD)
         (((define-state (B) (m) (goto B))) (goto B))])
       ()
-      ())))
+      ([(spawn-addr child-loc OLD) (* Nat) single]))))
 
   (define expected-widened-config
     (term

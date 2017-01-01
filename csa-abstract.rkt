@@ -2852,6 +2852,11 @@
       [`(spawn-addr ,_ NEW) #t]
       [else #f]))
 
+  (define (old-spawn-exists? new-addr)
+    ;; find actor with same spawn location as given address
+    (findf (lambda (actor) (equal? (second (first actor)) (second new-addr)))
+           (csa#-config-actors i)))
+
   ;; Because we can't test for "zero of" every possible message, we have to instead loop over both
   ;; existing and new messages to check the whole table
   (define result-after-checking-new-messages
@@ -2860,7 +2865,7 @@
       (match-define (list addr message mult) new-transmission)
       (comp-result-and
        comp-result
-       (if (new-spawn-address? addr)
+       (if (and (new-spawn-address? addr) (old-spawn-exists? addr))
            (match (list mult (get-existing-multiplicity addr message))
              ['(single none)   'not-gteq]
              ['(single single) 'gt]
@@ -2893,7 +2898,9 @@
 
 (module+ test
   (define new-message-test-config
-    (term (()
+    (term (([(spawn-addr 0 OLD) (() (goto A))]
+            [(spawn-addr 1 OLD) (() (goto A))]
+            [(spawn-addr 2 OLD) (() (goto A))])
            ()
            ([(spawn-addr 1 OLD) (* Nat) single]
             [(spawn-addr 2 OLD) (* Nat) many]))))
@@ -2915,6 +2922,9 @@
   (test-equal? "to NEW: had zero, send one"
     (compare-one-message `((spawn-addr 0 NEW) (* Nat) single))
     'not-gteq)
+  (test-equal? "to NEW: OLD doesn't exist, send one"
+    (compare-one-message `((spawn-addr 4 NEW) (* Nat) single))
+    'gt)
   (test-equal? "to NEW: had zero, send many"
     (compare-one-message `((spawn-addr 0 NEW) (* Nat) many))
     'gt)
