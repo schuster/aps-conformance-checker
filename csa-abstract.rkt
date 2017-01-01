@@ -2809,56 +2809,157 @@
 
 
 ;; Returns 'gt if any of the transmissions sent by the transition result lead to a greater config
-;; (because they were never sent before or only sent as one-ofs); 'eq otherwise
+;; (because they were never sent before or only sent as one-ofs); 'not-gteq if any of them lead to a
+;; non-greater/equal config; 'eq otherwise
 (define (csa#-compare-new-messages i transition-result)
-  (define existing-packets (csa#-config-message-packets i))
-  (if
-   (for/or ([transmission (append (csa#-transition-effect-sends transition-result))])
-     (define many-of-packet `(,(first transmission) ,(second transmission) many))
-     (not (member many-of-packet existing-packets)))
-   'gt
-   'eq))
+  ;; The expected results, by multiplicities:
+  ;;
+  ;; # New messages/# Existing messages to OLD:
+  ;; 0/0: 'eq
+  ;; 0/1: 'not-gteq if NEW actor exists, else 'eq
+  ;; 0/*: 'not-gteq if NEW actor exists, else 'eq
+  ;; 1/0: 'not-gteq
+  ;; 1/1: 'gt
+  ;; 1/*: 'not-gteq
+  ;; */0: 'gt
+  ;; */1: 'gt
+  ;; */*: 'gt
+
+  (define (get-existing-multiplicity addr message)
+    (get-multiplicity `(spawn-addr ,(second addr) OLD) message (csa#-config-message-packets i)))
+
+  (define (get-new-multiplicity addr message)
+    (get-multiplicity `(spawn-addr ,(second addr) NEW)
+                      message
+                      (csa#-transition-effect-sends transition-result)))
+
+  (define (get-multiplicity addr message packets)
+    (match (findf (lambda (pkt)
+                    (and (equal? (csa#-message-packet-address pkt) addr)
+                         (equal? (csa#-message-packet-value pkt) message)))
+                  packets)
+      [#f 'none]
+      [found-packet
+       (third found-packet)]))
+
+  (define (old-spawn-address? a)
+    (match a
+      [`(spawn-addr ,_ OLD) #t]
+      [else #f]))
+
+  (define (new-spawn-address? a)
+    (match a
+      [`(spawn-addr ,_ NEW) #t]
+      [else #f]))
+
+  ;; Because we can't test for "zero of" every possible message, we have to instead loop over both
+  ;; existing and new messages to check the whole table
+  (define result-after-checking-new-messages
+    (for/fold ([comp-result 'eq])
+              ([new-transmission (csa#-transition-effect-sends transition-result)])
+      (match-define (list addr message mult) new-transmission)
+      (comp-result-and
+       comp-result
+       (if (new-spawn-address? addr)
+           (match (list mult (get-existing-multiplicity addr message))
+             ['(single none)   'not-gteq]
+             ['(single single) 'gt]
+             ['(single many)   'not-gteq]
+             ['(many   none)   'gt]
+             ['(many   single) 'gt]
+             ['(many   many)   'gt])
+           'gt))))
+
+  (printf "result after: ~s\n" result-after-checking-new-messages)
+
+  (define packets-to-old
+    (filter
+     (lambda (pkt) (old-spawn-address? (csa#-message-packet-address pkt)))
+     (csa#-config-message-packets i)))
+
+  (define (new-spawn-exists? old-addr)
+    ;; find first spawned address with same spawn location
+    (findf (lambda (the-spawn) (equal? (second (first the-spawn)) (second old-addr)))
+           (csa#-transition-effect-spawns transition-result)))
+
+  (for/fold ([comp-result result-after-checking-new-messages])
+            ([packet-to-old packets-to-old])
+    (printf "new exists? ~s\n" (new-spawn-exists? (csa#-message-packet-address packet-to-old)))
+    (printf "new mult: ~s\n" (get-new-multiplicity (csa#-message-packet-address packet-to-old)
+                                         (csa#-message-packet-value packet-to-old)))
+    (comp-result-and
+     (if (and (new-spawn-exists? (csa#-message-packet-address packet-to-old))
+              (eq? (get-new-multiplicity (csa#-message-packet-address packet-to-old)
+                                         (csa#-message-packet-value packet-to-old))
+                   'none))
+         'not-gteq
+         'eq)
+     comp-result)))
 
 (module+ test
   (define new-message-test-config
     (term (()
            ()
-           ([(init-addr 1) (* Nat) single]
-            [(init-addr 2) (* Nat) many]))))
-  (test-equal? "new message from regular sends"
-    (csa#-compare-new-messages
-     new-message-test-config
-     (csa#-transition-effect #f #f (list `((init-addr 3) (* Nat) single)) null))
-    'gt)
-  ;; TODO: replace this with a many-of message
-  ;; (test-equal? "new message from loop sends"
-  ;;   (csa#-compare-new-messages
-  ;;    new-message-test-config
-  ;;    (csa#-transition-effect #f #f null (list `((init-addr 3) (* Nat))) null))
-  ;;   'gt)
-  (test-equal? "many-of message from regular sends"
-    (csa#-compare-new-messages
-     new-message-test-config
-     (csa#-transition-effect #f #f (list `((init-addr 1) (* Nat) single)) null))
-    'gt)
-  ;; TODO: replace this
-  ;; (test-equal? "many-of message from loop sends"
-  ;;   (csa#-compare-new-messages
-  ;;    new-message-test-config
-  ;;    (csa#-transition-effect #f #f null (list `((init-addr 1) (* Nat))) null))
-  ;;   'gt)
-  ;; TODO: replace this
-  ;; (test-equal? "no new messages message from loop sends"
-  ;;   (csa#-compare-new-messages
-  ;;    new-message-test-config
-  ;;    (csa#-transition-effect #f #f (list `((init-addr 2) (* Nat)))  (list `((init-addr 2) (* Nat))) null))
-  ;;   'eq)
+           ([(spawn-addr 1 OLD) (* Nat) single]
+            [(spawn-addr 2 OLD) (* Nat) many]))))
 
-  ;; tests I need:
-  ;; had zero to OLD, have zero/one/many to NEW
-  ;; had one to OLD, at least one to NEW
-  ;; had many to OLD, multiple v's to NEW
-)
+  (define (compare-one-message m)
+    (csa#-compare-new-messages
+     new-message-test-config
+     (csa#-transition-effect #f #f (list m) null)))
+
+  (test-equal? "single message to init-addr"
+    (compare-one-message `((init-addr 3) (* Nat) single))
+    'gt)
+  (test-equal? "single message to OLD spawn-addr"
+    (compare-one-message `((spawn-addr 1 OLD) (* Nat) single))
+    'gt)
+  (test-equal? "single message to collective address"
+    (compare-one-message `((blurred-spawn-addr 3) (* Nat) single))
+    'gt)
+  (test-equal? "to NEW: had zero, send one"
+    (compare-one-message `((spawn-addr 0 NEW) (* Nat) single))
+    'not-gteq)
+  (test-equal? "to NEW: had zero, send many"
+    (compare-one-message `((spawn-addr 0 NEW) (* Nat) many))
+    'gt)
+  (test-equal? "to NEW: had one, send one"
+    (compare-one-message `((spawn-addr 1 NEW) (* Nat) single))
+    'gt)
+  (test-equal? "to NEW: had one, send many"
+    (compare-one-message `((spawn-addr 1 NEW) (* Nat) many))
+    'gt)
+  (test-equal? "to NEW: had many, send one"
+    (compare-one-message `((spawn-addr 2 NEW) (* Nat) single))
+    'not-gteq)
+  (test-equal? "to NEW: had many, send many"
+    (compare-one-message `((spawn-addr 2 NEW) (* Nat) many))
+    'gt)
+  (test-equal? "to NEW: had zero, send zero"
+    (csa#-compare-new-messages
+     (term (() () ()))
+     (csa#-transition-effect #f #f null (list `((spawn-addr 0 NEW) (() (goto A))))))
+    'eq)
+  (test-equal? "to NEW: had one, send zero"
+    (csa#-compare-new-messages
+     (term (() () ([(spawn-addr 1 OLD) (* Nat) single])))
+     (csa#-transition-effect #f #f null (list `((spawn-addr 1 NEW) (() (goto A))))))
+    'not-gteq)
+  (test-equal? "to NEW: had many, send zero"
+    (csa#-compare-new-messages
+     (term (() () ([(spawn-addr 2 OLD) (* Nat) many])))
+     (csa#-transition-effect #f #f null (list `((spawn-addr 2 NEW) (() (goto A))))))
+    'not-gteq)
+  (test-equal? "had 1, NEW does not exist"
+    (csa#-compare-new-messages
+     (term (() () ([(spawn-addr 1 OLD) (* Nat) single])))
+     (csa#-transition-effect #f #f null null))
+    'eq)
+  (test-equal? "had many, NEW does not exist"
+    (csa#-compare-new-messages
+     (term (() () ([(spawn-addr 2 OLD) (* Nat) many])))
+     (csa#-transition-effect #f #f null null))
+    'eq))
 
 (define (csa#-actor-compare-behavior config transition-result new-i)
   (define addr (trigger-address (csa#-transition-effect-trigger transition-result)))
