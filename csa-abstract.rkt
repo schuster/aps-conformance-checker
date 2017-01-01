@@ -2870,8 +2870,6 @@
              ['(many   many)   'gt])
            'gt))))
 
-  (printf "result after: ~s\n" result-after-checking-new-messages)
-
   (define packets-to-old
     (filter
      (lambda (pkt) (old-spawn-address? (csa#-message-packet-address pkt)))
@@ -2884,9 +2882,6 @@
 
   (for/fold ([comp-result result-after-checking-new-messages])
             ([packet-to-old packets-to-old])
-    (printf "new exists? ~s\n" (new-spawn-exists? (csa#-message-packet-address packet-to-old)))
-    (printf "new mult: ~s\n" (get-new-multiplicity (csa#-message-packet-address packet-to-old)
-                                         (csa#-message-packet-value packet-to-old)))
     (comp-result-and
      (if (and (new-spawn-exists? (csa#-message-packet-address packet-to-old))
               (eq? (get-new-multiplicity (csa#-message-packet-address packet-to-old)
