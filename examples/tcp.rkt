@@ -11,6 +11,7 @@
 (define max-segment-lifetime (* 1000 2)) ; defined in milliseconds
 (define user-response-wait-time 3000)
 (define register-timeout 5000) ; in milliseconds (5 seconds is the Akka default)
+(define timeout-fudge-factor 500) ; in milliseconds
 
 (define tcp-program
   (quasiquote
@@ -1113,7 +1114,7 @@
 
   (test-case "Timeout before registration closes the session"
     (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
-    (sleep (/ register-timeout 1000))
+    (sleep (/ (+ register-timeout timeout-fudge-factor) 1000))
     (define octet-dest (make-async-channel))
     (send-session-command session (Register octet-dest))
     (send-packet tcp remote-ip (make-normal-packet server-port
