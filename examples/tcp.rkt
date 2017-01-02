@@ -15,7 +15,7 @@
 
 (define tcp-program
   (quasiquote
-(program (receptionists [tcp TcpInput]) (externals [packets-out OutPacket])
+(program (receptionists [tcp TcpInput]) (externals [packets-out TcpOutput])
 
 ;;---------------------------------------------------------------------------------------------------
 ;; Math
@@ -1301,15 +1301,62 @@
 
 ;; Conformance Tests
 (module+ test
-  (require "../main.rkt")
+  (require
+   "../csa.rkt" ; for csa-valid-type?
+   "../main.rkt")
+
+  (define desugared-tcp-packet-type
+    `(Record
+      [source-port Nat]
+      [destination-port Nat]
+      [seq Nat]
+      [ack Nat]
+      [ack-flag (Union [Ack] [NoAck])]
+      [rst (Union [Rst] [NoRst])]
+      [syn (Union [Syn] [NoSyn])]
+      [fin (Union [Fin] [NoFin])]
+      [window Nat]
+      [payload (Vectorof Nat)]))
+
+  (define desugared-tcp-output
+    `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
+
+  (define desugared-socket-address
+    `(Record [ip Nat] [port Nat]))
+
+  (define desugared-session-id
+    `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
+
+  (define desugared-session-command
+    `(Union
+      (Register (Addr (Vectorof Nat)))
+      (Write (Vectorof Nat)
+             (Addr (Union (CommandFailed)
+                          (WriteAck))))))
+
+  (define desugared-connection-status
+    `(Union
+      [CommandFailed]
+      [Connected ,desugared-session-id
+                 (Addr ,desugared-session-command)]))
+
+  (define desugared-user-command
+    `(Union
+      [Connect ,desugared-socket-address (Addr ,desugared-connection-status)]
+      [Bind Nat
+            (Addr (Union [Bound] [CommandFailed]))
+            (Addr ,desugared-connection-status)]))
 
   (define trivial-spec
-    `(specification (receptionists [tcp (Union)]) (externals)
-                    [tcp (Union)]    ; obs interface
-                    () ; unobs interface
-                    (goto Init)
-                    (define-state (DoNothing) [* -> () (goto DoNothing)])))
+    ;; TODO: maybe fix the types on receptionists and externals, although I don't think it really
+    ;; matters
+    `(specification (receptionists [tcp (Union)])
+                    (externals [packets-out ,desugared-tcp-output])
+       [tcp  (Union [UserCommand ,desugared-user-command])] ; obs interface
+       ([tcp (Union [InPacket Nat ,desugared-tcp-packet-type])])  ; unobs interface
+       (goto DoNothing)
+       (define-state (DoNothing) [* -> () (goto DoNothing)])))
 
-  (check-conformance
-   desugared-program
-   trivial-spec))
+  (test-true "User command type" (csa-valid-type? desugared-user-command))
+
+  (check-conformance desugared-program trivial-spec))
