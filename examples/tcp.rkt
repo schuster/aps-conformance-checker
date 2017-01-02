@@ -496,7 +496,7 @@
                                  (- first-seq-past-window (: send-buffer send-next))))]
               [new-snd-nxt
                (for/fold ([snd-nxt (: send-buffer send-next)])
-                         ([data (segmentize octets-in-window MAXIMUM-SEGMENT-SIZE-IN-BYTES)])
+                         ([data (segmentize octets-in-window ,MAXIMUM-SEGMENT-SIZE-IN-BYTES)])
                  (send-to-ip (make-normal-packet (: send-buffer send-next) rcv-nxt data))
                  (+ (: send-buffer send-next) (vector-length data)))])
          ;; TODO: restart the rxmt-timer
@@ -715,12 +715,12 @@
         [(Write data handler)
          (send handler (WriteAck))
          (goto Established
-               (accept-new-octets data send-buffer rcv-nxt timer)
+               (accept-new-octets data send-buffer rcv-nxt rxmt-timer)
                rcv-nxt
                receive-buffer
                status-updates
                octet-stream
-               timer)]))
+               rxmt-timer)]))
 
     (define-state (Closing) (m)
       ;; TODO: define this state
