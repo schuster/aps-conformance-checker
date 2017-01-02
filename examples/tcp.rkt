@@ -1297,3 +1297,19 @@
 ;; * receive RST in SynSent
 ;; * receive unacceptable ACK in SynSent
 ;; * in SynReceived, get ACK packet whose ACK is wrong (needs RST)
+
+
+;; Conformance Tests
+(module+ test
+  (require "../main.rkt")
+
+  (define trivial-spec
+    `(specification (receptionists [tcp (Union)]) (externals)
+                    [tcp (Union)]    ; obs interface
+                    () ; unobs interface
+                    (goto Init)
+                    (define-state (DoNothing) [* -> () (goto DoNothing)])))
+
+  (check-conformance
+   desugared-program
+   trivial-spec))
