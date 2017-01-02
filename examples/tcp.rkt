@@ -370,6 +370,7 @@
          (send reg-timer (Start ,register-timeout))
          (goto AwaitingRegistration
                (SendBuffer 0 snd-nxt window snd-nxt (vector))
+               (vector)
                rcv-nxt
                (create-empty-rbuffer)
                reg-timer)))
@@ -618,27 +619,36 @@
         [(RegisterTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]))
 
     ;; We're waiting for the user to register an actor to send received octets to
-    (define-state (AwaitingRegistration  [send-buffer SendBuffer]
-                                         [rcv-nxt Nat]
-                                         [receive-buffer ReceiveBuffer]
-                                         [registration-timer (Addr TimerCommand)]) (m)
+    (define-state (AwaitingRegistration [send-buffer SendBuffer]
+                                        [queued-packets (Vectorof TcpPacket)]
+                                        [rcv-nxt Nat]
+                                        [receive-buffer ReceiveBuffer]
+                                        [registration-timer (Addr TimerCommand)]) (m)
       (case m
         [(InTcpPacket packet)
          ;; we don't need the handler just to process incoming packets, so we do it just like in Established
          (let ([new-receive-buffer (process-incoming packet rcv-nxt receive-buffer (: send-buffer send-next))])
-           (goto AwaitingRegistration send-buffer rcv-nxt new-receive-buffer registration-timer))]
+           (goto AwaitingRegistration send-buffer queued-packets rcv-nxt new-receive-buffer registration-timer))]
         [(OrderedTcpPacket packet)
-         ;; TODO: do the queuing here
-         (goto AwaitingRegistration)]
+         (goto AwaitingRegistration
+               send-buffer
+               (vector-append queued-packets (vector packet))
+               rcv-nxt
+               receive-buffer
+               registration-timer)]
         [(Register octet-handler)
          (send registration-timer (Stop))
+         (for/fold ([dummy 0])
+                   ([packet queued-packets])
+           (send self (OrderedTcpPacket packet))
+           0)
          (goto Established send-buffer rcv-nxt receive-buffer octet-handler
                0 ;; TODO: make the real timer here: (create-timer (void) retransmission-timer)
                )]
         [(Write data handler)
          ;; can't yet write
          (send handler (CommandFailed))
-         (goto AwaitingRegistration send-buffer rcv-nxt receive-buffer registration-timer)]
+         (goto AwaitingRegistration send-buffer queued-packets rcv-nxt receive-buffer registration-timer)]
         [(RegisterTimeout)
          (abort-connection (: send-buffer send-next))
          (halt-with-notification)]))
@@ -1153,7 +1163,19 @@
                                                    (add1 remote-iss)
                                                    (add1 local-iss)
                                                    (vector 1 2 3)))
-    (check-unicast octet-handler (vector 1 2 3))))
+    (check-unicast octet-handler (vector 1 2 3)))
+
+  (test-case "Packet received while awaiting registration is sent to user after registration"
+    (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
+    (define octet-dest (make-async-channel))
+    (send-packet tcp remote-ip (make-normal-packet server-port
+                                                   local-port
+                                                   (add1 remote-iss)
+                                                   (add1 local-iss)
+                                                   (vector 1 2 3)))
+    (sleep 1)
+    (send-session-command session (Register octet-dest))
+    (check-unicast-match octet-dest (vector 1 2 3))))
 
 ;; Todo list of tests/functionality:
 ;; * decide whether to queue messages or not in AwaitingRegistration...
@@ -1169,6 +1191,8 @@
 ;; * abort (from Established)
 ;; * remaining TODOs, as I deem necessary
 ;; * check that all messages are handled in all states
+
+;; Later: will probably need to add widening of state parameters to the widening code
 
 ;; Maybe things to test:
 ;; * receive RST in SynSent
