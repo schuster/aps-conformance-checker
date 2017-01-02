@@ -228,19 +228,12 @@
     (Union
      (Register (Addr (Vectorof Byte)))
      (Write (Vectorof Byte) (Addr WriteResponse))
-     ;; TODO: should have Write, Close, ConfirmedClose, Abort
+     ;; TODO: should have Close, ConfirmedClose, Abort
      ))
 
   (define-variant ConnectionStatus
     (CommandFailed)
-    (Connected [session-id SessionId] [session (Addr TcpSessionCommand)])
-    ;; TODO: add these as necessary
-    ;; (ConnectionTimedOut)
-    ;; (ConnectionReset)
-    ;; (ConnectionEstablished [octets-to-session (Channel (Vectorof Byte))] [close-request (Channel)])
-    ;; (ConnectionClosing)
-    ;; (ConnectionClosed)
-    )
+    (Connected [session-id SessionId] [session (Addr TcpSessionCommand)]))
 
   (define-type BindStatus
     (Union [Bound] [CommandFailed]))
@@ -284,19 +277,12 @@
     (OrderedTcpPacket [packet TcpPacket])
     (Register [handler (Addr (Vectorof Byte))])
     (Write [data (Vectorof Byte)] [handler (Addr WriteResponse)])
-
-    ;; TODO: add the user commands (register, write, various closes)
-    ;;
-    ;; TODO: add the various timeouts
+    ;; timeouts
     (RegisterTimeout)
+    ;; TODO: add the various closes
 
-     ;; TODO: add these as needed
-     ;; [connection-response ConnectionResponse]
-     ;; [retransmission-timer Unit]
-     ;; [octets-to-send (Vectorof Byte)]
-     ;; [close-request]
-     ;; [time-wait-timer Unit]
-     )
+    ;; TODO: add the various timeouts
+    )
 
   ;;; The TCP session actor
 
@@ -379,7 +365,6 @@
 
      (define-function (finish-connecting [snd-nxt Nat] [rcv-nxt Nat] [window Nat])
        (send status-updates (Connected id self))
-       ;; TODO: start a registration timer
        (let ([reg-timer (spawn reg-timer Timer (RegisterTimeout) self)])
          (send reg-timer (Start ,register-timeout))
          (goto AwaitingRegistration
@@ -507,7 +492,6 @@
                                  (- first-seq-past-window (: send-buffer send-next))))]
               [new-snd-nxt
                (for/fold ([snd-nxt (: send-buffer send-next)])
-                         ;; TODO: pick up here
                          ([data (segmentize octets-in-window MAXIMUM-SEGMENT-SIZE-IN-BYTES)])
                  (send-to-ip (make-normal-packet (: send-buffer send-next) rcv-nxt data))
                  (+ (: send-buffer send-next) (vector-length data)))])
@@ -535,7 +519,6 @@
               [(= (: packet ack) snd-nxt) ; this is the only acceptable ACK
                (cond
                  [(packet-rst? packet)
-                  ;; TODO: test this branch
                   (send status-updates (CommandFailed))
                   (halt-with-notification)]
                  [(packet-syn? packet)
@@ -548,7 +531,6 @@
                   ;; reality.
                   (goto SynSent snd-nxt)])]
               [else ;; ACK present but not acceptable
-               ;; TODO: test this branch?
                (send-to-ip (make-rst (: packet ack)))
                (send status-updates (CommandFailed))
                (halt-with-notification)])]
@@ -621,17 +603,8 @@
                   (let ([rcv-nxt (compute-receive-next packet)])
                     (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
                     (finish-connecting snd-nxt rcv-nxt (: packet window)))]
-                 [else (finish-connecting snd-nxt rcv-nxt (: packet window))])
-               ;; TODO: use these parameters
-               ;; (next-state (Established (SendBuffer 0 snd-nxt (: packet window) snd-nxt (bytes))
-               ;;                          (compute-receive-next packet)
-               ;;                          (create-empty-buffer)
-               ;;                          status-updates
-               ;;                          octet-stream
-               ;;                          (create-timer (void) retransmission-timer)))
-               ]
+                 [else (finish-connecting snd-nxt rcv-nxt (: packet window))])]
               [else
-               ;; TODO: test this branch
                (send-to-ip (make-rst (: packet ack)))
                (goto SynReceived snd-nxt rcv-nxt receive-buffer)])]
            [else (goto SynReceived snd-nxt rcv-nxt receive-buffer)])]
@@ -1160,3 +1133,25 @@
                                                    (add1 local-iss)
                                                    (vector 1 2 3)))
     (check-unicast octet-handler (vector 1 2 3))))
+
+;; Todo list of tests/functionality:
+;; * fix the broken test
+;; * abort conneciton on register timeout (need a general "abort" function)
+;; * decide whether to queue messages or not in AwaitingRegistration...
+;; * ack received data
+;; * reorder received out-of-order data
+;; * Don't acknowledge empty packet (e.g. simple ACK)
+;; * retransmit data after timeout
+;; * receive FIN
+;; * active ConfirmedClose, through closing
+;; * active ConfirmedClose, through fin wait 2
+;; * active ConfirmedClose, directly from fin wait 1 to time wait
+;; * active Close, to any state
+;; * abort (from Established)
+;; * remaining TODOs, as I deem necessary
+;; * check that all messages are handled in all states
+
+;; Maybe things to test:
+;; * receive RST in SynSent
+;; * receive unacceptable ACK in SynSent
+;; * in SynReceived, get ACK packet whose ACK is wrong (needs RST)
