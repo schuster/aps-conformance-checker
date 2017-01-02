@@ -135,7 +135,7 @@
     (for/fold ([result (ReceiveBufferRetrieval (vector) buffer)])
               ([packet buffer])
       (cond
-        [(<= (: packet seq) starting-seq)
+        [(<= (: packet seq) stop-seq)
          (ReceiveBufferRetrieval (vector-append (: result retrieved) (vector packet))
                                  (vector-drop (: result remaining) 1))]
         [else result])))
@@ -1179,10 +1179,26 @@
                                                    (vector 1 2 3)))
     (sleep 1)
     (send-session-command session (Register octet-dest))
-    (check-unicast-match octet-dest (vector 1 2 3))))
+    (check-unicast-match octet-dest (vector 1 2 3)))
+
+  (test-case "Data received out-of-order is reordered"
+    (define octet-handler (make-async-channel))
+    (match-define (list packets-out tcp local-port local-iss session) (establish octet-handler))
+    (send-packet tcp remote-ip (make-normal-packet server-port
+                                                   local-port
+                                                   (+ remote-iss 4)
+                                                   (add1 local-iss)
+                                                   (vector 4 5 6)))
+    (send-packet tcp remote-ip (make-normal-packet server-port
+                                                   local-port
+                                                   (add1 remote-iss)
+                                                   (add1 local-iss)
+                                                   (vector 1 2 3)))
+    (check-unicast octet-handler (vector 1 2 3))
+    (check-unicast octet-handler (vector 4 5 6))))
 
 ;; Todo list of tests/functionality:
-;; * reorder received out-of-order data
+;; * can write data to the other side
 ;; * Don't acknowledge empty packet (e.g. simple ACK)
 ;; * retransmit data after timeout
 ;; * receive FIN
