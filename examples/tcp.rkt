@@ -466,17 +466,21 @@
      ;; Splits a byte string into a list of byte strings with each one no longer than the given
      ;; size. We assume that the given byte string is non-empty, and that the size is greater than
      ;; zero.
-     (define-function (segmentize [data (Vectorof Byte)] [size Nat])
+     (define-function (segmentize [data (Vectorof Byte)] [max-segment-size Nat])
        (for/fold ([segments (vector (vector))])
                  ([b data])
          ;; get the last segment out of the list
          ;; if that segment is full, start a new one
          ;; else, add to that segment
          (let ([last-segment (vector-ref segments (- (vector-length segments) 1))])
-           (if (<= (vector-length last-segment) size)
-               (vector-append (vector-copy segments 0 (- (vector-length segments) 1))
-                              (vector-append last-segment (vector b)))
-               (vector-append segments (vector b))))))
+           (cond
+             [(< (vector-length last-segment) max-segment-size)
+              (let ([previous-segments (vector-copy segments 0 (- (vector-length segments) 1))]
+                    [updated-segment (vector-append last-segment (vector b))])
+              (vector-append previous-segments (vector updated-segment)))]
+             [else
+              (let ([new-segment (vector b)])
+                (vector-append previous-segments new-segment))]))))
 
      ;; Accepts new octets to send from the user, sends the ones it can, and returns the new send
      ;; buffer with the new octets
