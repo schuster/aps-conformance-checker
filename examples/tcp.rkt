@@ -498,7 +498,10 @@
                  (+ (: send-buffer send-next) (vector-length data)))])
          ;; TODO: restart the rxmt-timer
          ;; (timer-start timer wait-time-in-milliseconds)
-         (send-buffer-add-octets send-buffer octets new-snd-nxt))))
+         (send-buffer-add-octets send-buffer octets new-snd-nxt)))
+
+     (define-function (abort-connection [snd-nxt Nat])
+       (send-to-ip (make-rst snd-nxt))))
 
     ;; initialization
     (let ([iss (get-iss)])
@@ -628,7 +631,7 @@
          ;; TODO: do the queuing here
          (goto AwaitingRegistration)]
         [(Register octet-handler)
-         ;; TODO: stop the registration timer
+         (send registration-timer (Stop))
          (goto Established send-buffer rcv-nxt receive-buffer octet-handler
                0 ;; TODO: make the real timer here: (create-timer (void) retransmission-timer)
                )]
@@ -637,7 +640,7 @@
          (send handler (CommandFailed))
          (goto AwaitingRegistration send-buffer rcv-nxt receive-buffer registration-timer)]
         [(RegisterTimeout)
-         ;; TODO: abort the connection
+         (abort-connection (: send-buffer send-next))
          (halt-with-notification)]))
 
     ;; REFACTOR: move these various receive-related params into the receive buffer
@@ -877,6 +880,21 @@
             (window _)
             (payload (vector)))])))
 
+  (define-match-expander tcp-rst
+    (lambda (stx)
+      (syntax-parse stx
+        [(_ src-port dest-port seqno)
+         #`(csa-record
+            (source-port (== src-port))
+            (destination-port (== dest-port))
+            (seq (== seqno))
+            (ack _)
+            (ack-flag (csa-variant NoAck))
+            (rst (csa-variant Rst))
+            (syn (csa-variant NoSyn))
+            (fin (csa-variant NoFin))
+            (window _)
+            (payload (vector)))])))
 
   (define-match-expander OutPacket
     (lambda (stx)
@@ -1115,6 +1133,8 @@
   (test-case "Timeout before registration closes the session"
     (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
     (sleep (/ (+ register-timeout timeout-fudge-factor) 1000))
+    (check-unicast-match packets-out (OutPacket (== remote-ip)
+                                                (tcp-rst local-port server-port (add1 local-iss))))
     (define octet-dest (make-async-channel))
     (send-session-command session (Register octet-dest))
     (send-packet tcp remote-ip (make-normal-packet server-port
@@ -1136,8 +1156,6 @@
     (check-unicast octet-handler (vector 1 2 3))))
 
 ;; Todo list of tests/functionality:
-;; * fix the broken test
-;; * abort conneciton on register timeout (need a general "abort" function)
 ;; * decide whether to queue messages or not in AwaitingRegistration...
 ;; * ack received data
 ;; * reorder received out-of-order data
