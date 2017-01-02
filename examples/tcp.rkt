@@ -871,7 +871,7 @@
                             ,user-response-wait-time)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; The tests
+;; Testing
 
 (module+ test
   (require
@@ -882,7 +882,9 @@
    racket/async-channel
    rackunit
    (for-syntax syntax/parse)
-   "../desugar.rkt")
+   "../csa.rkt" ; for csa-valid-type?
+   "../desugar.rkt"
+   "../main.rkt")
 
   (define-match-expander tcp-syn
     (lambda (stx)
@@ -1087,9 +1089,10 @@
   (define (establish octet-handler)
     (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
     (send-session-command session (Register octet-handler))
-    (list packets-out tcp local-port local-iss session))
+    (list packets-out tcp local-port local-iss session)))
 
-  ;; The tests themselves
+(module+ test
+  ;; Dynamic tests
   (test-case "Reset packet is dropped"
     (define-values (packets-out tcp) (start-prog))
     (send-packet tcp remote-ip (make-rst server-port client-port 10))
@@ -1298,13 +1301,8 @@
 ;; * receive unacceptable ACK in SynSent
 ;; * in SynReceived, get ACK packet whose ACK is wrong (needs RST)
 
-
 ;; Conformance Tests
 (module+ test
-  (require
-   "../csa.rkt" ; for csa-valid-type?
-   "../main.rkt")
-
   (define desugared-tcp-packet-type
     `(Record
       [source-port Nat]
