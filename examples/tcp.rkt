@@ -400,8 +400,6 @@
              ;; Just drop packets with the ACK flag unset or that ACK something not yet sent
              receive-buffer]
             [(segment-contains-seq? packet rcv-nxt)
-             ;; TODO: don't I need to ACK this packet?
-
              ;; queue up this segment
              (send self (OrderedTcpPacket packet))
              ;; queue up any received segments from the receive buffer that immediately follow this
@@ -1154,7 +1152,7 @@
                                                    (vector 1 2 3)))
     (check-no-message octet-dest))
 
-  (test-case "Octet stream receives data"
+  (test-case "Octet stream receives data, and data is ACKed"
     (define octet-handler (make-async-channel))
     (match-define (list packets-out tcp local-port local-iss session) (establish octet-handler))
     (define write-handler (make-async-channel))
@@ -1163,7 +1161,13 @@
                                                    (add1 remote-iss)
                                                    (add1 local-iss)
                                                    (vector 1 2 3)))
-    (check-unicast octet-handler (vector 1 2 3)))
+    (check-unicast octet-handler (vector 1 2 3))
+    (check-unicast-match packets-out (OutPacket (== remote-ip)
+                                                (tcp-ack local-port
+                                                         server-port
+                                                         (add1 local-iss)
+                                                         ;; add 1 for the SYN, 3 for the payload
+                                                         (+ remote-iss 4)))))
 
   (test-case "Packet received while awaiting registration is sent to user after registration"
     (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
@@ -1178,8 +1182,6 @@
     (check-unicast-match octet-dest (vector 1 2 3))))
 
 ;; Todo list of tests/functionality:
-;; * decide whether to queue messages or not in AwaitingRegistration...
-;; * ack received data
 ;; * reorder received out-of-order data
 ;; * Don't acknowledge empty packet (e.g. simple ACK)
 ;; * retransmit data after timeout
