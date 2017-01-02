@@ -188,8 +188,34 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Timer
 
-  ;; for now, fake the timer type
-  (define-type TimerCommand Nat)
+  (define-variant TimerCommand
+    (Stop)
+    (Start [timeout-in-milliseconds Nat]))
+
+  (define-type ExpirationMessage
+    (Union
+     [RegisterTimeout]
+     ;; TODO: add the other timeouts here
+     ))
+
+  (define-actor TimerCommand
+    (Timer [expiration-message ExpirationMessage]
+           [expiration-target (Addr ExpirationMessage)])
+    ()
+    (goto Stopped)
+    (define-state (Stopped) (m)
+      (case m
+        [(Stop) (goto Stopped)]
+        [(Start timeout-in-milliseconds)
+         (goto Running timeout-in-milliseconds)]))
+    (define-state/timeout (Running [timeout-in-milliseconds Nat]) (m)
+      (case m
+        [(Stop) (goto Stopped)]
+        [(Start new-timeout-in-milliseconds)
+         (goto Running new-timeout-in-milliseconds)])
+      (timeout timeout-in-milliseconds
+        (send expiration-target expiration-message)
+        (goto Stopped))))
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -262,6 +288,7 @@
     ;; TODO: add the user commands (register, write, various closes)
     ;;
     ;; TODO: add the various timeouts
+    (RegisterTimeout)
 
      ;; TODO: add these as needed
      ;; [connection-response ConnectionResponse]
@@ -353,12 +380,13 @@
      (define-function (finish-connecting [snd-nxt Nat] [rcv-nxt Nat] [window Nat])
        (send status-updates (Connected id self))
        ;; TODO: start a registration timer
-       (goto AwaitingRegistration
-             (SendBuffer 0 snd-nxt window snd-nxt (vector))
-             rcv-nxt
-             (create-empty-rbuffer)
-             0 ; TODO: put the real registration timer here
-             ))
+       (let ([reg-timer (spawn reg-timer Timer (RegisterTimeout) self)])
+         (send reg-timer (Start ,register-timeout))
+         (goto AwaitingRegistration
+               (SendBuffer 0 snd-nxt window snd-nxt (vector))
+               rcv-nxt
+               (create-empty-rbuffer)
+               reg-timer)))
 
      ;; Returns true if the segment is "acceptable", where a segment is acceptable if its start falls
      ;; somewhere in the current receive window
@@ -542,7 +570,8 @@
         ;; None of these should happen at this point; ignore them
         [(OrderedTcpPacket packet) (goto SynSent snd-nxt)]
         [(Register h) (goto SynSent snd-nxt)]
-        [(Write d h) (goto SynSent snd-nxt)])
+        [(Write d h) (goto SynSent snd-nxt)]
+        [(RegisterTimeout) (goto SynSent snd-nxt)])
 
       [timeout wait-time-in-milliseconds
         (send status-updates (CommandFailed))
@@ -608,7 +637,8 @@
            [else (goto SynReceived snd-nxt rcv-nxt receive-buffer)])]
         ;; None of these should happen at this point; ignore them
         [(Register h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(Write d h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]))
+        [(Write d h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
+        [(RegisterTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]))
 
     ;; We're waiting for the user to register an actor to send received octets to
     (define-state (AwaitingRegistration  [send-buffer SendBuffer]
@@ -631,7 +661,10 @@
         [(Write data handler)
          ;; can't yet write
          (send handler (CommandFailed))
-         (goto AwaitingRegistration send-buffer rcv-nxt receive-buffer registration-timer)]))
+         (goto AwaitingRegistration send-buffer rcv-nxt receive-buffer registration-timer)]
+        [(RegisterTimeout)
+         ;; TODO: abort the connection
+         (halt-with-notification)]))
 
     ;; REFACTOR: move these various receive-related params into the receive buffer
     (define-state (Established [send-buffer SendBuffer]
@@ -685,8 +718,10 @@
                             receive-buffer
                             octet-stream
                             rxmt-timer)]))])]
+         ;; ignore registrations and registration timeouts here
         [(Reigster h)
-         ;; ignore registrations here
+         (goto Established send-buffer rcv-nxt receive-buffer octet-stream rxmt-timer)]
+        [(RegisterTimeout)
          (goto Established send-buffer rcv-nxt receive-buffer octet-stream rxmt-timer)]
         [(Write data handler)
          (send handler (WriteAck))
@@ -711,6 +746,11 @@
          ;; can't write anymore
          (send handler (CommandFailed))
          (goto Halt)]
+        [(Register h) (goto Halt)]
+        [(RegisterTimeout) (goto Halt)]
+        [(InTcpPacket packet) (goto Halt)
+         ;; TODO: should I send a reset?
+         ]
         ;; TODO: handle other cases
         )))
 
@@ -1097,6 +1137,18 @@
                                                    (add1 local-iss)
                                                    (vector 1 2 3)))
     (check-unicast-match octet-dest (vector 1 2 3)))
+
+  (test-case "Timeout before registration closes the session"
+    (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
+    (sleep (/ register-timeout 1000))
+    (define octet-dest (make-async-channel))
+    (send-session-command session (Register octet-dest))
+    (send-packet tcp remote-ip (make-normal-packet server-port
+                                                   local-port
+                                                   (add1 remote-iss)
+                                                   (add1 local-iss)
+                                                   (vector 1 2 3)))
+    (check-no-message octet-dest))
 
   (test-case "Octet stream receives data"
     (define octet-handler (make-async-channel))
