@@ -154,13 +154,13 @@
     [send-next Nat]
     [buffer (Vectorof Byte)])
 
-  ;; Returns true if the send buffer contains no more bytes to send
-  (define-function (send-buffer-empty? [s SendBuffer])
-    (= 0 (send-buffer-length s)))
-
   ;; Returns the total number of octets to send stored in the buffer
   (define-function (send-buffer-length [s SendBuffer])
     (vector-length (: s buffer)))
+
+  ;; Returns true if the send buffer contains no more bytes to send
+  (define-function (send-buffer-empty? [s SendBuffer])
+    (= 0 (send-buffer-length s)))
 
   (define-function (increment-retransmit-count [s SendBuffer])
     (SendBuffer (+ (: s retransmit-count) 1)
@@ -196,6 +196,7 @@
   (define-type ExpirationMessage
     (Union
      [RegisterTimeout]
+     [RetransmitTimeout]
      ;; TODO: add the other timeouts here
      ))
 
@@ -270,6 +271,10 @@
     (ActiveOpen)
     (PassiveOpen [remote-seq Nat]))
 
+  (define-variant RetransmitResult
+    (RetransmitFailure)
+    (RetransmitSuccess))
+
   (define-variant TcpSessionInput
     (InTcpPacket [packet TcpPacket])
     ;; a "private" variant, used only internally for an ordered queue of packets. We assume that they
@@ -280,6 +285,7 @@
     (Write [data (Vectorof Byte)] [handler (Addr WriteResponse)])
     ;; timeouts
     (RegisterTimeout)
+    (RetransmitTimeout)
     ;; TODO: add the various closes
 
     ;; TODO: add the various timeouts
@@ -431,8 +437,7 @@
          (cond
            [(and acked-new-data? (< (: send-buffer unacked-seq) (: send-buffer send-next)))
             ;; have more data to send
-            ;; TODO: restart the timer
-            ;; (timer-restart rxmt-timer wait-time-in-milliseconds)
+            (send rxmt-timer (Start wait-time-in-milliseconds))
             0]
            [else 0])
          (SendBuffer (if acked-new-data? 0 (: send-buffer retransmit-count))
@@ -499,9 +504,26 @@
                          ([data (segmentize octets-in-window ,MAXIMUM-SEGMENT-SIZE-IN-BYTES)])
                  (send-to-ip (make-normal-packet (: send-buffer send-next) rcv-nxt data))
                  (+ (: send-buffer send-next) (vector-length data)))])
-         ;; TODO: restart the rxmt-timer
-         ;; (timer-start timer wait-time-in-milliseconds)
+         (send timer (Start wait-time-in-milliseconds))
          (send-buffer-add-octets send-buffer octets new-snd-nxt)))
+
+     ;; Either retransmits the oldest unacked segment, or fails because it reached the retry limit
+     ;; (returns RetransmitSuccess or RetransmitFailure)
+     (define-function (maybe-retransmit [send-buffer SendBuffer]
+                                        [rcv-nxt Nat]
+                                        [timer Timer])
+       (cond
+         [(= (: send-buffer retransmit-count) max-retries)
+          (RetransmitFailure)]
+         [(not (send-buffer-empty? send-buffer))
+          (let ([segment-length
+                 (min (send-buffer-length send-buffer) ,MAXIMUM-SEGMENT-SIZE-IN-BYTES)])
+            (send-to-ip (make-normal-packet (: send-buffer unacked-seq)
+                                            rcv-nxt
+                                            (vector-take (: send-buffer buffer) segment-length)))
+            (send timer (Start wait-time-in-milliseconds))
+            (RetransmitSuccess))]
+         [else (RetransmitSuccess)]))
 
      (define-function (abort-connection [snd-nxt Nat])
        (send-to-ip (make-rst snd-nxt))))
@@ -560,7 +582,8 @@
         [(OrderedTcpPacket packet) (goto SynSent snd-nxt)]
         [(Register h) (goto SynSent snd-nxt)]
         [(Write d h) (goto SynSent snd-nxt)]
-        [(RegisterTimeout) (goto SynSent snd-nxt)])
+        [(RegisterTimeout) (goto SynSent snd-nxt)]
+        [(RetransmitTimeout) (goto SynSent snd-nxt)])
 
       [timeout wait-time-in-milliseconds
         (send status-updates (CommandFailed))
@@ -618,7 +641,8 @@
         ;; None of these should happen at this point; ignore them
         [(Register h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
         [(Write d h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(RegisterTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]))
+        [(RegisterTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
+        [(RetransmitTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]))
 
     ;; We're waiting for the user to register an actor to send received octets to
     (define-state (AwaitingRegistration [send-buffer SendBuffer]
@@ -644,16 +668,22 @@
                    ([packet queued-packets])
            (send self (OrderedTcpPacket packet))
            0)
-         (goto Established send-buffer rcv-nxt receive-buffer octet-handler
-               0 ;; TODO: make the real timer here: (create-timer (void) retransmission-timer)
-               )]
+         (goto Established
+               send-buffer
+               rcv-nxt
+               receive-buffer
+               octet-handler
+               (spawn rxmt-timer Timer (RetransmitTimeout) self))]
         [(Write data handler)
          ;; can't yet write
          (send handler (CommandFailed))
          (goto AwaitingRegistration send-buffer queued-packets rcv-nxt receive-buffer registration-timer)]
         [(RegisterTimeout)
          (abort-connection (: send-buffer send-next))
-         (halt-with-notification)]))
+         (halt-with-notification)]
+        ;; retransmit timeout shouldn't happen here
+        [(RetransmitTimeout)
+         (goto AwaitingRegistration send-buffer queued-packets rcv-nxt receive-buffer registration-timer)]))
 
     ;; REFACTOR: move these various receive-related params into the receive buffer
     (define-state (Established [send-buffer SendBuffer]
@@ -718,9 +748,20 @@
                (accept-new-octets data send-buffer rcv-nxt rxmt-timer)
                rcv-nxt
                receive-buffer
-               status-updates
                octet-stream
-               rxmt-timer)]))
+               rxmt-timer)]
+        [(RetransmitTimeout)
+         (case (maybe-retransmit send-buffer rcv-nxt rxmt-timer)
+           [(RetransmitSuccess)
+            (goto Established
+                  (increment-retransmit-count send-buffer)
+                  rcv-nxt
+                  receive-buffer
+                  octet-stream
+                  rxmt-timer)]
+           [(RetransmitFailure)
+            ;; TODO: do I need to send a message to the user here?
+            (halt-with-notification)])]))
 
     (define-state (Closing) (m)
       ;; TODO: define this state
@@ -908,6 +949,22 @@
             (window _)
             (payload (vector)))])))
 
+  (define-match-expander tcp-normal
+    (lambda (stx)
+      (syntax-parse stx
+        [(_ src-port dest-port seqno ackno the-payload)
+         #`(csa-record
+            (source-port (== src-port))
+            (destination-port (== dest-port))
+            (seq (== seqno))
+            (ack (== ackno))
+            (ack-flag (csa-variant Ack))
+            (rst (csa-variant NoRst))
+            (syn (csa-variant NoSyn))
+            (fin (csa-variant NoFin))
+            (window _)
+            (payload the-payload))])))
+
   (define-match-expander OutPacket
     (lambda (stx)
       (syntax-parse stx
@@ -1012,6 +1069,8 @@
     (variant Register handler))
   (define (Write data handler)
     (variant Write data handler))
+  (define (WriteAck)
+    (variant WriteAck))
 
   ;; Helpers to get to various states
   (define (connect connection-response)
@@ -1159,7 +1218,6 @@
   (test-case "Octet stream receives data, and data is ACKed"
     (define octet-handler (make-async-channel))
     (match-define (list packets-out tcp local-port local-iss session) (establish octet-handler))
-    (define write-handler (make-async-channel))
     (send-packet tcp remote-ip (make-normal-packet server-port
                                                    local-port
                                                    (add1 remote-iss)
@@ -1199,12 +1257,31 @@
                                                    (add1 local-iss)
                                                    (vector 1 2 3)))
     (check-unicast octet-handler (vector 1 2 3))
-    (check-unicast octet-handler (vector 4 5 6))))
+    (check-unicast octet-handler (vector 4 5 6)))
+
+  (test-case "Can write data to other side; retransmit after no ACK for a while, then no retransmit after ACK"
+    (match-define (list packets-out tcp local-port local-iss session) (establish (make-async-channel)))
+    (define write-handler (make-async-channel))
+    (send-session-command session (Write (vector 1 2 3) write-handler))
+    (check-unicast write-handler (WriteAck))
+    (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-normal local-port server-port  (add1 local-iss) (add1 remote-iss) (vector 1 2 3))) #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
+    (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-normal local-port server-port  (add1 local-iss) (add1 remote-iss) (vector 1 2 3))) #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (+ 4 local-iss) (vector)))
+    (check-no-message packets-out #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000)))
+
+  (test-case "Give up retransmit after 4 total attempts"
+    (match-define (list packets-out tcp local-port local-iss session) (establish (make-async-channel)))
+    (define write-handler (make-async-channel))
+    (send-session-command session (Write (vector 1 2 3) write-handler))
+    (check-unicast write-handler (WriteAck))
+    (check-unicast-match packets-out _ #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
+    (check-unicast-match packets-out _ #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
+    (check-unicast-match packets-out _ #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
+    (check-unicast-match packets-out _ #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
+    (check-no-message packets-out #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))))
 
 ;; Todo list of tests/functionality:
-;; * can write data to the other side
 ;; * Don't acknowledge empty packet (e.g. simple ACK)
-;; * retransmit data after timeout
 ;; * receive FIN
 ;; * active ConfirmedClose, through closing
 ;; * active ConfirmedClose, through fin wait 2
