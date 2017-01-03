@@ -147,26 +147,34 @@
   ;; acknowledged. It tracks how many times items have been retransmitted without a new ACK, the
   ;; sequence numbers at the beginning and end of the buffer, and the current window size.,
 
+  (define-variant MaybeFinSeq
+    [NoFinSeq]
+    [FinSeq [num Nat]])
   (define-record SendBuffer
     [retransmit-count Nat]
     [unacked-seq Nat]
     [window Nat] ; window size in octets
     [send-next Nat]
+    [maybe-fin MaybeFinSeq]
     [buffer (Vectorof Byte)])
 
   ;; Returns the total number of octets to send stored in the buffer
   (define-function (send-buffer-length [s SendBuffer])
     (vector-length (: s buffer)))
 
-  ;; Returns true if the send buffer contains no more bytes to send
+  ;; Returns true if the send buffer contains no more bytes/FINs to send
   (define-function (send-buffer-empty? [s SendBuffer])
-    (= 0 (send-buffer-length s)))
+    (and (= 0 (send-buffer-length s))
+         (case (: send-buffer maybe-fin)
+           [(FinSeq n) (variant False)]
+           [(NoFinSeq) (variant True)])))
 
   (define-function (increment-retransmit-count [s SendBuffer])
     (SendBuffer (+ (: s retransmit-count) 1)
                 (: s unacked-seq)
                 (: s window)
                 (: s send-next)
+                (: s maybe-fin)
                 (: s buffer)))
 
   ;; Adds the given octets to the send buffer and updates the send-next pointer
@@ -177,6 +185,7 @@
                 (: s unacked-seq)
                 (: s window)
                 send-next
+                (: s maybe-fin)
                 (vector-append (: s buffer) data)))
 
   (define-function (send-buffer-add-fin [s SendBuffer])
@@ -184,6 +193,7 @@
                 (: s unacked-seq)
                 (: s window)
                 (+ (: s send-next) 1)
+                (FinSeq (: s send-next))
                 (: s buffer)))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -225,17 +235,21 @@
            (WriteAck)))
   (define-function (WriteAck) (variant WriteAck))
 
+  (define-variant TcpSessionEvent
+    [ReceivedData [bytes (Vectorof Byte)]]
+    [Closed]
+    [ConfirmedClosed]
+    [Aborted]
+    [PeerClosed]
+    [ErrorClosed])
+
   (define-type TcpSessionCommand
     (Union
      (Register (Addr TcpSessionEvent))
      (Write (Vectorof Byte) (Addr WriteResponse))
-     ;; TODO: should have Close, ConfirmedClose, Abort
-     ))
-
-  (define-variant TcpSessionEvent
-    [ReceivedData [bytes (Vectorof Byte)]]
-    [PeerClosed]
-    [ErrorClosed])
+     (Close (Addr TcpSessionEvent))
+     (ConfirmedClose (Addr TcpSessionEvent))
+     (Abort (Addr TcpSessionEvent))))
 
   (define-variant ConnectionStatus
     (CommandFailed)
@@ -279,6 +293,13 @@
     (RetransmitFailure)
     (RetransmitSuccess))
 
+  (define-type CloseType
+    (Union
+     [PeerClose]
+     [Close (Addr TcpSessionEvent)]
+     [ConfirmedClose (Addr TcpSessionEvent)]))
+  (define-function (PeerClose) (variant PeerClose))
+
   (define-variant ClosingState
     (SentFin) ; FIN-WAIT-1
     (WaitingOnPeerFin) ; FIN-WAIT-2
@@ -294,12 +315,13 @@
     (OrderedTcpPacket [packet TcpPacket])
     (Register [handler (Addr TcpSessionEvent)])
     (Write [data (Vectorof Byte)] [handler (Addr WriteResponse)])
+    (Close [close-handler (Addr TcpSessionEvent)])
+    (ConfirmedClose [close-handler (Addr TcpSessionEvent)])
+    (Abort [close-handler (Addr TcpSessionEvent)])
     ;; timeouts
     (RegisterTimeout)
     (RetransmitTimeout)
-    (TimeWaitTimeout)
-    ;; TODO: add the various closes
-    )
+    (TimeWaitTimeout))
 
   ;;; The TCP session actor
 
@@ -370,6 +392,18 @@
                   ,DEFAULT-WINDOW-SIZE
                   (vector)))
 
+     (define-function (make-fin-with-payload [seqno Nat] [ackno Nat] [payload (Vectorof Byte)])
+       (TcpPacket (: id local-port)
+                  (: (: id remote-address) port)
+                  seqno
+                  ackno
+                  (Ack)
+                  (NoRst)
+                  (NoSyn)
+                  (Fin)
+                  ,DEFAULT-WINDOW-SIZE
+                  payload))
+
      (define-function (make-normal-packet [seq Nat] [ack Nat] [payload (Vectorof Byte)])
        (TcpPacket (: id local-port)
                   (: (: id remote-address) port)
@@ -395,7 +429,7 @@
        (let ([reg-timer (spawn reg-timer Timer (RegisterTimeout) self)])
          (send reg-timer (Start ,register-timeout))
          (goto AwaitingRegistration
-               (SendBuffer 0 snd-nxt window snd-nxt (vector))
+               (SendBuffer 0 snd-nxt window snd-nxt (NoFinSeq) (vector))
                (vector)
                rcv-nxt
                (create-empty-rbuffer)
@@ -475,23 +509,33 @@
                      ;; but I'm just going to update it when we get a new ACK
                      (if acked-new-data? segment-window (: send-buffer window))
                      (: send-buffer send-next)
-                     (vector-copy (: send-buffer buffer)
-                                  (- new-snd-una (: send-buffer unacked-seq))
-                                  (vector-length (: send-buffer buffer))))))
+                     (: send-buffer maybe-fin)
+                     (vector-drop (: send-buffer buffer)
+                                  ;; an ACK for a FIN means there will be more ACKed "bytes" than ther
+                                  ;; are buffered bytes waiting to go, so we take the min here
+                                  (min (- new-snd-una (: send-buffer unacked-seq))
+                                       (vector-length (: send-buffer buffer)))))))
 
-     ;; Does the necessary handling for segment text on the next in-order packet, returning the new
-     ;; receive-next
+     ;; Does the necessary handling for segment text (and the FIN) on the next in-order packet,
+     ;; returning the new receive-next
      (define-function (process-segment-text [segment TcpPacket]
-                                            [send-next Nat]
+                                            [send-buffer SendBuffer]
                                             [rcv-nxt Nat]
                                             [octet-stream (Addr TcpSessionEvent)])
-       (let ([unseen-payload (vector-copy (: segment payload)
+       (let ([send-next (: send-buffer send-next)]
+             [unseen-payload (vector-copy (: segment payload)
                                           (- rcv-nxt (: segment seq))
                                           (vector-length (: segment payload)))]
              [new-rcv-nxt (compute-receive-next segment)])
+         ;; 1. send ACK if necessary
+         (cond
+           [(or (> (vector-length unseen-payload) 0) (packet-fin? packet))
+            (send-to-ip (make-normal-packet send-next new-rcv-nxt (vector)))
+            0]
+           [else 0])
+         ;; 2. send any unseen data to user
          (cond
            [(> (vector-length unseen-payload) 0)
-            (send-to-ip (make-normal-packet send-next new-rcv-nxt (vector)))
             (send octet-stream (ReceivedData (: segment payload)))
             0]
            [else 0])
@@ -536,6 +580,20 @@
          (send timer (Start wait-time-in-milliseconds))
          (send-buffer-add-octets send-buffer octets new-snd-nxt)))
 
+     (define-function (accept-new-fin [send-buffer SendBuffer]
+                                      [rcv-nxt Nat]
+                                      [timer Timer])
+       ;; 1. send a FIN if we can (i.e. if it's in the window)
+       (let ([first-seq-past-window (+ (: send-buffer unacked-seq) (: send-buffer window))])
+         (cond
+           [(< (: send-buffer send-next) first-seq-past-window)
+            (send-to-ip (make-fin (: send-buffer send-next) rcv-nxt))
+            0]
+           [else 0]))
+       (send timer (Start wait-time-in-milliseconds))
+       ;; 2. mark the send buffer as needing to send a FIN
+       (send-buffer-add-fin send-buffer))
+
      ;; Either retransmits the oldest unacked segment, or fails because it reached the retry limit
      ;; (returns RetransmitSuccess or RetransmitFailure)
      (define-function (maybe-retransmit [send-buffer SendBuffer]
@@ -545,17 +603,35 @@
          [(= (: send-buffer retransmit-count) max-retries)
           (RetransmitFailure)]
          [(not (send-buffer-empty? send-buffer))
-          (let ([segment-length
-                 (min (send-buffer-length send-buffer) ,MAXIMUM-SEGMENT-SIZE-IN-BYTES)])
-            (send-to-ip (make-normal-packet (: send-buffer unacked-seq)
-                                            rcv-nxt
-                                            (vector-take (: send-buffer buffer) segment-length)))
+          (let* ([payload-length (min (send-buffer-length send-buffer) ,MAXIMUM-SEGMENT-SIZE-IN-BYTES)]
+                 [payload (vector-take (: send-buffer buffer) payload-length)])
+            (case (: send-buffer maybe-fin)
+              [(NoFinSeq)
+               (send-to-ip (make-normal-packet (: send-buffer unacked-seq) rcv-nxt payload))]
+              [(FinSeq fin-seq)
+               (send-to-ip (make-fin-with-payload (: send-buffer unacked-seq) rcv-nxt payload))])
             (send timer (Start wait-time-in-milliseconds))
             (RetransmitSuccess))]
          [else (RetransmitSuccess)]))
 
      (define-function (abort-connection [snd-nxt Nat])
-       (send-to-ip (make-rst snd-nxt))))
+       (send-to-ip (make-rst snd-nxt)))
+
+     (define-function (start-close [send-buffer SendBuffer]
+                                   [rcv-nxt Nat]
+                                   [receive-buffer ReceiveBuffer]
+                                   [close-type CloseType]
+                                   [closing-state ClosingState]
+                                   [octet-stream (Addr TcpSessionEvent)]
+                                   [rxmt-timer (Addr Timer)])
+       (goto Closing
+             (accept-new-fin send-buffer rcv-nxt rxmt-timer)
+             rcv-nxt
+             receive-buffer
+             close-type
+             closing-state
+             octet-stream
+             rxmt-timer)))
 
     ;; initialization
     (let ([iss (get-iss)])
@@ -613,7 +689,10 @@
         [(Write d h) (goto SynSent snd-nxt)]
         [(RegisterTimeout) (goto SynSent snd-nxt)]
         [(RetransmitTimeout) (goto SynSent snd-nxt)]
-        [(TimeWaitTimeout) (goto SynSent snd-nxt)])
+        [(TimeWaitTimeout) (goto SynSent snd-nxt)]
+        [(Close h) (goto SynSent snd-nxt)]
+        [(ConfirmedClose h) (goto SynSent snd-nxt)]
+        [(Abort h) (goto SynSent snd-nxt)])
 
       [timeout wait-time-in-milliseconds
         (send status-updates (CommandFailed))
@@ -673,7 +752,10 @@
         [(Write d h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
         [(RegisterTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
         [(RetransmitTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(TimeWaitTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]))
+        [(TimeWaitTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
+        [(Close h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
+        [(ConfirmedClose h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
+        [(Abort h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]))
 
     ;; We're waiting for the user to register an actor to send received octets to
     (define-state (AwaitingRegistration [send-buffer SendBuffer]
@@ -712,6 +794,7 @@
         [(RegisterTimeout)
          (abort-connection (: send-buffer send-next))
          (halt-with-notification)]
+        ;; TODO: add close commands here
         ;; these timeouts shouldn't happen here
         [(RetransmitTimeout)
          (goto AwaitingRegistration send-buffer queued-packets rcv-nxt receive-buffer registration-timer)]
@@ -743,8 +826,7 @@
            [else
             (let ([new-send-buffer
                    (process-ack send-buffer (: packet ack) (: packet window) rxmt-timer)]
-                  [new-rcv-nxt
-                   (process-segment-text packet (: send-buffer send-next) rcv-nxt octet-stream)])
+                  [new-rcv-nxt (process-segment-text packet send-buffer rcv-nxt octet-stream)])
               ;; NOTE: we could optimize here by going into fast recovery mode if this is the 3rd
               ;; duplicate ACK
 
@@ -752,14 +834,13 @@
               (cond
                 [(packet-fin? packet)
                  (send octet-stream (PeerClosed))
-                 (send-to-ip (make-fin (: send-buffer send-next) new-rcv-nxt))
-                 (goto Closing
-                       send-buffer
-                       new-rcv-nxt
-                       receive-buffer
-                       (WaitingOnPeerAck)
-                       octet-stream
-                       rxmt-timer)]
+                 (start-close send-buffer
+                              new-rcv-nxt
+                              receive-buffer
+                              (PeerClose)
+                              (WaitingOnPeerAck)
+                              octet-stream
+                              rxmt-timer)]
                 [else (goto Established
                             new-send-buffer
                             new-rcv-nxt
@@ -792,16 +873,35 @@
                   rxmt-timer)]
            [(RetransmitFailure)
             ;; TODO: do I need to send a message to the user here?
-            (halt-with-notification)])]))
+            (halt-with-notification)])]
+        [(Close close-handler)
+         (send close-handler (Closed))
+         (send octet-stream (Closed))
+         (start-close send-buffer
+                      rcv-nxt
+                      receive-buffer
+                      (Close close-handler)
+                      (SentFin)
+                      octet-stream
+                      rxmt-timer)]
+        [(ConfirmedClose close-handler)
+         (start-close send-buffer
+                      rcv-nxt
+                      receive-buffer
+                      (ConfirmedClose close-handler)
+                      (SentFin)
+                      octet-stream
+                      rxmt-timer)]))
 
-    ;; In the process of closing down; groups together FIN-WAIT-1, FIN-WAIT-2, CLOSING, CLOSE-WAIT,
-    ;; and LAST-ACK in the typical TCP state diagram
+    ;; In the process of closing down; groups together FIN-WAIT-1, FIN-WAIT-2, CLOSING, and LAST-ACK
+    ;; in the typical TCP state diagram
     (define-state (Closing [send-buffer SendBuffer]
                            [rcv-nxt Nat]
                            [receive-buffer ReceiveBuffer]
+                           [close-type CloseType]
                            [closing-state ClosingState]
                            [octet-stream (Addr TcpSessionEvent)]
-                           [rxmt-timer Timer]) (m)
+                           [rxmt-timer (Addr TimerCommand)]) (m)
       (case m
         [(InTcpPacket packet)
          (let ([new-receive-buffer
@@ -810,43 +910,78 @@
                  send-buffer
                  rcv-nxt
                  new-receive-buffer
+                 close-type
                  closing-state
                  octet-stream
                  rxmt-timer))]
         [(OrderedTcpPacket packet)
          ;; TODO: figure out where to send various Close messages in all of this
+         ;;
+         ;; TODO: for each ErrorClosed, send it only when no other Closed message has been sent
          (cond
            [(or (packet-rst? packet) (packet-syn? packet))
             (send octet-stream (ErrorClosed))
             (halt-with-notification)]
            [else
             (let ([new-send-buffer (process-ack send-buffer (: packet ack) (: packet window) rxmt-timer)]
-                  [new-rcv-nxt (process-segment-text packet (: send-buffer send-next) rcv-nxt octet-stream)]
+                  [new-rcv-nxt (process-segment-text packet send-buffer rcv-nxt octet-stream)]
                   [all-data-is-acked? (>= (: packet ack) (- (: send-buffer send-next) 1))])
               ;; TODO: if this segment does not contain rcv-nxt, send back an ACK
 
               ;; NOTE: Optimization: if this is the third duplicate ACK, go into fast recovery mode
+              ;; TODO: send ACK for all new ACKed data
               (case closing-state
                 [(SentFin)
                  (cond
                    [(packet-fin? packet)
-                    ;; Possible Optimization: don't repeat this ACK if we already sent one above
-                    (send-to-ip (make-normal-packet (: send-buffer send-next) new-rcv-nxt (vector)))
+                    (case close-type
+                      [(ConfirmedClose close-handler)
+                       (send octet-stream (ConfirmedClosed))
+                       (send close-handler (ConfirmedClosed))
+                       0]
+                      [(Close close-handler) 0]
+                      [(PeerClose) 0])
                     (cond
                       [all-data-is-acked?
                        (goto-TimeWait (: send-buffer send-next) rcv-nxt receive-buffer octet-stream)]
-                      [else (goto Closing send-buffer rcv-nxt receive-buffer octet-stream rxmt-timer)])]
+                      [else
+                       (goto Closing
+                             send-buffer
+                             rcv-nxt
+                             receive-buffer
+                             close-type
+                             (SentThenReceivedFin)
+                             octet-stream
+                             rxmt-timer)])]
+                   [all-data-is-acked?
+                    (goto Closing
+                          new-send-buffer
+                          new-rcv-nxt
+                          receive-buffer
+                          close-type
+                          (WaitingOnPeerFin)
+                          octet-stream
+                          rxmt-timer)]
                    [else
                     (goto Closing
                           new-send-buffer
                           new-rcv-nxt
                           receive-buffer
-                          (if all-data-is-acked? (WaitingOnPeerFin) (SentFin))
+                          close-type
+                          (SentFin)
                           octet-stream
                           rxmt-timer)])]
                 [(WaitingOnPeerFin)
                  (cond
                    [(packet-fin? packet)
+                    (send-to-ip (make-normal-packet (: send-buffer send-next) new-rcv-nxt (vector)))
+                    (case close-type
+                      [(ConfirmedClose close-handler)
+                       (send octet-stream (ConfirmedClosed))
+                       (send close-handler (ConfirmedClosed))
+                       0]
+                      [(Close close-handler) 0]
+                      [(PeerClose) 0])
                     (goto-TimeWait (: send-buffer send-next)
                                    rcv-nxt
                                    receive-buffer
@@ -856,12 +991,20 @@
                           new-send-buffer
                           new-rcv-nxt
                           receive-buffer
+                          close-type
                           closing-state
                           octet-stream
                           rxmt-timer)])]
                 [(SentThenReceivedFin)
                  (cond
                    [all-data-is-acked?
+                    (case close-type
+                      [(ConfirmedClose close-handler)
+                       (send octet-stream (ConfirmedClosed))
+                       (send close-handler (ConfirmedClosed))
+                       0]
+                      [(Close h) 0]
+                      [(PeerClose) 0])
                     (goto-TimeWait (: send-buffer send-next)
                                    rcv-nxt
                                    receive-buffer
@@ -871,6 +1014,7 @@
                           new-send-buffer
                           new-rcv-nxt
                           receive-buffer
+                          close-type
                           closing-state
                           octet-stream
                           rxmt-timer)])]
@@ -883,17 +1027,18 @@
                           new-send-buffer
                           new-rcv-nxt
                           receive-buffer
+                          close-type
                           closing-state
                           octet-stream
                           rxmt-timer)])]))])]
         [(Register h)
-         (goto Closing send-buffer rcv-nxt receive-buffer closing-state octet-stream rxmt-timer)]
+         (goto Closing send-buffer rcv-nxt receive-buffer close-type closing-state octet-stream rxmt-timer)]
         [(RegisterTimeout)
          ;; shouldn't happen here
-         (goto Closing send-buffer rcv-nxt receive-buffer closing-state octet-stream rxmt-timer)]
+         (goto Closing send-buffer rcv-nxt receive-buffer close-type closing-state octet-stream rxmt-timer)]
         [(Write d write-handler)
          (send write-handler (CommandFailed))
-         (goto Closing send-buffer rcv-nxt receive-buffer closing-state octet-stream rxmt-timer)]
+         (goto Closing send-buffer rcv-nxt receive-buffer close-type closing-state octet-stream rxmt-timer)]
         [(RetransmitTimeout)
          (case (maybe-retransmit send-buffer rcv-nxt rxmt-timer)
            [(RetransmitSuccess)
@@ -901,6 +1046,7 @@
                   (increment-retransmit-count send-buffer)
                   rcv-nxt
                   receive-buffer
+                  close-type
                   closing-state
                   octet-stream
                   rxmt-timer)]
@@ -909,7 +1055,7 @@
             (halt-with-notification)])]
         [(TimeWaitTimeout)
          ;; shouldn't happen here
-         (goto Closing send-buffer rcv-nxt receive-buffer closing-state octet-stream rxmt-timer)])
+         (goto Closing send-buffer rcv-nxt receive-buffer close-type closing-state octet-stream rxmt-timer)])
 
       ;; [close-request ()
       ;;                (define already-received-close
@@ -946,7 +1092,7 @@
                             [rcv-nxt Nat]
                             [receive-buffer ReceiveBuffer]
                             [octet-stream (Addr TcpSessionEvent)]
-                            [time-wait-timer Timer]) (m)
+                            [time-wait-timer (Addr TimerCommand)]) (m)
       (case m
         [(InTcpPacket packet)
          (let ([new-receive-buffer (process-incoming packet rcv-nxt receive-buffer snd-nxt)])
@@ -996,8 +1142,8 @@
          (send write-handler (CommandFailed))
          (goto Closed)]
         ;; shouldn't happen here:
-        [(RetransmitTimeout) (goto Halt)]
-        [(TimeoutWaitTimeout) (goto Halt)]
+        [(RetransmitTimeout) (goto Closed)]
+        [(TimeoutWaitTimeout) (goto Closed)]
 
         ;; TODO: handle other cases (the various Close requests
         )))
@@ -1322,6 +1468,12 @@
     (Write data handler)
     (WriteAck)
     (ReceivedData data)
+    (Close handler)
+    (Closed)
+    (ConfirmedClose handler)
+    (ConfirmedClosed)
+    (Abort handler)
+    (Aborted)
     (PeerClosed)
     (ErrorClosed))
 
@@ -1340,7 +1492,12 @@
   (define (establish octet-handler)
     (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
     (send-session-command session (Register octet-handler))
-    (list packets-out tcp local-port local-iss session)))
+    (list packets-out tcp local-port local-iss session))
+
+  (define (check-closed? session)
+    (define write-handler (make-async-channel))
+    (send-session-command session (Write (vector 1) write-handler))
+    (check-unicast write-handler (CommandFailed))))
 
 (module+ test
   ;; Dynamic tests
@@ -1546,11 +1703,34 @@
     (check-unicast octet-dest (PeerClosed))
     (check-unicast-match packets-out
                          (OutPacket (== remote-ip)
+                                    (tcp-normal local-port server-port (add1 local-iss) (+ 2 remote-iss) (vector))))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
                                     (tcp-fin local-port server-port (add1 local-iss) (+ 2 remote-iss))))
     ;; ACK the FIN
     (send-packet tcp remote-ip (make-fin server-port local-port (add1 remote-iss) (+ 2 local-iss)))
-    ;; TODO: maybe test that other commands now receive failure messages
-    ))
+    (check-closed? session))
+
+  (test-case "ConfirmedClose, through the ACK-then-FIN route"
+    (define handler (make-async-channel))
+    (match-define (list packets-out tcp local-port local-iss session) (establish handler))
+    (define close-handler (make-async-channel))
+    (send-session-command session (ConfirmedClose close-handler))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-fin local-port server-port (add1 local-iss) (add1 remote-iss))))
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (+ 2 local-iss) (vector)))
+    (send-packet tcp remote-ip (make-fin server-port           local-port (add1 remote-iss) (+ 2 local-iss)))
+    (check-unicast handler (ConfirmedClosed))
+    (check-unicast close-handler (ConfirmedClosed))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-normal local-port
+                                                server-port
+                                                (+ 2 local-iss)
+                                                (+ 2 remote-iss)
+                                                (vector))))
+    (check-closed? session)))
 
 ;; Todo list of tests/functionality:
 ;; * active ConfirmedClose, through closing
@@ -1596,6 +1776,7 @@
 
   (define desugared-session-command
     `(Union
+      ;; TODO: add the other tcp events in here
       (Register (Addr (Vectorof Nat)))
       (Write (Vectorof Nat)
              (Addr (Union (CommandFailed)
