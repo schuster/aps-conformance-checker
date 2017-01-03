@@ -5,7 +5,7 @@
 
 (define DEFAULT-WINDOW-SIZE 29200)
 (define MAXIMUM-SEGMENT-SIZE-IN-BYTES 536)
-(define wait-time-in-milliseconds 1000)
+(define wait-time-in-milliseconds 2000)
 (define max-retries 3)
 ;; NOTE: real MSL value is 2 minutes
 (define max-segment-lifetime (* 1000 2)) ; defined in milliseconds
