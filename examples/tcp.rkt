@@ -908,7 +908,7 @@
                   octet-stream
                   rxmt-timer)]
            [(RetransmitFailure)
-            ;; TODO: do I need to send a message to the user here?
+            (send handler (ErrorClosed))
             (halt-with-notification)])]
         [(Close close-handler)
          (send close-handler (Closed))
@@ -956,9 +956,6 @@
                  octet-stream
                  rxmt-timer))]
         [(OrderedTcpPacket packet)
-         ;; TODO: figure out where to send various Close messages in all of this
-         ;;
-         ;; TODO: for each ErrorClosed, send it only when no other Closed message has been sent
          (cond
            [(or (packet-rst? packet) (packet-syn? packet))
             (send octet-stream (ErrorClosed))
@@ -974,10 +971,7 @@
                                                        [(PeerClose) (variant False)])
                                                      octet-stream)]
                   [all-data-is-acked? (>= (: packet ack) (- (: send-buffer send-next) 1))])
-              ;; TODO: if this segment does not contain rcv-nxt, send back an ACK
-
               ;; NOTE: Optimization: if this is the third duplicate ACK, go into fast recovery mode
-              ;; TODO: send ACK for all new ACKed data
               (case closing-state
                 [(SentFin)
                  (cond
@@ -1169,6 +1163,15 @@
         [(Write d write-handler)
          (send write-handler (CommandFailed))
          (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)]
+        [(Close close-handler)
+         (send close-handler (CommandFailed))]
+        [(ConfirmedClose close-handler)
+         (send close-handler (CommandFailed))]
+        [(Abort close-handler)
+         (abort-connection (: send-buffer send-next))
+         (send close-handler (Aborted))
+         (send octet-stream (Aborted))
+         (halt-with-notification)]
         [(RetransmitTimeout)
          ;; the other side has ACKed everything, so we can ignore the timer
          (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)]
@@ -1189,21 +1192,25 @@
          (goto Closed)]
         [(Register h) (goto Closed)]
         [(RegisterTimeout) (goto Closed)]
-        [(InTcpPacket packet) (goto Closed)
-         ;; TODO: should I send a reset?
-         ]
-        [(OrderedTcpPacket packet) (goto Closed)
-         ;; TODO: should I send a reset?
-         ]
+        [(InTcpPacket packet)
+         (send-to-ip (make-rst/global packet))
+         (goto Closed)]
+        [(OrderedTcpPacket packet)
+         (send-to-ip (make-rst/global packet))
+         (goto Closed)]
         [(Write d write-handler)
          (send write-handler (CommandFailed))
          (goto Closed)]
+        [(Close close-handler)
+         (send close-handler (CommandFailed))]
+        [(ConfirmedClose close-handler)
+         (send close-handler (CommandFailed))]
+        [(Abort close-handler)
+         (send close-handler (CommandFailed))
+         (halt-with-notification)]
         ;; shouldn't happen here:
         [(RetransmitTimeout) (goto Closed)]
-        [(TimeoutWaitTimeout) (goto Closed)]
-
-        ;; TODO: handle other cases (the various Close requests
-        )))
+        [(TimeoutWaitTimeout) (goto Closed)])))
 
   ;;;; The main TCP actor
 
@@ -1316,7 +1323,6 @@
             (destination-port (== dest-port))
             (seq _)
             (ack _)
-            ;; TODO: note bug: had a NoSyn here the first time instead of NoAck
             (ack-flag (csa-variant NoAck))
             (rst (csa-variant NoRst))
             (syn (csa-variant Syn))
@@ -1959,7 +1965,6 @@
     (check-closed? session)))
 
 ;; Todo list of tests/functionality:
-;; * remaining TODOs, as I deem necessary
 ;; * check that all messages are handled in all states
 
 ;; Later: will probably need to add widening of state parameters to the widening code
