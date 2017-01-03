@@ -1730,12 +1730,51 @@
                                                 (+ 2 local-iss)
                                                 (+ 2 remote-iss)
                                                 (vector))))
+    (check-closed? session))
+
+  (test-case "ConfirmedClose, through the FIN-with-ACK route"
+    (define handler (make-async-channel))
+    (match-define (list packets-out tcp local-port local-iss session) (establish handler))
+    (define close-handler (make-async-channel))
+    (send-session-command session (ConfirmedClose close-handler))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-fin local-port server-port (add1 local-iss) (add1 remote-iss))))
+    (send-packet tcp remote-ip (make-fin server-port           local-port (add1 remote-iss) (+ 1 local-iss)))
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 2 remote-iss) (+ 2 local-iss) (vector)))
+    (check-unicast handler (ConfirmedClosed))
+    (check-unicast close-handler (ConfirmedClosed))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-normal local-port
+                                                server-port
+                                                (+ 2 local-iss)
+                                                (+ 2 remote-iss)
+                                                (vector))))
+    (check-closed? session))
+
+  (test-case "ConfirmedClose, through the FIN then ACK route"
+    (define handler (make-async-channel))
+    (match-define (list packets-out tcp local-port local-iss session) (establish handler))
+    (define close-handler (make-async-channel))
+    (send-session-command session (ConfirmedClose close-handler))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-fin local-port server-port (add1 local-iss) (add1 remote-iss))))
+    (send-packet tcp remote-ip (make-fin server-port           local-port (add1 remote-iss) (+ 2 local-iss)))
+    (check-unicast handler (ConfirmedClosed))
+    (check-unicast close-handler (ConfirmedClosed))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-normal local-port
+                                                server-port
+                                                (+ 2 local-iss)
+                                                (+ 2 remote-iss)
+                                                (vector))))
     (check-closed? session)))
 
 ;; Todo list of tests/functionality:
-;; * active ConfirmedClose, through closing
-;; * active ConfirmedClose, through fin wait 2
-;; * active ConfirmedClose, directly from fin wait 1 to time wait
+;; * deliver received messages only for ConfirmedClose, not our own close
 ;; * active Close, to any state
 ;; * abort (from Established)
 ;; * remaining TODOs, as I deem necessary
