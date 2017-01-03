@@ -2976,11 +2976,14 @@
      ;; TODO: think about: blurring might change around what address is what. Am I sure that this
      ;; comparison (and the spawn one) check the right things? Need to know this for the soundness
      ;; proof
-     (if (member new-behavior old-behaviors)
-         'eq
-         (if (precise-internal-address? addr)
-             'not-gteq
-             'gt)))))
+     (cond
+       [(precise-internal-address? addr)
+        (match-define (list old-behavior) old-behaviors)
+        (compare-behavior new-behavior old-behavior)]
+       ;; remaining cases are for collective addresses
+       [(member new-behavior old-behaviors)
+        'eq]
+       [else 'gt]))))
 
 (module+ test
   (test-equal? "actor-compare-behavior: new atomic behavior"
@@ -2999,6 +3002,51 @@
      (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto A)) null null)
      behavior-test-config)
     'eq)
+  (test-equal? "actor-compare-behavior: adding to vector in old atomic behavior"
+    (csa#-actor-compare-behavior
+     (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
+            ([(blurred-spawn-addr 2)
+              ((() (goto B))
+               (() (goto C)))])
+            ()))
+     (csa#-transition-effect
+      `(timeout/empty-queue (init-addr 1)) '(() (goto A (vector-val (variant B) (variant A)) )) null null)
+     (term (([(init-addr 1) (() (goto A (vector-val (variant B) (variant A))))])
+            ([(blurred-spawn-addr 2)
+              ((() (goto B))
+               (() (goto C)))])
+            ())))
+    'gt)
+  (test-equal? "actor-compare-behavior: same vector in old atomic behavior"
+    (csa#-actor-compare-behavior
+     (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
+            ([(blurred-spawn-addr 2)
+              ((() (goto B))
+               (() (goto C)))])
+            ()))
+     (csa#-transition-effect
+      `(timeout/empty-queue (init-addr 1)) '(() (goto A (vector-val (variant A)))) null null)
+     (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
+            ([(blurred-spawn-addr 2)
+              ((() (goto B))
+               (() (goto C)))])
+            ())))
+    'eq)
+  (test-equal? "actor-compare-behavior: smaller vector in old atomic behavior"
+    (csa#-actor-compare-behavior
+     (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
+            ([(blurred-spawn-addr 2)
+              ((() (goto B))
+               (() (goto C)))])
+            ()))
+     (csa#-transition-effect
+      `(timeout/empty-queue (init-addr 1)) '(() (goto A (vector-val))) null null)
+     (term (([(init-addr 1) (() (goto A (vector-val)))])
+            ([(blurred-spawn-addr 2)
+              ((() (goto B))
+               (() (goto C)))])
+            ())))
+    'not-gteq)
   (test-equal? "actor-compare-behavior: new collective behavior"
     (csa#-actor-compare-behavior
      behavior-test-config
@@ -3015,6 +3063,113 @@
      behavior-test-config
      (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto B)) null null)
      behavior-test-config)
+    'eq))
+
+;; b# b# -> ('eq or 'gt or 'not-gteq)
+(define (compare-behavior new-behavior old-behavior)
+  (define new-goto (second new-behavior))
+  (define old-goto (second old-behavior))
+  (cond
+    ;; state names and state definitions must be equal
+    [(and (equal? (first new-goto) (first old-goto))
+          (equal? (first new-behavior) (first old-behavior)))
+     (for/fold ([comp-result 'eq])
+               ([new-arg (cdr new-goto)]
+                [old-arg (cdr old-goto)])
+       (comp-result-and comp-result (compare-value new-arg old-arg)))]
+    [else 'not-gteq]))
+
+(define (compare-value v1 v2)
+  (match (list v1 v2)
+    [(list (list 'variant tag1 fields1 ...)
+           (list 'variant tag2 fields2 ...))
+     (and (equal? tag1 tag2)
+          (for/fold ([comp-result 'eq])
+                    ([field1 fields1]
+                     [field2 fields2])
+            (comp-result-and comp-result (compare-value field1 field2))))]
+    [(list (list 'record `[,ls1 ,vs1] ...) (list 'record `[,ls2 ,vs2] ...))
+     (for/fold ([comp-result 'eq])
+               ([l1 ls1]
+                [l2 ls2]
+                [v1 vs1]
+                [v2 vs2])
+       (comp-result-and
+        comp-result
+        (if (equal? l1 l2)
+            (compare-value v1 v2)
+            'not-gteq)))]
+    [(list `(folded ,t1 ,v1) `(folded ,t2 ,v2))
+     (if (equal? t1 t2)
+         (compare-value v1 v2)
+         'not-gteq)]
+    [(list (list 'list-val args1 ...) (list 'list-val args2 ...))
+     (compare-value-sets args1 args2)]
+    [(list (list 'vector-val args1 ...) (list 'vector-val args2 ...))
+     (compare-value-sets args1 args2)]
+    [(list (list 'hash-val args1 ...) (list 'hash-val args2 ...))
+     (compare-value-sets args1 args2)]
+    [_ (if (equal? v1 v2) 'eq 'not-gteq)]))
+
+(define (compare-value-sets vals1 vals2)
+     (define val-set1 (list->set vals1))
+     (define val-set2 (list->set vals2))
+     (cond
+       [(set=? val-set1 val-set2) 'eq]
+       [(proper-subset? val-set2 val-set1) 'gt]
+       [else 'not-gteq]))
+
+(module+ test
+  (test-equal? "compare-value record 1"
+    (compare-value `(record [a (vector-val (* Nat))] [b (* Nat)])
+                   `(record [a (vector-val)]         [b (* Nat)]))
+    'gt)
+  (test-equal? "compare-value record 2"
+    (compare-value `(record [a (vector-val (* Nat))] [b (* Nat)])
+                   `(record [a (vector-val (* Nat))] [b (* Nat)]))
+    'eq)
+  (test-equal? "compare-value record 3"
+    (compare-value `(record [a (vector-val (variant A))] [b (* Nat)])
+                   `(record [a (vector-val (variant B))] [b (* Nat)]))
+    'not-gteq)
+
+  (test-equal? "compare-value variant 1"
+    (compare-value `(variant A (vector-val (* Nat)) (* Nat))
+                   `(variant A (vector-val) (* Nat)))
+    'gt)
+  (test-equal? "compare-value variant 2"
+    (compare-value `(variant A (vector-val (* Nat)) (* Nat))
+                   `(variant A (vector-val (* Nat)) (* Nat)))
+    'eq)
+  (test-equal? "compare-value variant 3"
+    (compare-value `(variant A (vector-val) (* Nat))
+                   `(variant A (vector-val (* Nat)) (* Nat)))
+    'not-gteq)
+
+  (test-equal? "compare-value vector-val 1"
+    (compare-value '(vector-val (* Nat))
+                   '(vector-val))
+    'gt)
+  (test-equal? "compare-value vector-val 2"
+    (compare-value '(vector-val (* Nat))
+                   '(vector-val (* Nat)))
+    'eq)
+  (test-equal? "compare-value vector-val 3"
+    (compare-value '(vector-val)
+                   '(vector-val (* Nat)))
+    'not-gteq)
+
+  (test-equal? "compare-value addresses 1"
+    (compare-value `((* Nat) (init-addr 1))
+                   `((* Nat) (init-addr 2)))
+    'not-gteq)
+  (test-equal? "compare-value addresses 2"
+    (compare-value `((* String) (init-addr 1))
+                   `((* Nat) (init-addr 1)))
+    'not-gteq)
+  (test-equal? "compare-value addresses 3"
+    (compare-value `((* Nat) (init-addr 1))
+                   `((* Nat) (init-addr 1)))
     'eq))
 
 ;; Returns #t if the action represented by the effect's trigger can happen again after applying the

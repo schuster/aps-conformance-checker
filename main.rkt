@@ -658,19 +658,13 @@
 
 ;; config-pair -> config-pair
 (define (widen-pair the-pair)
-
-  ;; NOTE: for now, we only widen into states where the behavior of the existing actors does not
-  ;; change. It's possible that a transition might lead to a configuration that is strictly larger,
-  ;; including larger absract values for the state parameters, but because those are harder to check,
-  ;; we skip them for now.
-
   ;; Algorithm:
   ;;
   ;; * Evaluate all possible handlers of this configuration and add each result (goto, spawns,
   ;; internal messages, external messages) to a worklist. A single handler may have many possible
   ;; results because of the non-determinism of the abstract interpretation.
   ;;
-  ;; * In the worklist loop, determine whether the "goto" of the effect is exactly the same, whether
+  ;; * In the worklist loop, determine whether the "goto" of the effect is at least as large, whether
   ;; the action is repeatable, and whether there exists a spec step that leads to the exact same spec
   ;; config (modulo additions to the observed or unobserved interface). If not, throw this worklist
   ;; item away (after marking it as applied), and move on to the next loop iteration.
