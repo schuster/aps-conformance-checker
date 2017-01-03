@@ -453,7 +453,7 @@
                                      [receive-buffer ReceiveBuffer]
                                      [octet-stream (Addr TcpSessionEvent)])
        (let ([timer (spawn time-wait-timer Timer (TimeWaitTimeout) self)])
-         (send timer (Start (* 2 max-segment-lifetime-in-ms)))
+         (send timer (Start (mult 2 max-segment-lifetime-in-ms)))
          (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream timer)))
 
      ;; Returns true if the segment is "acceptable", where a segment is acceptable if its start falls
@@ -1126,7 +1126,7 @@
            [else
             ;; If we get this far, then this must be a retransmitted FIN, so send back an ACK
             (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
-            (send time-wait-timer (Start (* 2 max-segment-lifetime-in-ms)))
+            (send time-wait-timer (Start (mult 2 max-segment-lifetime-in-ms)))
             (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)])]
         [(Register h) (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)]
         [(Write d write-handler)

@@ -99,7 +99,7 @@
        ;; Nanopass)
        (+ e1 e2)
        (- e1 e2)
-       (* e1 e2)
+       (mult e1 e2)
        (/ e1 e2)
        (arithmetic-shift e1 e2)
        (< e1 e2)
