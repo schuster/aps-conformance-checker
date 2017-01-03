@@ -892,7 +892,12 @@
                       (ConfirmedClose close-handler)
                       (SentFin)
                       octet-stream
-                      rxmt-timer)]))
+                      rxmt-timer)]
+        [(Abort close-handler)
+         (abort-connection (: send-buffer send-next))
+         (send close-handler (Aborted))
+         (send octet-stream (Aborted))
+         (halt-with-notification)]))
 
     ;; In the process of closing down; groups together FIN-WAIT-1, FIN-WAIT-2, CLOSING, and LAST-ACK
     ;; in the typical TCP state diagram
@@ -1196,7 +1201,7 @@
                                          packets-out
                                          bind-handler
                                          self
-                                         ;; TODO: consider making these top-level constants
+                                         ;; REFACTOR: consider making these top-level constants
                                          wait-time-in-milliseconds
                                          max-retries
                                          max-segment-lifetime-in-ms
@@ -1825,7 +1830,22 @@
                                                 (+ 2 local-iss)
                                                 (+ 5 remote-iss)
                                                 (vector))))
-    (check-closed? session)))
+    (check-closed? session))
+
+  (test-case "Abort from ESTABLISHED"
+    (define handler (make-async-channel))
+    (match-define (list packets-out tcp local-port local-iss session) (establish handler))
+    (define close-handler (make-async-channel))
+    (send-session-command session (Abort close-handler))
+    (check-unicast handler (Aborted))
+    (check-unicast close-handler (Aborted))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-rst local-port server-port (add1 local-iss))))
+    (check-closed? session)
+    ;; received packets should not come through to the user
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
+    (check-no-message handler #:timeout 0.5)))
 
 ;; Todo list of tests/functionality:
 ;; * abort (from Established)
