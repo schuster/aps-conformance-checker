@@ -1957,13 +1957,22 @@
   (define desugared-session-id
     `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
 
+  (define desugared-tcp-session-event
+    `(Union
+      [ReceivedData (Vectorof Nat)]
+      [Closed]
+      [ConfirmedClosed]
+      [Aborted]
+      [PeerClosed]
+      [ErrorClosed]))
+
   (define desugared-session-command
     `(Union
-      ;; TODO: add the other tcp events in here
-      (Register (Addr (Vectorof Nat)))
-      (Write (Vectorof Nat)
-             (Addr (Union (CommandFailed)
-                          (WriteAck))))))
+      (Register (Addr ,desugared-tcp-session-event))
+      (Write (Vectorof Nat) (Addr ,desugared-tcp-session-event))
+      (Close (Addr ,desugared-tcp-session-event))
+      (ConfirmedClose (Addr ,desugared-tcp-session-event))
+      (Abort (Addr ,desugared-tcp-session-event))))
 
   (define desugared-connection-status
     `(Union
@@ -1978,10 +1987,14 @@
             (Addr (Union [Bound] [CommandFailed]))
             (Addr ,desugared-connection-status)]))
 
+  (define desugared-tcp-input
+    `(Union
+      (InPacket Nat ,desugared-tcp-packet-type)
+      (UserCommand ,desugared-user-command)
+      (SessionCloseNotification ,desugared-session-id)))
+
   (define trivial-spec
-    ;; TODO: maybe fix the types on receptionists and externals, although I don't think it really
-    ;; matters
-    `(specification (receptionists [tcp (Union)])
+    `(specification (receptionists [tcp ,desugared-tcp-input])
                     (externals [packets-out ,desugared-tcp-output])
        [tcp  (Union [UserCommand ,desugared-user-command])] ; obs interface
        ([tcp (Union [InPacket Nat ,desugared-tcp-packet-type])])  ; unobs interface
