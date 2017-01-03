@@ -775,6 +775,18 @@
     (==> (hash-has-key? (* (Hash τ_1 τ_2)) v#_key)
          (variant False)
          WildcardHashHasKeyFalse)
+    (==> (hash-empty? (hash-val _ _))
+         (variant True)
+         HashEmptyTrue)
+    (==> (hash-empty? (hash-val _ _))
+         (variant False)
+         HashEmptyFalse)
+    (==> (hash-empty? (* (Hash _ _)))
+         (variant True)
+         WildcardHashEmptyTrue)
+    (==> (hash-empty? (* (Hash _ _)))
+         (variant False)
+         WildcardHashEmptyFalse)
 
     ;; Loops
     (==> (for/fold ([x_fold v#_fold])
@@ -1010,6 +1022,12 @@
                                 (term (variant Just (* Nat)))))
   (check-exp-steps-to? (term (hash-remove (* (Hash Nat Nat)) (* Nat)))
                        (term (* (Hash Nat Nat))))
+  (check-exp-steps-to-all (term (hash-empty? (hash-val ((* Nat)) ((variant A) (variant B)))))
+                          (list (term (variant True))
+                                (term (variant False))))
+  (check-exp-steps-to-all (term (hash-empty? (* (Hash Nat Nat))))
+                          (list (term (variant True))
+                                (term (variant False))))
 
   ;; NOTE: these are the old tests for checking sorting of loop-sent messages, which I don't do
   ;; anymore. Keeping them around in case I change my mind

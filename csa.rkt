@@ -92,6 +92,7 @@
    hash-remove
    hash-set
    hash-has-key?
+   hash-empty?
    sort-numbers-descending
    ;; printf and abs-len for debugging only
    printf
