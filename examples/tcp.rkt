@@ -1087,6 +1087,15 @@
         [(Write d write-handler)
          (send write-handler (CommandFailed))
          (goto Closing send-buffer rcv-nxt receive-buffer close-type closing-state octet-stream rxmt-timer)]
+        [(Close close-handler)
+         (send close-handler (CommandFailed))]
+        [(ConfirmedClose close-handler)
+         (send close-handler (CommandFailed))]
+        [(Abort close-handler)
+         (abort-connection (: send-buffer send-next))
+         (send close-handler (Aborted))
+         (send octet-stream (Aborted))
+         (halt-with-notification)]
         [(RetransmitTimeout)
          (case (maybe-retransmit send-buffer rcv-nxt rxmt-timer)
            [(RetransmitSuccess)
@@ -1928,11 +1937,29 @@
                                                 server-port
                                                 (+ 2 local-iss)
                                                 (+ 2 remote-iss)
-                                                (vector))))))
+                                                (vector)))))
+
+  (test-case "Can abort while closing"
+    (define handler (make-async-channel))
+    (match-define (list packets-out tcp local-port local-iss session) (establish handler))
+    (define close-handler (make-async-channel))
+    (send-session-command session (ConfirmedClose close-handler))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-fin local-port server-port (add1 local-iss) (add1 remote-iss))))
+    (define abort-handler (make-async-channel))
+    (send-session-command session (Abort abort-handler))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-rst local-port server-port (+ 2 local-iss))))
+    (check-unicast abort-handler (Aborted))
+    (check-unicast handler (Aborted))
+    ;; the close handler gets NO message
+    (check-no-message close-handler)
+    (check-closed? session)))
 
 ;; Todo list of tests/functionality:
 ;; * remaining TODOs, as I deem necessary
-;; * abort from mid-closing states (Fin-wait-1/2, in particular)
 ;; * check that all messages are handled in all states
 
 ;; Later: will probably need to add widening of state parameters to the widening code
