@@ -197,6 +197,17 @@
                 (: s buffer)))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Sink
+
+  ;; just a simple actor to swallow messages to the user when we're closing before the user registered
+  ;; a handler
+  (define-actor TcpSessionEvent
+    (Sink)
+    ()
+    (goto Sink)
+    (define-state (Sink) (m) (goto Sink)))
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Timer
 
   (define-variant TimerCommand
@@ -433,7 +444,8 @@
                (vector)
                rcv-nxt
                (create-empty-rbuffer)
-               reg-timer)))
+               reg-timer
+               (spawn rxmt-timer Timer (RetransmitTimeout) self))))
 
      ;; Transitions to time-wait, starting a timer on the way in
      (define-function (goto-TimeWait [snd-nxt Nat]
@@ -763,44 +775,67 @@
                                         [queued-packets (Vectorof TcpPacket)]
                                         [rcv-nxt Nat]
                                         [receive-buffer ReceiveBuffer]
-                                        [registration-timer (Addr TimerCommand)]) (m)
+                                        [registration-timer (Addr TimerCommand)]
+                                        [rxmt-timer (Addr TimerCommand)]) (m)
       (case m
         [(InTcpPacket packet)
          ;; we don't need the handler just to process incoming packets, so we do it just like in Established
          (let ([new-receive-buffer (process-incoming packet rcv-nxt receive-buffer (: send-buffer send-next))])
-           (goto AwaitingRegistration send-buffer queued-packets rcv-nxt new-receive-buffer registration-timer))]
+           (goto AwaitingRegistration
+                 send-buffer
+                 queued-packets
+                 rcv-nxt
+                 new-receive-buffer
+                 registration-timer
+                 rxmt-timer))]
         [(OrderedTcpPacket packet)
          (goto AwaitingRegistration
                send-buffer
                (vector-append queued-packets (vector packet))
                rcv-nxt
                receive-buffer
-               registration-timer)]
+               registration-timer
+               rxmt-timer)]
         [(Register octet-handler)
          (send registration-timer (Stop))
          (for/fold ([dummy 0])
                    ([packet queued-packets])
            (send self (OrderedTcpPacket packet))
            0)
-         (goto Established
-               send-buffer
-               rcv-nxt
-               receive-buffer
-               octet-handler
-               (spawn rxmt-timer Timer (RetransmitTimeout) self))]
+         (goto Established send-buffer rcv-nxt receive-buffer octet-handler rxmt-timer)]
         [(Write data handler)
          ;; can't yet write
          (send handler (CommandFailed))
-         (goto AwaitingRegistration send-buffer queued-packets rcv-nxt receive-buffer registration-timer)]
+         (goto AwaitingRegistration send-buffer queued-packets rcv-nxt receive-buffer registration-timer rxmt-timer)]
         [(RegisterTimeout)
          (abort-connection (: send-buffer send-next))
          (halt-with-notification)]
-        ;; TODO: add close commands here
+        [(Close close-handler)
+         (send close-handler (Closed))
+         (start-close send-buffer
+                      rcv-nxt
+                      receive-buffer
+                      (Close close-handler)
+                      (SentFin)
+                      (spawn close-await Sink)
+                      rxmt-timer)]
+        [(ConfirmedClose close-handler)
+         (start-close send-buffer
+                      rcv-nxt
+                      receive-buffer
+                      (ConfirmedClose close-handler)
+                      (SentFin)
+                      (spawn confirmed-close-await Sink)
+                      rxmt-timer)]
+        [(Abort close-handler)
+         (abort-connection (: send-buffer send-next))
+         (send close-handler (Aborted))
+         (halt-with-notification)]
         ;; these timeouts shouldn't happen here
         [(RetransmitTimeout)
-         (goto AwaitingRegistration send-buffer queued-packets rcv-nxt receive-buffer registration-timer)]
+         (goto AwaitingRegistration send-buffer queued-packets rcv-nxt receive-buffer registration-timer rxmt-timer)]
         [(TimeWaitTimeout)
-         (goto AwaitingRegistration send-buffer queued-packets rcv-nxt receive-buffer registration-timer)]))
+         (goto AwaitingRegistration send-buffer queued-packets rcv-nxt receive-buffer registration-timer rxmt-timer)]))
 
     ;; REFACTOR: move these various receive-related params into the receive buffer
     (define-state (Established [send-buffer SendBuffer]
@@ -1845,12 +1880,58 @@
     (check-closed? session)
     ;; received packets should not come through to the user
     (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
-    (check-no-message handler #:timeout 0.5)))
+    (check-no-message handler #:timeout 0.5))
+
+  (test-case "Abort from AwaitingRegistration"
+    (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
+    (define close-handler (make-async-channel))
+    (send-session-command session (Abort close-handler))
+    (check-unicast close-handler (Aborted))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-rst local-port server-port (add1 local-iss))))
+    (check-closed? session))
+
+  (test-case "ConfirmedClose from AwaitingRegistration"
+    (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
+    (define close-handler (make-async-channel))
+    (send-session-command session (ConfirmedClose close-handler))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-fin local-port server-port (add1 local-iss) (add1 remote-iss))))
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 1 remote-iss) (+ 2 local-iss) (vector)))
+    (send-packet tcp remote-ip (make-fin server-port           local-port (+ 1 remote-iss) (+ 2 local-iss)))
+    (check-unicast close-handler (ConfirmedClosed))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-normal local-port
+                                                server-port
+                                                (+ 2 local-iss)
+                                                (+ 2 remote-iss)
+                                                (vector))))
+    (check-closed? session))
+
+  (test-case "Close from AwaitingRegistration"
+    (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
+    (define close-handler (make-async-channel))
+    (send-session-command session (Close close-handler))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-fin local-port server-port (add1 local-iss) (add1 remote-iss))))
+    (check-unicast close-handler (Closed))
+    (check-closed? session)
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 1 remote-iss) (+ 2 local-iss) (vector)))
+    (send-packet tcp remote-ip (make-fin server-port           local-port (+ 1 remote-iss) (+ 2 local-iss)))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-normal local-port
+                                                server-port
+                                                (+ 2 local-iss)
+                                                (+ 2 remote-iss)
+                                                (vector))))))
 
 ;; Todo list of tests/functionality:
-;; * abort (from Established)
 ;; * remaining TODOs, as I deem necessary
-;; * active close during AwaitingRegistration
 ;; * abort from mid-closing states (Fin-wait-1/2, in particular)
 ;; * check that all messages are handled in all states
 
