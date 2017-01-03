@@ -70,7 +70,7 @@
       (* τ)
       (list-val v# ...)
       (vector-val v# ...)
-      (hash-val v# ...))
+      (hash-val (v# ...) (v# ...)))
   (e# (spawn any_location τ e# Q# ...)
       (spawning a#int τ e# Q# ...)
       (goto q e# ...)
@@ -507,9 +507,9 @@
 ;; progrm)
 (define (stuck-at-empty-list-ref? h)
   (redex-let csa# ([(e# _ _) h])
-    (or (redex-match? csa# (in-hole E# (list-ref   (list-val)   v#)) (term e#))
-        (redex-match? csa# (in-hole E# (vector-ref (vector-val) v#)) (term e#))
-        (redex-match? csa# (in-hole E# (hash-ref   (hash-val)   v#)) (term e#)))))
+    (or (redex-match? csa# (in-hole E# (list-ref   (list-val)      v#)) (term e#))
+        (redex-match? csa# (in-hole E# (vector-ref (vector-val)    v#)) (term e#))
+        (redex-match? csa# (in-hole E# (hash-ref   (hash-val () ()) v#)) (term e#)))))
 
 (module+ test
   (test-true "stuck config 1"
@@ -517,7 +517,7 @@
   (test-true "stuck config 2"
     (stuck-at-empty-list-ref? (inject/H# (term (list-ref (list-val) (* Nat))))))
   (test-true "stuck config 3"
-    (stuck-at-empty-list-ref? (inject/H# (term (hash-ref (hash-val) (* Nat)))))))
+    (stuck-at-empty-list-ref? (inject/H# (term (hash-ref (hash-val () ()) (* Nat)))))))
 
 (define (complete-handler-config? c)
   (redex-match csa# ((in-hole E# (goto q v#_param ...)) any_output any_spawns) c))
@@ -733,40 +733,40 @@
          (* (Vectorof τ))
          VectorWildcardAppend2)
     (==> (hash [v#_key v#_val] ...)
-         (normalize-collection (hash-val v#_val ...))
+         (normalize-collection (hash-val (v#_key ...) (v#_val ...)))
          HashEval)
-    (==> (hash-ref (hash-val v#_1 ... v# v#_2 ...) v#_key)
+    (==> (hash-ref (hash-val _ (v#_1 ... v# v#_2 ...)) v#_key)
          (variant Just v#)
          HashRefSuccess)
-    (==> (hash-ref (* Hash τ_1 τ_2) v#_key)
+    (==> (hash-ref (* (Hash τ_1 τ_2)) v#_key)
          (variant Just (* τ_2))
          HashWildcardRefSuccess)
-    (==> (hash-ref (hash-val v#_other ...) v#_key)
+    (==> (hash-ref (hash-val _ _) v#_key)
          (variant Nothing)
          HashRefFailure)
-    (==> (hash-ref (* Hash τ_1 τ_2) v#_key)
+    (==> (hash-ref (* (Hash τ_1 τ_2)) v#_key)
          (variant Nothing)
          HashWildcardRefFailure)
-    (==> (hash-set (hash-val v#_1 ... v#_value v#_2 ...) v#_key v#_value)
-         (hash-val v#_1 ... v#_value v#_2 ...)
-         HashSetExists)
-    (==> (hash-set (hash-val v#_current ...) v#_key v#_value)
-         (normalize-collection (hash-val v#_current ... v#_value))
-         (side-condition (not (member (term v#_value) (term (v#_current ...)))))
-         HashSetNewItem)
-    (==> (hash-set (* Hash τ_1 τ_2) v#_key v#_value)
-         (* Hash τ_1 τ_2)
+    (==> (hash-keys (hash (v#_key ...) _))
+         (list-val v#_key ...))
+    (==> (hash-keys (* (Hash τ_1 τ_2)))
+         (* (Listof τ_1)))
+    (==> (hash-set (hash-val (v#_keys ...) (v#_vals ...)) v#_new-key v#_new-val)
+         (normalize-collection (hash-val (v#_keys ... v#_new-key) (v#_vals ... v#_new-val)))
+         HashSet)
+    (==> (hash-set (* (Hash τ_1 τ_2)) v#_key v#_value)
+         (* (Hash τ_1 τ_2))
          HashWildcardSet)
-    (==> (hash-remove (hash-val v# ...) v#_remove)
-         (hash-val v# ...)
+    (==> (hash-remove (hash-val any_keys any_vals) v#_remove)
+         (hash-val any_keys any_vals)
          HashRemove)
     (==> (hash-remove (* (Hash τ_1 τ_2)) v#_remove)
          (* (Hash τ_1 τ_2))
          HashRemoveWildcard)
-    (==> (hash-has-key? (hash-val v# ...) v#_key)
+    (==> (hash-has-key? (hash-val any_keys any_vals) v#_key)
          (variant True)
          HashHasKeyTrue)
-    (==> (hash-has-key? (hash-val v# ...) v#_key)
+    (==> (hash-has-key? (hash-val any_keys any_vals) v#_key)
          (variant False)
          HashHasKeyFalse)
     (==> (hash-has-key? (* (Hash τ_1 τ_2)) v#_key)
@@ -983,25 +983,33 @@
   ;; hash
   (check-exp-steps-to?
    (term (hash [(* Nat) (variant B)] [(* Nat) (variant A)]))
-   (term (hash-val (variant A) (variant B))))
+   (term (hash-val ((* Nat)) ((variant A) (variant B)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val (variant B) (variant C)) (* Nat) (variant A)))
-   (term (hash-val (variant A) (variant B) (variant C))))
+   (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant A)))
+   (term (hash-val ((* Nat)) ((variant A) (variant B) (variant C)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val (variant C) (variant B)) (* Nat) (variant A)))
-   (term (hash-val (variant A) (variant B) (variant C))))
+   (term (hash-set (hash-val ((* Nat)) ((variant C) (variant B))) (* Nat) (variant A)))
+   (term (hash-val ((* Nat)) ((variant A) (variant B) (variant C)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val) (* Nat) (variant A)))
-   (term (hash-val (variant A))))
+   (term (hash-set (hash-val () ()) (* Nat) (variant A)))
+   (term (hash-val ((* Nat)) ((variant A)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val (variant B) (variant C)) (* Nat) (variant D)))
-   (term (hash-val (variant B) (variant C) (variant D))))
+   (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant D)))
+   (term (hash-val ((* Nat)) ((variant B) (variant C) (variant D)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val (variant B) (variant C)) (* Nat) (variant B)))
-   (term (hash-val (variant B) (variant C))))
+   (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant B)))
+   (term (hash-val ((* Nat)) ((variant B) (variant C)))))
   (check-exp-steps-to?
-   (term (hash-remove (hash-val (variant B) (variant C)) (variant B)))
-   (term (hash-val (variant B) (variant C))))
+   (term (hash-remove (hash-val ((* Nat)) ((variant B) (variant C))) (variant B)))
+   (term (hash-val ((* Nat)) ((variant B) (variant C)))))
+  (check-exp-steps-to-all (term (hash-ref (* (Hash Nat Nat)) (* Nat)))
+                          (list '(variant Nothing)
+                                '(variant Just (* Nat))))
+  (check-exp-steps-to-all (term (hash-ref (* (Hash Nat Nat)) (* Nat)))
+                          (list (term (variant Nothing))
+                                (term (variant Just (* Nat)))))
+  (check-exp-steps-to? (term (hash-remove (* (Hash Nat Nat)) (* Nat)))
+                       (term (* (Hash Nat Nat))))
 
   ;; NOTE: these are the old tests for checking sorting of loop-sent messages, which I don't do
   ;; anymore. Keeping them around in case I change my mind
@@ -1085,8 +1093,9 @@
    (list-val ,@(sort (remove-duplicates (term (v# ...))) sexp<?))]
   [(normalize-collection (vector-val v# ...))
    (vector-val ,@(sort (remove-duplicates (term (v# ...))) sexp<?))]
-  [(normalize-collection (hash-val v# ...))
-   (hash-val ,@(sort (remove-duplicates (term (v# ...))) sexp<?))])
+  [(normalize-collection (hash-val (v#_keys ...) (v#_vals ...)))
+   (hash-val ,(sort (remove-duplicates (term (v#_keys ...))) sexp<?)
+             ,(sort (remove-duplicates (term (v#_vals ...))) sexp<?))])
 
 (define-metafunction csa#
   add-output : ([a# v# m] ...) [a# v# m] -> ([a# v# m] ...)
@@ -1305,8 +1314,10 @@
                                                               states)))]
     [`(goto ,s ,args ...) `(goto ,s ,@(map do-subst args))]
     [`(printf ,str ,args ...) `(printf ,str ,@(map do-subst args))]
-    [(list (and kw (or 'send 'begin (? primop?) 'list 'list-val 'vector 'vector-val 'hash-val 'loop-context)) args ...)
+    [(list (and kw (or 'send 'begin (? primop?) 'list 'list-val 'vector 'vector-val 'loop-context)) args ...)
      `(,kw ,@(map do-subst args))]
+    [`(hash-val ,args1 ,args2)
+     `(hash-val ,(map do-subst args1) ,(map do-subst args2))]
     [`(let ([,new-vars ,new-vals] ...) ,body)
      (define bindings (map (lambda (nvar nval) `(,nvar ,(do-subst nval))) new-vars new-vals))
      (if (member var new-vars)
@@ -1550,8 +1561,9 @@
    (normalize-collection (vector-val (abstract-e v (a ...) natural_depth) ...))]
   [(abstract-e (vector e ...) (a ...) natural_depth)
    (vector (abstract-e e (a ...) natural_depth) ...)]
-  [(abstract-e (hash [v v_val] ...) (a ...) natural_depth)
-   (normalize-collection (hash-val (abstract-e v_val (a ...) natural_depth) ...))]
+  [(abstract-e (hash [v_key v_val] ...) (a ...) natural_depth)
+   (normalize-collection (hash-val ((abstract-e v_key (a ...) natural_depth) ...)
+                                   ((abstract-e v_val (a ...) natural_depth) ...)))]
   [(abstract-e (hash [e_key e_val] ...) (a ...) natural_depth)
    (hash [(abstract-e e_key (a ...) natural_depth) (abstract-e e_val (a ...) natural_depth)] ...)]
   [(abstract-e (for/fold ([x_1 e_1]) ([x_2 e_2]) e) (a ...) natural)
@@ -1589,11 +1601,11 @@
   (check-equal? (term (abstract-e (vector (variant B) (variant A)) () 10))
                 (term (vector-val (variant A) (variant B))))
   (check-equal? (term (abstract-e (hash [1 (variant B)] [2 (variant A)]) () 10))
-                (term (hash-val (variant A) (variant B))))
+                (term (hash-val ((* Nat)) ((variant A) (variant B)))))
   (check-equal? (term (abstract-e (hash [1 2] [3 4]) () 10))
-                (term (hash-val (* Nat))))
+                (term (hash-val ((* Nat)) ((* Nat)))))
   (check-equal? (term (abstract-e (hash) () 10))
-                (term (hash-val)))
+                (term (hash-val () ())))
   (check-equal? (term (abstract-e (hash [1 (let ([x 1]) x)] [3 4]) () 10))
                 (term (hash [(* Nat) (let ([x (* Nat)]) x)] [(* Nat) (* Nat)])))
   (test-equal? "Abstraction on non-matching addresses"
@@ -1787,6 +1799,10 @@
     [(list (and keyword (or `vector-val 'list-val 'hash-val)) terms ...)
      (define blurred-args (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) terms))
      (term (normalize-collection (,keyword ,@blurred-args)))]
+    [`(hash-val ,keys ,vals)
+     (define blurred-keys (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) keys))
+     (define blurred-vals (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) vals))
+     (term (normalize-collection (hash-val ,blurred-keys ,blurred-vals)))]
     [(list terms ...)
      (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) terms)]
     [_ some-term]))
@@ -1844,15 +1860,16 @@
   (test-equal? "blur test 3"
    (csa#-blur-addresses
     (redex-let csa#
-        ([e# (term (hash-val (Nat (obs-ext 1))
-                             (Nat (obs-ext 2))
-                             (Nat (obs-ext 3))
-                             (Nat (obs-ext 4))))])
+        ([e# (term (hash-val ((* Nat))
+                             ((Nat (obs-ext 1))
+                              (Nat (obs-ext 2))
+                              (Nat (obs-ext 3))
+                              (Nat (obs-ext 4)))))])
       (term e#))
     null
     '((obs-ext 1) (obs-ext 3)))
    ;; Some reordering happens as a result of normalize-collection
-   (term (hash-val (* (Addr Nat)) (Nat (obs-ext 1)) (Nat (obs-ext 3)))))
+   (term (hash-val ((* Nat)) ((* (Addr Nat)) (Nat (obs-ext 1)) (Nat (obs-ext 3))))))
 
   (test-equal? "blur test 4"
    (csa#-blur-addresses
@@ -2305,8 +2322,8 @@
    (normalize-collection (list-val (coerce v# τ) ...))]
   [(coerce (vector-val v# ...) (Vectorof τ))
    (normalize-collection (vector-val (coerce v# τ) ...))]
-  [(coerce (hash-val v# ...) (Hash _ τ))
-   (normalize-collection (hash-val (coerce v# τ) ...))])
+  [(coerce (hash-val (v#_keys ...) (v#_vals ...)) (Hash τ_key τ_val))
+   (normalize-collection (hash-val ((coerce v#_keys τ_key) ...) ((coerce v#_vals τ_val) ...)))])
 
 (module+ test
   (test-equal? "coerce wildcard 1" (term (coerce (* Nat) Nat)) (term (* Nat)))
@@ -2350,9 +2367,9 @@
                   (Vectorof (Addr (Union [A])))))
     (term (vector-val (* (Addr (Union [A]))))))
   (test-equal? "coerce hash"
-    (term (coerce (hash-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
+    (term (coerce (hash-val ((* Nat)) ((* (Addr (Union [A] [B]))) (* (Addr (Union [A])))))
                   (Hash Nat (Addr (Union [A])))))
-    (term (hash-val (* (Addr (Union [A])))))))
+    (term (hash-val ((* Nat)) ((* (Addr (Union [A]))))))))
 
 ;; NOTE: this is really a conservative approximation of <= for types. For instance, we don't rename
 ;; variables in recursive types to check for alpha-equivalent recursive types
