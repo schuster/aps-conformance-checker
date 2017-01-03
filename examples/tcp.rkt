@@ -928,7 +928,7 @@
                   octet-stream
                   rxmt-timer)]
            [(RetransmitFailure)
-            (send handler (ErrorClosed))
+            (send octet-stream (ErrorClosed))
             (halt-with-notification)])]
         [(TimeWaitTimeout)
          (goto Established send-buffer rcv-nxt receive-buffer octet-stream rxmt-timer)]))
