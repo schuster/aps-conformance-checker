@@ -712,7 +712,7 @@
              ;; leave it as is?)
              (define sbc-pair (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
              (cond
-               [(csa#-transition-to-greater-config? i transition-result (config-pair-impl-config sbc-pair))
+               [(csa#-transition-valid-for-widen? i transition-result (config-pair-impl-config sbc-pair))
                 ;; (displayln "not bailing out")
                 (define repeated-i-step (apply-transition (config-pair-impl-config sbc-pair) transition-result observed?))
                 (define repeated-s (first-spec-step-to-same-state (config-pair-spec-config sbc-pair) repeated-i-step))

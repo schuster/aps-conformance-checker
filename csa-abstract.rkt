@@ -15,7 +15,7 @@
  csa#-address-strip-type
  ;; required for widening
  (struct-out csa#-transition-effect)
- csa#-transition-to-greater-config?
+ csa#-transition-valid-for-widen?
  csa#-eval-trigger
  csa#-apply-transition
  csa#-blur-and-duplicate-message
@@ -2498,8 +2498,9 @@
 
 ;; i# csa#-transition-effect -> Boolean
 ;;
-;; Returns #t if the transition effect results in a configuration strictly larger than the given one
-(define (csa#-transition-to-greater-config? i transition-result new-i)
+;; Returns #t if multiple applications of this transition effect would result in a configuration
+;; strictly larger than the given one
+(define (csa#-transition-valid-for-widen? i transition-result new-i)
   ;; REFACTOR: make the spawn and self behavior comparisons all happen in one place
 
   ;; If any spawned actor has a behavior different than an existing current atomic actor for the
