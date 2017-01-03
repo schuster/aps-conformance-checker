@@ -700,12 +700,12 @@
         [(OrderedTcpPacket packet) (goto SynSent snd-nxt)]
         [(Register h) (goto SynSent snd-nxt)]
         [(Write d h) (goto SynSent snd-nxt)]
-        [(RegisterTimeout) (goto SynSent snd-nxt)]
-        [(RetransmitTimeout) (goto SynSent snd-nxt)]
-        [(TimeWaitTimeout) (goto SynSent snd-nxt)]
         [(Close h) (goto SynSent snd-nxt)]
         [(ConfirmedClose h) (goto SynSent snd-nxt)]
-        [(Abort h) (goto SynSent snd-nxt)])
+        [(Abort h) (goto SynSent snd-nxt)]
+        [(RegisterTimeout) (goto SynSent snd-nxt)]
+        [(RetransmitTimeout) (goto SynSent snd-nxt)]
+        [(TimeWaitTimeout) (goto SynSent snd-nxt)])
 
       [timeout wait-time-in-milliseconds
         (send status-updates (CommandFailed))
@@ -763,12 +763,12 @@
         ;; None of these should happen at this point; ignore them
         [(Register h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
         [(Write d h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(RegisterTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(RetransmitTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(TimeWaitTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
         [(Close h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
         [(ConfirmedClose h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(Abort h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]))
+        [(Abort h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
+        [(RegisterTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
+        [(RetransmitTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
+        [(TimeWaitTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]))
 
     ;; We're waiting for the user to register an actor to send received octets to
     (define-state (AwaitingRegistration [send-buffer SendBuffer]
@@ -807,9 +807,6 @@
          ;; can't yet write
          (send handler (CommandFailed))
          (goto AwaitingRegistration send-buffer queued-packets rcv-nxt receive-buffer registration-timer rxmt-timer)]
-        [(RegisterTimeout)
-         (abort-connection (: send-buffer send-next))
-         (halt-with-notification)]
         [(Close close-handler)
          (send close-handler (Closed))
          (start-close send-buffer
@@ -830,6 +827,9 @@
         [(Abort close-handler)
          (abort-connection (: send-buffer send-next))
          (send close-handler (Aborted))
+         (halt-with-notification)]
+        [(RegisterTimeout)
+         (abort-connection (: send-buffer send-next))
          (halt-with-notification)]
         ;; these timeouts shouldn't happen here
         [(RetransmitTimeout)
@@ -883,12 +883,7 @@
                             receive-buffer
                             octet-stream
                             rxmt-timer)]))])]
-         ;; ignore registrations, registration timeouts, and time-wait timeouts here
         [(Register h)
-         (goto Established send-buffer rcv-nxt receive-buffer octet-stream rxmt-timer)]
-        [(RegisterTimeout)
-         (goto Established send-buffer rcv-nxt receive-buffer octet-stream rxmt-timer)]
-        [(TimeWaitTimeout)
          (goto Established send-buffer rcv-nxt receive-buffer octet-stream rxmt-timer)]
         [(Write data handler)
          (send handler (WriteAck))
@@ -898,18 +893,6 @@
                receive-buffer
                octet-stream
                rxmt-timer)]
-        [(RetransmitTimeout)
-         (case (maybe-retransmit send-buffer rcv-nxt rxmt-timer)
-           [(RetransmitSuccess)
-            (goto Established
-                  (increment-retransmit-count send-buffer)
-                  rcv-nxt
-                  receive-buffer
-                  octet-stream
-                  rxmt-timer)]
-           [(RetransmitFailure)
-            (send handler (ErrorClosed))
-            (halt-with-notification)])]
         [(Close close-handler)
          (send close-handler (Closed))
          (send octet-stream (Closed))
@@ -932,7 +915,23 @@
          (abort-connection (: send-buffer send-next))
          (send close-handler (Aborted))
          (send octet-stream (Aborted))
-         (halt-with-notification)]))
+         (halt-with-notification)]
+        [(RegisterTimeout)
+         (goto Established send-buffer rcv-nxt receive-buffer octet-stream rxmt-timer)]
+        [(RetransmitTimeout)
+         (case (maybe-retransmit send-buffer rcv-nxt rxmt-timer)
+           [(RetransmitSuccess)
+            (goto Established
+                  (increment-retransmit-count send-buffer)
+                  rcv-nxt
+                  receive-buffer
+                  octet-stream
+                  rxmt-timer)]
+           [(RetransmitFailure)
+            (send handler (ErrorClosed))
+            (halt-with-notification)])]
+        [(TimeWaitTimeout)
+         (goto Established send-buffer rcv-nxt receive-buffer octet-stream rxmt-timer)]))
 
     ;; In the process of closing down; groups together FIN-WAIT-1, FIN-WAIT-2, CLOSING, and LAST-ACK
     ;; in the typical TCP state diagram
@@ -1075,9 +1074,6 @@
                           rxmt-timer)])]))])]
         [(Register h)
          (goto Closing send-buffer rcv-nxt receive-buffer close-type closing-state octet-stream rxmt-timer)]
-        [(RegisterTimeout)
-         ;; shouldn't happen here
-         (goto Closing send-buffer rcv-nxt receive-buffer close-type closing-state octet-stream rxmt-timer)]
         [(Write d write-handler)
          (send write-handler (CommandFailed))
          (goto Closing send-buffer rcv-nxt receive-buffer close-type closing-state octet-stream rxmt-timer)]
@@ -1090,6 +1086,9 @@
          (send close-handler (Aborted))
          (send octet-stream (Aborted))
          (halt-with-notification)]
+        [(RegisterTimeout)
+         ;; shouldn't happen here
+         (goto Closing send-buffer rcv-nxt receive-buffer close-type closing-state octet-stream rxmt-timer)]
         [(RetransmitTimeout)
          (case (maybe-retransmit send-buffer rcv-nxt rxmt-timer)
            [(RetransmitSuccess)
@@ -1106,36 +1105,7 @@
             (halt-with-notification)])]
         [(TimeWaitTimeout)
          ;; shouldn't happen here
-         (goto Closing send-buffer rcv-nxt receive-buffer close-type closing-state octet-stream rxmt-timer)])
-
-      ;; [close-request ()
-      ;;                (define already-received-close
-      ;;                  (case closing-state
-      ;;                    [SentFin () true]
-      ;;                    [WaitingOnPeerFin () true]
-      ;;                    [SentThenReceivedFin () true]
-      ;;                    [ReceivedFin () false]
-      ;;                    [WaitingOnPeerAck () true]))
-      ;;                (cond
-      ;;                  [already-received-close
-      ;;                   (send status-updates (ConnectionClosing))
-      ;;                   (next-state (Closing send-buffer
-      ;;                                        rcv-nxt
-      ;;                                        receive-buffer
-      ;;                                        closing-state
-      ;;                                        status-updates
-      ;;                                        octet-stream
-      ;;                                        rxmt-timer))]
-      ;;                  [else
-      ;;                   (send-to-ip (make-fin (: send-buffer send-next) rcv-nxt))
-      ;;                   (next-state (Closing (send-buffer-add-fin send-buffer)
-      ;;                                        rcv-nxt
-      ;;                                        receive-buffer
-      ;;                                        (WaitingOnPeerAck)
-      ;;                                        status-updates
-      ;;                                        octet-stream
-      ;;                                        rxmt-timer))])]
-      )
+         (goto Closing send-buffer rcv-nxt receive-buffer close-type closing-state octet-stream rxmt-timer)]))
 
     ;; Waiting to make sure the peer received our ACK of their FIN (we've already received an ACK for
     ;; our FIN)
@@ -1159,7 +1129,6 @@
             (send time-wait-timer (Start (* 2 max-segment-lifetime-in-ms)))
             (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)])]
         [(Register h) (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)]
-        [(RegisterTimeout) (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)]
         [(Write d write-handler)
          (send write-handler (CommandFailed))
          (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)]
@@ -1172,34 +1141,26 @@
          (send close-handler (Aborted))
          (send octet-stream (Aborted))
          (halt-with-notification)]
+        [(RegisterTimeout) (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)]
         [(RetransmitTimeout)
          ;; the other side has ACKed everything, so we can ignore the timer
          (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)]
         [(TimeWaitTimeout)
          ;; (send status-updates (ConnectionClosed))
-         (halt-with-notification)])
-
-      ;; [close-request ()
-      ;;                (send status-updates (ConnectionClosing))
-      ;;                (next-state (TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer))]
-      )
+         (halt-with-notification)]))
 
     (define-state (Closed) (m)
       (case m
-        [(Write data handler)
-         ;; can't write anymore
-         (send handler (CommandFailed))
-         (goto Closed)]
-        [(Register h) (goto Closed)]
-        [(RegisterTimeout) (goto Closed)]
         [(InTcpPacket packet)
          (send-to-ip (make-rst/global packet))
          (goto Closed)]
         [(OrderedTcpPacket packet)
          (send-to-ip (make-rst/global packet))
          (goto Closed)]
-        [(Write d write-handler)
-         (send write-handler (CommandFailed))
+        [(Register h) (goto Closed)]
+        [(Write data handler)
+         ;; can't write anymore
+         (send handler (CommandFailed))
          (goto Closed)]
         [(Close close-handler)
          (send close-handler (CommandFailed))]
@@ -1208,6 +1169,7 @@
         [(Abort close-handler)
          (send close-handler (CommandFailed))
          (halt-with-notification)]
+        [(RegisterTimeout) (goto Closed)]
         ;; shouldn't happen here:
         [(RetransmitTimeout) (goto Closed)]
         [(TimeoutWaitTimeout) (goto Closed)])))
@@ -1963,9 +1925,6 @@
     ;; the close handler gets NO message
     (check-no-message close-handler)
     (check-closed? session)))
-
-;; Todo list of tests/functionality:
-;; * check that all messages are handled in all states
 
 ;; Later: will probably need to add widening of state parameters to the widening code
 
