@@ -521,6 +521,7 @@
      (define-function (process-segment-text [segment TcpPacket]
                                             [send-buffer SendBuffer]
                                             [rcv-nxt Nat]
+                                            [receive-data? (Union (True) (False))]
                                             [octet-stream (Addr TcpSessionEvent)])
        (let ([send-next (: send-buffer send-next)]
              [unseen-payload (vector-copy (: segment payload)
@@ -535,7 +536,7 @@
            [else 0])
          ;; 2. send any unseen data to user
          (cond
-           [(> (vector-length unseen-payload) 0)
+           [(and (> (vector-length unseen-payload) 0) receive-data?)
             (send octet-stream (ReceivedData (: segment payload)))
             0]
            [else 0])
@@ -826,7 +827,7 @@
            [else
             (let ([new-send-buffer
                    (process-ack send-buffer (: packet ack) (: packet window) rxmt-timer)]
-                  [new-rcv-nxt (process-segment-text packet send-buffer rcv-nxt octet-stream)])
+                  [new-rcv-nxt (process-segment-text packet send-buffer rcv-nxt (variant True) octet-stream)])
               ;; NOTE: we could optimize here by going into fast recovery mode if this is the 3rd
               ;; duplicate ACK
 
@@ -924,7 +925,14 @@
             (halt-with-notification)]
            [else
             (let ([new-send-buffer (process-ack send-buffer (: packet ack) (: packet window) rxmt-timer)]
-                  [new-rcv-nxt (process-segment-text packet send-buffer rcv-nxt octet-stream)]
+                  [new-rcv-nxt (process-segment-text packet
+                                                     send-buffer
+                                                     rcv-nxt
+                                                     (case close-type
+                                                       [(ConfirmedClose h) (variant True)]
+                                                       [(Close h) (variant False)]
+                                                       [(PeerClose) (variant False)])
+                                                     octet-stream)]
                   [all-data-is-acked? (>= (: packet ack) (- (: send-buffer send-next) 1))])
               ;; TODO: if this segment does not contain rcv-nxt, send back an ACK
 
@@ -1719,8 +1727,20 @@
     (check-unicast-match packets-out
                          (OutPacket (== remote-ip)
                                     (tcp-fin local-port server-port (add1 local-iss) (add1 remote-iss))))
-    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (+ 2 local-iss) (vector)))
-    (send-packet tcp remote-ip (make-fin server-port           local-port (add1 remote-iss) (+ 2 local-iss)))
+
+    ;; received packets *should* come through to the user (we're only half-closed)
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
+    (check-unicast handler (ReceivedData (vector 1 2 3)))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-normal local-port
+                                                server-port
+                                                (+ 2 local-iss)
+                                                (+ 4 remote-iss)
+                                                (vector))))
+    ;; now the peer sends its ACK and FIN and closes
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 4 remote-iss) (+ 2 local-iss) (vector)))
+    (send-packet tcp remote-ip (make-fin server-port           local-port (+ 4 remote-iss) (+ 2 local-iss)))
     (check-unicast handler (ConfirmedClosed))
     (check-unicast close-handler (ConfirmedClosed))
     (check-unicast-match packets-out
@@ -1728,7 +1748,7 @@
                                     (tcp-normal local-port
                                                 server-port
                                                 (+ 2 local-iss)
-                                                (+ 2 remote-iss)
+                                                (+ 5 remote-iss)
                                                 (vector))))
     (check-closed? session))
 
@@ -1771,11 +1791,43 @@
                                                 (+ 2 local-iss)
                                                 (+ 2 remote-iss)
                                                 (vector))))
+    (check-closed? session))
+
+  (test-case "Close, through the ACK then FIN route"
+    (define handler (make-async-channel))
+    (match-define (list packets-out tcp local-port local-iss session) (establish handler))
+    (define close-handler (make-async-channel))
+    (send-session-command session (Close close-handler))
+    (check-unicast handler (Closed))
+    (check-unicast close-handler (Closed))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-fin local-port server-port (add1 local-iss) (add1 remote-iss))))
+    ;; received packets should not come through to the user
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
+    (check-no-message handler #:timeout 0.5)
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-normal local-port
+                                                server-port
+                                                (+ 2 local-iss)
+                                                (+ 4 remote-iss)
+                                                (vector))))
+
+    ;; peer ACKs the FIN
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 4 remote-iss) (+ 2 local-iss) (vector)))
+    ;; peer sends its FIN
+    (send-packet tcp remote-ip (make-fin server-port local-port (+ 4 remote-iss) (+ 2 local-iss)))
+    (check-unicast-match packets-out
+                         (OutPacket (== remote-ip)
+                                    (tcp-normal local-port
+                                                server-port
+                                                (+ 2 local-iss)
+                                                (+ 5 remote-iss)
+                                                (vector))))
     (check-closed? session)))
 
 ;; Todo list of tests/functionality:
-;; * deliver received messages only for ConfirmedClose, not our own close
-;; * active Close, to any state
 ;; * abort (from Established)
 ;; * remaining TODOs, as I deem necessary
 ;; * active close during AwaitingRegistration
