@@ -716,12 +716,7 @@
                 ;; (displayln "not bailing out")
                 (define repeated-i-step (apply-transition (config-pair-impl-config sbc-pair) transition-result observed?))
                 (define repeated-s (first-spec-step-to-same-state (config-pair-spec-config sbc-pair) repeated-i-step))
-                (define twice-applied-pair (first (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
-                ;; if this transition both spawns a new actor and sends a message to it, or the
-                ;; spawned actor sends a message, the message will not get duplicated until a third
-                ;; application of the transition.
-                (define thrice-applied-i-step (apply-transition (config-pair-impl-config twice-applied-pair) transition-result observed?))
-                (define new-widened-pair (first (first (sbc (config-pair (impl-step-destination thrice-applied-i-step) repeated-s)))))
+                (define new-widened-pair (first (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
                 (for-each (curry enqueue! possible-transitions)
                           (impl-transition-effects-from new-widened-pair))
                 (worklist-loop new-widened-pair)]
