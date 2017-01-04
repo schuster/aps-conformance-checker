@@ -653,7 +653,7 @@
                                       σ#
                                       σ#
                                       ((σ# (goto φ a# ...) (Φ ...)) ...)
-                                      (a#int ...))
+                                      (τa# ...))
   [---------
    (aps#-list-matches-po?/j () any_addr any_addr () ())]
 
@@ -687,6 +687,9 @@
   (check-equal?
    (aps#-match-po '(variant A (* Nat) (Nat (init-addr 2))) 'UNKNOWN '(variant A * self))
    (list '(Nat (init-addr 2)) '() '()))
+  (check-equal?
+   (aps#-match-po '(variant A (* Nat) (Nat (init-addr 2))) 'UNKNOWN '(variant A * *))
+   (list 'UNKNOWN '() '((Nat (init-addr 2)))))
   (check-equal?
    (aps#-match-po '(variant A (* Nat) (Nat (init-addr 2))) '(Nat (init-addr 2)) '(variant A * self))
    (list '(Nat (init-addr 2)) '() '()))
