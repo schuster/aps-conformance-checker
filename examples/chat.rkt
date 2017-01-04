@@ -113,11 +113,11 @@
         [(JoinRoom room-name username user)
          (case (hash-ref rooms room-name)
            [(Nothing)
-            (let ([new-room (spawn new-room ChatRoom name self)])
+            (let ([new-room (spawn new-room ChatRoom room-name self)])
               (send new-room (UserJoining username user))
               (goto Always (hash-set rooms room-name new-room)))]
            [(Just room)
-            (send new-room (UserJoining username user))
+            (send room (UserJoining username user))
             (goto Always rooms)])]
         [(GetRoomList callback)
          (send callback (hash-keys rooms))
@@ -134,7 +134,9 @@
 (module+ test
   (require
    racket/async-channel
+   (only-in csa record variant :)
    csa/eval
+   csa/testing
    rackunit
    asyncunit
    "../desugar.rkt"
@@ -144,4 +146,80 @@
    redex/reduction-semantics
    "../csa.rkt")
 
-  (define desugared-program (desugar chat-program)))
+  (define desugared-program (desugar chat-program))
+  (define (start-prog)
+      (csa-run desugared-program))
+
+  (test-case "User for auth does not exist"
+    (define auth (start-prog))
+    (define auth-callback (make-async-channel))
+    (async-channel-put auth (variant LogIn "bob" "123" auth-callback))
+    (check-unicast auth-callback (variant AuthenticationFailed)))
+
+  (test-case "Wrong password"
+    (define auth (start-prog))
+    (define auth-callback (make-async-channel))
+    (async-channel-put auth (variant LogIn "joe" "123" auth-callback))
+    (check-unicast auth-callback (variant AuthenticationFailed)))
+
+  (test-case "Right auth can log in, server responds to queries"
+    (define auth (start-prog))
+    (define auth-callback (make-async-channel))
+    (async-channel-put auth (variant LogIn "joe" "abc" auth-callback))
+    (define server(check-unicast-match auth-callback
+                                       (csa-variant AuthenticationSucceeded server)
+                                       #:result server))
+    (define room-list-callback (make-async-channel))
+    (async-channel-put server (variant GetRoomList room-list-callback))
+    (check-unicast room-list-callback null))
+
+  (define (connect-to-server auth username password)
+    (define auth-callback (make-async-channel))
+    (async-channel-put auth (variant LogIn "joe" "abc" auth-callback))
+    (match (async-channel-get auth-callback) [(csa-variant AuthenticationSucceeded server) server]))
+
+  (test-case "Can join new room, new room is reflected in room list, message to room is echoed"
+    (define auth (start-prog))
+    (define server (connect-to-server auth "joe" "abc"))
+    (define room-handler (make-async-channel))
+    (async-channel-put server (variant JoinRoom "my-room" "joe" room-handler))
+    (define room (check-unicast-match room-handler (csa-variant JoinedRoom room) #:result room))
+    (define room-list-callback (make-async-channel))
+    (async-channel-put server (variant GetRoomList room-list-callback))
+    (check-unicast room-list-callback (list "my-room"))
+    (async-channel-put room (variant Speak "joe" "hello"))
+    (check-unicast room-handler (variant Message "joe" "hello")))
+
+  (define (join-room server room-name username)
+    (define room-handler (make-async-channel))
+    (async-channel-put server (variant JoinRoom room-name username room-handler))
+    (match (async-channel-get room-handler)
+      [(csa-variant JoinedRoom room) (list room room-handler)]))
+
+  (test-case "Notify others when a user joins and leaves a room"
+    (define auth (start-prog))
+    (define server (connect-to-server auth "joe" "abc"))
+    (match-define (list room joe-room-handler) (join-room server "my-room" "joe"))
+    (match-define (list _ sally-room-handler) (join-room server "my-room" "sally"))
+    (check-unicast joe-room-handler (variant MemberJoined "sally"))
+    (async-channel-put room (variant Leave "joe"))
+    (check-unicast sally-room-handler (variant MemberLeft "joe")))
+
+  (test-case "Do not receive messages after leaving room"
+    (define auth (start-prog))
+    (define server (connect-to-server auth "joe" "abc"))
+    (match-define (list room joe-room-handler) (join-room server "my-room" "joe"))
+    (match-define (list _ sally-room-handler) (join-room server "my-room" "sally"))
+    (async-channel-put room (variant Leave "joe"))
+    (async-channel-get sally-room-handler) ; swallow the "Joe left" notification
+    (async-channel-put room (variant Speak "sally" "hello"))
+    (check-unicast sally-room-handler (variant Message "sally" "hello"))
+    (async-channel-get joe-room-handler) ; swallow the "Sally joined" notification
+    (check-no-message joe-room-handler)))
+
+;; TODO:
+;; * notify others of join
+;; * notify others of leave
+;; * broadcast message
+;; * room provides membership list, updated as people join/leave
+;; * room is dead once everyone leaves (does not respond to messages)
