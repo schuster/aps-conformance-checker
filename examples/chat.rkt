@@ -9,7 +9,7 @@
 (define chat-program (quote
 
 (program (receptionists [auth AuthCommand]) (externals)
-  (define-constant pw-table (hash ["joe" "abc"] ["sally" "xyz"]))
+  (define-constant pw-table (hash ["joe" "abc"] ["sally" "xyz"] ["john" "def"]))
 
   (define-type RoomCommand
     (Union
@@ -215,11 +215,75 @@
     (async-channel-put room (variant Speak "sally" "hello"))
     (check-unicast sally-room-handler (variant Message "sally" "hello"))
     (async-channel-get joe-room-handler) ; swallow the "Sally joined" notification
-    (check-no-message joe-room-handler)))
+    (check-no-message joe-room-handler))
 
-;; TODO:
-;; * notify others of join
-;; * notify others of leave
-;; * broadcast message
-;; * room provides membership list, updated as people join/leave
-;; * room is dead once everyone leaves (does not respond to messages)
+  (test-case "Sent message broadcast to all users in room"
+    (define auth (start-prog))
+    (define server (connect-to-server auth "joe" "abc"))
+    (match-define (list room joe-room-handler) (join-room server "my-room" "joe"))
+    (match-define (list _ sally-room-handler) (join-room server "my-room" "sally"))
+    (match-define (list _ john-room-handler) (join-room server "my-room" "john"))
+    ;; eat the join notifications
+    (async-channel-get joe-room-handler)
+    (async-channel-get joe-room-handler)
+    (async-channel-get sally-room-handler)
+
+    (async-channel-put room (variant Speak "joe" "hello"))
+    (check-unicast joe-room-handler (variant Message "joe" "hello"))
+    (check-unicast sally-room-handler (variant Message "joe" "hello"))
+    (check-unicast john-room-handler (variant Message "joe" "hello")))
+
+  (test-case "Room updates membership list as users join/leave"
+    (define auth (start-prog))
+    (define server (connect-to-server auth "joe" "abc"))
+    (match-define (list room joe-room-handler) (join-room server "my-room" "joe"))
+    (define member-callback (make-async-channel))
+    (async-channel-put room (variant GetMembers member-callback))
+    (check-unicast member-callback (list "joe"))
+    (match-define (list _ sally-room-handler) (join-room server "my-room" "sally"))
+    (match-define (list _ john-room-handler) (join-room server "my-room" "john"))
+    (async-channel-put room (variant GetMembers member-callback))
+    (check-unicast-match member-callback
+                         new-members
+                         #:result (check-equal? (list->set new-members) (set "joe" "sally" "john")))
+    (async-channel-put room (variant Leave "joe"))
+    (async-channel-put room (variant GetMembers member-callback))
+    (check-unicast-match member-callback
+                         new-members
+                         #:result (check-equal? (list->set new-members) (set "sally" "john"))))
+
+  (test-case "Room dies (does not react to messages) once all users leave"
+    (define auth (start-prog))
+    (define server (connect-to-server auth "joe" "abc"))
+    (match-define (list room joe-room-handler) (join-room server "my-room" "joe"))
+    (match-define (list _ sally-room-handler) (join-room server "my-room" "sally"))
+    (match-define (list _ john-room-handler) (join-room server "my-room" "john"))
+    (define member-callback (make-async-channel))
+    (async-channel-put room (variant GetMembers member-callback))
+    (check-unicast-match member-callback
+                         new-members
+                         #:result (check-equal? (list->set new-members) (set "joe" "sally" "john")))
+    (async-channel-put room (variant Leave "joe"))
+    (async-channel-put room (variant Leave "sally"))
+    (async-channel-put room (variant Leave "john"))
+    (async-channel-put room (variant GetMembers member-callback))
+    (check-no-message member-callback))
+
+  (test-case "Messages are isolated within a single room"
+    (define auth (start-prog))
+    (define server (connect-to-server auth "joe" "abc"))
+    (match-define (list room1 joe-room1-handler) (join-room server "room1" "joe"))
+    (match-define (list _ sally-room1-handler) (join-room server "room1" "sally"))
+    (match-define (list _ sally-room2-handler) (join-room server "room2" "sally"))
+    (match-define (list _ john-room2-handler) (join-room server "room2" "john"))
+
+    ;; swallow the various joined notifications
+    (async-channel-get joe-room1-handler)
+    (async-channel-get sally-room2-handler)
+
+    ;; check the message recipients
+    (async-channel-put room1 (variant Speak "joe" "hello"))
+    (check-unicast joe-room1-handler (variant Message "joe" "hello"))
+    (check-unicast sally-room1-handler (variant Message "joe" "hello"))
+    (check-no-message sally-room2-handler)
+    (check-no-message john-room2-handler)))
