@@ -148,8 +148,20 @@
 
   (define desugared-program (desugar chat-program))
   (define (start-prog)
-      (csa-run desugared-program))
+    (csa-run desugared-program))
 
+  (define (connect-to-server auth username password)
+    (define auth-callback (make-async-channel))
+    (async-channel-put auth (variant LogIn "joe" "abc" auth-callback))
+    (match (async-channel-get auth-callback) [(csa-variant AuthenticationSucceeded server) server]))
+
+  (define (join-room server room-name username)
+    (define room-handler (make-async-channel))
+    (async-channel-put server (variant JoinRoom room-name username room-handler))
+    (match (async-channel-get room-handler)
+      [(csa-variant JoinedRoom room) (list room room-handler)])))
+
+(module+ test
   (test-case "User for auth does not exist"
     (define auth (start-prog))
     (define auth-callback (make-async-channel))
@@ -173,11 +185,6 @@
     (async-channel-put server (variant GetRoomList room-list-callback))
     (check-unicast room-list-callback null))
 
-  (define (connect-to-server auth username password)
-    (define auth-callback (make-async-channel))
-    (async-channel-put auth (variant LogIn "joe" "abc" auth-callback))
-    (match (async-channel-get auth-callback) [(csa-variant AuthenticationSucceeded server) server]))
-
   (test-case "Can join new room, new room is reflected in room list, message to room is echoed"
     (define auth (start-prog))
     (define server (connect-to-server auth "joe" "abc"))
@@ -189,12 +196,6 @@
     (check-unicast room-list-callback (list "my-room"))
     (async-channel-put room (variant Speak "joe" "hello"))
     (check-unicast room-handler (variant Message "joe" "hello")))
-
-  (define (join-room server room-name username)
-    (define room-handler (make-async-channel))
-    (async-channel-put server (variant JoinRoom room-name username room-handler))
-    (match (async-channel-get room-handler)
-      [(csa-variant JoinedRoom room) (list room room-handler)]))
 
   (test-case "Notify others when a user joins and leaves a room"
     (define auth (start-prog))
@@ -287,3 +288,56 @@
     (check-unicast sally-room1-handler (variant Message "joe" "hello"))
     (check-no-message sally-room2-handler)
     (check-no-message john-room2-handler)))
+
+(module+ test
+  ;; Specification conformance tests
+
+  (define desugared-room-command
+    `(Union
+      (Speak String String)
+      (Leave String)
+      (GetMembers (Addr (Listof String)))))
+
+  (define desugared-room-event
+    `(Union
+      (JoinedRoom (Addr ,desugared-room-command))
+      (MemberLeft String)
+      (MemberJoined String)
+      (Message String String)))
+
+  (define desugared-server-command
+    `(Union
+      (JoinRoom String String (Addr ,desugared-room-event))
+      (GetRoomList (Addr (Listof String)))))
+
+  (define desugared-login-response
+    `(Union (AuthenticationFailed)
+            (AuthenticationSucceeded (Addr ,desugared-server-command))))
+
+  (define desugared-auth-command
+    `(Union (LogIn String String (Addr ,desugared-login-response))))
+
+  ;; TODO: probably need to enable multiple spec steps per impl step (unobs trigger, to same state
+
+  (define chat-spec
+    (term
+     (specification (receptionists [auth ,desugared-auth-command]) (externals)
+       [auth ,desugared-auth-command]
+       ([auth ,desugared-auth-command])
+       (goto AuthAlways)
+       (define-state (AuthAlways)
+         [(variant LogIn * * callback) ->
+          ([obligation callback (or (variant AuthenticationFailed)
+                                    (variant AuthenticationSucceeded *))])
+          (goto AuthAlways)]))))
+
+  (check-true (redex-match? csa-eval τ desugared-room-command))
+  (check-true (redex-match? csa-eval τ desugared-room-event))
+  (check-true (redex-match? csa-eval τ desugared-server-command))
+  (check-true (redex-match? csa-eval τ desugared-login-response))
+
+  (test-true "Valid type for auth input"
+    (redex-match? csa-eval τ desugared-auth-command))
+
+  (test-true "Authenticator returns a success or failure response"
+    (check-conformance desugared-program chat-spec)))
