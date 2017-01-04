@@ -89,6 +89,7 @@
    vector-append
    hash-ref
    hash-keys
+   hash-values
    hash-remove
    hash-set
    hash-has-key?

@@ -128,6 +128,7 @@
        (hash [e1 e2] ...)
        (hash-ref e1 e2)
        (hash-keys e1)
+       (hash-values e1)
        (hash-set e1 e2 e3)
        (hash-remove e1 e2)
        (hash-has-key? e1 e2)
