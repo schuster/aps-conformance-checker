@@ -146,10 +146,22 @@
 (define-metafunction aps#
   subst/aps#/f : f x a# -> f
   [(subst/aps#/f (obligation u po) x a#)
-   (obligation (subst/aps#/u u x a#) po)]
+   (obligation (subst/aps#/u u x a#) (subst/aps#/po po x a#))]
   [(subst/aps#/f (fork (goto φ u ...) Φ ...) x a#)
    (fork (goto φ (subst/aps#/u u x a#) ...)
          (subst/aps#/Φ Φ x a#) ...)])
+
+(define-metafunction aps#
+  subst/aps#/po : po x a# -> po
+  [(subst/aps#/po * _ _) *]
+  [(subst/aps#/po (or po ...) x a#) (or (subst/aps#/po po x a#) ...)]
+  [(subst/aps#/po (fork (goto φ u ...) Φ ...) x a#)
+   (fork (goto φ (subst/aps#/u u x a#) ...)
+         (subst/aps#/Φ Φ x a#) ...)]
+  [(subst/aps#/po self _ _) self]
+  [(subst/aps#/po (variant t po ...) x a#) (variant t (subst/aps#/po po x a#) ...)]
+  [(subst/aps#/po (record [l po] ...) x a#) (record [l (subst/aps#/po po x a#)] ...)]
+  [(subst/aps#/po (fold po) x a#) (fold (subst/aps#/po po x a#))])
 
 (module+ test
   (test-equal? "Simple subst/aps#/f test"
@@ -160,7 +172,11 @@
                         (obs-ext 1)))
     (term [fork (goto S1 (obs-ext 1))
                 (define-state (S1 y x) [* -> () (goto S2 y)])
-                (define-state (S2 y) [* -> ([obligation (obs-ext 1) *]) (goto S2 y)])])))
+                (define-state (S2 y) [* -> ([obligation (obs-ext 1) *]) (goto S2 y)])]))
+
+  (test-equal? "Substitute into goto in an output obligation fork"
+    (term (subst/aps#/f [obligation (obs-ext 0) (variant A (fork (goto S x)))] x (obs-ext 1)))
+    (term [obligation (obs-ext 0) (variant A (fork (goto S (obs-ext 1))))])))
 
 (define-judgment-form aps#
   #:mode (pattern-binds-var I I)

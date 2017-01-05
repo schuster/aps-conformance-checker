@@ -59,7 +59,7 @@
       self
       (variant t po ...)
       (record [l po] ...)
-      (fold p))
+      (fold po))
   ;; state name
   (φ variable-not-otherwise-mentioned))
 
