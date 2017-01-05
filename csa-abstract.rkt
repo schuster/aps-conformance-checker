@@ -3122,27 +3122,38 @@
 
 ;; b# b# -> ('eq or 'gt or 'not-gteq)
 (define (compare-behavior new-behavior old-behavior)
-  (define new-goto (second new-behavior))
-  (define old-goto (second old-behavior))
+  (match-define `(,old-state-defs (goto ,old-state ,old-state-args ...)) old-behavior)
+  (match-define `(,new-state-defs (goto ,new-state ,new-state-args ...)) new-behavior)
+
   (cond
     ;; state names and state definitions must be equal
-    [(and (equal? (first new-goto) (first old-goto))
-          (equal? (first new-behavior) (first old-behavior)))
+    [(and (equal? new-state old-state)
+          (equal? new-state-defs old-state-defs))
      (for/fold ([comp-result 'eq])
-               ([new-arg (cdr new-goto)]
-                [old-arg (cdr old-goto)])
+               ([new-arg new-state-args]
+                [old-arg old-state-args])
        (comp-result-and comp-result (compare-value new-arg old-arg)))]
     [else 'not-gteq]))
+
+(module+ test
+  (check-equal? (compare-behavior (term (() (goto A))) (term (() (goto B))))
+                'not-gteq)
+  (check-equal? (compare-behavior (term (() (goto A (variant B)))) (term (() (goto A (variant B)))))
+                'eq)
+  (check-equal? (compare-behavior (term (() (goto A (vector-val (variant A) (variant B)))))
+                                  (term (() (goto A (vector-val (variant B))))))
+                'gt))
 
 (define (compare-value v1 v2)
   (match (list v1 v2)
     [(list (list 'variant tag1 fields1 ...)
            (list 'variant tag2 fields2 ...))
-     (and (equal? tag1 tag2)
-          (for/fold ([comp-result 'eq])
-                    ([field1 fields1]
-                     [field2 fields2])
-            (comp-result-and comp-result (compare-value field1 field2))))]
+     (if (equal? tag1 tag2)
+         (for/fold ([comp-result 'eq])
+                   ([field1 fields1]
+                    [field2 fields2])
+           (comp-result-and comp-result (compare-value field1 field2)))
+         'not-gteq)]
     [(list (list 'record `[,ls1 ,vs1] ...) (list 'record `[,ls2 ,vs2] ...))
      (for/fold ([comp-result 'eq])
                ([l1 ls1]
@@ -3165,6 +3176,12 @@
     [(list (list 'hash-val args1 ...) (list 'hash-val args2 ...))
      (compare-value-sets args1 args2)]
     [_ (if (equal? v1 v2) 'eq 'not-gteq)]))
+
+(module+ test
+  (check-equal?
+   (compare-value (term (variant A (* Nat)))
+                  (term (variant B (* Nat))))
+   'not-gteq))
 
 (define (compare-value-sets vals1 vals2)
      (define val-set1 (list->set vals1))
