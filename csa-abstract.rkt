@@ -50,6 +50,7 @@
 
 (require
  redex/reduction-semantics
+ (for-syntax syntax/parse)
  "csa.rkt"
  "sexp-helpers.rkt")
 
@@ -2756,7 +2757,15 @@
    'eq))
 
 ;; comparison-result comparison-result -> comparison-result
-(define (comp-result-and c1 c2)
+(define-syntax (comp-result-and stx)
+  (syntax-parse stx
+    [(_ exp1 exp2)
+     #`(let ([result1 exp1])
+         (if (eq? result1 'not-gteq)
+             'not-gteq
+             (comp-result-and/internal result1 exp2)))]))
+
+(define (comp-result-and/internal c1 c2)
   (cond
     [(or (eq? c1 'not-gteq) (eq? c2 'not-gteq))
      'not-gteq]
@@ -2770,7 +2779,8 @@
   (test-equal? "comp-result-and not-gteq gt" (comp-result-and 'not-gteq 'gt) 'not-gteq)
   (test-equal? "comp-result-and gt eq 2" (comp-result-and 'eq 'gt) 'gt)
   (test-equal? "comp-result-and not-gteq eq 2" (comp-result-and 'eq 'not-gteq) 'not-gteq)
-  (test-equal? "comp-result-and not-gteq gt 2" (comp-result-and 'gt 'not-gteq) 'not-gteq))
+  (test-equal? "comp-result-and not-gteq gt 2" (comp-result-and 'gt 'not-gteq) 'not-gteq)
+  (test-equal? "comp-result-and short-circuits" (comp-result-and 'not-gteq (error "foo")) 'not-gteq))
 
 ;; Returns #t if the transition effect contains any internal addresses that no longer refer
 ;; to actors (atomic or collective), other than those referring to spawns of the effect
