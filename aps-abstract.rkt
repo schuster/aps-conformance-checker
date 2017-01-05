@@ -755,34 +755,28 @@
 ;; outputs, which may not necessarily be true (but usually should be)
 (define (aps#-resolve-outputs spec-config outputs)
   (define initial-commitment-map (aps#-config-commitment-map spec-config))
-  (cond
-    ;; We assume a many-of send to an observed address *always* breaks conformance. This is overly
-    ;; conservative, but is good enough for our purposes right now.
-    [(ormap (curry commitments-for-address initial-commitment-map)
-            (map first (filter (lambda (send) (eq? (third send) 'many)) outputs)))
-     #f]
-    [else
-     (let loop ([commitment-map (aps#-config-commitment-map spec-config)]
-                [self-address (aps#-config-obs-interface spec-config)]
-                [spawn-infos null]
-                [added-unobs-receptionists null]
-                [satisfied-commitments null]
-                [remaining-outputs outputs])
-       (match remaining-outputs
-         [(list)
-          (define updated-config
-            (term (,self-address
-                   ,(merge-receptionists (aps#-config-receptionists spec-config)
-                                         added-unobs-receptionists)
-                   ,(aps#-config-current-state spec-config)
-                   ,(aps#-config-state-defs spec-config)
-                   ,commitment-map)))
-          (match-define (list remaining-config spawned-configs)
-            (fork-configs updated-config spawn-infos))
-          (list remaining-config spawned-configs satisfied-commitments)]
-         [(list output remaining-outputs ...)
-          (define address (csa#-output-address output))
-          (match (commitments-for-address commitment-map address)
+  (define free-output-patterns (build-free-output-map spec-config))
+  (let loop ([commitment-map (aps#-config-commitment-map spec-config)]
+             [self-address (aps#-config-obs-interface spec-config)]
+             [spawn-infos null]
+             [added-unobs-receptionists null]
+             [satisfied-commitments null]
+             [remaining-outputs outputs])
+    (match remaining-outputs
+      [(list)
+       (define updated-config
+         (term (,self-address
+                ,(merge-receptionists (aps#-config-receptionists spec-config)
+                                      added-unobs-receptionists)
+                ,(aps#-config-current-state spec-config)
+                ,(aps#-config-state-defs spec-config)
+                ,commitment-map)))
+       (match-define (list remaining-config spawned-configs)
+         (fork-configs updated-config spawn-infos))
+       (list remaining-config spawned-configs satisfied-commitments)]
+      [(list output remaining-outputs ...)
+       (define address (csa#-output-address output))
+       (match (commitments-for-address commitment-map address)
             ;; we can ignore outputs on unobserved addresses
             ;; TODO: need to pull out escaped receptionists from this message
             [#f (loop commitment-map
@@ -792,7 +786,12 @@
                       satisfied-commitments
                       remaining-outputs)]
             [commitments
-             (define patterns (map commitment-pattern commitments))
+             (define patterns
+               ;; use regular patterns if the message was sent only once; have to use free-output
+               ;; patterns if it was sent more than once (e.g. in a loop)
+               (match (csa#-output-multiplicity output)
+                 ['single (map commitment-pattern commitments)]
+                 ['many (hash-ref free-output-patterns address null)]))
              ;; NOTE: This assumes there is at most one pattern that matches the message (this should
              ;; usually be true)
              (match (find-matching-pattern patterns (csa#-output-message output) self-address)
@@ -803,7 +802,7 @@
                       (append spawn-infos new-spawn-infos)
                       (append added-unobs-receptionists new-receptionists)
                       (append satisfied-commitments (list (term (,address ,pat))))
-                      remaining-outputs)])])]))]))
+                      remaining-outputs)])])])))
 
 ;; Returns the output-match-result if a single pattern in the list matches the message (where the
 ;; current known observed environment interface is self-address); #f otherwise. Overlapping patterns
@@ -850,6 +849,22 @@
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1) (many *) (single (record)))))
      (term ([(obs-ext 1) (* Nat) many]))))
+  (define free-output-spec
+    (term
+     (UNKNOWN
+      ()
+      (goto S1 (obs-ext 1) (obs-ext 2))
+      ((define-state (S1 a b)
+         [x -> ([obligation x *]) (goto S1)]
+         [x -> ([obligation b *]) (goto S1)]
+         [unobs -> ([obligation a (variant A)]) (goto S2)]
+         [unobs -> ([obligation a (variant B)]) (goto S1 a b)]
+         [unobs -> ([obligation a (variant C)]) (goto S1 a b)]
+         [unobs -> ([obligation b (variant D)]) (goto S1 a b)]))
+      ([(obs-ext 1)] [(obs-ext 2)]))))
+  (test-equal? "resolve against free outputs"
+    (aps#-resolve-outputs free-output-spec (term ([(obs-ext 1) (variant C) many])))
+    (list free-output-spec null (list `[(obs-ext 1) (variant C)])))
 
   ;; TODO: test aps#-resolve-outputs for (along with normal cases):
   ;; * spec that observes an address but neither saves it nor has output commtiments for it
@@ -869,7 +884,10 @@
   [(remove-commitment-pattern/mf (any_1 ... (a#ext any_2 ... (many po) any_3 ...) any_4 ...)
                                  a#ext
                                  po)
-   (any_1 ... (a#ext any_2 ... (many po) any_3 ...) any_4 ...)])
+   (any_1 ... (a#ext any_2 ... (many po) any_3 ...) any_4 ...)]
+  ;; we might call this metafunction with a free output pattern not in the obligation list, so if the
+  ;; pattern doesn't exist just return the existing map
+  [(remove-commitment-pattern/mf any_obligations _ _) any_obligations])
 
 (module+ test
   (check-equal?
@@ -950,6 +968,33 @@
     (aps#-config-has-commitment? has-commitment-test-config (term (obs-ext 1)) (term (record))))
   (test-true "aps#-config-has-commitment? 1"
     (aps#-config-has-commitment? has-commitment-test-config (term (obs-ext 2)) (term (record)))))
+
+;; If the specification's current state has an unobserved transition to the same state whose only
+;; effect is a single obligation on an observed address, we call that obligation "free" because we may
+;; take that transition an unbounded number of times to match an unbounded number of outputs that
+;; match that pattern.
+;;
+;; This function returns a hashtable from addresses to patterns indicating all free patterns in the
+;; current configuration.
+(define (build-free-output-map config)
+  (define current-state (aps#-config-current-state config))
+  (for/fold ([free-pattern-map (hash)])
+            ([trans (config-current-transitions config)])
+    (match trans
+      [`(unobs -> ([obligation ,addr ,pattern]) ,(== current-state))
+       (hash-set free-pattern-map
+                 addr
+                 (match (hash-ref free-pattern-map addr #f)
+                   [#f (list pattern)]
+                   [other-patterns (cons pattern other-patterns)]))]
+      [_ free-pattern-map])))
+
+(module+ test
+  (check-equal?
+   (build-free-output-map
+    free-output-spec)
+   (hash '(obs-ext 1) (list '(variant C) '(variant B))
+         '(obs-ext 2) (list '(variant D)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors

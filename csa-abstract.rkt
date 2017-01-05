@@ -28,6 +28,7 @@
  ;; Required by APS#
  csa#-output-address
  csa#-output-message
+ csa#-output-multiplicity
  csa#-blur-addresses ; needed for blurring in APS#
  internals-in
  externals-in
@@ -2154,6 +2155,8 @@
 (define csa#-output-address car)
 
 (define csa#-output-message cadr)
+
+(define csa#-output-multiplicity caddr)
 
 ;; (a# b#) -> b#
 (define (actor-behavior actor)
