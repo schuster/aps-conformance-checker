@@ -252,6 +252,7 @@
                (log-related-spec-steps log-file (list pair i-step) matching-s-steps)
                (hash-set! related-spec-steps (list pair i-step) matching-s-steps)
                (when (set-empty? matching-s-steps)
+                 ;; (printf "Unmatchable impl step: ~s\n" (debug-impl-step i-step))
                  (set! found-unmatchable-step? #t)))
 
              ;; Add this pair to either related or unrelated set; add new worklist items
