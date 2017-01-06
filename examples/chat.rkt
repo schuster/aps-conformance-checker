@@ -317,7 +317,31 @@
   (define desugared-auth-command
     `(Union (LogIn String String (Addr ,desugared-login-response))))
 
-  ;; TODO: probably need to enable multiple spec steps per impl step (unobs trigger, to same state
+  (define (room-spec-behavior initial-goto)
+    (term
+     (,initial-goto
+      ;; The abstraction can't prove that the room given back to the user is running (because it might
+      ;; be given a blurred address which can choose either an alive or dead behavior for each input
+      ;; commnad, individually), so we have to treat each command as possibly never getting a response
+      (define-state (MaybeRunning room-handler)
+        [(variant Speak * *) -> () (goto MaybeRunning room-handler)]
+        [(variant Leave *) -> () (goto MaybeRunning room-handler)]
+        [(variant GetMembers callback) -> ([obligation callback *]) (goto MaybeRunning room-handler)]
+        [(variant GetMembers callback) -> () (goto MaybeRunning room-handler)]
+        [unobs -> ([obligation room-handler (variant MemberLeft *)]) (goto MaybeRunning room-handler)]
+        [unobs -> ([obligation room-handler (variant MemberJoined *)]) (goto MaybeRunning room-handler)]
+        [unobs -> ([obligation room-handler (variant Message * *)]) (goto MaybeRunning room-handler)]))))
+
+  (define server-spec-behavior
+    (term
+     ((goto ServerAlways)
+      (define-state (ServerAlways)
+        [(variant GetRoomList callback) -> ([obligation callback *]) (goto ServerAlways)]
+        ;; in reality, we should never be given a dead room, but the checker is too imprecise to see
+        ;; that
+        [(variant JoinRoom * * handler) ->
+         ([obligation handler (variant JoinedRoom (fork ,@(room-spec-behavior '(goto MaybeRunning handler))))])
+         (goto ServerAlways)]))))
 
   (define chat-spec
     (term
@@ -328,7 +352,7 @@
        (define-state (AuthAlways)
          [(variant LogIn * * callback) ->
           ([obligation callback (or (variant AuthenticationFailed)
-                                    (variant AuthenticationSucceeded *))])
+                                    (variant AuthenticationSucceeded (fork ,@server-spec-behavior)))])
           (goto AuthAlways)]))))
 
   (check-true (redex-match? csa-eval τ desugared-room-command))
