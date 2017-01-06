@@ -745,14 +745,11 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Commitment Satisfaction
 
-;; s# ((a#ext v#) ...) ->  [s# (s# ...) ([a po] ...)] or #f
+;; s# ((a#ext v# m) ...) ->  (Listof [s# (s# ...) ([a po] ...)])
 ;;
-;; Returns a tuple of the specification config after having resolved all of the given outputs
+;; Returns a list of tuples of the specification config after having resolved all of the given outputs
 ;; (removing output commitments as necessary), a list of the satisfied commitments, and the spawned
-;; configs; or #f if a resolution of these outputs is not possible
-;;
-;; NOTE: assuming there is at most one way to satisfy the given config's commitments with these
-;; outputs, which may not necessarily be true (but usually should be)
+;; configs.
 (define (aps#-resolve-outputs spec-config outputs)
   (define initial-commitment-map (aps#-config-commitment-map spec-config))
   (define free-output-patterns (build-free-output-map spec-config))
@@ -773,7 +770,7 @@
                 ,commitment-map)))
        (match-define (list remaining-config spawned-configs)
          (fork-configs updated-config spawn-infos))
-       (list remaining-config spawned-configs satisfied-commitments)]
+       (list (list remaining-config spawned-configs satisfied-commitments))]
       [(list output remaining-outputs ...)
        (define address (csa#-output-address output))
        (match (commitments-for-address commitment-map address)
@@ -788,67 +785,77 @@
             [commitments
              (define patterns
                ;; use regular patterns if the message was sent only once; have to use free-output
-               ;; patterns if it was sent more than once (e.g. in a loop)
+               ;; patterns if it may have been sent more than once (e.g. in a loop)
                (match (csa#-output-multiplicity output)
                  ['single (map commitment-pattern commitments)]
                  ['many (hash-ref free-output-patterns address null)]))
-             ;; NOTE: This assumes there is at most one pattern that matches the message (this should
-             ;; usually be true)
-             (match (find-matching-pattern patterns (csa#-output-message output) self-address)
-               [#f #f]
-               [(list pat self-address new-spawn-infos new-receptionists)
+             ;; for each possible way to match, loop again with the remaining config and append all
+             ;; final results
+             (append*
+              (for/list ([match-result
+                          (find-matching-patterns patterns (csa#-output-message output) self-address)])
+                (match-define (list pat self-address new-spawn-infos new-receptionists) match-result)
                 (loop (aps#-remove-commitment-pattern commitment-map address pat)
                       self-address
                       (append spawn-infos new-spawn-infos)
                       (append added-unobs-receptionists new-receptionists)
                       (append satisfied-commitments (list (term (,address ,pat))))
-                      remaining-outputs)])])])))
+                      remaining-outputs)))])])))
 
-;; Returns the output-match-result if a single pattern in the list matches the message (where the
-;; current known observed environment interface is self-address); #f otherwise. Overlapping patterns
-;; are not supported, which is why we return #f if more than one pattern matches.
-(define (find-matching-pattern patterns message self-address)
-  (let loop ([patterns patterns])
-    (match patterns
-      [(list) #f]
-      [(list pattern patterns ...)
-       (match (aps#-match-po message self-address pattern)
-         [#f (loop patterns)]
-         [(list self-addr spawn-infos new-receptionists)
-          (list pattern self-addr spawn-infos new-receptionists)])])))
+;; (listof pattern) v# σ# -> (listof output-match-result)
+;;
+;; Returns all possible match results
+;; (i.e. pattern/self-address/list-of-spawn-infos/list-of-unobs-receptionists) tuples
+
+;; Returns the
+;; output-match-result if a single pattern in the list matches the message (where the current known
+;; observed environment interface is self-address); #f otherwise. Overlapping patterns are not
+;; supported, which is why we return #f if more than one pattern matches.
+(define (find-matching-patterns patterns message self-address)
+  (append*
+   (for/list ([pattern patterns])
+     (judgment-holds (aps#-matches-po?/j ,message
+                                         ,self-address
+                                         ,pattern
+                                         any_new-self
+                                         any_spawn-infos
+                                         any_recs)
+                     (,pattern any_new-self any_spawn-infos any_recs)))))
 
 (module+ test
   (define (make-dummy-spec commitments)
     (term (UNKNOWN () (goto DummyState) ((define-state (DummyState))) ,commitments)))
-  (test-false "resolve test 1"
+  (test-equal? "resolve test 1"
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1))))
-     (term (((obs-ext 1) (* Nat) single)))))
+     (term (((obs-ext 1) (* Nat) single))))
+    null)
   (test-equal? "resolve test 2"
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1) (single *))))
      (term (((obs-ext 1) (* Nat) single))))
-    (list (make-dummy-spec `(((obs-ext 1))))
-          `()
-          `(((obs-ext 1) *))))
+    (list (list (make-dummy-spec `(((obs-ext 1))))
+                `()
+                `(((obs-ext 1) *)))))
   (test-equal? "resolve test 3"
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1) (single *) (single (record)))))
      (term (((obs-ext 1) (* Nat) single))))
-    (list (make-dummy-spec `(((obs-ext 1) (single (record)))))
-          `()
-          `(((obs-ext 1) *))))
+    (list (list (make-dummy-spec `(((obs-ext 1) (single (record)))))
+                `()
+                `(((obs-ext 1) *)))))
   (test-equal? "resolve test 4"
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1) (many *) (single (record)))))
      (term (((obs-ext 1) (* Nat) single))))
-    (list (make-dummy-spec `(((obs-ext 1) (many *) (single (record)))))
-          `()
-          `(((obs-ext 1) *))))
-  (test-false "resolve loop test"
+    (list (list (make-dummy-spec `(((obs-ext 1) (many *) (single (record)))))
+                `()
+                `(((obs-ext 1) *)))))
+  (test-equal? "resolve loop test"
     (aps#-resolve-outputs
      (make-dummy-spec `(((obs-ext 1) (many *) (single (record)))))
-     (term ([(obs-ext 1) (* Nat) many]))))
+     (term ([(obs-ext 1) (* Nat) many])))
+    null)
   (define free-output-spec
     (term
      (UNKNOWN
@@ -864,7 +871,44 @@
       ([(obs-ext 1)] [(obs-ext 2)]))))
   (test-equal? "resolve against free outputs"
     (aps#-resolve-outputs free-output-spec (term ([(obs-ext 1) (variant C) many])))
-    (list free-output-spec null (list `[(obs-ext 1) (variant C)])))
+    (list (list free-output-spec null (list `[(obs-ext 1) (variant C)]))))
+
+  (test-equal? "resolve against two different branches of an 'or' pattern"
+    (aps#-resolve-outputs
+     (term
+      (UNKNOWN
+       ()
+       (goto S1)
+       ((define-state (S1)))
+       ([(obs-ext 1) (single (or * (fork (goto B))))])))
+     (term ([(obs-ext 1) (Nat (init-addr 2)) single])))
+    (list
+     ;; result 1 (match against the fork)
+     (list
+      (term
+       (UNKNOWN
+        ((Nat (init-addr 2)))
+        (goto S1)
+        ((define-state (S1)))
+        ([(obs-ext 1)])))
+      (list
+       (term
+        ((Nat (init-addr 2))
+         ()
+         (goto B)
+         ()
+         ())))
+      (list (term [(obs-ext 1) (or * (fork (goto B)))])))
+     ;; result 2 (match against *)
+     (list
+      (term
+       (UNKNOWN
+        ((Nat (init-addr 2)))
+        (goto S1)
+        ((define-state (S1)))
+        ([(obs-ext 1)])))
+      null
+      (list (term [(obs-ext 1) (or * (fork (goto B)))])))))
 
   ;; TODO: test aps#-resolve-outputs for (along with normal cases):
   ;; * spec that observes an address but neither saves it nor has output commtiments for it

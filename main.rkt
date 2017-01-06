@@ -370,10 +370,12 @@
                                              (impl-step-trigger i-step))])
     (match-define (list config spawns1) trigger-result)
     (match (aps#-resolve-outputs config (impl-step-outputs i-step))
-      [#f (void)]
-      [(list stepped-spec-config spawns2 satisfied-commitments)
-       (set-add! matched-stepped-configs
-                 (spec-step stepped-spec-config (append spawns1 spawns2) satisfied-commitments))]))
+      [(list) (void)]
+      [(list results ...)
+       (for ([result results])
+         (match-define (list stepped-spec-config spawns2 satisfied-commitments) result)
+         (set-add! matched-stepped-configs
+                   (spec-step stepped-spec-config (append spawns1 spawns2) satisfied-commitments)))]))
   matched-stepped-configs)
 
 (module+ test
@@ -1320,7 +1322,7 @@
   ;; pattern that can possibly match
   (test-valid-actor? send-message-then-another)
   (test-valid-instance? overlapping-patterns-spec)
-  (test-false "Overlapping output patterns cause non-conformance"
+  (test-true "Overlapping output patterns are okay"
     (check-conformance/config
      (make-single-actor-config send-message-then-another)
      (make-exclusive-spec overlapping-patterns-spec)))
