@@ -1135,6 +1135,9 @@
 
 (define-metafunction csa#
   add-output : ([a# v# m] ...) [a# v# m] -> ([a# v# m] ...)
+  ;; don't add outputs for unobserved addresses: they don't matter for the spec, and ignoring them
+  ;; allows us to explore less states in a given handler
+  [(add-output any_outs [(* (Addr _)) _ _]) any_outs]
   [(add-output (any_1 ... [a# v# _] any_2 ...) [a# v# _])
    (any_1 ... [a# v# many] any_2 ...)]
   [(add-output (any ...) [a# v# m])
