@@ -37,8 +37,7 @@
 
   (define-variant ChatServerInput
     (JoinRoom [room-name String] [username String] [user (Addr RoomEvent)])
-    (GetRoomList [callback (Addr (Listof String))])
-    (RoomClosed [name String]))
+    (GetRoomList [callback (Addr (Listof String))]))
 
   (define-variant ChatRoomInput
     (UserJoining [name String] [address (Addr RoomEvent)])
@@ -66,7 +65,7 @@
             (goto Always)])])))
 
   (define-actor ChatRoomInput
-    (ChatRoom [name String] [server (Addr (Union (RoomClosed String)))])
+    (ChatRoom [name String])
     ()
     (goto Running (hash))
     (define-state (Running [users (Hash String (Addr RoomEvent))]) (m)
@@ -88,21 +87,15 @@
          (cond
            [(hash-has-key? users username)
             (let ([remaining-users (hash-remove users username)])
-              (cond
-                [(hash-empty? remaining-users)
-                 (send server (RoomClosed name))
-                 (goto Done)]
-                [else
-                 (for/fold ([dummy 0])
-                           ([remaining-user (hash-values remaining-users)])
-                   (send remaining-user (MemberLeft username))
-                   0)
-                 (goto Running remaining-users)]))]
+              (for/fold ([dummy 0])
+                        ([remaining-user (hash-values remaining-users)])
+                (send remaining-user (MemberLeft username))
+                0)
+              (goto Running remaining-users))]
            [else (goto Running users)])]
         [(GetMembers callback)
          (send callback (hash-keys users))
-         (goto Running users)]))
-    (define-state (Done) (m) (goto Done)))
+         (goto Running users)])))
 
   (define-actor ChatServerInput
     (ChatServer)
@@ -113,7 +106,7 @@
         [(JoinRoom room-name username user)
          (case (hash-ref rooms room-name)
            [(Nothing)
-            (let ([new-room (spawn new-room ChatRoom room-name self)])
+            (let ([new-room (spawn new-room ChatRoom room-name)])
               (send new-room (UserJoining username user))
               (goto Always (hash-set rooms room-name new-room)))]
            [(Just room)
@@ -121,12 +114,7 @@
             (goto Always rooms)])]
         [(GetRoomList callback)
          (send callback (hash-keys rooms))
-         (goto Always rooms)]
-        [(RoomClosed room-name)
-         (case (hash-ref rooms room-name)
-           [(Nothing) (goto Always rooms)]
-           [(Just r)
-            (goto Always (hash-remove rooms room-name))])])))
+         (goto Always rooms)])))
 
   (actors [server (spawn server ChatServer)]
           [auth (spawn auth Authenticator pw-table server)]))))
@@ -253,23 +241,6 @@
                          new-members
                          #:result (check-equal? (list->set new-members) (set "sally" "john"))))
 
-  (test-case "Room dies (does not react to messages) once all users leave"
-    (define auth (start-prog))
-    (define server (connect-to-server auth "joe" "abc"))
-    (match-define (list room joe-room-handler) (join-room server "my-room" "joe"))
-    (match-define (list _ sally-room-handler) (join-room server "my-room" "sally"))
-    (match-define (list _ john-room-handler) (join-room server "my-room" "john"))
-    (define member-callback (make-async-channel))
-    (async-channel-put room (variant GetMembers member-callback))
-    (check-unicast-match member-callback
-                         new-members
-                         #:result (check-equal? (list->set new-members) (set "joe" "sally" "john")))
-    (async-channel-put room (variant Leave "joe"))
-    (async-channel-put room (variant Leave "sally"))
-    (async-channel-put room (variant Leave "john"))
-    (async-channel-put room (variant GetMembers member-callback))
-    (check-no-message member-callback))
-
   (test-case "Messages are isolated within a single room"
     (define auth (start-prog))
     (define server (connect-to-server auth "joe" "abc"))
@@ -317,30 +288,27 @@
   (define desugared-auth-command
     `(Union (LogIn String String (Addr ,desugared-login-response))))
 
-  (define (room-spec-behavior initial-goto)
+  (define (room-spec-behavior handler)
     (term
-     (,initial-goto
-      ;; The abstraction can't prove that the room given back to the user is running (because it might
-      ;; be given a blurred address which can choose either an alive or dead behavior for each input
-      ;; commnad, individually), so we have to treat each command as possibly never getting a response
-      (define-state (MaybeRunning room-handler)
-        [(variant Speak * *) -> () (goto MaybeRunning room-handler)]
-        [(variant Leave *) -> () (goto MaybeRunning room-handler)]
-        [(variant GetMembers callback) -> ([obligation callback *]) (goto MaybeRunning room-handler)]
-        [(variant GetMembers callback) -> () (goto MaybeRunning room-handler)]
-        [unobs -> ([obligation room-handler (variant MemberLeft *)]) (goto MaybeRunning room-handler)]
-        [unobs -> ([obligation room-handler (variant MemberJoined *)]) (goto MaybeRunning room-handler)]
-        [unobs -> ([obligation room-handler (variant Message * *)]) (goto MaybeRunning room-handler)]))))
+     ((goto Running ,handler)
+      ;; Because the observer could cause *any* member to leave, not just itself, the checker can't
+      ;; prove that no messages will be sent to the handler after the Leave message is
+      ;; sent.
+      (define-state (Running room-handler)
+        [(variant Speak * *) -> () (goto Running room-handler)]
+        [(variant Leave *) -> () (goto Running room-handler)]
+        [(variant GetMembers callback) -> ([obligation callback *]) (goto Running room-handler)]
+        [unobs -> ([obligation room-handler (variant MemberLeft *)]) (goto Running room-handler)]
+        [unobs -> ([obligation room-handler (variant MemberJoined *)]) (goto Running room-handler)]
+        [unobs -> ([obligation room-handler (variant Message * *)]) (goto Running room-handler)]))))
 
   (define server-spec-behavior
     (term
      ((goto ServerAlways)
       (define-state (ServerAlways)
         [(variant GetRoomList callback) -> ([obligation callback *]) (goto ServerAlways)]
-        ;; in reality, we should never be given a dead room, but the checker is too imprecise to see
-        ;; that
         [(variant JoinRoom * * handler) ->
-         ([obligation handler (variant JoinedRoom (fork ,@(room-spec-behavior '(goto MaybeRunning handler))))])
+         ([obligation handler (variant JoinedRoom (fork ,@(room-spec-behavior 'handler)))])
          (goto ServerAlways)]))))
 
   (define chat-spec
@@ -363,5 +331,5 @@
   (test-true "Valid type for auth input"
     (redex-match? csa-eval τ desugared-auth-command))
 
-  (test-true "Authenticator returns a success or failure response"
+  (test-true "Chat server conforms to its spec"
     (check-conformance desugared-program chat-spec)))
