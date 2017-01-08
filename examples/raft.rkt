@@ -88,28 +88,28 @@
        ;; TODO: consider removing the "PeerMessage" part of the type, just to make things more
        ;; concise, esp. for sending back *out*
        [(variant PeerMessage (fold (variant RequestVote * candidate * *))) ->
-        ([obligation candidate (fold (variant PeerMessage (variant VoteCandidate * *)))])
+        ([obligation candidate (variant PeerMessage (fold (variant VoteCandidate * *)))])
         (goto Running)]
-       [(variant PeerMessage (variant RequestVote * candidate * *)) ->
-        ([obligation candidate (variant PeerMessage (variant DeclineCandidate * *))])
+       [(variant PeerMessage (fold (variant RequestVote * candidate * *))) ->
+        ([obligation candidate (variant PeerMessage (fold (variant DeclineCandidate * *)))])
         (goto Running)]
-       [(variant PeerMessage (variant VoteCandidate * *)) -> () (goto Running)]
-       [(variant PeerMessage (variant DeclineCandidate * *)) -> () (goto Running)]
-       [(variant PeerMessage (variant AppendEntries * * * * * leader *)) ->
-        ([obligation leader (variant PeerMessage (variant AppendRejected * * *))])
+       [(variant PeerMessage (fold (variant VoteCandidate * *))) -> () (goto Running)]
+       [(variant PeerMessage (fold (variant DeclineCandidate * *))) -> () (goto Running)]
+       [(variant PeerMessage (fold (variant AppendEntries * * * * * leader *))) ->
+        ([obligation leader (variant PeerMessage (fold (variant AppendRejected * * *)))])
         (goto Running)]
-       [(variant PeerMessage (variant AppendEntries * * * * * leader *)) ->
-        ([obligation leader (variant PeerMessage (variant AppendSuccessful * * *))])
+       [(variant PeerMessage (fold (variant AppendEntries * * * * * leader *))) ->
+        ([obligation leader (variant PeerMessage (fold (variant AppendSuccessful * * *)))])
         (goto Running)]
        ;; TODO: break these out into separate states so that the append retry can only happen when in
        ;; the leader state (and otherwise the leader must fall back to being a follower)
-       [(variant PeerMessage (variant AppendRejected * * member)) -> () (goto Running)]
+       [(variant PeerMessage (fold (variant AppendRejected * * member))) -> () (goto Running)]
        ;; APS PROTOCOL BUG: I left this case out the first time around
-       [(variant PeerMessage (variant AppendRejected * * member)) ->
+       [(variant PeerMessage (fold (variant AppendRejected * * member))) ->
         ;; TODO: should I require that the self address is in this response?
-        ([obligation member (variant PeerMessage (variant AppendEntries * * * * * * *))])
+        ([obligation member (variant PeerMessage (fold (variant AppendEntries * * * * * * *)))])
         (goto Running)]
-       [(variant PeerMessage (variant AppendSuccessful * * *)) -> () (goto Running)]))))
+       [(variant PeerMessage (fold (variant AppendSuccessful * * *))) -> () (goto Running)]))))
 
 (define raft-actor-surface-prog (term
 (program
