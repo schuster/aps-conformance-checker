@@ -160,8 +160,7 @@
          (subst/aps#/Φ Φ x a#) ...)]
   [(subst/aps#/po self _ _) self]
   [(subst/aps#/po (variant t po ...) x a#) (variant t (subst/aps#/po po x a#) ...)]
-  [(subst/aps#/po (record [l po] ...) x a#) (record [l (subst/aps#/po po x a#)] ...)]
-  [(subst/aps#/po (fold po) x a#) (fold (subst/aps#/po po x a#))])
+  [(subst/aps#/po (record [l po] ...) x a#) (record [l (subst/aps#/po po x a#)] ...)])
 
 (module+ test
   (test-equal? "Simple subst/aps#/f test"
@@ -192,11 +191,7 @@
   [(side-condition ,(ormap (lambda (p) (judgment-holds (pattern-binds-var ,p x)))
                            (term (p ...))))
    ----------
-   (pattern-binds-var (reocrd [l p] ...) x)]
-
-  [(pattern-binds-var p x)
-   ---------
-   (pattern-binds-var (fold p) x)])
+   (pattern-binds-var (reocrd [l p] ...) x)])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Transition selection
@@ -566,9 +561,11 @@
    ---------------------------------------------
    (aps#-match/j (* (Record [l τ] ..._n)) (record [l p] ..._n) ([x a#_binding] ... ...))]
 
+  ;; Just ignore folds in the values: in a real language, the programmer wouldn't see them and
+  ;; therefore would not write patterns for them
   [(aps#-match/j v# p ([x a#_binding] ...))
    -----------------------------------------------------------
-   (aps#-match/j (folded _ v#) (fold p) ([x a#_binding] ...))])
+   (aps#-match/j (folded _ v#) p ([x a#_binding] ...))])
 
 (module+ test
   (check-true (judgment-holds (aps#-match/j (* Nat) * ())))
@@ -584,9 +581,10 @@
   (check-true (judgment-holds (aps#-match/j (* (Record [a (Addr Nat)])) (record [a *]) ())))
   (check-true (judgment-holds (aps#-match/j (* Nat) * any)))
   (check-false (judgment-holds (aps#-match/j (* Nat) x any)))
-  (check-true (judgment-holds (aps#-match/j (folded Nat (Nat (obs-ext 1))) (fold x) any)))
-  (check-false (judgment-holds (aps#-match/j (folded Nat (* Nat)) x any)))
-  (check-false (judgment-holds (aps#-match/j (* Nat) (fold x) any))))
+  (check-true (judgment-holds (aps#-match/j (folded Nat (Nat (obs-ext 1))) x any)))
+  ;; matches two ways, but should only return one result:
+  (check-equal? (judgment-holds (aps#-match/j (folded Nat (* Nat)) * any_bindings) any_bindings)
+                (list '())))
 
 ;;  aps#-match-po : (csa#-output-message output) self-address) patterns)
 ;;
@@ -659,9 +657,11 @@
                        any_spawns
                        any_receptionists)]
 
+  ;; Just ignore folds in the values: in a real language, the programmer wouldn't see them and
+  ;; therefore would not write patterns for them
   [(aps#-matches-po?/j v# σ# po any_self-addr any_spawns any_receptionists)
-   ------------------------------------------------------------------------------------------
-   (aps#-matches-po?/j (folded _ v#) σ# (fold po) any_self-addr any_spawns any_receptionists)])
+   -------------------------------------------------------------------------------------
+   (aps#-matches-po?/j (folded _ v#) σ# po any_self-addr any_spawns any_receptionists)])
 
 (define-judgment-form aps#
   #:mode (aps#-list-matches-po?/j I I O O O)
@@ -739,7 +739,7 @@
          '()))
 
   (test-equal? "Fold test"
-   (aps#-match-po '(folded Nat (variant A)) 'UNKNOWN '(fold (variant A)))
+   (aps#-match-po '(folded Nat (variant A)) 'UNKNOWN '(variant A))
    (list 'UNKNOWN '() '())))
 
 ;; ---------------------------------------------------------------------------------------------------

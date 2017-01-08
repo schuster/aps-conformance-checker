@@ -374,45 +374,45 @@
      (goto Idle)
 
      (define-state (Idle)
-       [(variant PeerMessage (fold (variant Seize peer))) ->
-        ([obligation peer (variant PeerMessage (fold (variant Seized)))])
+       [(variant PeerMessage (variant Seize peer)) ->
+        ([obligation peer (variant PeerMessage (variant Seized))])
         (goto Ringing peer)]
-       [(variant PeerMessage (fold (variant Seize peer))) ->
-        ([obligation peer (variant PeerMessage (fold (variant Rejected)))])
+       [(variant PeerMessage (variant Seize peer)) ->
+        ([obligation peer (variant PeerMessage (variant Rejected))])
         (goto Idle)]
-       [(variant PeerMessage (fold (variant Seized))) -> () (goto Idle)]
-       [(variant PeerMessage (fold (variant Rejected))) -> () (goto Idle)]
-       [(variant PeerMessage (fold (variant Answered))) -> () (goto Idle)]
-       [(variant PeerMessage (fold (variant Cleared))) -> () (goto Idle)])
+       [(variant PeerMessage (variant Seized)) -> () (goto Idle)]
+       [(variant PeerMessage (variant Rejected)) -> () (goto Idle)]
+       [(variant PeerMessage (variant Answered)) -> () (goto Idle)]
+       [(variant PeerMessage (variant Cleared)) -> () (goto Idle)])
 
      (define-state (Ringing peer)
        ; can answer, can react to a Cleared, can respond to Seized
        [unobs ->
-        ([obligation peer (variant PeerMessage (fold (variant Answered)))])
+        ([obligation peer (variant PeerMessage (variant Answered))])
         (goto InCall peer)]
-       [(variant PeerMessage (fold (variant Seize other-peer))) ->
-        ([obligation other-peer (variant PeerMessage (fold (variant Rejected)))])
+       [(variant PeerMessage (variant Seize other-peer)) ->
+        ([obligation other-peer (variant PeerMessage (variant Rejected))])
         (goto Ringing peer)]
-       [(variant PeerMessage (fold (variant Cleared))) -> () (goto Idle)]
+       [(variant PeerMessage (variant Cleared)) -> () (goto Idle)]
        ;; An unobserved actor could *also* send us Cleared, which still causes us to go to Idle
        [unobs -> () (goto Idle)]
-       [(variant PeerMessage (fold (variant Seized))) -> () (goto Ringing peer)]
-       [(variant PeerMessage (fold (variant Rejected))) -> () (goto Ringing peer)]
-       [(variant PeerMessage (fold (variant Answered))) -> () (goto Ringing peer)])
+       [(variant PeerMessage (variant Seized)) -> () (goto Ringing peer)]
+       [(variant PeerMessage (variant Rejected)) -> () (goto Ringing peer)]
+       [(variant PeerMessage (variant Answered)) -> () (goto Ringing peer)])
 
      (define-state (InCall peer)
-       [unobs -> ([obligation peer (variant PeerMessage (fold (variant Cleared)))]) (goto Idle)]
-       [(variant PeerMessage (fold (variant Seize other-peer))) ->
-        ([obligation other-peer (variant PeerMessage (fold (variant Rejected)))])
+       [unobs -> ([obligation peer (variant PeerMessage (variant Cleared))]) (goto Idle)]
+       [(variant PeerMessage (variant Seize other-peer)) ->
+        ([obligation other-peer (variant PeerMessage (variant Rejected))])
         (goto InCall peer)]
-       [(variant PeerMessage (fold (variant Cleared))) -> () (goto Idle)]
+       [(variant PeerMessage (variant Cleared)) -> () (goto Idle)]
        ;; An unobserved actor could *also* send us Cleared, which still causes us to go to Idle,
        ;; without us sending a Cleared message back
        [unobs -> () (goto Idle)]
        ;; ignore all others
-       [(variant PeerMessage (fold (variant Seized))) -> () (goto InCall peer)]
-       [(variant PeerMessage (fold (variant Rejected))) -> () (goto InCall peer)]
-       [(variant PeerMessage (fold (variant Answered))) -> () (goto InCall peer)])))
+       [(variant PeerMessage (variant Seized)) -> () (goto InCall peer)]
+       [(variant PeerMessage (variant Rejected)) -> () (goto InCall peer)]
+       [(variant PeerMessage (variant Answered)) -> () (goto InCall peer)])))
 
 (module+ test
   (require
