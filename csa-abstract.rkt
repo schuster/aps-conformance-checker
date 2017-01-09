@@ -2883,19 +2883,6 @@
 ;; result in a strictly greater configuration than i, 'eq if it results in the same configuration, and
 ;; 'not-gteq otherwise
 (define (csa#-compare-new-messages i transition-result new-i)
-  ;; OLD CODE:
-  ;; (define existing-packets (csa#-config-message-packets i))
-  ;; (if
-  ;;  (for/or ([transmission (append (csa#-transition-effect-sends transition-result))])
-  ;;    (define many-of-packet `(,(first transmission) ,(second transmission) many))
-  ;;    (not (member many-of-packet existing-packets)))
-  ;;  'gt
-  ;;  'eq)
-
-  ;; NEW NEW CODE:
-
-  ;; What I want to do:
-  ;;
   ;; 1. Check for all existing messages to an OLD spawn in the old impl that there is a "matching"
   ;; number of that message in the new impl to an OLD spawn (because a transition that blurs the
   ;; original spawn could break validity by not sending a "replacement" message to the new spawn).
@@ -2944,7 +2931,7 @@
 
   ;; Step 2:
   (for/fold ([comp-result OLD-spawns-have-enough-messages])
-            ([new-packet (csa#-transition-effect-sends transition-result)])
+            ([new-packet (filter internal-output? (csa#-transition-effect-sends transition-result))])
     (define message (csa#-message-packet-value new-packet))
     (comp-result-and
      comp-result
