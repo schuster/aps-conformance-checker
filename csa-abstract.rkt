@@ -334,12 +334,21 @@
   (term (external-receive ,address ,message)))
 
 (define trigger-eval-cache (make-hash))
+(define trigger-eval-cache-lookup-count 0)
+(define trigger-eval-cache-found-count 0)
 
 ;; i# trigger# -> (Listof csa#-transtion-effect)
 (define (csa#-eval-trigger config trigger abort)
+  (define (print-cache-stats)
+    (printf "Eval-trigger cache stats: ~s/~s (~s%)\n"
+            trigger-eval-cache-found-count
+            trigger-eval-cache-lookup-count
+            (floor (* 100 (/ trigger-eval-cache-found-count trigger-eval-cache-lookup-count)))))
   (define cache-key (cons config trigger))
+  (set! trigger-eval-cache-lookup-count (add1 trigger-eval-cache-lookup-count))
   (match (hash-ref trigger-eval-cache cache-key #f)
     [#f
+     ;; (print-cache-stats)
      (define result
        (match trigger
          [`(timeout/empty-queue ,addr)
@@ -352,7 +361,10 @@
           (eval-message config addr message trigger abort)]))
      (hash-set! trigger-eval-cache cache-key result)
      result]
-    [cached cached]))
+    [cached
+     (set! trigger-eval-cache-found-count (add1 trigger-eval-cache-found-count))
+     ;; (print-cache-stats)
+     cached]))
 
 (define (eval-timeout config addr trigger abort)
   (append*
