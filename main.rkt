@@ -81,7 +81,8 @@
      (match (get-initial-abstract-pairs initial-impl-config initial-spec-config)
        [#f #f]
        [unwidened-initial-pairs
-        (define initial-pairs (map widen-pair unwidened-initial-pairs))
+        (define initial-pairs (map (curryr widen-pair 0 0 0)
+                                   unwidened-initial-pairs))
         (match-define (list rank1-pairs
                             rank1-unrelated-successors
                             incoming-steps
@@ -241,6 +242,7 @@
             [i-steps
              ;; Find the matching s-steps
              (define found-unmatchable-step? #f)
+             (widen-printf "Finding matching s-steps\n")
              (for ([i-step i-steps])
                ;; Debugging:
                ;; (printf "Impl step: ~s\n" (debug-impl-step i-step))
@@ -275,7 +277,10 @@
 
                 ;; Debugging
                 ;; (displayln "Related pair")
+                (widen-printf "Widening/sbc-ing ~s impl steps\n" (length i-steps))
+                (define i-step-num 0)
                 (for ([i-step i-steps])
+                  (set! i-step-num (add1 i-step-num))
                   (for ([s-step (hash-ref related-spec-steps (list pair i-step))])
                     (define successor-pairs
                       (for/list ([config (cons (spec-step-destination s-step) (spec-step-spawns s-step))])
@@ -289,7 +294,10 @@
                       ;; TODO: add the address binding here, too, and adjust other uses of incoming
                       ;; (e.g. in prune-unsupported) to take that structure into account
                       (match-define (list unwidened-sbc-pair rename-map) sbc-result)
-                      (define sbc-pair (widen-pair unwidened-sbc-pair))
+                      (define sbc-pair (widen-pair unwidened-sbc-pair
+                                                   visited-pairs-count
+                                                   i-step-num
+                                                   (length i-steps)))
                       (log-incoming log-file sbc-pair (list pair i-step s-step rename-map))
                       (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step rename-map))
                       ;; unless it's already in the queue, or we have already explored it (and
@@ -319,8 +327,10 @@
     ;; TODO: (perf. improvement) share the results between the observed and unobserved external
     ;; receives, because often many of the results will be the same (because the same address might
     ;; receive messages from both the observed and unobserved environments)
+    (define triggers (impl-triggers-from impl-config spec-config))
+    (widen-printf "Finding impl steps from ~s triggers\n" (length triggers))
     (append*
-     (for/list ([trigger-with-obs (impl-triggers-from impl-config spec-config)])
+     (for/list ([trigger-with-obs triggers])
        (define effects (csa#-eval-trigger impl-config (first trigger-with-obs) abort))
        (for/list ([effect effects])
          (apply-transition impl-config effect (second trigger-with-obs)))))))
@@ -660,7 +670,7 @@
 ;; Widening
 
 ;; config-pair -> config-pair
-(define (widen-pair the-pair)
+(define (widen-pair the-pair pair-number i-step-number i-step-total)
   ;; Algorithm:
   ;;
   ;; * Evaluate all possible handlers of this configuration and add each result (goto, spawns,
@@ -684,13 +694,16 @@
   ;; internal-sends, spawns)
   (define possible-transitions (apply queue (impl-transition-effects-from the-pair)))
   (define processed-transitions (mutable-set))
+  (define loop-count 0)
+  (define widen-use-count 0)
   (let worklist-loop ([widened-pair the-pair])
     (match (dequeue-if-non-empty! possible-transitions)
       [#f widened-pair]
       [transition-result-with-obs
+       (set! loop-count (add1 loop-count))
        (cond
          [(set-member? processed-transitions transition-result-with-obs)
-          ;; Skip this transition is we already processed it
+          ;; Skip this transition if we already processed it
           (worklist-loop widened-pair)]
          [else
           (set-add! processed-transitions transition-result-with-obs)
@@ -717,9 +730,15 @@
              (cond
                [(csa#-transition-valid-for-widen? i transition-result (config-pair-impl-config sbc-pair))
                 ;; (displayln "not bailing out")
+                (set! widen-use-count (add1 widen-use-count))
                 (define repeated-i-step (apply-transition (config-pair-impl-config sbc-pair) transition-result observed?))
                 (define repeated-s (first-spec-step-to-same-state (config-pair-spec-config sbc-pair) repeated-i-step))
                 (define new-widened-pair (first (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
+                (widen-printf "Widen: applied a transition for pair ~s, i-step ~s of ~s. Loop count = ~s, use count = ~s\nTransition result: ~s\n~s\n\n"
+                        pair-number i-step-number i-step-total loop-count widen-use-count
+                        (debug-transition-result transition-result)
+                        (impl-config-without-state-defs (config-pair-impl-config new-widened-pair)))
+                (widen-printf "Remaining transitions: ~s\n" (queue-length possible-transitions))
                 (for-each (curry enqueue! possible-transitions)
                           (impl-transition-effects-from new-widened-pair))
                 (worklist-loop new-widened-pair)]
@@ -792,10 +811,15 @@
   (match-define (config-pair i s) the-pair)
   (let/cc return-continuation
     (define (abort) (return-continuation null))
-    (append*
-     (for/list ([trigger-with-obs (impl-triggers-from i s)])
-       (define observed? (second trigger-with-obs))
-       (map (curryr list observed?) (csa#-eval-trigger i (first trigger-with-obs) abort))))))
+    (define triggers (impl-triggers-from i s))
+    (widen-printf "Widen: gettings effects from ~s triggers\n" (length triggers))
+    (define final-results
+     (append*
+      (for/list ([trigger-with-obs triggers])
+        (define observed? (second trigger-with-obs))
+        (map (curryr list observed?) (csa#-eval-trigger i (first trigger-with-obs) abort)))))
+    (widen-printf "Widen: Found ~s transitions\n" (length final-results))
+    final-results))
 
 ;; Returns the first spec step from this spec config that both matches the i-step and ends up in a
 ;; configuration identical to the original one (with the exception of the unobserved interface, which
@@ -1036,6 +1060,12 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debugging
 
+(define DEBUG-WIDEN #f)
+
+(define (widen-printf m . args)
+  (when DEBUG-WIDEN
+    (apply printf (format "~s: ~a" (date->string (seconds->date (current-seconds)) #t) m) args)))
+
 (define DISPLAY-STEPS #f)
 
 (define (display-step-line msg)
@@ -1049,6 +1079,11 @@
   (list (impl-step-from-observer? step)
         (impl-step-trigger step)
         (impl-step-outputs step)))
+
+(define (debug-transition-result result)
+  (list (csa#-transition-effect-trigger result)
+        (csa#-transition-effect-sends result)
+        (csa#-transition-effect-spawns result)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Logging
