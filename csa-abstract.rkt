@@ -2969,75 +2969,84 @@
 
 ;; TODO: test the new message rule
 
-;; (module+ test
-;;   (define new-message-test-config
-;;     (term (([(spawn-addr 0 OLD) (() (goto A))]
-;;             [(spawn-addr 1 OLD) (() (goto A))]
-;;             [(spawn-addr 2 OLD) (() (goto A))])
-;;            ()
-;;            ([(spawn-addr 1 OLD) (* Nat) single]
-;;             [(spawn-addr 2 OLD) (* Nat) many]))))
+(module+ test
 
-;;   (define (compare-one-message m)
-;;     (csa#-compare-new-messages
-;;      new-message-test-config
-;;      (csa#-transition-effect #f #f (list m) null)))
+  (define new-message-test-config
+    (term (([(spawn-addr 0 OLD) (() (goto A))]
+            [(spawn-addr 1 OLD) (() (goto A))]
+            [(spawn-addr 2 OLD) (() (goto A))])
+           ()
+           ([(spawn-addr 1 OLD) (* Nat) single]
+            [(spawn-addr 2 OLD) (* Nat) many]))))
 
-;;   (test-equal? "single message to init-addr"
-;;     (compare-one-message `((init-addr 3) (* Nat) single))
-;;     'gt)
-;;   (test-equal? "single message to OLD spawn-addr"
-;;     (compare-one-message `((spawn-addr 1 OLD) (* Nat) single))
-;;     'gt)
-;;   (test-equal? "single message to collective address"
-;;     (compare-one-message `((blurred-spawn-addr 3) (* Nat) single))
-;;     'gt)
-;;   (test-equal? "to NEW: had zero, send one"
-;;     (compare-one-message `((spawn-addr 0 NEW) (* Nat) single))
-;;     'not-gteq)
-;;   (test-equal? "to NEW: OLD doesn't exist, send one"
-;;     (compare-one-message `((spawn-addr 4 NEW) (* Nat) single))
-;;     'gt)
-;;   (test-equal? "to NEW: had zero, send many"
-;;     (compare-one-message `((spawn-addr 0 NEW) (* Nat) many))
-;;     'gt)
-;;   (test-equal? "to NEW: had one, send one"
-;;     (compare-one-message `((spawn-addr 1 NEW) (* Nat) single))
-;;     'gt)
-;;   (test-equal? "to NEW: had one, send many"
-;;     (compare-one-message `((spawn-addr 1 NEW) (* Nat) many))
-;;     'gt)
-;;   (test-equal? "to NEW: had many, send one"
-;;     (compare-one-message `((spawn-addr 2 NEW) (* Nat) single))
-;;     'not-gteq)
-;;   (test-equal? "to NEW: had many, send many"
-;;     (compare-one-message `((spawn-addr 2 NEW) (* Nat) many))
-;;     'gt)
-;;   (test-equal? "to NEW: had zero, send zero"
-;;     (csa#-compare-new-messages
-;;      (term (() () ()))
-;;      (csa#-transition-effect #f #f null (list `((spawn-addr 0 NEW) (() (goto A))))))
-;;     'eq)
-;;   (test-equal? "to NEW: had one, send zero"
-;;     (csa#-compare-new-messages
-;;      (term (() () ([(spawn-addr 1 OLD) (* Nat) single])))
-;;      (csa#-transition-effect #f #f null (list `((spawn-addr 1 NEW) (() (goto A))))))
-;;     'not-gteq)
-;;   (test-equal? "to NEW: had many, send zero"
-;;     (csa#-compare-new-messages
-;;      (term (() () ([(spawn-addr 2 OLD) (* Nat) many])))
-;;      (csa#-transition-effect #f #f null (list `((spawn-addr 2 NEW) (() (goto A))))))
-;;     'not-gteq)
-;;   (test-equal? "had 1, NEW does not exist"
-;;     (csa#-compare-new-messages
-;;      (term (() () ([(spawn-addr 1 OLD) (* Nat) single])))
-;;      (csa#-transition-effect #f #f null null))
-;;     'eq)
-;;   (test-equal? "had many, NEW does not exist"
-;;     (csa#-compare-new-messages
-;;      (term (() () ([(spawn-addr 2 OLD) (* Nat) many])))
-;;      (csa#-transition-effect #f #f null null))
-;;     'eq))
+  (test-equal? "Ensure that only internal messages are compared"
+    (csa#-compare-new-messages
+     new-message-test-config
+     (csa#-transition-effect #f #f (list `[(obs-ext 1) (* Nat) single]) null)
+     new-message-test-config)
+    'eq)
+
+  ;; (define (compare-one-message m)
+  ;;   (csa#-compare-new-messages
+  ;;    new-message-test-config
+  ;;    (csa#-transition-effect #f #f (list m) null)))
+
+  ;; (test-equal? "single message to init-addr"
+  ;;   (compare-one-message `((init-addr 3) (* Nat) single))
+  ;;   'gt)
+  ;; (test-equal? "single message to OLD spawn-addr"
+  ;;   (compare-one-message `((spawn-addr 1 OLD) (* Nat) single))
+  ;;   'gt)
+  ;; (test-equal? "single message to collective address"
+  ;;   (compare-one-message `((blurred-spawn-addr 3) (* Nat) single))
+  ;;   'gt)
+  ;; (test-equal? "to NEW: had zero, send one"
+  ;;   (compare-one-message `((spawn-addr 0 NEW) (* Nat) single))
+  ;;   'not-gteq)
+  ;; (test-equal? "to NEW: OLD doesn't exist, send one"
+  ;;   (compare-one-message `((spawn-addr 4 NEW) (* Nat) single))
+  ;;   'gt)
+  ;; (test-equal? "to NEW: had zero, send many"
+  ;;   (compare-one-message `((spawn-addr 0 NEW) (* Nat) many))
+  ;;   'gt)
+  ;; (test-equal? "to NEW: had one, send one"
+  ;;   (compare-one-message `((spawn-addr 1 NEW) (* Nat) single))
+  ;;   'gt)
+  ;; (test-equal? "to NEW: had one, send many"
+  ;;   (compare-one-message `((spawn-addr 1 NEW) (* Nat) many))
+  ;;   'gt)
+  ;; (test-equal? "to NEW: had many, send one"
+  ;;   (compare-one-message `((spawn-addr 2 NEW) (* Nat) single))
+  ;;   'not-gteq)
+  ;; (test-equal? "to NEW: had many, send many"
+  ;;   (compare-one-message `((spawn-addr 2 NEW) (* Nat) many))
+  ;;   'gt)
+  ;; (test-equal? "to NEW: had zero, send zero"
+  ;;   (csa#-compare-new-messages
+  ;;    (term (() () ()))
+  ;;    (csa#-transition-effect #f #f null (list `((spawn-addr 0 NEW) (() (goto A))))))
+  ;;   'eq)
+  ;; (test-equal? "to NEW: had one, send zero"
+  ;;   (csa#-compare-new-messages
+  ;;    (term (() () ([(spawn-addr 1 OLD) (* Nat) single])))
+  ;;    (csa#-transition-effect #f #f null (list `((spawn-addr 1 NEW) (() (goto A))))))
+  ;;   'not-gteq)
+  ;; (test-equal? "to NEW: had many, send zero"
+  ;;   (csa#-compare-new-messages
+  ;;    (term (() () ([(spawn-addr 2 OLD) (* Nat) many])))
+  ;;    (csa#-transition-effect #f #f null (list `((spawn-addr 2 NEW) (() (goto A))))))
+  ;;   'not-gteq)
+  ;; (test-equal? "had 1, NEW does not exist"
+  ;;   (csa#-compare-new-messages
+  ;;    (term (() () ([(spawn-addr 1 OLD) (* Nat) single])))
+  ;;    (csa#-transition-effect #f #f null null))
+  ;;   'eq)
+  ;; (test-equal? "had many, NEW does not exist"
+  ;;   (csa#-compare-new-messages
+  ;;    (term (() () ([(spawn-addr 2 OLD) (* Nat) many])))
+  ;;    (csa#-transition-effect #f #f null null))
+  ;;   'eq)
+  )
 
 (define (csa#-actor-compare-behavior config transition-result new-i)
   (define addr (trigger-address (csa#-transition-effect-trigger transition-result)))
