@@ -37,10 +37,18 @@
     [remote-address InetSocketAddress]
     [local-port Nat])
 
-  (define-variant Ack? [Ack] [NoAck])
-  (define-variant Rst? [Rst] [NoRst])
-  (define-variant Syn? [Syn] [NoSyn])
-  (define-variant Fin? [Fin] [NoFin])
+  (define-type Ack? Nat)
+  (define-type Rst? Nat)
+  (define-type Syn? Nat)
+  (define-type Fin? Nat)
+  (define-function (Ack) 1)
+  (define-function (NoAck) 0)
+  (define-function (Rst) 1)
+  (define-function (NoRst) 0)
+  (define-function (Syn) 1)
+  (define-function (NoSyn) 0)
+  (define-function (Fin) 1)
+  (define-function (NoFin) 0)
 
   (define-record TcpPacket
     [source-port Nat]
@@ -67,24 +75,16 @@
                (vector)))
 
   (define-function (packet-ack? [packet TcpPacket])
-    (case (: packet ack-flag)
-      [(Ack) (variant True)]
-      [(NoAck) (variant False)]))
+    (= (: packet ack-flag) 1))
 
   (define-function (packet-rst? [packet TcpPacket])
-    (case (: packet rst)
-      [(Rst) (variant True)]
-      [(NoRst) (variant False)]))
+    (= (: packet rst) 1))
 
   (define-function (packet-syn? [packet TcpPacket])
-    (case (: packet syn)
-      [(Syn) (variant True)]
-      [(NoSyn) (variant False)]))
+    (= (: packet syn) 1))
 
-    (define-function (packet-fin? [packet TcpPacket])
-    (case (: packet fin)
-      [(Fin) (variant True)]
-      [(NoFin) (variant False)]))
+  (define-function (packet-fin? [packet TcpPacket])
+    (= (: packet fin) 1))
 
   ;; Returns the sequence number for the last octet in the segment, or the sequence number if the
   ;; segment carries no octets.
@@ -431,8 +431,8 @@
      ;; furthest-forward acceptable ACK.
      (define-function (compute-receive-next [packet TcpPacket])
        (+ (: packet seq)
-          (+ (case (: packet syn) [(Syn) 1] [(NoSyn) 0])
-             (+ (case (: packet fin) [(Fin) 1] [(NoFin) 0])
+          (+ (: packet syn)
+             (+ (: packet fin)
                 (vector-length (: packet payload))))))
 
      (define-function (finish-connecting [snd-nxt Nat] [rcv-nxt Nat] [window Nat])
@@ -1285,10 +1285,10 @@
             (destination-port (== dest-port))
             (seq _)
             (ack _)
-            (ack-flag (csa-variant NoAck))
-            (rst (csa-variant NoRst))
-            (syn (csa-variant Syn))
-            (fin (csa-variant NoFin))
+            (ack-flag 0)
+            (rst 0)
+            (syn 1)
+            (fin 0)
             (window _)
             (payload (vector)))])))
 
@@ -1301,10 +1301,10 @@
             (destination-port (== dest-port))
             (seq iss-name)
             (ack (== expected-ack))
-            (ack-flag (csa-variant Ack))
-            (rst (csa-variant NoRst))
-            (syn (csa-variant Syn))
-            (fin (csa-variant NoFin))
+            (ack-flag 1)
+            (rst 0)
+            (syn 1)
+            (fin 0)
             (window _)
             (payload (vector)))])))
 
@@ -1317,10 +1317,10 @@
             (destination-port (== dest-port))
             (seq (== seqno))
             (ack (== ackno))
-            (ack-flag (csa-variant Ack))
-            (rst (csa-variant NoRst))
-            (syn (csa-variant NoSyn))
-            (fin (csa-variant NoFin))
+            (ack-flag 1)
+            (rst 0)
+            (syn 0)
+            (fin 0)
             (window _)
             (payload (vector)))])))
 
@@ -1333,10 +1333,10 @@
             (destination-port (== dest-port))
             (seq (== seqno))
             (ack _)
-            (ack-flag (csa-variant NoAck))
-            (rst (csa-variant Rst))
-            (syn (csa-variant NoSyn))
-            (fin (csa-variant NoFin))
+            (ack-flag 0)
+            (rst 1)
+            (syn 0)
+            (fin 0)
             (window _)
             (payload (vector)))])))
 
@@ -1349,10 +1349,10 @@
             (destination-port (== dest-port))
             (seq (== seqno))
             (ack (== ackno))
-            (ack-flag (csa-variant Ack))
-            (rst (csa-variant NoRst))
-            (syn (csa-variant NoSyn))
-            (fin (csa-variant Fin))
+            (ack-flag 1)
+            (rst 0)
+            (syn 0)
+            (fin 1)
             (window _)
             (payload (vector)))])))
 
@@ -1365,10 +1365,10 @@
             (destination-port (== dest-port))
             (seq (== seqno))
             (ack (== ackno))
-            (ack-flag (csa-variant Ack))
-            (rst (csa-variant NoRst))
-            (syn (csa-variant NoSyn))
-            (fin (csa-variant NoFin))
+            (ack-flag 1)
+            (rst 0)
+            (syn 0)
+            (fin 0)
             (window _)
             (payload the-payload))])))
 
@@ -1403,10 +1403,10 @@
      [destination-port dest-port]
      [seq seq]
      [ack 0]
-     [ack-flag (variant NoAck)]
-     [rst (variant Rst)]
-     [syn (variant NoSyn)]
-     [fin (variant NoFin)]
+     [ack-flag 0]
+     [rst 1]
+     [syn 0]
+     [fin 0]
      [window DEFAULT-WINDOW-SIZE]
      [payload (vector)]))
 
@@ -1416,10 +1416,10 @@
      [destination-port dest-port]
      [seq seqno]
      [ack 0]
-     [ack-flag (variant NoAck)]
-     [rst (variant NoRst)]
-     [syn (variant Syn)]
-     [fin (variant NoFin)]
+     [ack-flag 0]
+     [rst 0]
+     [syn 1]
+     [fin 0]
      [window DEFAULT-WINDOW-SIZE]
      [payload (vector)]))
 
@@ -1429,10 +1429,10 @@
      [destination-port dest-port]
      [seq seq]
      [ack ack]
-     [ack-flag (variant Ack)]
-     [rst (variant NoRst)]
-     [syn (variant Syn)]
-     [fin (variant NoFin)]
+     [ack-flag 1]
+     [rst 0]
+     [syn 1]
+     [fin 0]
      [window DEFAULT-WINDOW-SIZE]
      [payload (vector)]))
 
@@ -1455,10 +1455,10 @@
      [destination-port dest-port]
      [seq seq]
      [ack ack]
-     [ack-flag (variant Ack)]
-     [rst (variant NoRst)]
-     [syn (variant NoSyn)]
-     [fin (variant NoFin)]
+     [ack-flag 1]
+     [rst 0]
+     [syn 0]
+     [fin 0]
      [window DEFAULT-WINDOW-SIZE]
      [payload payload]))
 
@@ -1468,10 +1468,10 @@
      [destination-port dest-port]
      [seq seq]
      [ack ack]
-     [ack-flag (variant Ack)]
-     [rst (variant NoRst)]
-     [syn (variant NoSyn)]
-     [fin (variant Fin)]
+     [ack-flag 1]
+     [rst 0]
+     [syn 0]
+     [fin 1]
      [window DEFAULT-WINDOW-SIZE]
      [payload (vector)]))
 
@@ -1941,10 +1941,10 @@
       [destination-port Nat]
       [seq Nat]
       [ack Nat]
-      [ack-flag (Union [Ack] [NoAck])]
-      [rst (Union [Rst] [NoRst])]
-      [syn (Union [Syn] [NoSyn])]
-      [fin (Union [Fin] [NoFin])]
+      [ack-flag Nat]
+      [rst Nat]
+      [syn Nat]
+      [fin Nat]
       [window Nat]
       [payload (Vectorof Nat)]))
 
