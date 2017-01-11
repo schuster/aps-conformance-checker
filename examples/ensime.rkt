@@ -515,10 +515,10 @@
           ([obligation s (variant SymbolSearchResults *)])
           (goto HandleRequests)]
          [(variant DebugRunReq s) ->
-          ([obligation s (variant VoidResponse)])
+          ([obligation s (or (variant FalseResponse) (variant TrueResponse))])
           (goto HandleRequests)]
          [(variant DebugStopReq s) ->
-          ([obligation s (variant VoidResponse)])
+          ([obligation s (or (variant FalseResponse) (variant TrueResponse))])
           (goto HandleRequests)]
          [(variant DebugValueReq * s) ->
           ([obligation s (or (variant FalseResponse) (variant DebugValue *))])
