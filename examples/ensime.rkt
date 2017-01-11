@@ -12,7 +12,8 @@
 ;; dispatched to the appropriate actor.
 ;;
 ;; This example shows how my conformance checker can deal with simple RPC calls even when they involve
-;; messages being routed through a static topology.
+;; messages being routed through a static topology. This is also a good example of the kind of
+;; benefits gained from the widening optimization.
 
 (define ensime-program
   (quasiquote
@@ -107,7 +108,8 @@
        (goto Always)])))
 
 ; stubbing out types for File and FileLocation
-(define-type File (Hash Nat String))
+(define-variant FileType (Java) (Scala))
+(define-record File [type FileType] [text (Hash Nat String)])
 (define-type FileLocation Nat)
 (define-variant MaybeDocSigPair
   (NoDocSigPair)
@@ -125,13 +127,59 @@
   (define-state (Always) (m)
     (case m
       [(DocUriAtPointReq file loc sender)
-       (case (hash-ref file loc)
+       (case (hash-ref (: file text) loc)
          [(Nothing) (send sender (NoDocSigPair))]
          [(Just path) (send sender (DocSigPair path))])
        (goto Always)]
       [(CompletionsReq file point max-results case-sensitive? reload? sender)
        (send sender (list "a" "b" "c"))
        (goto Always)])))
+
+(define-variant VoidResponse
+  (VoidResponse))
+
+(define-variant RefactorType
+  (InlineLocal)
+  (Rename))
+
+(define-variant RefactorResult
+  (RefactorFailure [procedure-id Nat] [reason String] [status String])
+  (RefactorDiffEffect [procedure-id Nat] [refactor-type RefactorType] [diff String]))
+
+(define-type AnalyzerInput
+  (Union
+   [TypecheckAllReq (Addr VoidResponse)]
+   [CompletionsReq File Nat Nat Boolean Boolean (Addr (Listof String))]
+   [RefactorReq Nat RefactorType Boolean (Addr RefactorResult)]))
+
+(define-actor AnalyzerInput
+  (Analyzer)
+  ()
+  (goto Always)
+  (define-state (Always) (m)
+    (case m
+      [(TypecheckAllReq sender)
+       (send sender (VoidResponse))
+       (goto Always)]
+      [(CompletionsReq file point max-results case-sensitive? reload? sender)
+       (send sender (list "d" "e" "f"))
+       (goto Always)]
+      [(RefactorReq proc-id type interactive? sender)
+       (case type
+         [(InlineLocal)
+          (send sender
+                ; a numeric comparison here causes both branches to execute in abstract interpretation
+                (if (= 1 1)
+                    (RefactorFailure proc-id "fail" "fail")
+                    (RefactorDiffEffect proc-id type "this is the new file")))
+          (goto Always)]
+         [(Rename)
+          (send sender
+                ; a numeric comparison here causes both branches to execute in abstract interpretation
+                (if (= 1 2)
+                    (RefactorFailure proc-id "fail" "fail")
+                    (RefactorDiffEffect proc-id type "this is the new file")))
+          (goto Always)])])))
 
 (define-variant ProjectInput
   (ConnectionInfoReq [sender (Addr ConnectionInfo)])
@@ -150,15 +198,19 @@
                   [max-results Nat]
                   [case-sensitive? Boolean]
                   [reload? Boolean]
-                  [sender (Addr (Listof String))]))
+                  [sender (Addr (Listof String))])
+  (TypecheckAllReq [sender (Addr VoidResponse)])
+  (RefactorReq [proc-id Nat]
+               [type RefactorType]
+               [interactive? Boolean]
+               [sender (Addr RefactorResult)]))
 
 (define-actor ProjectInput
   (Project [docs (Addr DocResolverInput)]
            [indexer (Addr IndexerInput)]
            [debugger (Addr DebugActorInput)]
            [javac (Addr JavaAnalyzerInput)]
-   ;; TODO: put all the other actors here
-   )
+           [scalac (Addr AnalyzerInput)])
   ()
   (goto AwaitingConnectionInfoReq)
   (define-state (AwaitingConnectionInfoReq) (m)
@@ -173,7 +225,9 @@
       [(DebugStopReq s) (goto AwaitingConnectionInfoReq)]
       [(DebugValueReq l s) (goto AwaitingConnectionInfoReq)]
       [(DocUriAtPointReq f p s) (goto AwaitingConnectionInfoReq)]
-      [(CompletionsReq f p m c r s) (goto AwaitingConnectionInfoReq)]))
+      [(CompletionsReq f p m c r s) (goto AwaitingConnectionInfoReq)]
+      [(TypecheckAllReq s) (goto AwaitingConnectionInfoReq)]
+      [(RefactorReq p t i s) (goto AwaitingConnectionInfoReq)]))
   (define-state (HandleRequests) (m)
     (case m
       [(ConnectionInfoReq sender)
@@ -201,18 +255,23 @@
        (send javac (DocUriAtPointReq f p s))
        (goto HandleRequests)]
       [(CompletionsReq f p m c r s)
-       (send javac (CompletionsReq f p m c r s))
+       (case (: f type)
+         [(Java) (send javac (CompletionsReq f p m c r s))]
+         [(Scala) (send scalac (CompletionsReq f p m c r s))])
+       (goto HandleRequests)]
+      [(TypecheckAllReq s)
+       (send scalac (TypecheckAllReq s))
+       (goto HandleRequests)]
+      [(RefactorReq p t i s)
+       (send scalac (RefactorReq p t i s))
        (goto HandleRequests)])))
 
 (actors [docs (spawn docs-loc DocResolver)]
         [indexer (spawn indexer-loc Indexer)]
         [debugger (spawn debugger-loc DebugActor)]
         [javac (spawn javac-loc JavaAnalyzer)]
-        [project (spawn project-loc Project docs indexer debugger javac)]))))
-
-;; Messages to do:
-;; * Javac: docUriAtPointReq, CompletionsReq
-;; * Scalac: TypecheckAll, CompletionsReq, RefactorReq
+        [scalac (spawn scala-loc Analyzer)]
+        [project (spawn project-loc Project docs indexer debugger javac scalac)]))))
 
 (module+ test
   (require
@@ -273,7 +332,7 @@
     (check-unicast stop-dest (variant TrueResponse))
     ;; javac
     (define javadoc-dest (make-async-channel))
-    (define test-file (hash 1 "a" 2 "b"))
+    (define test-file (record [type (variant Java)] [text (hash 1 "a" 2 "b")]))
     (async-channel-put project (variant DocUriAtPointReq test-file 1 javadoc-dest))
     (check-unicast javadoc-dest (variant DocSigPair "a"))
     (async-channel-put project (variant DocUriAtPointReq test-file 3 javadoc-dest))
@@ -286,4 +345,25 @@
                                         (variant False)
                                         (variant False)
                                         java-completions-dest))
-    (check-unicast java-completions-dest (list "a" "b" "c"))))
+    (check-unicast java-completions-dest (list "a" "b" "c"))
+    ;; scalac
+    (define typecheck-dest (make-async-channel))
+    (async-channel-put project (variant TypecheckAllReq typecheck-dest))
+    (check-unicast typecheck-dest (variant VoidResponse))
+    (define scala-completions-dest (make-async-channel))
+    (define scala-test-file (record [type (variant Scala)] [text (hash 3 "c" 4 "d")]))
+    (async-channel-put project (variant CompletionsReq
+                                        scala-test-file
+                                        4
+                                        10
+                                        (variant False)
+                                        (variant False)
+                                        scala-completions-dest))
+    (check-unicast scala-completions-dest (list "d" "e" "f"))
+    (define refactor-dest (make-async-channel))
+    (async-channel-put project (variant RefactorReq 1 (variant Rename) false refactor-dest))
+    (check-unicast refactor-dest
+                   (variant RefactorDiffEffect 1 (variant Rename) "this is the new file"))
+    (define refactor-dest2 (make-async-channel))
+    (async-channel-put project (variant RefactorReq 1 (variant InlineLocal) false refactor-dest2))
+    (check-unicast refactor-dest2 (variant RefactorFailure 1 "fail" "fail"))))
