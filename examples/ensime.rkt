@@ -487,12 +487,12 @@
                    (Addr ,desugared-refactor-result))))
 
   (define project-spec
-    `(specification (receptionists [project ,desugard-project-input]) (externals)
-       [project ,desugard-project-input]
+    `(specification (receptionists [project ,desugared-project-input]) (externals)
+       [project ,desugared-project-input]
        ()
        (goto AwaitingConnectionInfoReq)
        (define-state (AwaitingConnectionInfoReq)
-         [(variant ConnectionInfoReq s) -> ([obligation s (ConnectionInfo)]) (goto HandleRequests)]
+         [(variant ConnectionInfoReq s) -> ([obligation s (variant ConnectionInfo)]) (goto HandleRequests)]
          [(variant Resolve * s) -> () (goto AwaitingConnectionInfoReq)]
          [(variant PublicSymbolSearchReq * * s) -> () (goto AwaitingConnectionInfoReq)]
          [(variant TypeCompletionsReq * * s) -> () (goto AwaitingConnectionInfoReq)]
@@ -504,9 +504,9 @@
          [(variant TypecheckAllReq s) -> () (goto AwaitingConnectionInfoReq)]
          [(variant RefactorReq * * * s) -> () (goto AwaitingConnectionInfoReq)])
        (define-state (HandleRequests)
-         [(variant ConnectionInfoReq s) -> ([obligation s (ConnectionInfo)]) (goto HandleRequests)]
+         [(variant ConnectionInfoReq s) -> ([obligation s (variant ConnectionInfo)]) (goto HandleRequests)]
          [(variant Resolve * s) ->
-          ([obligation s (or (variant FalseResponse) (StringResponse path))])
+          ([obligation s (or (variant FalseResponse) (variant StringResponse *))])
           (goto HandleRequests)]
          [(variant PublicSymbolSearchReq * * s) ->
           ([obligation s (variant ImportSuggestions *)])
