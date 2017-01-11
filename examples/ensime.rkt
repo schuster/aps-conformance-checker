@@ -1,8 +1,22 @@
 #lang racket
 
+;; This program mimicks the structure of the "Project" actor from ensime-server
+;; (https://github.com/ensime/ensime-server), which is a program for providing developers with tools
+;; such as debuggers, documentation lookup, and auto-complete suggestions when writing Java or Scala
+;; code.
+;;
+;; My version here simply stubs out the actual implementations for each of the RPC-like calls (which
+;; largely involve no communication internally), focusing on the communication topology between the
+;; Project actor and its children. The Project has 5 children (actors for the doc resolver, the
+;; indexer, the debugger, the Java compiler, and the Scala compiler), and each incoming RPC is simply
+;; dispatched to the appropriate actor.
+;;
+;; This example shows how my conformance checker can deal with simple RPC calls even when they involve
+;; messages being routed through a static topology.
+
 (define ensime-program
   (quasiquote
-(program (receptionists [project ???]) (externals)
+(program (receptionists [project ProjectActorInput]) (externals)
 
 (define-variant ConnectionInfo
   (ConnectionInfo))
@@ -50,10 +64,44 @@
   (define-state (Always) (m)
     (case m
       [(PublicSymbolSearchReq keywords max-results sender)
-       (send sender (list "foo" "bar"))
+       (send sender (ImportSuggestions (list "foo" "bar")))
        (goto Always)]
       [(TypeCompletionsReq query max-results sender)
-       (send sender (list query))
+       (send sender (SymbolSearchResults (list query)))
+       (goto Always)])))
+
+(define-variant BooleanResponse
+  (TrueResponse)
+  (FalseResponse))
+
+(define-type DebugLocation Nat)
+(define-variant DebugValue
+  (DebugValue [value String]))
+
+(define-constant debug-values (hash [1 "foo"] [2 "bar"]))
+
+(define-type DebugActorInput
+  (Union
+   (DebugRunReq (Addr BooleanResponse))
+   (DebugStopReq (Addr BooleanResponse))
+   (DebugValueReq DebugLocation (Addr (Union [DebugValue String] [FalseResponse])))))
+
+(define-actor DebugActorInput
+  (DebugActor)
+  ()
+  (goto Always)
+  (define-state (Always) (m)
+    (case m
+      [(DebugRunReq sender)
+       (send sender (TrueResponse))
+       (goto Always)]
+      [(DebugStopReq sender)
+       (send sender (TrueResponse))
+       (goto Always)]
+      [(DebugValueReq location sender)
+       (case (hash-ref debug-values location)
+         [(Nothing) (send sender (FalseResponse))]
+         [(Just val) (send sender (DebugValue val))])
        (goto Always)])))
 
 (define-variant ProjectInput
@@ -63,10 +111,15 @@
                          [max-results Nat]
                          [sender (Addr ImportSuggestions)])
   (TypeCompletionsReq [query String] [max-results Nat] [sender (Addr SymbolSearchResults)])
-  )
+  (DebugRunReq [sender (Addr BooleanResponse)])
+  (DebugStopReq [sender (Addr BooleanResponse)])
+  (DebugValueReq [location DebugLocation]
+                 [sender (Addr (Union [DebugValue String] [FalseResponse]))]))
 
 (define-actor ProjectInput
   (Project [docs (Addr DocResolverInput)]
+           [indexer (Addr IndexerInput)]
+           [debugger (Addr DebugActorInput)]
    ;; TODO: put all the other actors here
    )
   ()
@@ -78,7 +131,10 @@
        (goto HandleRequests)]
       [(Resolve p s) (goto AwaitingConnectionInfoReq)]
       [(PublicSymbolSearchReq k m s) (goto AwaitingConnectionInfoReq)]
-      [(TypeCompletionsReq q m s) (goto AwaitingConnectionInfoReq)]))
+      [(TypeCompletionsReq q m s) (goto AwaitingConnectionInfoReq)]
+      [(DebugRunReq s) (goto AwaitingConnectionInfoReq)]
+      [(DebugStopReq s) (goto AwaitingConnectionInfoReq)]
+      [(DebugValueReq l s) (goto AwaitingConnectionInfoReq)]))
   (define-state (HandleRequests) (m)
     (case m
       [(ConnectionInfoReq sender)
@@ -92,16 +148,23 @@
        (goto HandleRequests)]
       [(TypeCompletionsReq q m s)
        (send indexer (TypeCompletionsReq q m s))
-       (goto HandleRequests)]))
-  )
+       (goto HandleRequests)]
+      [(DebugRunReq s)
+       (send debugger (DebugRunReq s))
+       (goto HandleRequests)]
+      [(DebugStopReq s)
+       (send debugger (DebugStopReq s))
+       (goto HandleRequests)]
+      [(DebugValueReq l s)
+       (send debugger (DebugValueReq l s))
+       (goto HandleRequests)])))
 
-(actors [docs (spawn docs DocResolver)]
-        [project (spawn project Project docs)]))))
+(actors [docs (spawn docs-loc DocResolver)]
+        [indexer (spawn indexer-loc Indexer)]
+        [debugger (spawn debugger-loc DebugActor)]
+        [project (spawn project-loc Project docs indexer debugger)]))))
 
 ;; Messages to do:
-;; * docs: resolve
-;; * indexer: public symbol search, type complections req
-;; * debugger: Run, Stop, Value(location)
 ;; * Javac: docUriAtPointReq, CompletionsReq
 ;; * Scalac: TypecheckAll, CompletionsReq, RefactorReq
 
@@ -141,16 +204,24 @@
     ;; Check for responses on all messages
     (async-channel-put project (variant ConnectionInfoReq ci-dest))
     (check-unicast ci-dest (variant ConnectionInfo))
+    ;; docs
     (define doc-dest (make-async-channel))
     (async-channel-put project (variant Resolve "begin" doc-dest))
     (check-unicast doc-dest (variant StringResponse "http://www.racket-lang.org/"))
-
+    ;; indexer
     (define symbol-dest (make-async-channel))
     (async-channel-put project (variant PublicSymbolSearchReq (list "foo") 10 symbol-dest))
     (check-unicast symbol-dest (variant ImportSuggestions (list "foo" "bar")))
     (define completion-dest (make-async-channel))
     (async-channel-put project (variant TypeCompletionsReq "abc" 10 symbol-dest))
-    (check-unicast symbol-dest (variant SymbolSearchResults (list "abc")))))
-
-;; TODO: queue up messages during the ConnectionInfo phase: spec can be weak here, but at least say a
-;; little bit of something AND be true to the real program
+    (check-unicast symbol-dest (variant SymbolSearchResults (list "abc")))
+    ;; debugger
+    (define run-dest (make-async-channel))
+    (async-channel-put project (variant DebugRunReq run-dest))
+    (check-unicast run-dest (variant TrueResponse))
+    (define value-dest (make-async-channel))
+    (async-channel-put project (variant DebugValueReq 2 value-dest))
+    (check-unicast value-dest (variant DebugValue "bar"))
+    (define stop-dest (make-async-channel))
+    (async-channel-put project (variant DebugStopReq stop-dest))
+    (check-unicast stop-dest (variant TrueResponse))))
