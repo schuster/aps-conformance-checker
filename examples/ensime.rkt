@@ -297,8 +297,66 @@
     (define dest (make-async-channel))
     (async-channel-put project (variant Resolve "begin" dest))
     (check-no-message dest)
-    ;; TODO: check for all the other requests
-    )
+
+
+    ;; Check that no other request gets a response
+    ;; docs
+    (define doc-dest (make-async-channel))
+    (async-channel-put project (variant Resolve "begin" doc-dest))
+    (check-no-message doc-dest)
+    ;; indexer
+    (define symbol-dest (make-async-channel))
+    (async-channel-put project (variant PublicSymbolSearchReq (list "foo") 10 symbol-dest))
+    (check-no-message symbol-dest)
+    (define completion-dest (make-async-channel))
+    (async-channel-put project (variant TypeCompletionsReq "abc" 10 symbol-dest))
+    (check-no-message symbol-dest)
+    ;; debugger
+    (define run-dest (make-async-channel))
+    (async-channel-put project (variant DebugRunReq run-dest))
+    (check-no-message run-dest)
+    (define value-dest (make-async-channel))
+    (async-channel-put project (variant DebugValueReq 2 value-dest))
+    (check-no-message value-dest)
+    (define stop-dest (make-async-channel))
+    (async-channel-put project (variant DebugStopReq stop-dest))
+    (check-no-message stop-dest)
+    ;; javac
+    (define javadoc-dest (make-async-channel))
+    (define test-file (record [type (variant Java)] [text (hash 1 "a" 2 "b")]))
+    (async-channel-put project (variant DocUriAtPointReq test-file 1 javadoc-dest))
+    (check-no-message javadoc-dest)
+    (async-channel-put project (variant DocUriAtPointReq test-file 3 javadoc-dest))
+    (check-no-message javadoc-dest)
+    (define java-completions-dest (make-async-channel))
+    (async-channel-put project (variant CompletionsReq
+                                        test-file
+                                        5
+                                        10
+                                        (variant False)
+                                        (variant False)
+                                        java-completions-dest))
+    (check-no-message java-completions-dest)
+    ;; scalac
+    (define typecheck-dest (make-async-channel))
+    (async-channel-put project (variant TypecheckAllReq typecheck-dest))
+    (check-no-message typecheck-dest)
+    (define scala-completions-dest (make-async-channel))
+    (define scala-test-file (record [type (variant Scala)] [text (hash 3 "c" 4 "d")]))
+    (async-channel-put project (variant CompletionsReq
+                                        scala-test-file
+                                        4
+                                        10
+                                        (variant False)
+                                        (variant False)
+                                        scala-completions-dest))
+    (check-no-message scala-completions-dest)
+    (define refactor-dest (make-async-channel))
+    (async-channel-put project (variant RefactorReq 1 (variant Rename) false refactor-dest))
+    (check-no-message refactor-dest)
+    (define refactor-dest2 (make-async-channel))
+    (async-channel-put project (variant RefactorReq 1 (variant InlineLocal) false refactor-dest2))
+    (check-no-message refactor-dest2))
 
   (test-case "All methods get responses after initialization"
     (define project (start-prog))
