@@ -79,6 +79,7 @@
    random
    ceiling
    cons
+   empty?
    list-ref
    length
    vector-length

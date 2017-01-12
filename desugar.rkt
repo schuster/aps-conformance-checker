@@ -116,6 +116,7 @@
        (ceiling e)
        (list e ...)
        (cons e1 e2)
+       (empty? e)
        (list-ref e1 e2)
        (length e)
        (vector e ...)
