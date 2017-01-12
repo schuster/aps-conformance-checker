@@ -17,29 +17,49 @@
   )
 
 (define-variant TaskInfo
-  (Map [initial-data (Listof String)] [partition-id Nat])
+  (Map [initial-data (Listof String)])
   (Reduce [left (Hash String Nat)] [right (Hash String Nat)]))
 
 ;; TODO: move this into some other definition
 (define-variant MiscCommands
   (UpdateTaskExecutionState [job-id Nat] [task-id Nat] [state ExecutionState])
-  (SubmitTask [job-id Nat] [task-id Nat] [info TaskInfo]))
+  (SubmitTask [job-id Nat] [task-id Nat] [info TaskInfo])
+  (RequestNextInputSplit [job-id Nat]
+                         [task-id Nat]
+                         [target (Addr (Union (NextInputSplit (Listof String))))])
+  (NextInputSplit [items (Listof String)]))
 
 (define-type TaskRunnerInput
   (Union
    ;; TODO: put other stuff here
    [SubmitTask Nat Nat TaskInfo]))
 
+(define-function (word-count-increment [h (Hash String Nat)] [word String])
+  (hash-set h
+            word
+            (case (hash-ref h word)
+              [(Nothing) 1]
+              [(Just n) (+ n 1)])))
 
 ;; should track what task we're running, for cancellations and success reports
 ;;
 ;; Inputs:
 ;; * submit task
 ;; * cancel task
+;; * more items
 (define-actor TaskRunnerInput
   ;; TODO: add real types for job/task managers
   (TaskRunner [job-manager (Addr JobManagerInput)] [task-manager (Addr TaskManagerInput)])
-  ()
+  ((define-function (count-new-words [job-id Nat]
+                                     [task-id Nat]
+                                     [word-count (Hash String Nat)]
+                                     [words (Listof String)])
+     (let ([result-so-far
+            (for/fold ([result word-count])
+                      ([word words])
+              (word-count-increment result word))])
+       (send job-manager (RequestNextInputSplit job-id task-id self))
+       (goto WaitingForNextSplit job-id task-id result-so-far))))
   (goto AwaitingTask)
   (define-state (AwaitingTask) (m)
     (case m
@@ -56,7 +76,7 @@
       )
     (timeout ,task-wait-time
       (case info
-        ;; TODO: do the map case
+        [(Map words) (count-new-words job-id task-id (hash) words)]
         [(Reduce left right)
          (let ([final-result
                 (for/fold ([result left])
@@ -70,7 +90,16 @@
                         [right-value (case (hash-ref right key) [(Nothing) 0] [(Just n) n])])
                     (hash-set result key (+ left-value right-value))))])
            (send task-manager (UpdateTaskExecutionState job-id task-id (Finished final-result)))
-           (goto AwaitingTask))]))))
+           (goto AwaitingTask))])))
+  (define-state (WaitingForNextSplit [job-id Nat] [task-id Nat] [word-count (Hash String Nat)]) (m)
+    (case m
+      ;; TODO: other commands
+      [(NextInputSplit words)
+       (cond
+         [(empty? words)
+          (send task-manager (UpdateTaskExecutionState job-id task-id (Finished word-count)))
+          (goto AwaitingTask)]
+         [else (count-new-words job-id task-id word-count words)])])))
 
 ;; Task manager inputs:
 ;; * submit task (respond with Acknowledge of Failure)
@@ -168,4 +197,21 @@
                                1
                                1
                                (variant Finished (hash "a" 4 "b" 6 "c" 3 "d" 5)))
+                   #:timeout 3))
+
+  (test-case "TaskRunner can complete a map task"
+    (define jm (make-async-channel))
+    (define tm (make-async-channel))
+    (define runner (csa-run task-runner-only-program jm tm))
+    (async-channel-put runner (variant SubmitTask 1 1 (variant Map (list "a" "b" "b"))))
+    (define split-target
+      (check-unicast-match jm (csa-variant RequestNextInputSplit 1 1 target) #:result target #:timeout 3))
+    (async-channel-put split-target (variant NextInputSplit (list "c" "a" "d")))
+    (define split-target2
+      (check-unicast-match jm (csa-variant RequestNextInputSplit 1 1 target) #:result target #:timeout 3))
+    (async-channel-put split-target2 (variant NextInputSplit (list)))
+    (check-unicast tm (variant UpdateTaskExecutionState
+                               1
+                               1
+                               (variant Finished (hash "a" 2 "b" 2 "c" 1 "d" 1)))
                    #:timeout 3)))
