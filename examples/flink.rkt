@@ -33,7 +33,10 @@
   ;; tasks
   ;; TODO: fix this type
   (RegisterRunner [addr (Addr TaskRunnerInput)])
-  (Acknowledge [job-id Nat] [task-id Nat]))
+
+  ;; these two are responses to SubmitTask
+  (Acknowledge [job-id Nat] [task-id Nat])
+  (Failure [job-id Nat] [task-id Nat]))
 
 (define-type TaskRunnerInput
   (Union
@@ -148,8 +151,7 @@
       [(SubmitTask job-id task-id info ack-dest)
        (case (list-as-variant idle-runners)
          [(Empty)
-          ;; TODO: figure out the failure message here
-          ;; (send ack-dest (???))
+          (send ack-dest (Failure job-id task-id))
           (goto Running idle-runners busy-runners)]
          [(Cons runner other-runners)
           (send runner (RunTask job-id task-id info))
@@ -315,6 +317,51 @@
     (check-unicast jm (variant UpdateTaskExecutionState
                                1
                                2
-                               (variant Finished (hash "b" 2))) #:timeout 3)))
+                               (variant Finished (hash "b" 2))) #:timeout 3))
 
-;; TODO: task manager responds with failure if it can't run a task right away
+  (test-case "TaskManager fails a SubmitTask if it has no runners"
+    (define task-manager-only-program
+      (desugar
+       ;; TODO: put real types here
+       `(program (receptionists [task-manager Nat]) (externals [job-manager Nat])
+                 ,@flink-definitions
+                 (actors [task-manager (spawn task-manager-loc TaskManager job-manager)]))))
+    (define jm (make-async-channel))
+    (define task-manager (csa-run task-manager-only-program jm))
+    (async-channel-put task-manager (variant SubmitTask
+                                             1
+                                             1
+                                             (variant Reduce
+                                                      (hash "a" 1 "b" 2 "c" 3)
+                                                      (hash "a" 3 "b" 4 "d" 5))
+                                             jm))
+    (check-unicast jm (variant Failure 1 1)))
+
+  (test-case "TaskManager fails a SubmitTask if all its runners are busy"
+    (define jm (make-async-channel))
+    (define task-manager (csa-run task-manager-program jm))
+    (sleep 0.5) ; give some time for the TaskRunner registrations to happen first
+    (async-channel-put task-manager (variant SubmitTask
+                                             1
+                                             1
+                                             (variant Reduce
+                                                      (hash "a" 1 "b" 2 "c" 3)
+                                                      (hash "a" 3 "b" 4 "d" 5))
+                                             jm))
+    (async-channel-put task-manager (variant SubmitTask
+                                             1
+                                             2
+                                             (variant Reduce
+                                                      (hash "a" 1 "b" 2 "c" 3)
+                                                      (hash "a" 3 "b" 4 "d" 5))
+                                             jm))
+    (async-channel-put task-manager (variant SubmitTask
+                                             1
+                                             3
+                                             (variant Reduce
+                                                      (hash "a" 1 "b" 2 "c" 3)
+                                                      (hash "a" 3 "b" 4 "d" 5))
+                                             jm))
+    (check-unicast jm (variant Acknowledge 1 1))
+    (check-unicast jm (variant Acknowledge 1 2))
+    (check-unicast jm (variant Failure 1 3))))
