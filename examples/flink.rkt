@@ -23,16 +23,22 @@
 ;; TODO: move this into some other definition
 (define-variant MiscCommands
   (UpdateTaskExecutionState [job-id Nat] [task-id Nat] [state ExecutionState])
-  (SubmitTask [job-id Nat] [task-id Nat] [info TaskInfo])
+  (SubmitTask [job-id Nat] [task-id Nat] [info TaskInfo] [ack-dest (Addr (Union (Acknowledge Nat Nat)))])
+  (RunTask [job-id Nat] [task-id Nat] [info TaskInfo])
   (RequestNextInputSplit [job-id Nat]
                          [task-id Nat]
                          [target (Addr (Union (NextInputSplit (Listof String))))])
-  (NextInputSplit [items (Listof String)]))
+  (NextInputSplit [items (Listof String)])
+  ;; NOTE: this one is my own command, since the real Apache Flink cheats and uses threads to execute
+  ;; tasks
+  ;; TODO: fix this type
+  (RegisterRunner [addr (Addr TaskRunnerInput)])
+  (Acknowledge [job-id Nat] [task-id Nat]))
 
 (define-type TaskRunnerInput
   (Union
    ;; TODO: put other stuff here
-   [SubmitTask Nat Nat TaskInfo]))
+   [RunTask Nat Nat TaskInfo]))
 
 (define-function (word-count-increment [h (Hash String Nat)] [word String])
   (hash-set h
@@ -60,16 +66,23 @@
               (word-count-increment result word))])
        (send job-manager (RequestNextInputSplit job-id task-id self))
        (goto WaitingForNextSplit job-id task-id result-so-far))))
-  (goto AwaitingTask)
+  ;; Can't send message from actor that starts at the start of the program, so we use a timeout-zero
+  ;; state instead
+  (goto AboutToRegister)
+  (define-state/timeout (AboutToRegister)
+    (m) (goto AboutToRegister) ; this shouldn't happen
+    (timeout 0
+      (send task-manager (RegisterRunner self))
+      (goto AwaitingTask)))
   (define-state (AwaitingTask) (m)
     (case m
-      [(SubmitTask job-id task-id info)
+      [(RunTask job-id task-id info)
        (goto AboutToRunTask job-id task-id info)]
       ;; TODO: other commands
       ))
   (define-state/timeout (AboutToRunTask [job-id Nat] [task-id Nat] [info TaskInfo]) (m)
     (case m
-      [(SubmitTask new-job-id new-task-id new-info)
+      [(RunTask new-job-id new-task-id new-info)
        ;; TODO: drop the existing task; presumably the task manager knows about it anyway
        (goto AboutToRunTask new-job-id new-task-id new-info)]
       ;; TODO: other commands
@@ -95,11 +108,17 @@
     (case m
       ;; TODO: other commands
       [(NextInputSplit words)
-       (cond
-         [(empty? words)
+       (case (list-as-variant words)
+         [(Empty)
           (send task-manager (UpdateTaskExecutionState job-id task-id (Finished word-count)))
           (goto AwaitingTask)]
-         [else (count-new-words job-id task-id word-count words)])])))
+         [(Cons w ws) (count-new-words job-id task-id word-count words)])])))
+
+(define-record BusyRunner
+  [job-id Nat]
+  [task-id Nat]
+  ;; TODO: fix this type
+  [addr (Addr TaskRunnerInput)])
 
 ;; Task manager inputs:
 ;; * submit task (respond with Acknowledge of Failure)
@@ -115,11 +134,44 @@
 
 ;; The TaskManager should record a list of infos about its TaskRunners, including their state and what
 ;; task they're working on
-;; (define-actor TaskManagerInput
-;;   (TaskManager)
-;;   ()
-;;   (goto Running)
-;;   (define-state (Running)))
+;;
+;; TODO: put the real type here
+(define-actor TaskManagerInput
+  (TaskManager [job-manager (Addr JobManagerInput)])
+  ()
+  (goto Running (list) (list))
+  ;; TODO: fix type on idle-runners
+  (define-state (Running [idle-runners (Listof (Addr TaskRunnerInput))]
+                         [busy-runners (Listof BusyRunner)]) (m)
+    (case m
+      [(RegisterRunner runner) (goto Running (cons runner idle-runners) busy-runners)]
+      [(SubmitTask job-id task-id info ack-dest)
+       (case (list-as-variant idle-runners)
+         [(Empty)
+          ;; TODO: figure out the failure message here
+          ;; (send ack-dest (???))
+          (goto Running idle-runners busy-runners)]
+         [(Cons runner other-runners)
+          (send runner (RunTask job-id task-id info))
+          ;; NOTE: *almost* forgot the acknowledgment here, until I saw my old comment
+          (send ack-dest (Acknowledge job-id task-id))
+          (goto Running other-runners (cons (BusyRunner job-id task-id runner) busy-runners))])]
+      [(UpdateTaskExecutionState job-id task-id state)
+       ;; Remove the runner for this job ID and task ID
+       (let ([new-runners
+              (for/fold ([new-runners (record [idle idle-runners] [busy (list)])])
+                        ([busy-runner busy-runners])
+                (if (and (= job-id (: busy-runner job-id)) (= task-id (: busy-runner task-id)))
+                    (record [idle (cons (: busy-runner addr) (: new-runners idle))]
+                            [busy (: new-runners busy)])
+                    (record [idle (: new-runners idle)]
+                            [busy (cons busy-runner (: new-runners busy))])))])
+         (send job-manager m)
+         (goto Running (: new-runners idle) (: new-runners busy)))
+       ;; NOTE: interesting question I want to ask here (during removal): can I ever have two runners
+       ;; trying to run the exact same task? What if I tried to cancel it before, failed, then retried
+       ;; and now I have two runners doing it?
+       ])))
 
 ;; Job manager needs to track:
 ;; * running jobs, and their state (cancelled or not)
@@ -159,8 +211,6 @@
 
 ;; Tests for TaskRunner:
 ;; * submit then cancel (say, right after submission): make sure there's no result
-;; * submit map task, go through process of getting more inputs, eventually succeed with right answer
-;; * submit reduce task, get right input
 
 (module+ test
   (require
@@ -187,7 +237,9 @@
     (define jm (make-async-channel))
     (define tm (make-async-channel))
     (define runner (csa-run task-runner-only-program jm tm))
-    (async-channel-put runner (variant SubmitTask
+    ;; registration happens first
+    (check-unicast-match tm (csa-variant RegisterRunner _))
+    (async-channel-put runner (variant RunTask
                                        1
                                        1
                                        (variant Reduce
@@ -203,7 +255,9 @@
     (define jm (make-async-channel))
     (define tm (make-async-channel))
     (define runner (csa-run task-runner-only-program jm tm))
-    (async-channel-put runner (variant SubmitTask 1 1 (variant Map (list "a" "b" "b"))))
+    ;; registration happens first
+    (check-unicast-match tm (csa-variant RegisterRunner _))
+    (async-channel-put runner (variant RunTask 1 1 (variant Map (list "a" "b" "b"))))
     (define split-target
       (check-unicast-match jm (csa-variant RequestNextInputSplit 1 1 target) #:result target #:timeout 3))
     (async-channel-put split-target (variant NextInputSplit (list "c" "a" "d")))
@@ -214,4 +268,53 @@
                                1
                                1
                                (variant Finished (hash "a" 2 "b" 2 "c" 1 "d" 1)))
-                   #:timeout 3)))
+                   #:timeout 3))
+
+  (define task-manager-program
+    (desugar
+     ;; TODO: put real types here
+     `(program (receptionists [task-manager Nat]) (externals [job-manager Nat])
+               ,@flink-definitions
+               (actors [task-manager (spawn task-manager-loc TaskManager job-manager)]
+                       [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager)]
+                       [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager)]))))
+
+  (test-case "TaskManager can run three tasks to completion (waiting for TaskRunner completions)"
+    (define jm (make-async-channel))
+    (define task-manager (csa-run task-manager-program jm))
+    (sleep 0.5) ; give some time for the TaskRunner registrations to happen first
+    (async-channel-put task-manager (variant SubmitTask
+                                             1
+                                             1
+                                             (variant Reduce
+                                                      (hash "a" 1 "b" 2 "c" 3)
+                                                      (hash "a" 3 "b" 4 "d" 5))
+                                             jm))
+    (check-unicast jm (variant Acknowledge 1 1))
+    (async-channel-put task-manager (variant SubmitTask
+                                             2
+                                             1
+                                             (variant Reduce
+                                                      (hash "a" 1)
+                                                      (hash "a" 3))
+                                             jm))
+    (check-unicast jm (variant Acknowledge 2 1))
+    (define result1 (check-unicast-match jm result #:result result #:timeout 3))
+    (define result2 (check-unicast-match jm result #:result result #:timeout 3))
+    (check-equal? (set result1 result2)
+                  (set (variant UpdateTaskExecutionState
+                                1
+                                1
+                                (variant Finished (hash "a" 4 "b" 6 "c" 3 "d" 5)))
+                       (variant UpdateTaskExecutionState
+                                2
+                                1
+                                (variant Finished (hash "a" 4)))))
+    (async-channel-put task-manager (variant SubmitTask 1 2 (variant Reduce (hash) (hash "b" 2)) jm))
+    (check-unicast jm (variant Acknowledge 1 2))
+    (check-unicast jm (variant UpdateTaskExecutionState
+                               1
+                               2
+                               (variant Finished (hash "b" 2))) #:timeout 3)))
+
+;; TODO: task manager responds with failure if it can't run a task right away
