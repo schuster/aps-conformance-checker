@@ -79,7 +79,7 @@
    random
    ceiling
    cons
-   empty?
+   list-as-variant
    list-ref
    length
    vector-length
