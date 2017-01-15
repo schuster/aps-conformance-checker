@@ -19,11 +19,11 @@
 ;;---------------------------------------------------------------------------------------------------
 ;; Math
 
-  (define-function (max [a Nat] [b Nat])
-    (if (> a b) a b))
+(define-function (max [a Nat] [b Nat])
+  (if (> a b) a b))
 
-  (define-function (min [a Nat] [b Nat])
-    (if (< a b) a b))
+(define-function (min [a Nat] [b Nat])
+  (if (< a b) a b))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; JobManager's Client-facing API
@@ -99,14 +99,14 @@
 ;; ---------------------------------------------------------------------------------------------------
 
 (define-variant ExecutionState ; comes from runtime/execution/ExecutionState.java
-  (Finished [result Nat])
+  (Finished [result (Hash String Nat)])
   ;; TODO: the rest of the states
   )
 
 ;; TODO: move this into some other definition
 (define-variant MiscCommands
   ;; TODO: fix the type on RegisterTaskManager's addr
-  (RegisterTaskManager [num-slots Nat] [addr (Addr TaskManagerInput)])
+  (RegisterTaskManager [id Nat] [num-slots Nat] [addr (Addr TaskManagerInput)])
   (UpdateTaskExecutionState [id JobTaskId] [state ExecutionState])
   (SubmitTask [task ReadyTask] [ack-dest (Addr (Union [Acknowledge Nat Nat]))])
   (RunTask [task ReadyTask])
@@ -121,7 +121,10 @@
 
   ;; these two are responses to SubmitTask
   (Acknowledge [id JobTaskId])
-  (Failure [id JobTaskId]))
+  (Failure [id JobTaskId])
+
+  ;; Response to RegisterTaskManager
+  (AcknowledgeRegistration))
 
 (define-type TaskRunnerInput
   (Union
@@ -195,11 +198,11 @@
     (case m
       ;; TODO: other commands
       [(NextInputSplit words)
-       (case (list-as-variant words)
-         [(Empty)
+       (cond
+         [(= 0 (vector-length words))
           (send task-manager (UpdateTaskExecutionState id (Finished word-count)))
           (goto AwaitingTask)]
-         [(Cons w ws) (count-new-words id word-count words)])])))
+         [else (count-new-words id word-count words)])])))
 
 ;; A runner currently running a task with the given ID
 (define-record BusyRunner
@@ -225,13 +228,25 @@
 ;;
 ;; TODO: put the real type here
 (define-actor TaskManagerInput
-  (TaskManager [job-manager (Addr JobManagerInput)])
+  (TaskManager [my-id Nat] [job-manager (Addr JobManagerInput)])
   ()
-  (goto Running (list) (list))
+  (goto Init)
+  (define-state/timeout (Init) (m)
+    (goto Init)
+    (timeout 0
+      (send job-manager (RegisterTaskManager my-id 2 self))
+      (goto AwaitingRegistration (list))))
+  (define-state (AwaitingRegistration [idle-runners (Listof (Addr TaskRunnerInput))]) (m)
+    (case m
+      ;; TODO: other actions
+      [(AcknowledgeRegistration) (goto Running idle-runners (list))]
+      [(RegisterRunner runner) (goto AwaitingRegistration (cons runner idle-runners))]))
+
   ;; TODO: fix type on idle-runners
   (define-state (Running [idle-runners (Listof (Addr TaskRunnerInput))]
                          [busy-runners (Listof BusyRunner)]) (m)
     (case m
+      [(AcknowledgeRegistration) (goto Running idle-runners busy-runners)]
       [(RegisterRunner runner) (goto Running (cons runner idle-runners) busy-runners)]
       [(SubmitTask task ack-dest)
        (case (list-as-variant idle-runners)
@@ -293,7 +308,7 @@
            [(Map data)
             (let ([partition-next-send (min ,partition-chunk-size (vector-length data))])
               (record [need-data (: all-tasks need-data)]
-                      [ready (cons (ReadyTask full-id (MapWork (vector-take data partition-chunk-size)))
+                      [ready (cons (ReadyTask full-id (MapWork (vector-take data partition-next-send)))
                                    (: all-tasks ready))]
                       [partitions
                        (hash-set (: all-tasks partitions)
@@ -332,30 +347,84 @@
                                [unsent-tasks (list)]
                                [running-tasks running-tasks])])
                ([task ready-tasks])
-       (case (find-available-slot task-managers)
+       (case (find-available-slot (: state task-managers))
          [(Nothing)
           ;; no slot available, so have to wait
           (record [task-managers (: state task-managers)]
                   [unsent-tasks (cons task (: state unsent-tasks))]
                   [running-tasks (: state running-tasks)])]
          [(Just task-manager-id)
-          (case (hash-ref task-managers task-manager-id)
+          (case (hash-ref (: state task-managers) task-manager-id)
             [(Nothing) ; shouldn't happen
              state]
             [(Just manager-record)
              (send (: manager-record addr) (SubmitTask task self))
              (let ([new-manager-record (ManagedTaskManager
                                         (: manager-record addr)
-                                        (- 1 (: manager-record availble-slots)))])
-               (record [task-managers (hash-set task-managers task-manager-id new-manager-record)]
-                       [ready-tasks (: state ready-tasks)]
+                                        (- (: manager-record available-slots) 1))])
+               (record [task-managers (hash-set (: state task-managers) task-manager-id new-manager-record)]
+                       [unsent-tasks (: state unsent-tasks)]
                        [running-tasks (hash-set (: state running-tasks)
                                                 (: task id)
-                                                (RunningTaskExecution task task-manager-id))]))])]))))
+                                                (RunningTaskExecution task task-manager-id))]))])])))
+
+   ;; Remove the task from the active jobs list and free up a slot on the TaskManager
+   (define-function (deactivate-task [id JobTaskId]
+                                     [task-managers (Hash Nat ManagedTaskManager)]
+                                     [running-tasks (Hash JobTaskId RunningTaskExecution)])
+     (case (hash-ref running-tasks id)
+       [(Nothing)
+        (record [task-managers task-managers] [running-tasks running-tasks])]
+       [(Just execution)
+        (case (hash-ref task-managers (: execution task-manager))
+          ;; Might not be around anymore if the task manager was deregistered
+          [(Nothing)
+           (record [task-managers task-managers] [running-tasks (hash-remove running-tasks id)])]
+          [(Just manager-record)
+           (let ([new-record (ManagedTaskManager (: manager-record addr)
+                                                 (+ 1 (: manager-record available-slots)))])
+             (record [task-managers (hash-set task-managers
+                                              (: execution task-manager)
+                                              new-record)]
+                     [running-tasks (hash-remove running-tasks id)]))])]))
+
+   (define-function (maybe-populate-input [maybe-data MaybeReduceData]
+                                          [id JobTaskId]
+                                          [task-result (Hash String Nat)])
+     (case maybe-data
+       [(WaitingOn waiting-for-id)
+        (if (= id waiting-for-id)
+            (Ready task-result)
+            maybe-data)]
+       [(Ready data) maybe-data]))
+
+   ;; Puts the result data into the tasks for any data that's waiting for it
+   (define-function (push-to-consumer [id JobTaskId]
+                                      [task-result (Hash String Nat)]
+                                      [waiting-tasks (Listof WaitingTask)]
+                                      [ready-tasks (Listof ReadyTask)])
+     (for/fold ([result (record [waiting-tasks (list)] [ready-tasks ready-tasks])])
+               ([waiting-task waiting-tasks])
+       (let* ([new-left (maybe-populate-input (: waiting-task left) id task-result)]
+              [new-right (maybe-populate-input (: waiting-task right) id task-result)]
+              [new-waiting-task (WaitingReduceTask (: waiting-task id) new-left new-right)])
+         (case new-left
+           [(Ready left-data)
+            (case new-right
+              [(Ready right-data)
+               (record [waiting-tasks (: result waiting-tasks)]
+                       [ready-tasks (cons (ReadyTask (: waiting-task id) (ReduceWork left-data right-data))
+                                          (: result ready-tasks))])]
+              [(WaitingOn t)
+               (record [waiting-tasks (cons new-waiting-task (: result waiting-tasks))]
+                       [ready-tasks (: result ready-tasks)])])]
+           [(WaitingOn t)
+            (record [waiting-tasks (cons new-waiting-task (: result waiting-tasks))]
+                    [ready-tasks (: result ready-tasks)])])))))
 
   (goto ManagingJobs (hash) (hash) (list) (list) (hash) (hash))
 
-  ;; NOTE: I'm ignoring for now the ordering of waiting-tasks. In a real implementation it would a
+  ;; NOTE: I'm ignoring for now the ordering of waiting-tasks. In a real implementation it would use a
   ;; queue to avoid starvation of any tasks/jobs, but I'm making the simplifying assumption that that
   ;; won't be an issue in my uses
   (define-state (ManagingJobs
@@ -367,20 +436,94 @@
                  [running-tasks (Hash JobTaskId RunningTaskExecution)]
                  [partitions (Hash JobTaskId UsedPartition)]) (m)
     (case m
+      [(RegisterTaskManager id slots addr)
+       (send addr (AcknowledgeRegistration))
+       (let* ([task-managers-index (hash-set task-managers-index id (ManagedTaskManager addr slots))]
+              [submission-result (send-ready-tasks task-managers-index ready-tasks running-tasks)])
+         (goto ManagingJobs
+               (: submission-result task-managers)
+               active-jobs
+               waiting-tasks
+               (: submission-result unsent-tasks)
+               (: submission-result running-tasks)
+               partitions))]
       [(SubmitJob job client)
        ;; TODO:
        ;; divide into tasks that can be done now and those that can't
-       (let* ([all-tasks (triage-submitted-tasks (: job id) (: job tasks) waiting-tasks ready-tasks partitions)]
+       (let* ([triage-result (triage-submitted-tasks (: job id)
+                                                     (: job tasks)
+                                                     waiting-tasks
+                                                     ready-tasks
+                                                     partitions)]
               [submission-result (send-ready-tasks task-managers-index
-                                                   (: all-tasks ready)
+                                                   (: triage-result ready)
                                                    running-tasks)])
          (goto ManagingJobs
                (: submission-result task-managers)
-               (hash-set jobs job-id (JobCompletionInfo (: job final-task-id) client))
-               (: all-task need-data)
+               (hash-set active-jobs (: job id) (JobCompletionInfo (: job final-task-id) client))
+               (: triage-result need-data)
                (: submission-result unsent-tasks)
                (: submission-result running-tasks)
-               (: all-tasks partitions)))]
+               (: triage-result partitions)))]
+      [(Acknowledge id)
+       (goto ManagingJobs task-managers-index active-jobs waiting-tasks ready-tasks running-tasks partitions)]
+      [(RequestNextInputSplit id target)
+
+       (let ([new-partitions
+              (case (hash-ref partitions id)
+                [(Nothing)
+                 (send target (NextInputSplit (vector)))
+                 partitions]
+                [(Just partition)
+                 (let* ([data (: partition data)]
+                        [len (vector-length data)]
+                        [next-send (: partition next-send)]
+                        [num-items-to-send (min ,partition-chunk-size (- len next-send))])
+                   (send target (NextInputSplit (vector-copy data next-send (+ next-send num-items-to-send))))
+                   (hash-set partitions id (UsedPartition data (+ next-send num-items-to-send))))])])
+         (goto ManagingJobs task-managers-index active-jobs waiting-tasks ready-tasks running-tasks new-partitions))]
+      [(UpdateTaskExecutionState id state)
+       ;; Remove the task from the running tasks list and free up a slot on the TaskManager
+       (let* ([deactivate-result (deactivate-task id task-managers-index running-tasks)]
+              [task-managers-index (: deactivate-result task-managers)]
+              [running-tasks (: deactivate-result running-tasks)])
+         (case state
+           ;; TODO: other states
+           [(Finished result)
+            ;; 1. remove the partition
+            (let* ([partitions (hash-remove partitions id)]
+                   ;; 2. update any tasks that depended on this one, move them into ready if necessary
+                   [push-result (push-to-consumer id result waiting-tasks ready-tasks)]
+                   [waiting-tasks (: push-result waiting-tasks)]
+                   [ready-tasks (: push-result ready-tasks)]
+                   ;; 3. send more ready tasks
+                   [submission-result (send-ready-tasks task-managers-index ready-tasks running-tasks)]
+                   [task-managers-index (: submission-result task-managers)]
+                   [ready-tasks (: submission-result unsent-tasks)]
+                   [running-tasks (: submission-result running-tasks)])
+              ;; 4. if job is finished: send result to client and remove from active jobs
+              (case (hash-ref active-jobs (: id job-id))
+                [(Nothing) ; could happen if this was a duplicate result or job was cancelled
+                 (goto ManagingJobs task-managers-index active-jobs waiting-tasks ready-tasks running-tasks partitions)]
+                [(Just job-info)
+                 (cond
+                   [(= (: id task-id) (: job-info final-task-id))
+                    (send (: job-info client) result)
+                    (goto ManagingJobs
+                          task-managers-index
+                          (hash-remove active-jobs (: id job-id))
+                          waiting-tasks
+                          ready-tasks
+                          running-tasks
+                          partitions)]
+                   [else
+                    (goto ManagingJobs
+                          task-managers-index
+                          active-jobs
+                          waiting-tasks
+                          ready-tasks
+                          running-tasks
+                          partitions)])]))]))]
       ;; TODO: other commands
       ;; TODO: remove partition when a task completes successfully (or when its task/job is cancelled)
       )
@@ -433,11 +576,16 @@
    redex/reduction-semantics
    "../csa.rkt")
 
+  (define (Job id tasks final-task-id) (record [id id] [tasks tasks] [final-task-id final-task-id]))
+  (define (Task id type) (record [id id] [type type]))
+  (define (Map data) (variant Map data))
+  (define (Reduce left right) (variant Reduce left right))
   (define (JobTaskId job-id task-id) (record [job-id job-id] [task-id task-id]))
   (define (RunTask t) (variant RunTask t))
   (define (ReadyTask id work) (record [id id] [work work]))
   (define (MapWork initial-data) (variant MapWork initial-data))
   (define (ReduceWork left right) (variant ReduceWork left right))
+  (define (SubmitJob job client) (variant SubmitJob job client))
 
   (define-match-expander JobTaskId/pat
     (lambda (stx)
@@ -477,12 +625,12 @@
       (check-unicast-match jm (csa-variant RequestNextInputSplit (JobTaskId/pat 1 1) target)
                            #:result target
                            #:timeout 3))
-    (async-channel-put split-target (variant NextInputSplit (list "c" "a" "d")))
+    (async-channel-put split-target (variant NextInputSplit (vector "c" "a" "d")))
     (define split-target2
       (check-unicast-match jm (csa-variant RequestNextInputSplit (JobTaskId/pat 1 1) target)
                            #:result target
                            #:timeout 3))
-    (async-channel-put split-target2 (variant NextInputSplit (list)))
+    (async-channel-put split-target2 (variant NextInputSplit (vector)))
     (check-unicast tm (variant UpdateTaskExecutionState
                                (JobTaskId 1 1)
                                (variant Finished (hash "a" 2 "b" 2 "c" 1 "d" 1)))
@@ -493,13 +641,14 @@
      ;; TODO: put real types here
      `(program (receptionists [task-manager Nat]) (externals [job-manager Nat])
                ,@flink-definitions
-               (actors [task-manager (spawn task-manager-loc TaskManager job-manager)]
+               (actors [task-manager (spawn task-manager-loc TaskManager 1 job-manager)]
                        [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager)]
                        [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager)]))))
 
   (test-case "TaskManager can run three tasks to completion (waiting for TaskRunner completions)"
     (define jm (make-async-channel))
     (define task-manager (csa-run task-manager-program jm))
+    (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 _))
     (sleep 0.5) ; give some time for the TaskRunner registrations to happen first
     (async-channel-put task-manager (variant SubmitTask
                                              (ReadyTask
@@ -535,9 +684,10 @@
        ;; TODO: put real types here
        `(program (receptionists [task-manager Nat]) (externals [job-manager Nat])
                  ,@flink-definitions
-                 (actors [task-manager (spawn task-manager-loc TaskManager job-manager)]))))
+                 (actors [task-manager (spawn task-manager-loc TaskManager 1 job-manager)]))))
     (define jm (make-async-channel))
     (define task-manager (csa-run task-manager-only-program jm))
+    (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 _))
     (async-channel-put task-manager (variant SubmitTask
                                              (ReadyTask (JobTaskId 1 1)
                                                         (ReduceWork (hash "a" 1 "b" 2 "c" 3)
@@ -548,6 +698,7 @@
   (test-case "TaskManager fails a SubmitTask if all its runners are busy"
     (define jm (make-async-channel))
     (define task-manager (csa-run task-manager-program jm))
+    (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 _))
     (sleep 0.5) ; give some time for the TaskRunner registrations to happen first
     (async-channel-put task-manager (variant SubmitTask
                                              (ReadyTask (JobTaskId 1 1)
@@ -571,38 +722,36 @@
     (check-unicast jm (variant Acknowledge (JobTaskId 1 2)))
     (check-unicast jm (variant Failure (JobTaskId 1 3))))
 
-  ;; (define job-manager-program
-  ;;   (desugar
-  ;;    ;; TODO: put real types on receptionists here
-  ;;    `(program (receptionists [job-manager Nat]) (externals)
-  ;;              ,@flink-definitions
-  ;;              (actors ;; [job-manager (spawn jm-loc JobManager)]
-  ;;                      ;; [task-manager1 (spawn task-manager1-loc TaskManager job-manager)]
-  ;;                      ;; [task-manager2 (spawn task-manager1-loc TaskManager job-manager)]
-  ;;                      ;; [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager1)]
-  ;;                      ;; [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager1)]
-  ;;                      ;; [task-runner3 (spawn runner3-loc TaskRunner job-manager task-manager2)]
-  ;;                      ;; [task-runner4 (spawn runner4-loc TaskRunner job-manager task-manager2)]
-  ;;                      ))))
+  (define job-manager-program
+    (desugar
+     ;; TODO: put real types on receptionists here
+     `(program (receptionists [job-manager Nat]) (externals)
+               ,@flink-definitions
+               (actors [job-manager (spawn jm-loc JobManager)]
+                       [task-manager1 (spawn task-manager1-loc TaskManager 1 job-manager)]
+                       [task-manager2 (spawn task-manager2-loc TaskManager 2 job-manager)]
+                       [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager1)]
+                       [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager1)]
+                       [task-runner3 (spawn runner3-loc TaskRunner job-manager task-manager2)]
+                       [task-runner4 (spawn runner4-loc TaskRunner job-manager task-manager2)]))))
 
-  ;; (test-case "Job manager runs a job to completion"
-  ;;   (define jm (csa-run job-manager-program))
-  ;;   ;; 1. Wait for the task managers to register with the job manager
-  ;;   ;; TODO:
-  ;;   ;; 2. Submit the job
-  ;; (define job (Job 1 (list (Task 1 (Map (list "a" "b" "c" "a" "b" "c")))) 7))
-  ;; (Task 2 (Map (list "a" "b")))
-  ;; (Task 3 (Map (list "a" "b")))
-  ;; (Task 4 (Map (list "a" "b")))
-  ;; (Task 5 (Reduce 1 2))
-  ;; (Task 6 (Reduce 3 4))
-  ;; (Task 7 (Reduce 5 6))
-  ;; (define client (make-async-channel))
-  ;;   ;; 3. Wait for response (check-unicast client (csa-variant Finished 
-  ;;   0
-  ;;          )
-  )
-
-;; Job manager: job runs to completion, get result
+  (test-case "Job manager runs a job to completion"
+    (define jm (csa-run job-manager-program))
+    ;; 1. Wait for the task managers to register with the job manager
+    (sleep 3)
+    ;; 2. Submit the job
+    (define job (Job 1
+                     (list (Task 1 (Map (vector "a" "b" "c" "a" "b" "c")))
+                           (Task 2 (Map (vector "a" "b")))
+                           (Task 3 (Map (vector "a" "b")))
+                           (Task 4 (Map (vector "a" "b")))
+                           (Task 5 (Reduce 1 2))
+                           (Task 6 (Reduce 3 4))
+                           (Task 7 (Reduce 5 6)))
+                     7))
+    (define client (make-async-channel))
+    (async-channel-put jm (SubmitJob job client))
+    ;; 3. Wait for response
+    (check-unicast client (hash "a" 5 "b" 5 "c" 2) #:timeout 30)))
 
 ;; Job manager: multiple jobs can be completed even when there are more tasks than TaskRunners
