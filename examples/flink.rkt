@@ -586,6 +586,7 @@
   (define (MapWork initial-data) (variant MapWork initial-data))
   (define (ReduceWork left right) (variant ReduceWork left right))
   (define (SubmitJob job client) (variant SubmitJob job client))
+  (define (AcknowledgeRegistration) (variant AcknowledgeRegistration))
 
   (define-match-expander JobTaskId/pat
     (lambda (stx)
@@ -649,6 +650,7 @@
     (define jm (make-async-channel))
     (define task-manager (csa-run task-manager-program jm))
     (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 _))
+    (async-channel-put task-manager (AcknowledgeRegistration))
     (sleep 0.5) ; give some time for the TaskRunner registrations to happen first
     (async-channel-put task-manager (variant SubmitTask
                                              (ReadyTask
@@ -688,6 +690,7 @@
     (define jm (make-async-channel))
     (define task-manager (csa-run task-manager-only-program jm))
     (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 _))
+    (async-channel-put task-manager (AcknowledgeRegistration))
     (async-channel-put task-manager (variant SubmitTask
                                              (ReadyTask (JobTaskId 1 1)
                                                         (ReduceWork (hash "a" 1 "b" 2 "c" 3)
@@ -699,6 +702,7 @@
     (define jm (make-async-channel))
     (define task-manager (csa-run task-manager-program jm))
     (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 _))
+    (async-channel-put task-manager (AcknowledgeRegistration))
     (sleep 0.5) ; give some time for the TaskRunner registrations to happen first
     (async-channel-put task-manager (variant SubmitTask
                                              (ReadyTask (JobTaskId 1 1)
