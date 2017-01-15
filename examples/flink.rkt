@@ -756,6 +756,31 @@
     (define client (make-async-channel))
     (async-channel-put jm (SubmitJob job client))
     ;; 3. Wait for response
-    (check-unicast client (hash "a" 5 "b" 5 "c" 2) #:timeout 30)))
+    (check-unicast client (hash "a" 5 "b" 5 "c" 2) #:timeout 30))
 
-;; Job manager: multiple jobs can be completed even when there are more tasks than TaskRunners
+  (test-case "Job manager runs multiple jobs to completion (more tasks than task runners)"
+    (define jm (csa-run job-manager-program))
+    ;; 1. Wait for the task managers to register with the job manager
+    (sleep 3)
+    ;; 2. Submit the jobs
+    (define job1 (Job 1
+                     (list (Task 1 (Map (vector "a" "b" "c" "a" "b" "c")))
+                           (Task 2 (Map (vector "a" "b")))
+                           (Task 3 (Map (vector "a" "b")))
+                           (Task 4 (Map (vector "a" "b")))
+                           (Task 5 (Reduce 1 2))
+                           (Task 6 (Reduce 3 4))
+                           (Task 7 (Reduce 5 6)))
+                     7))
+    (define client1 (make-async-channel))
+    (define job2 (Job 2
+                     (list (Task 1 (Map (vector "x" "y" "y" "z" "x")))
+                           (Task 2 (Map (vector "y" "y" "y" "z" "z" "z" "x")))
+                           (Task 3 (Reduce 1 2)))
+                     3))
+    (define client2 (make-async-channel))
+    (async-channel-put jm (SubmitJob job1 client1))
+    (async-channel-put jm (SubmitJob job2 client2))
+    ;; 3. Wait for response
+    (check-unicast client1 (hash "a" 5 "b" 5 "c" 2) #:timeout 30)
+    (check-unicast client2 (hash "x" 3 "y" 5 "z" 4) #:timeout 30)))
