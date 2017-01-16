@@ -87,7 +87,7 @@
   [next-send Nat])
 
 (define-record ManagedTaskManager
-  [addr (Addr TaskManagerCommand)]
+  [address (Addr TaskManagerCommand)]
   [available-slots Nat])
 
 ;; Represents a task known to be running on the specified task manager
@@ -163,7 +163,7 @@
 
 (define-variant TaskManagerInput
   (AcknowledgeRegistration)
-  (RegisterRunner [addr (Addr TaskRunnerInput)])
+  (RegisterRunner [address (Addr TaskRunnerInput)])
   (SubmitTask [task ReadyTask] [ack-dest (Addr (Addr SubmitCancelResponse))])
   (CancelTask [id JobTaskId] [ack-dest (Addr (Addr SubmitCancelResponse))])
   (UpdateTaskExecutionState [id JobTaskId] [state ExecutionState])
@@ -171,7 +171,7 @@
   (JobManagerTerminated))
 
 (define-variant JobManagerInputVariant
-  (RegisterTaskManager [id Nat] [num-slots Nat] [addr (Addr TaskManagerCommand)])
+  (RegisterTaskManager [id Nat] [num-slots Nat] [address (Addr TaskManagerCommand)])
   (RequestNextInputSplit [id JobTaskId]
                          [target (Addr (Union [NextInputSplit (Vectorof String)]))])
   (SubmitJob [job Job] [client (Addr JobResult)])
@@ -284,7 +284,7 @@
 ;; A runner currently running a task with the given ID
 (define-record BusyRunner
   [id JobTaskId]
-  [addr (Addr RunnerCommand)])
+  [address (Addr RunnerCommand)])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; TaskManager
@@ -340,7 +340,7 @@
                  ([busy-runner busy-runners])
          (cond
            [(= id (: busy-runner id))
-            (send (: busy-runner addr) (CancelRunnerTask id))
+            (send (: busy-runner address) (CancelRunnerTask id))
             0]
            [else 0]))
        (goto Running idle-runners busy-runners)]
@@ -350,7 +350,7 @@
               (for/fold ([new-runners (record [idle idle-runners] [busy (list)])])
                         ([busy-runner busy-runners])
                 (if (= id (: busy-runner id))
-                    (record [idle (cons (: busy-runner addr) (: new-runners idle))]
+                    (record [idle (cons (: busy-runner address) (: new-runners idle))]
                             [busy (: new-runners busy)])
                     (record [idle (: new-runners idle)]
                             [busy (cons busy-runner (: new-runners busy))])))])
@@ -364,8 +364,8 @@
        (let ([idle-runners
               (for/fold ([idle-runners idle-runners])
                         ([busy-runner busy-runners])
-                (send (: busy-runner addr) (CancelRunnerTask (: busy-runner id)))
-                (cons (: busy-runner addr) idle-runners))])
+                (send (: busy-runner address) (CancelRunnerTask (: busy-runner id)))
+                (cons (: busy-runner address) idle-runners))])
          (send job-manager (RegisterTaskManager my-id 2 self))
          (goto AwaitingRegistration idle-runners))])))
 
@@ -437,9 +437,9 @@
             [(Nothing) ; shouldn't happen
              state]
             [(Just manager-record)
-             (send (: manager-record addr) (SubmitTask task self))
+             (send (: manager-record address) (SubmitTask task self))
              (let ([new-manager-record (ManagedTaskManager
-                                        (: manager-record addr)
+                                        (: manager-record address)
                                         (- (: manager-record available-slots) 1))])
                (record [task-managers (hash-set (: state task-managers) task-manager-id new-manager-record)]
                        [unsent-tasks (: state unsent-tasks)]
@@ -460,7 +460,7 @@
           [(Nothing)
            (record [task-managers task-managers] [running-tasks (hash-remove running-tasks id)])]
           [(Just manager-record)
-           (let ([new-record (ManagedTaskManager (: manager-record addr)
+           (let ([new-record (ManagedTaskManager (: manager-record address)
                                                  (+ 1 (: manager-record available-slots)))])
              (record [task-managers (hash-set task-managers
                                               (: execution task-manager)
@@ -524,9 +524,9 @@
                  [running-tasks (Hash JobTaskId RunningTaskExecution)]
                  [partitions (Hash JobTaskId UsedPartition)]) (m)
     (case m
-      [(RegisterTaskManager id slots addr)
-       (send addr (AcknowledgeRegistration))
-       (let* ([task-managers (hash-set task-managers id (ManagedTaskManager addr slots))]
+      [(RegisterTaskManager id slots address)
+       (send address (AcknowledgeRegistration))
+       (let* ([task-managers (hash-set task-managers id (ManagedTaskManager address slots))]
               [submission-result (send-ready-tasks task-managers ready-tasks running-tasks)])
          (goto ManagingJobs
                (: submission-result task-managers)
@@ -667,10 +667,10 @@
                                   (case (hash-ref (: result task-managers) (: execution task-manager))
                                     [(Nothing) (: result task-managers)]
                                     [(Just m)
-                                     (send (: m addr) (CancelTask task-id self))
+                                     (send (: m address) (CancelTask task-id self))
                                      (hash-set (: result task-managers)
                                                (: execution task-manager)
-                                               (ManagedTaskManager (: m addr) (+ (: m available-slots) 1)))])
+                                               (ManagedTaskManager (: m address) (+ (: m available-slots) 1)))])
                                   ]
                                  [running-tasks (hash-remove running-tasks task-id)])]
                         [else result])))]
