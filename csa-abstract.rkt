@@ -661,24 +661,12 @@
          Not)
 
     ;; For now, we're conservative and always assume both results are possible
-    (==> (= τa#_1 τa#_2)
+    (==> (= v#_1 v#_2)
          (variant True)
-         AddressEqualityTrue)
-    (==> (= τa#_1 τa#_2)
+         EqualityTrue)
+    (==> (= v#_1 v#_2)
          (variant False)
-         AddressEqualityFalse)
-    (==> (= (* String) (* String))
-         (variant True)
-         StringEqualityTrue)
-    (==> (= (* String) (* String))
-         (variant False)
-         StringEqualityFalse)
-    (==> (= (* Nat) (* Nat))
-         (variant True)
-         NatEqualityTrue)
-    (==> (= (* Nat) (* Nat))
-         (variant False)
-         NatEqualityFalse)
+         EqualityFalse)
 
     ;; Vectors, Lists, and Hashes
 
