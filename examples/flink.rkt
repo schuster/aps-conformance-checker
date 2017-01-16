@@ -457,7 +457,7 @@
   ;; queue to avoid starvation of any tasks/jobs, but I'm making the simplifying assumption that that
   ;; won't be an issue in my uses
   (define-state (ManagingJobs
-                 [task-managers-index (Hash Nat ManagedTaskManagerp)]
+                 [task-managers (Hash Nat ManagedTaskManagerp)]
                  [active-jobs (Hash Nat JobCompletionInfo)]
                  ;; Tasks that are waiting on their input tasks to complete
                  [waiting-tasks (Listof WatingReduceTask)]
@@ -467,8 +467,8 @@
     (case m
       [(RegisterTaskManager id slots addr)
        (send addr (AcknowledgeRegistration))
-       (let* ([task-managers-index (hash-set task-managers-index id (ManagedTaskManager addr slots))]
-              [submission-result (send-ready-tasks task-managers-index ready-tasks running-tasks)])
+       (let* ([task-managers (hash-set task-managers id (ManagedTaskManager addr slots))]
+              [submission-result (send-ready-tasks task-managers ready-tasks running-tasks)])
          (goto ManagingJobs
                (: submission-result task-managers)
                active-jobs
@@ -484,7 +484,7 @@
                                                      waiting-tasks
                                                      ready-tasks
                                                      partitions)]
-              [submission-result (send-ready-tasks task-managers-index
+              [submission-result (send-ready-tasks task-managers
                                                    (: triage-result ready)
                                                    running-tasks)])
          (goto ManagingJobs
@@ -495,7 +495,7 @@
                (: submission-result running-tasks)
                (: triage-result partitions)))]
       [(Acknowledge id)
-       (goto ManagingJobs task-managers-index active-jobs waiting-tasks ready-tasks running-tasks partitions)]
+       (goto ManagingJobs task-managers active-jobs waiting-tasks ready-tasks running-tasks partitions)]
       [(RequestNextInputSplit id target)
 
        (let ([new-partitions
@@ -510,11 +510,11 @@
                         [num-items-to-send (min ,partition-chunk-size (- len next-send))])
                    (send target (NextInputSplit (vector-copy data next-send (+ next-send num-items-to-send))))
                    (hash-set partitions id (UsedPartition data (+ next-send num-items-to-send))))])])
-         (goto ManagingJobs task-managers-index active-jobs waiting-tasks ready-tasks running-tasks new-partitions))]
+         (goto ManagingJobs task-managers active-jobs waiting-tasks ready-tasks running-tasks new-partitions))]
       [(UpdateTaskExecutionState id state)
        ;; Remove the task from the running tasks list and free up a slot on the TaskManager
-       (let* ([deactivate-result (deactivate-task id task-managers-index running-tasks)]
-              [task-managers-index (: deactivate-result task-managers)]
+       (let* ([deactivate-result (deactivate-task id task-managers running-tasks)]
+              [task-managers (: deactivate-result task-managers)]
               [running-tasks (: deactivate-result running-tasks)])
          (case state
            ;; TODO: other states
@@ -526,20 +526,20 @@
                    [waiting-tasks (: push-result waiting-tasks)]
                    [ready-tasks (: push-result ready-tasks)]
                    ;; 3. send more ready tasks
-                   [submission-result (send-ready-tasks task-managers-index ready-tasks running-tasks)]
-                   [task-managers-index (: submission-result task-managers)]
+                   [submission-result (send-ready-tasks task-managers ready-tasks running-tasks)]
+                   [task-managers (: submission-result task-managers)]
                    [ready-tasks (: submission-result unsent-tasks)]
                    [running-tasks (: submission-result running-tasks)])
               ;; 4. if job is finished: send result to client and remove from active jobs
               (case (hash-ref active-jobs (: id job-id))
                 [(Nothing) ; could happen if this was a duplicate result or job was cancelled
-                 (goto ManagingJobs task-managers-index active-jobs waiting-tasks ready-tasks running-tasks partitions)]
+                 (goto ManagingJobs task-managers active-jobs waiting-tasks ready-tasks running-tasks partitions)]
                 [(Just job-info)
                  (cond
                    [(= (: id task-id) (: job-info final-task-id))
                     (send (: job-info client) result)
                     (goto ManagingJobs
-                          task-managers-index
+                          task-managers
                           (hash-remove active-jobs (: id job-id))
                           waiting-tasks
                           ready-tasks
@@ -547,14 +547,14 @@
                           partitions)]
                    [else
                     (goto ManagingJobs
-                          task-managers-index
+                          task-managers
                           active-jobs
                           waiting-tasks
                           ready-tasks
                           running-tasks
                           partitions)])]))]))]
       [(TaskManagerTerminated task-manager-id)
-       (let* ([task-managers-index (hash-remove task-managers-index task-manager-id)]
+       (let* ([task-managers (hash-remove task-managers task-manager-id)]
               [move-result
                (for/fold ([result (record [ready-tasks ready-tasks]
                                           [running-tasks running-tasks]
@@ -573,7 +573,7 @@
               [running-tasks (: move-result running-tasks)]
               [partitions (: move-result partitions)]
               ;; Try to resend the ready tasks
-              [submission-result (send-ready-tasks task-managers-index ready-tasks running-tasks)])
+              [submission-result (send-ready-tasks task-managers ready-tasks running-tasks)])
          (goto ManagingJobs
                (: submission-result task-managers)
                active-jobs
