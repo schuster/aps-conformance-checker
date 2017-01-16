@@ -742,6 +742,44 @@
   (define (CancellationSuccess) (variant CancellationSuccess))
   (define (CancellationFailure) (variant CancellationFailure))
 
+  (define desugared-job-task-id `(Record [job-id Nat] [task-id Nat]))
+  (check-true (redex-match? csa-eval τ desugared-job-task-id))
+
+  (define desugared-ready-task
+    `(Record [id ,desugared-job-task-id]
+             [work (Union (MapWork (Vectorof String))
+                          (ReduceWork (Hash String Nat) (Hash String Nat)))]))
+  (check-true (redex-match? csa-eval τ desugared-ready-task))
+  (define desugared-submit-cancel-response
+    `(Union
+      (Acknowledge ,desugared-job-task-id)
+      (Failure ,desugared-job-task-id)))
+  (check-true (redex-match? csa-eval τ desugared-submit-cancel-response))
+  (define desugared-task-manager-command
+    `(Union
+      [AcknowledgeRegistration]
+      [SubmitTask ,desugared-ready-task (Addr ,desugared-submit-cancel-response)]
+      [CancelTask ,desugared-job-task-id (Addr ,desugared-submit-cancel-response)]))
+  (check-true (redex-match? csa-eval τ desugared-task-manager-command))
+  (define desugared-execution-state
+    `(Union
+      (Finished (Hash String Nat))
+      (Cancelled)))
+  (check-true (redex-match? csa-eval τ desugared-execution-state))
+  (define desugared-tm-to-jm-type
+    `(Union
+      [RequestNextInputSplit ,desugared-job-task-id (Addr (Union [NextInputSplit (Vectorof String)]))]
+      [RegisterTaskManager Nat Nat (Addr ,desugared-task-manager-command)]
+      [UpdateTaskExecutionState ,desugared-job-task-id ,desugared-execution-state]))
+  (check-true (redex-match? csa-eval τ desugared-tm-to-jm-type))
+  (define desugared-tm-test-input-type
+    `(Union
+      [JobManagerTerminated]
+      [AcknowledgeRegistration]
+      [SubmitTask ,desugared-ready-task (Addr ,desugared-submit-cancel-response)]
+      [CancelTask ,desugared-job-task-id (Addr ,desugared-submit-cancel-response)]))
+  (check-true (redex-match? csa-eval τ desugared-tm-test-input-type))
+
   (define-match-expander JobTaskId/pat
     (lambda (stx)
       (syntax-parse stx
@@ -757,7 +795,8 @@
 
   (define task-manager-program
     (desugar
-     `(program (receptionists [task-manager Nat]) (externals [job-manager Nat])
+     `(program (receptionists [task-manager ,desugared-tm-test-input-type])
+               (externals [job-manager ,desugared-tm-to-jm-type])
                ,@flink-definitions
                (actors [task-manager (spawn task-manager-loc TaskManager 1 job-manager)]
                        [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager)]
@@ -824,7 +863,6 @@
                                (variant Finished (hash "a" 2 "b" 2 "c" 1 "d" 1)))
                    #:timeout 3))
 
-  
   (test-case "TaskManager can run three tasks to completion (waiting for TaskRunner completions)"
     (define jm (make-async-channel))
     (define task-manager (csa-run task-manager-program jm))
@@ -1029,6 +1067,52 @@
     (define canceller (make-async-channel))
     (async-channel-put jm (CancelJob 1 canceller))
     (check-unicast canceller (CancellationFailure))))
+
+(module+ test
+  (define task-manager-spec
+    `(specification (receptionists [task-manager ,desugared-tm-test-input-type])
+                    (externals [job-manager ,desugared-tm-to-jm-type])
+       (task-manager ,desugared-tm-test-input-type)
+       ()
+       (goto Unregistered job-manager)
+       (define-state (Unregistered job-manager)
+         [(variant JobManagerTerminated) -> () (goto Unregistered job-manager)]
+         [(variant AcknowledgeRegistration) -> () (goto Registered job-manager)]
+         [(variant SubmitTask * ack-dest) ->
+          ([obligation ack-dest (variant Failure *)])
+          (goto Unregistered job-manager)]
+         [(variant CancelTask * ack-dest) ->
+          ([obligation ack-dest (variant Failure *)])
+          (goto Unregistered job-manager)]
+         [unobs ->
+          ([obligation job-manager (variant RegisterTaskManager * * *)])
+          (goto Unregistered job-manager)]
+         ;; These two messages might still happen during Unregistered because the runners are
+         ;; cancelled later
+         [unobs ->
+          ([obligation job-manager (variant UpdateTaskExecutionState * *)])
+          (goto Unregistered job-manager)]
+         [unobs ->
+          ([obligation job-manager (variant RequestNextInputSplit * *)])
+          (goto Unregistered job-manager)])
+       (define-state (Registered job-manager)
+         [(variant JobManagerTerminated) -> () (goto Unregistered job-manager)]
+         [(variant AcknowledgeRegistration) -> () (goto Registered job-manager)]
+         [(variant SubmitTask * ack-dest) ->
+          ([obligation ack-dest (or (variant Acknowledge *) (variant Failure *))])
+          (goto Registered job-manager)]
+         [(variant CancelTask * ack-dest) ->
+          ([obligation ack-dest (or (variant Acknowledge *) (variant Failure *))])
+          (goto Registered job-manager)]
+         [unobs ->
+          ([obligation job-manager (variant UpdateTaskExecutionState * *)])
+          (goto Unregistered job-manager)]
+         [unobs ->
+          ([obligation job-manager (variant RequestNextInputSplit * *)])
+          (goto Unregistered job-manager)])))
+
+  (test-true "Task manager conforms to its spec"
+    (check-conformance task-manager-program task-manager-spec)))
 
 ;; Specs to check:
 ;; * JobManager, from TaskManager/Task perspective:
