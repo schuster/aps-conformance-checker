@@ -753,6 +753,40 @@
      `(program (receptionists [task-runner Nat]) (externals [job-manager Nat] [task-manager Nat])
                ,@flink-definitions
                (actors [task-runner (spawn task-runner-loc TaskRunner job-manager task-manager)]))))
+
+
+  (define task-manager-program
+    (desugar
+     `(program (receptionists [task-manager Nat]) (externals [job-manager Nat])
+               ,@flink-definitions
+               (actors [task-manager (spawn task-manager-loc TaskManager 1 job-manager)]
+                       [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager)]
+                       [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager)]))))
+
+  (define job-manager-program
+    (desugar
+     `(program (receptionists [job-manager Nat]) (externals)
+               ,@flink-definitions
+               (actors [job-manager (spawn jm-loc JobManager)]
+                       [task-manager1 (spawn task-manager1-loc TaskManager 1 job-manager)]
+                       [task-manager2 (spawn task-manager2-loc TaskManager 2 job-manager)]
+                       [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager1)]
+                       [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager1)]
+                       [task-runner3 (spawn runner3-loc TaskRunner job-manager task-manager2)]
+                       [task-runner4 (spawn runner4-loc TaskRunner job-manager task-manager2)]))))
+
+  (define single-tm-job-manager-program
+    (desugar
+     `(program (receptionists [job-manager Nat] [task-manager1 Nat]) (externals)
+               ,@flink-definitions
+               (actors [job-manager (spawn jm-loc JobManager)]
+                       [task-manager1 (spawn task-manager1-loc TaskManager 1 job-manager)]
+                       [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager1)]
+                       [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager1)])))))
+
+(module+ test
+  ;; Dynamic tests
+
   (test-case "TaskRunner can complete a reduce task"
     (define jm (make-async-channel))
     (define tm (make-async-channel))
@@ -790,14 +824,7 @@
                                (variant Finished (hash "a" 2 "b" 2 "c" 1 "d" 1)))
                    #:timeout 3))
 
-  (define task-manager-program
-    (desugar
-     `(program (receptionists [task-manager Nat]) (externals [job-manager Nat])
-               ,@flink-definitions
-               (actors [task-manager (spawn task-manager-loc TaskManager 1 job-manager)]
-                       [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager)]
-                       [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager)]))))
-
+  
   (test-case "TaskManager can run three tasks to completion (waiting for TaskRunner completions)"
     (define jm (make-async-channel))
     (define task-manager (csa-run task-manager-program jm))
@@ -877,18 +904,6 @@
     (check-unicast jm (variant Acknowledge (JobTaskId 1 2)))
     (check-unicast jm (variant Failure (JobTaskId 1 3))))
 
-  (define job-manager-program
-    (desugar
-     `(program (receptionists [job-manager Nat]) (externals)
-               ,@flink-definitions
-               (actors [job-manager (spawn jm-loc JobManager)]
-                       [task-manager1 (spawn task-manager1-loc TaskManager 1 job-manager)]
-                       [task-manager2 (spawn task-manager2-loc TaskManager 2 job-manager)]
-                       [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager1)]
-                       [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager1)]
-                       [task-runner3 (spawn runner3-loc TaskRunner job-manager task-manager2)]
-                       [task-runner4 (spawn runner4-loc TaskRunner job-manager task-manager2)]))))
-
   (test-case "Job manager runs a job to completion"
     (define jm (csa-run job-manager-program))
     ;; 1. Wait for the task managers to register with the job manager
@@ -914,35 +929,26 @@
     (sleep 3)
     ;; 2. Submit the jobs
     (define job1 (Job 1
-                     (list (Task 1 (Map (vector "a" "b" "c" "a" "b" "c")))
-                           (Task 2 (Map (vector "a" "b")))
-                           (Task 3 (Map (vector "a" "b")))
-                           (Task 4 (Map (vector "a" "b")))
-                           (Task 5 (Reduce 1 2))
-                           (Task 6 (Reduce 3 4))
-                           (Task 7 (Reduce 5 6)))
-                     7))
+                      (list (Task 1 (Map (vector "a" "b" "c" "a" "b" "c")))
+                            (Task 2 (Map (vector "a" "b")))
+                            (Task 3 (Map (vector "a" "b")))
+                            (Task 4 (Map (vector "a" "b")))
+                            (Task 5 (Reduce 1 2))
+                            (Task 6 (Reduce 3 4))
+                            (Task 7 (Reduce 5 6)))
+                      7))
     (define client1 (make-async-channel))
     (define job2 (Job 2
-                     (list (Task 1 (Map (vector "x" "y" "y" "z" "x")))
-                           (Task 2 (Map (vector "y" "y" "y" "z" "z" "z" "x")))
-                           (Task 3 (Reduce 1 2)))
-                     3))
+                      (list (Task 1 (Map (vector "x" "y" "y" "z" "x")))
+                            (Task 2 (Map (vector "y" "y" "y" "z" "z" "z" "x")))
+                            (Task 3 (Reduce 1 2)))
+                      3))
     (define client2 (make-async-channel))
     (async-channel-put jm (SubmitJob job1 client1))
     (async-channel-put jm (SubmitJob job2 client2))
     ;; 3. Wait for response
     (check-unicast client1 (JobResultSuccess (hash "a" 5 "b" 5 "c" 2)) #:timeout 30)
     (check-unicast client2 (JobResultSuccess (hash "x" 3 "y" 5 "z" 4)) #:timeout 30))
-
-  (define single-tm-job-manager-program
-    (desugar
-     `(program (receptionists [job-manager Nat] [task-manager1 Nat]) (externals)
-               ,@flink-definitions
-               (actors [job-manager (spawn jm-loc JobManager)]
-                       [task-manager1 (spawn task-manager1-loc TaskManager 1 job-manager)]
-                       [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager1)]
-                       [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager1)]))))
 
   (test-case "One task manager of two drops out; all tasks are still completed"
     (match-define-values (jm _) (csa-run single-tm-job-manager-program))
@@ -1025,7 +1031,21 @@
     (check-unicast canceller (CancellationFailure))))
 
 ;; Specs to check:
-;; * submit job: get any number of Finish or Cancel messages
-;; * cancel job: get exactly one success or failure
-;; * JobManager responds to requests for next input
-;; * Canceled Task gets an acknowledgment, plus UpdateExecutionState if something actually got cancelled
+;; * JobManager, from TaskManager/Task perspective:
+;;   * respond to registration requests, then sends other commands (SubmitTask, CancelTask)
+;;   * respond to RequestNextInputSplit
+
+;; * TaskManager, from JobManager perspective:
+;;   * send multiple registration requests until accepted
+;;   * unregister on JobManagerTerminated
+;;   * respond to SubmitTask (always cancel when not registered)
+;;   * respond to CancelTask (always failure when not registered)
+;;   * sends UpdateTaskExecutionState sometimes
+;; * JobManager (full program), from client POV:
+;;   * after Submit/Cancel, might get Finished/Canceled results
+;;   * Cancel gets a success or failure right away
+
+
+;; Missed responses to check with specs:
+;; * ACK SubmitTask in TaskManager
+;; * TaskManager registration acknowledgment
