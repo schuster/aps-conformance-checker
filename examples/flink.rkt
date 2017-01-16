@@ -238,7 +238,7 @@
       [(CancelRunnerTask to-cancel-id)
        (cond
          [(= to-cancel-id (: task id))
-          (send task-manager (UpdateTaskExecutionState (: task id) (Cancelled)))
+          (send task-manager (UpdateTaskExecutionState to-cancel-id (Cancelled)))
           (goto AwaitingTask)]
          [else (goto AboutToRunTask task)])]
       [(NextInputSplit items) (goto AboutToRunTask task)])
@@ -274,7 +274,7 @@
       [(CancelRunnerTask to-cancel-id)
        (cond
          [(= to-cancel-id id)
-          (send task-manager (UpdateTaskExecutionState (: task id) (Cancelled)))
+          (send task-manager (UpdateTaskExecutionState id (Cancelled)))
           (goto AwaitingTask)]
          [else (goto WaitingForNextSplit id word-count)])])))
 
