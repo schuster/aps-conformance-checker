@@ -127,7 +127,7 @@
 
 (define-type InputSplitRequest
   (Union
-   [RequestNextInputSplit (Addr (Union [NextInputSplit (Vectorof String)]))]))
+   [RequestNextInputSplit JobTaskId (Addr (Union [NextInputSplit (Vectorof String)]))]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; TaskRunner -> TaskManager Communication
@@ -314,7 +314,7 @@
       [(UpdateTaskExecutionState id state)
        ;; might happen if we got disconnected but the runners were still running
        (goto AwaitingRegistration idle-runners)]
-      [(JobManagerTerminated) (goto AwaitingRegistration)])
+      [(JobManagerTerminated) (goto AwaitingRegistration idle-runners)])
     (timeout 5000
       (send job-manager (RegisterTaskManager my-id 2 self))
       (goto AwaitingRegistration idle-runners)))
