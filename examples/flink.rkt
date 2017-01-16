@@ -309,7 +309,7 @@
        (send ack-dest (Failure (: task id)))
        (goto AwaitingRegistration idle-runners)]
       [(CancelTask id ack-dest)
-       (send ack-dest (CancellationFailure))
+       (send ack-dest (Failure id))
        (goto AwaitingRegistration idle-runners)]
       [(UpdateTaskExecutionState id state)
        ;; might happen if we got disconnected but the runners were still running
