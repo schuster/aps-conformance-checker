@@ -78,10 +78,6 @@
   [data (Vectorof Nat)]
   [next-send Nat])
 
-(define-record RunningTask
-  [task-manager Nat]
-  [type TaskExecutionType])
-
 (define-record ManagedTaskManager
   ;; TODO: fix this type
   [addr (Addr TaskManagerInput)]
