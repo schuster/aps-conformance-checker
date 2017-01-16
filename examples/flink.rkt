@@ -88,9 +88,13 @@
   [task ReadyTask]
   [task-manager TaskManagerId])
 
+(define-variant JobResult
+  (JobResultSuccess [result (Hash String Nat)])
+  (JobResultFailure))
+
 (define-record JobCompletionInfo
   [final-task-id Nat]
-  [client (Addr Nat)])
+  [client (Addr JobResult)])
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -98,6 +102,10 @@
   (Finished [result (Hash String Nat)])
   ;; TODO: the rest of the states
   )
+
+(define-variant CancellationResult
+  (CancellationSuccess)
+  (CancellationFailure))
 
 ;; TODO: move this into some other definition
 (define-variant MiscCommands
@@ -113,7 +121,8 @@
   ;; tasks
   ;; TODO: fix this type
   (RegisterRunner [addr (Addr TaskRunnerInput)])
-  (SubmitJob [job Job] [client (Addr (Hash String Nat))])
+  (SubmitJob [job Job] [client (Addr JobResult)])
+  (CancelJob [id Nat] [result-dest (Addr CancellationResult)])
 
   ;; these two are responses to SubmitTask
   (Acknowledge [id JobTaskId])
@@ -294,20 +303,6 @@
                 (cons (: busy-runner addr) idle-runners))])
          (send job-manager (RegisterTaskManager my-id 2 self))
          (goto AwaitingRegistration idle-runners))])))
-
-
-;; So, Job Manager inputs:
-;; * SubmitJob
-;; * CancelJob
-;; * Register task manager
-;; * Heartbeat (maybe)
-;; * TaskResult (UpdateTaskExecutionState)
-;;   * this also triggers new consumers to be queued
-;; * FreeSlot (whatever this is called in their system)
-;; * RequestNextInputSplit
-;; * timeouts?
-
-;; TODO: add numeric IDs to task managers; put into registration message
 
 (define-actor JobManagerInput
   (JobManager)
@@ -537,7 +532,7 @@
                 [(Just job-info)
                  (cond
                    [(= (: id task-id) (: job-info final-task-id))
-                    (send (: job-info client) result)
+                    (send (: job-info client) (JobResultSuccess result))
                     (goto ManagingJobs
                           task-managers
                           (hash-remove active-jobs (: id job-id))
@@ -581,41 +576,61 @@
                (: submission-result unsent-tasks)
                (: submission-result running-tasks)
                partitions))]
-      ;; TODO: other commands
-      ;; TODO: remove partition when a task completes successfully (or when its task/job is cancelled)
-      )
-    ;; handle now: submit job, register, task result, free slot?, request next input
-
-    ;; state:
-    ;; remaininig partition data (hmm.. what if we restart a task?)
-    ;; task managers: available slots
-    ;; running jobs
-    ;; running tasks? (at least need to be able to tell TMs to cancel tasks when user wants to cancel a job)
-
-    ;; Job manager needs to track:
-    ;; * running jobs, and their state (cancelled or not)
-    ;; * running tasks, tasks waiting to go
-    ;; * available partitions (remove them once they're done)
-    ;; * registered task managers (maybe I do this part later... just assume static topology at first and deal with task managers later)
-    ;; * available slots on task managers
-
-    )))))
-
-;; Tests to run/scenarios to complete:
-;; * send job, it completes
-;; * multiple jobs running at once
-;; * cancel a job while running
-;; * cancel a job after it completed
-;; * task manager is lost while processing a task; task is restarted elsewhere
-;; * lost task manager tries to send a result (maybe I don't need to deal with that level of reliability)
-;; * task manager rejoins after being lost
-
-;; Plan: successful path, then cancellation, then registration/deregistration
-
-;; Idea: de-registration happens like this: we timeout if the task doesn't come back for a while. When that happens, we assume the task manager is dead (but don't try to kill its other tasks, because that's hard - we let them time out). Then we let it re-register (how does it know it needs to re-register? Hmm... Maybe it has to timeout on waiting for messages from the job manager. Interesting property: for *every* task from job manager, we reset the re-register timer)
-
-;; Tests for TaskRunner:
-;; * submit then cancel (say, right after submission): make sure there's no result
+      [(CancelJob id-to-cancel result-dest)
+       (case (hash-ref active-jobs id-to-cancel)
+         [(Nothing)
+          (send result-dest (CancellationFailure))
+          (goto ManagingJobs task-managers active-jobs waiting-tasks ready-tasks running-tasks partitions)]
+         [(Just job-info)
+          ;; 1. Cancel running tasks
+          (let* ([run-remove-result
+                  (for/fold ([result (record [task-managers task-managers]
+                                             [running-tasks running-tasks])])
+                            ([execution (hash-values running-tasks)])
+                    (let ([task-id (: (: execution task) id)])
+                      (cond
+                        [(= (: task-id job-id) id-to-cancel)
+                         (record [task-managers
+                                  (case (hash-ref (: result task-managers) (: execution task-manager))
+                                    [(Nothing) (: result task-managers)]
+                                    [(Just m) (hash-set (: result task-managers)
+                                                        (: execution task-manager)
+                                                        (ManagedTaskManager (: m addr) (+ (: m available-slots) 1)))])
+                                  ]
+                                 [running-tasks (hash-remove running-tasks task-id)])]
+                        [else result])))]
+                 [task-managers (: run-remove-result task-managers)]
+                 [running-tasks (: run-remove-result running-tasks)]
+                 ;; 2. Clear partitions
+                 [partitions
+                  (for/fold ([remaining-partitions partitions])
+                            ([key (hash-keys partitions)])
+                    (if (= (: key job-id) id-to-cancel)
+                        (hash-remove remaining-partitions key)
+                        remaining-partitions))]
+                 ;; 3. Remove ready tasks
+                 [ready-tasks
+                  (for/fold ([remaining-ready-tasks (list)])
+                            ([ready-task ready-tasks])
+                    (if (= (: (: ready-task id) job-id) id-to-cancel)
+                        remaining-ready-tasks
+                        (cons ready-task remaining-ready-tasks)))]
+                 ;; 4. Remove waiting tasks
+                 [waiting-tasks
+                  (for/fold ([remaining-waiting-tasks (list)])
+                            ([waiting-task waiting-tasks])
+                    (if (= (: (: waiting-task id) job-id) id-to-cancel)
+                        remaining-waiting-tasks
+                        (cons waiting-task remaining-waiting--tasks)))])
+            (send (: job-info client) (JobResultFailure))
+            (send result-dest (CancellationSuccess))
+            (goto ManagingJobs
+                  task-managers
+                  (hash-remove active-jobs id-to-cancel)
+                  waiting-tasks
+                  ready-tasks
+                  running-tasks
+                  partitions))])]))))))
 
 (module+ test
   (require
@@ -646,6 +661,11 @@
   (define (AcknowledgeRegistration) (variant AcknowledgeRegistration))
   (define (TaskManagerTerminated id) (variant TaskManagerTerminated id))
   (define (JobManagerTerminated) (variant JobManagerTerminated))
+  (define (JobResultSuccess result) (variant JobResultSuccess result))
+  (define (JobResultFailure) (variant JobResultFailure))
+  (define (CancelJob id canceller) (variant CancelJob id canceller))
+  (define (CancellationSuccess) (variant CancellationSuccess))
+  (define (CancellationFailure) (variant CancellationFailure))
 
   (define-match-expander JobTaskId/pat
     (lambda (stx)
@@ -787,7 +807,6 @@
 
   (define job-manager-program
     (desugar
-     ;; TODO: put real types on receptionists here
      `(program (receptionists [job-manager Nat]) (externals)
                ,@flink-definitions
                (actors [job-manager (spawn jm-loc JobManager)]
@@ -815,7 +834,7 @@
     (define client (make-async-channel))
     (async-channel-put jm (SubmitJob job client))
     ;; 3. Wait for response
-    (check-unicast client (hash "a" 5 "b" 5 "c" 2) #:timeout 30))
+    (check-unicast client (JobResultSuccess (hash "a" 5 "b" 5 "c" 2)) #:timeout 30))
 
   (test-case "Job manager runs multiple jobs to completion (more tasks than task runners)"
     (define jm (csa-run job-manager-program))
@@ -841,8 +860,8 @@
     (async-channel-put jm (SubmitJob job1 client1))
     (async-channel-put jm (SubmitJob job2 client2))
     ;; 3. Wait for response
-    (check-unicast client1 (hash "a" 5 "b" 5 "c" 2) #:timeout 30)
-    (check-unicast client2 (hash "x" 3 "y" 5 "z" 4) #:timeout 30))
+    (check-unicast client1 (JobResultSuccess (hash "a" 5 "b" 5 "c" 2)) #:timeout 30)
+    (check-unicast client2 (JobResultSuccess (hash "x" 3 "y" 5 "z" 4)) #:timeout 30))
 
   (define single-tm-job-manager-program
     (desugar
@@ -869,7 +888,7 @@
     (define client (make-async-channel))
     (async-channel-put jm (SubmitJob job client))
     (async-channel-put jm (TaskManagerTerminated 2))
-    (check-unicast client (hash "a" 5 "b" 5 "c" 2) #:timeout 30))
+    (check-unicast client (JobResultSuccess (hash "a" 5 "b" 5 "c" 2)) #:timeout 30))
 
   (test-case "Only task manager drops out then reconnects; all tasks are still completed"
     (match-define-values (jm tm) (csa-run single-tm-job-manager-program))
@@ -889,4 +908,50 @@
     (sleep 1)
     (async-channel-put tm (JobManagerTerminated))
     ;; At this point, the TaskManager should attempt to re-register, then finish the remaining tasks
-    (check-unicast client (hash "a" 5 "b" 5 "c" 2) #:timeout 30)))
+    (check-unicast client (JobResultSuccess (hash "a" 5 "b" 5 "c" 2)) #:timeout 30))
+
+  (test-case "Cancelling a job sends cancel result to canceller and client, client gets no result"
+    (define jm (csa-run job-manager-program))
+    (sleep 1) ; wait for the registrations to go through
+    (define job (Job 1
+                     (list (Task 1 (Map (vector "a" "b" "c" "a" "b" "c")))
+                           (Task 2 (Map (vector "a" "b")))
+                           (Task 5 (Reduce 1 2)))
+                     5))
+    (define client (make-async-channel))
+    (async-channel-put jm (SubmitJob job client))
+    (sleep 1)
+    (define canceller (make-async-channel))
+    (async-channel-put jm (CancelJob 1 canceller))
+    (check-unicast canceller (CancellationSuccess))
+    (check-unicast client (JobResultFailure))
+    (check-no-message client #:timeout 10))
+
+  (test-case "Cancelling a non-existent job sends back cancel-failure"
+    (define jm (csa-run job-manager-program))
+    (sleep 1) ; wait for the registrations to go through
+    (define canceller (make-async-channel))
+    (async-channel-put jm (CancelJob 1 canceller))
+    (check-unicast canceller (CancellationFailure)))
+
+  (test-case "Cancelling a job after completion ends with CancellationFailure"
+    (define jm (csa-run job-manager-program))
+    ;; 1. Wait for the task managers to register with the job manager
+    (sleep 3)
+    ;; 2. Submit the job
+    (define job (Job 1
+                     (list (Task 1 (Map (vector "a" "b" "c" "a" "b" "c")))
+                           (Task 2 (Map (vector "a" "b")))
+                           (Task 5 (Reduce 1 2)))
+                     5))
+    (define client (make-async-channel))
+    (async-channel-put jm (SubmitJob job client))
+    ;; 3. Wait for response
+    (check-unicast client (JobResultSuccess (hash "a" 3 "b" 3 "c" 2)) #:timeout 30)
+    (define canceller (make-async-channel))
+    (async-channel-put jm (CancelJob 1 canceller))
+    (check-unicast canceller (CancellationFailure))))
+
+;; TODO: organize the type definitions
+;; TODO: check type annotations
+;; TODO: fix remaining TODOs
