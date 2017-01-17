@@ -13,6 +13,8 @@
  ;; check-conformance/config
  ;; prune-unsupported
  ;; partition-by-satisfaction
+ ;; impl-config-without-state-defs
+ ;; spec-config-without-state-defs
  )
 
 (require
