@@ -839,13 +839,43 @@
          `(for/fold ([,result-var ,stuck-result])
                     ([,item-var ,stuck-items])
             ,body)))]
-    ;; TODO: add a goto rule
+    ;; Communication
+    [`(send ,e-addr ,e-message)
+     (eval-and-then* (list e-addr e-message) effects
+       (lambda (vs effects)
+         (match-define (list v-addr v-message) vs)
+         (define addr-type (term (address-type/mf ,v-addr)))
+         (define addr (term (address-strip-type/mf ,v-addr)))
+         (define quantity (if (in-loop-context?) 'many 'single))
+         (match-define `(,sends ,spawns) effects)
+         (value-result v-message
+                       (term ((add-output ,sends [,addr (coerce ,v-message ,addr-type) ,quantity])
+                              ,spawns))))
+       (lambda (stucks) `(send ,@stucks)))]
+    ;; Spawns
+    [`(spawn ,loc ,type ,init-exp ,raw-state-defs ...)
+     (define address (if (in-loop-context?) `(blurred-spawn-addr ,loc) `(spawn-addr ,loc NEW)))
+     (define state-defs
+       (for/list ([def raw-state-defs])
+         (term (csa#-subst/Q# ,def self (,type ,address)))))
+     (eval-and-then init-exp effects
+       (lambda (goto-val effects)
+         (match-define (list sends spawns) effects)
+         (value-result address
+                       (list sends
+                             (term (add-spawn ,spawns [,address (,state-defs ,goto-val)])))))
+       (lambda (stuck) `(spawn ,loc ,type ,stuck ,@raw-state-defs)))]
+    ;; Goto
+    [`(goto ,state-name ,args ...)
+     (eval-and-then* args effects
+       (lambda (arg-vals effects) (value-result `(goto ,state-name ,@arg-vals) effects))
+       (lambda (stucks) `(goto ,state-name ,@stucks)))]
     [`(,(or 'list-val 'vector-val 'hash-val) ,_ ...) (value-result exp effects)]
     ;; Misc. Values
     [`(variant ,tag ,exps ...)
      (eval-and-then* exps effects
-                     (lambda (vs effects) (value-result `(variant ,tag ,@vs) effects))
-                     (lambda (stucks) `(variant ,tag ,@stucks)))]
+       (lambda (vs effects) (value-result `(variant ,tag ,@vs) effects))
+       (lambda (stucks) `(variant ,tag ,@stucks)))]
     [`(* ,type) (value-result exp effects)]
     [`(,_
        ,(or `(init-addr ,_)
@@ -1565,6 +1595,55 @@
                                 [(True) item]
                                 [(False) result]))
                            (list `(variant X) `(variant A) `(variant B)`(variant C)))
+  (check-exp-steps-to-all? `(for/fold ([result (variant X)])
+                                      ([item (list (* Nat))])
+                              (variant Y))
+                           (list `(variant X) `(variant Y)))
+  (check-equal? (eval-machine
+                 `(spawn loc Nat
+                         (goto Foo (begin (variant A)))
+                         (define-state (Foo) (m) (goto Foo)))
+                 empty-effects)
+                (value-result `(spawn-addr loc NEW)
+                              `(() ([(spawn-addr loc NEW)
+                                     (((define-state (Foo) (m) (goto Foo)))
+                                      (goto Foo (variant A)))]))))
+
+  (test-case "Spawn in loop is a collective actor"
+    (check-same-items?
+     (first
+      (eval-machine
+       `(for/fold ([dummy (* Nat)])
+                  ([item (* (Listof Nat))])
+          (begin
+            (spawn loc Nat (goto Foo (variant A)))
+            (* Nat)))
+       empty-effects))
+     (list
+      (machine-state `(* Nat) `(() ()))
+      (machine-state `(* Nat) `(() ([(blurred-spawn-addr loc) (() (goto Foo (variant A)))]))))))
+
+  (check-exp-steps-to? `(goto S (begin (variant A)) (begin (variant B) (variant C)))
+                       `(goto S (variant A) (variant C)))
+
+  (check-equal?
+   (eval-machine
+    `(begin (send (Nat (init-addr 1)) (* Nat)) (variant X))
+    empty-effects)
+   (eval-machine-result (list (machine-state `(variant X) `(([(init-addr 1) (* Nat) single]) ())))
+                        null))
+
+  (test-case "Send in loop is a many-of message"
+    (check-same-items?
+     (first
+      (eval-machine
+       `(for/fold ([dummy (* Nat)])
+                  ([item (* (Listof Nat))])
+          (send (Nat (init-addr 1)) item))
+       empty-effects))
+     (list
+      (machine-state `(* Nat) `(() ()))
+      (machine-state `(* Nat) `(([(init-addr 1) (* Nat) many]) ())))))
 
   ;; NOTE: these are the old tests for checking sorting of loop-sent messages, which I don't do
   ;; anymore. Keeping them around in case I change my mind
