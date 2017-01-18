@@ -111,7 +111,7 @@
        (τ (obs-ext natural))
        (* (Addr τ)))
   ;; H# = handler machine state (exp + outputs + spawns so far)
-  (H# (e# ([a# v# m] ...) ((a#int b#) ...)))
+  (H# (e# [([a# v# m] ...) ((a#int b#) ...)]))
   (E# hole
       (spawning a#int τ E# Q# ...)
       (goto q v# ... E# e# ...)
@@ -490,25 +490,24 @@
     (define final-machine-states
       (match (hash-ref eval-cache handler-machine #f)
         [#f
-         (define all-final-states
-           ;; Remove states stuck as a result of over-abstraction; we can assume these would never
-           ;; happen at run-time
-           (filter (negate stuck-at-empty-list-ref?)
-                   (apply-reduction-relation* handler-step# handler-machine #:cache-all? #t)))
-         (unless (andmap complete-handler-config? all-final-states)
+         ;; REFACTOR: have eval-machine just take the whole machine as input
+         ;;
+         ;; REFACTOR: don't return stuck states; just error if we run into them
+         (match-define (list init-exp init-effects) handler-machine)
+         (match-define (list value-states stuck-states) (eval-machine init-exp init-effects))
+         (unless (empty? stuck-states)
            (error 'eval-handler
                   "Abstract evaluation did not complete\nInitial state: ~s\nFinal stuck states:~s"
                   handler-machine
-                  (filter (negate complete-handler-config?) all-final-states)))
-         (hash-set! eval-cache handler-machine all-final-states)
-         all-final-states]
+                  stuck-states))
+         (hash-set! eval-cache handler-machine value-states)
+         value-states]
         [cached-results cached-results]))
 
     (for/list ([machine-state final-machine-states])
       ;; TODO: rename outputs to something like "transmissions", because some of them stay internal
       ;; to the configuration
-      (match-define (list final-exp outputs spawns) machine-state)
-      ;; TODO: check that there are no internal loop outputs, or refactor that code entirely
+      (match-define (list final-exp (list outputs spawns)) machine-state)
       (redex-let csa# ([(in-hole E# (goto q v#_param ...)) final-exp])
         (csa#-transition-effect
          trigger
@@ -992,7 +991,7 @@
 (define (machine-state exp fx)
   (list exp fx))
 
-(define (inject-machine exp)
+(define (inject/H# exp)
   (machine-state exp empty-effects))
 
 (define (eval-machine-result values stucks)
@@ -1007,407 +1006,7 @@
       (map list vars vals)
       #f))
 
-;; ---------------------------------------------------------------------------------------------------
-
-;; Returns #t if the given handler machine state is unable to step because of an over-approximation in
-;; the abstraction (assumes that there are no empty vector/list/hash references in the actual running
-;; progrm)
-(define (stuck-at-empty-list-ref? h)
-  (redex-let csa# ([(e# _ _) h])
-    (or (redex-match? csa# (in-hole E# (list-ref   (list-val)      v#)) (term e#))
-        (redex-match? csa# (in-hole E# (vector-ref (vector-val)    v#)) (term e#))
-        (redex-match? csa# (in-hole E# (hash-ref   (hash-val () ()) v#)) (term e#)))))
-
-(module+ test
-  (test-true "stuck config 1"
-    (stuck-at-empty-list-ref? (inject/H# (term (vector-ref (vector-val) (* Nat))))))
-  (test-true "stuck config 2"
-    (stuck-at-empty-list-ref? (inject/H# (term (list-ref (list-val) (* Nat))))))
-  (test-true "stuck config 3"
-    (stuck-at-empty-list-ref? (inject/H# (term (hash-ref (hash-val () ()) (* Nat)))))))
-
-(define (complete-handler-config? c)
-  (redex-match csa# ((in-hole E# (goto q v#_param ...)) any_output any_spawns) c))
-
-(define (inject/H# exp)
-  (redex-let csa#
-             ([e# exp]
-              [H# (term (,exp () ()))])
-             (term H#)))
-
 (define abort-evaluation-param (make-parameter #f))
-
-(define handler-step#
-  (reduction-relation csa#
-    #:domain H#
-
-    ;; let, match, begin, send, goto
-    (==> (begin v# e# e#_rest ...)
-         (begin e# e#_rest ...)
-         Begin1)
-    (==> (begin v#)
-         v#
-         Begin2)
-
-    (==> (case (* (Union _ ... [t τ ..._n] _ ...))
-           [(t x ..._n) e#]
-           _ ...)
-         (csa#-subst-n/mf e# [x (* τ)] ...)
-         CaseWildcardSuccess)
-    (==> (case (* (Union [t_val τ_val ...] ...))
-           ;; Only fail if there is at least one more clause; type safety guarantees that at least one
-           ;; clause matches
-           [(t_1 x_1 ...) e#_1]
-           [(t_2 x_2 ...) e#_2]
-           [(t_rest x_rest ...) e#_rest] ...)
-         (case (* (Union [t_val τ_val ...] ...))
-           [(t_2 x_2 ...) e#_2]
-           [(t_rest x_rest ...) e#_rest] ...)
-         CaseWildcardFailure)
-    (==> (case (variant t v# ..._n)
-           [(t x ..._n) e#]
-           _ ...)
-         (csa#-subst-n/mf e# [x v#] ...)
-         CaseVariantSuccess)
-    (==> (case (variant t v# ...)
-           [(t_other x ...) e#]
-           [(t_rest x_rest ...) e#_rest] ...)
-         (case (variant t v# ...)
-           [(t_rest x_rest ...) e#_rest] ...)
-         (side-condition (not (equal? (term t) (term t_other))))
-         CaseVariantFailure)
-
-    ;; Let
-    (==> (let ([x v#] ...) e#)
-         (csa#-subst-n/mf e# [x v#] ...)
-         Let)
-
-    ;; Records
-    (==> (: (record _ ... [l v#] _ ...) l)
-         v#
-         RecordLookup)
-    (==> (: (* (Record _ ... [l τ] _ ...)) l)
-         (* τ)
-         RecordWildcardLookup)
-    (==> (! (record any_1 ... [l _] any_2 ...) [l v#])
-         (record any_1 ... [l v#] any_2 ...)
-         RecordUpdate)
-    (==> (! (* (Record any_1 ... [l τ] any_2 ...)) [l v#])
-         (* (Record any_1 ... [l τ] any_2 ...))
-         RecordWildcardUpdate)
-
-    ;; Recursive Types
-
-    (==> (fold τ (* _))
-         (* τ)
-         FoldWildcard)
-    (==> (fold τ v#)
-         (folded τ v#)
-         (side-condition (not (redex-match? csa# (* _) (term v#))))
-         (side-condition (< (term (fold-depth/mf v#)) MAX-RECURSION-DEPTH))
-         FoldPreMaxDepth)
-    (==> (fold τ v#)
-         (* τ)
-         (side-condition (not (redex-match? csa# (* _) (term v#))))
-         (side-condition (= (term (fold-depth/mf v#)) MAX-RECURSION-DEPTH))
-         ;; We're currently not able to give any addresses in a "folded" past our maximum fold-depth a
-         ;; sound abstraction if the address is an internal address or an external address observed by
-         ;; the spec, so we take the easy way out here and just bail out if the value to be folded
-         ;; contains *any* address.
-         (side-condition (when (csa#-contains-address? (term v#)) ((abort-evaluation-param))))
-         FoldAtMaxDepth)
-    (==> (unfold τ (folded τ v#))
-         v#
-         Unfold)
-    (==> (unfold τ (* (minfixpt X τ)))
-         (* (type-subst τ X (minfixpt X τ)))
-         UnfoldWildcard)
-
-    ;; Primops
-    (==> (primop (* Nat) (* Nat))
-         (variant True)
-         (side-condition (member (term primop) (list '< '<= '> '>= '=)))
-         BinaryNumericPredicate1)
-    (==> (primop (* Nat) (* Nat))
-         (variant False)
-         (side-condition (member (term primop) (list '< '<= '> '>= '=)))
-         BinaryNumericPredicate2)
-
-    (==> (primop (* Nat) (* Nat))
-         (* Nat)
-         (side-condition (member (term primop) (list '+ '- 'mult '/ 'arithmetic-shift)))
-         Arith)
-
-    (==> (primop (* Nat))
-         (* Nat)
-         (side-condition (member (term primop) (list 'random 'ceiling)))
-         UnaryNumericOp)
-
-    (==> (and v#_1 v#_2)
-         (csa#-and (canonicalize-boolean v#_1) (canonicalize-boolean v#_2))
-         And)
-    (==> (or v#_1 v#_2)
-         (csa#-or (canonicalize-boolean v#_1) (canonicalize-boolean v#_2))
-         Or)
-    (==> (not v#)
-         (csa#-not (canonicalize-boolean v#))
-         Not)
-
-    ;; For now, we're conservative and always assume both results are possible
-    (==> (= v#_1 v#_2)
-         (variant True)
-         EqualityTrue)
-    (==> (= v#_1 v#_2)
-         (variant False)
-         EqualityFalse)
-
-    ;; Vectors, Lists, and Hashes
-
-    (==> (list v# ...)
-         (normalize-collection (list-val v# ...))
-         ListEval)
-    (==> (cons v#_new (list-val v# ...))
-         (normalize-collection (list-val v#_new v# ...))
-         Cons)
-    (==> (cons v# (* (Listof τ)))
-         (* (Listof τ))
-         WildcardCons)
-    (==> (list-as-variant (list-val _ ...))
-         (variant Empty)
-         ListAsVariantEmpty)
-    (==> (list-as-variant (list-val any_1 ... v# any_2 ...))
-         (variant Cons v# (list-val any_1 ... v# any_2 ...))
-         ListAsVariantCons)
-    (==> (list-as-variant (* _))
-         (variant Empty)
-         WildcardListAsVariantEmpty)
-    (==> (list-as-variant (* (Listof τ)))
-         (variant Cons (* τ) (* (Listof τ)))
-         WildcardListAsVariantEmpt)
-    (==> (list-ref (list-val _ ... v# _ ...) (* Nat))
-         v#
-         ListRef)
-    (==> (list-ref (* (Listof τ)) (* Nat))
-         (* τ)
-         WildcardListRef)
-    (==> (length (list-val v# ...))
-         (* Nat)
-         ListLength)
-    (==> (length (* (Listof _)))
-         (* Nat)
-         WildcardListLength)
-    (==> (vector v# ...)
-         (normalize-collection (vector-val v# ...))
-         VectorEval)
-    (==> (vector-ref (vector-val _ .... v# _ ...) (* Nat))
-         v#
-         VectorRef)
-    (==> (vector-ref (* (Vectorof τ)) (* Nat))
-         (* τ)
-         VectorWildcardRef)
-    (==> (vector-take (vector-val v# ...) (* Nat))
-         (vector-val v# ...)
-         VectorTake)
-    (==> (vector-take (* (Vectorof τ)) (* Nat))
-         (* (Vectorof τ))
-         VectorWildcardTake)
-    (==> (vector-drop (vector-val v# ...) (* Nat))
-         (vector-val v# ...)
-         VectorDrop)
-    (==> (vector-drop (* (Vectorof τ)) (* Nat))
-         (* (Vectorof τ))
-         VectorWildcardDrop)
-    (==> (vector-length (vector-val v# ...))
-         (* Nat)
-         VectorLength)
-    (==> (vector-length (* (Vectorof τ)))
-         (* Nat)
-         VectorWildcardLength)
-    (==> (vector-copy (vector-val v# ...) (* Nat) (* Nat))
-         (vector-val v# ...)
-         VectorCopy)
-    (==> (vector-copy (* (Vectorof τ)) (* Nat) (* Nat))
-         (* (Vectorof τ))
-         VectorWildcardCopy)
-    ;; TODO: figure out if the type is ever *not* big enough to also cover the other vector
-    (==> (vector-append (vector-val v#_1 ...) (vector-val v#_2 ...))
-         (normalize-collection (vector-val v#_1 ... v#_2 ...))
-         VectorAppend)
-    (==> (vector-append (* (Vectorof τ)) _)
-         (* (Vectorof τ))
-         VectorWildcardAppend1)
-    (==> (vector-append _ (* (Vectorof τ)))
-         (* (Vectorof τ))
-         VectorWildcardAppend2)
-    (==> (hash [v#_key v#_val] ...)
-         (normalize-collection (hash-val (v#_key ...) (v#_val ...)))
-         HashEval)
-    (==> (hash-ref (hash-val _ (v#_1 ... v# v#_2 ...)) v#_key)
-         (variant Just v#)
-         HashRefSuccess)
-    (==> (hash-ref (* (Hash τ_1 τ_2)) v#_key)
-         (variant Just (* τ_2))
-         HashWildcardRefSuccess)
-    (==> (hash-ref (hash-val _ _) v#_key)
-         (variant Nothing)
-         HashRefFailure)
-    (==> (hash-ref (* (Hash τ_1 τ_2)) v#_key)
-         (variant Nothing)
-         HashWildcardRefFailure)
-    (==> (hash-keys (hash-val (v#_key ...) _))
-         (list-val v#_key ...)
-         HashKeys)
-    (==> (hash-keys (* (Hash τ_1 τ_2)))
-         (* (Listof τ_1))
-         WildcardHashKeys)
-    (==> (hash-values (hash-val _ (v# ...)))
-         (list-val v# ...)
-         HashValues)
-    (==> (hash-values (* (Hash τ_1 τ_2)))
-         (* (Listof τ_2))
-         WildcardHashValues)
-    (==> (hash-set (hash-val (v#_keys ...) (v#_vals ...)) v#_new-key v#_new-val)
-         (normalize-collection (hash-val (v#_keys ... v#_new-key) (v#_vals ... v#_new-val)))
-         HashSet)
-    (==> (hash-set (* (Hash τ_1 τ_2)) v#_key v#_value)
-         (* (Hash τ_1 τ_2))
-         HashWildcardSet)
-    (==> (hash-remove (hash-val any_keys any_vals) v#_remove)
-         (hash-val any_keys any_vals)
-         HashRemove)
-    (==> (hash-remove (* (Hash τ_1 τ_2)) v#_remove)
-         (* (Hash τ_1 τ_2))
-         HashRemoveWildcard)
-    (==> (hash-has-key? (hash-val any_keys any_vals) v#_key)
-         (variant True)
-         HashHasKeyTrue)
-    (==> (hash-has-key? (hash-val any_keys any_vals) v#_key)
-         (variant False)
-         HashHasKeyFalse)
-    (==> (hash-has-key? (* (Hash τ_1 τ_2)) v#_key)
-         (variant True)
-         WildcardHashHasKeyTrue)
-    (==> (hash-has-key? (* (Hash τ_1 τ_2)) v#_key)
-         (variant False)
-         WildcardHashHasKeyFalse)
-    (==> (hash-empty? (hash-val _ _))
-         (variant True)
-         HashEmptyTrue)
-    (==> (hash-empty? (hash-val _ _))
-         (variant False)
-         HashEmptyFalse)
-    (==> (hash-empty? (* (Hash _ _)))
-         (variant True)
-         WildcardHashEmptyTrue)
-    (==> (hash-empty? (* (Hash _ _)))
-         (variant False)
-         WildcardHashEmptyFalse)
-
-    ;; Loops
-    (==> (for/fold ([x_fold v#_fold])
-                   ;; the "any" pattern lets us match both lists and vectors
-                   ([x_item (any_constructor v#_1 ... v#_item v#_2 ...)])
-           e#_body)
-         (for/fold ([x_fold e#_unrolled-body])
-                   ([x_item (any_constructor v#_1 ... v#_item v#_2 ...)])
-           e#_body)
-         (side-condition (member (term any_constructor) (list 'list-val 'vector-val)))
-         (where e#_unrolled-body
-                (loop-context (csa#-subst-n/mf e#_body [x_fold v#_fold] [x_item v#_item])))
-         ForLoop1)
-    (==> (for/fold ([x_fold v#_fold])
-                   ;; the "any" here lets us abstract over Listof/Vectorof
-                   ([x_item (* (any_type τ))])
-           e#_body)
-         (for/fold ([x_fold e#_unrolled-body])
-                   ([x_item (* (any_type τ))])
-           e#_body)
-         (side-condition (member (term any_type) (list 'Listof 'Vectorof)))
-         (where e#_unrolled-body
-                (loop-context (csa#-subst-n/mf e#_body [x_fold v#_fold] [x_item (* τ)])))
-         ForLoopWildcard1)
-    (==> (for/fold ([x_fold v#_fold]) _ _)
-         v#_fold
-         ForLoop2)
-
-    (==> (loop-context v#)
-         v#
-         RemoveLoopContext)
-
-    (==> (sort-numbers-descending v#)
-         v#
-         Sort)
-
-    ;; Communication
-
-    (--> ((in-hole E# (send τa# v#)) any_outputs any_spawns)
-         ((in-hole E# v#)            (add-output any_outputs [a# (coerce v# τ) single]) any_spawns)
-         ;; regular send only occurs outside of loop contexts
-         (side-condition (not (redex-match csa# (in-hole E# (loop-context E#_2)) (term E#))))
-         (where τ (address-type/mf τa#))
-         (where a# (address-strip-type/mf τa#))
-         Send)
-    (--> ((in-hole E# (loop-context (in-hole E#_2 (send τa# v#))))
-          any_outputs
-          any_spawns)
-         ((in-hole E# (loop-context (in-hole E#_2 v#)))
-          ;; NOTE: I used to have a sort here on the loop-outputs; is it still necessary for good
-          ;; performance? My hunch is the sexp comparison in sort takes more time than the sort saves
-          (add-output any_outputs [a# (coerce v# τ) many])
-          any_spawns)
-         (where τ (address-type/mf τa#))
-         (where a# (address-strip-type/mf τa#))
-         LoopSend)
-
-    ;; Spawn
-    (--> ((in-hole E# (spawn any_location τ e# Q# ...)) any_outputs any_spawns)
-         ((in-hole E# (spawning a#int τ (csa#-subst-n/mf e# [self (τ a#int)]) (csa#-subst/Q# Q# self (τ a#int)) ...))
-          any_outputs
-          any_spawns)
-         (side-condition (not (redex-match csa# (in-hole E# (loop-context E#_2)) (term E#))))
-         (where a#int (spawn-addr any_location NEW))
-         SpawnStart)
-    ;; actors spawned inside a loop are immediately converted to collective actors
-    (--> ((in-hole E# (loop-context (in-hole E#_2 (spawn any_location τ e# Q# ...)))) any_outputs any_spawns)
-         ((in-hole E# (loop-context (in-hole E#_2 (spawning a#int τ (csa#-subst-n/mf e# [self (τ a#int)]) (csa#-subst/Q# Q# self (τ a#int)) ...)))) any_outputs any_spawns)
-         (where a#int (blurred-spawn-addr any_location))
-         LoopSpawnStart)
-    (--> ((in-hole E# (spawning a#int τ (in-hole E#_2 (goto q v# ...)) Q# ...))
-          any_outputs
-          any_spawns)
-         ((in-hole E# (τ a#int))
-          any_outputs
-          (add-spawn any_spawns [a#int ((Q# ...) (goto q v# ...))]))
-         SpawnFinish)
-
-    ;; Debugging
-
-    (==> (printf string v# ...)
-         (* Nat)
-         (side-condition (apply printf (term (string v# ...))))
-         Printf)
-
-    (==> (print-len (list v# ...))
-         (* Nat)
-         (side-condition (printf "~s" (length (term (v# ...)))))
-         PrintLenList)
-    (==> (print-len (* (Listof _)))
-         (* Nat)
-         (side-condition (printf "1"))
-         PrintLenListWildcard)
-    (==> (print-len (vector-val v# ...))
-         (* Nat)
-         (side-condition (printf "~s" (length (term (v# ...)))))
-         PrintLenVector)
-    (==> (print-len (* (Vectorof _)))
-         (* Nat)
-         (side-condition (printf "1"))
-         PrintLenVectorWildcard)
-
-    with
-    [(--> ((in-hole E# old) any_outputs any_spawns)
-          ((in-hole E# new) any_outputs any_spawns))
-     (==> old new)]))
 
 (module+ test
   (define (exp-reduce* e)
