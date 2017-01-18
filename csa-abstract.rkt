@@ -871,6 +871,14 @@
        (lambda (arg-vals effects) (value-result `(goto ,state-name ,@arg-vals) effects))
        (lambda (stucks) `(goto ,state-name ,@stucks)))]
     [`(,(or 'list-val 'vector-val 'hash-val) ,_ ...) (value-result exp effects)]
+    ;; Debugging
+    [`(printf ,args ...)
+     (eval-and-then* args effects
+       (lambda (vs effects)
+         (apply printf vs)
+         (value-result `(* Nat) effects))
+       (lambda (stucks) `(printf ,@stucks)))]
+    ;; TODO: add print-len back in for lists and vectors
     ;; Misc. Values
     [`(variant ,tag ,exps ...)
      (eval-and-then* exps effects
