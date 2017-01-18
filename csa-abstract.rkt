@@ -637,6 +637,27 @@
               [_ (one-value-result v-rec effects)])]
            [_ (one-stuck-result `(! ,v-rec [,l ,v-field]) effects)]))
        (lambda (stuck) `(! ,stuck l)))]
+    ;; Recursive Types
+    [`(fold ,type ,exp)
+     (eval-and-then exp effects
+       (lambda (v effects)
+         (match v
+           [`(* ,_) (one-value-result `(* ,type) effects)]
+           [_
+            (if (< (term (fold-depth/mf ,v)) MAX-RECURSION-DEPTH)
+                (one-value-result `(folded ,type ,v) effects)
+                (if (csa#-contains-address? (term v#))
+                    ((abort-evaluation-param))
+                    (one-value-result `(* ,type) effects)))]))
+       (lambda (stuck) `(fold ,type ,stuck)))]
+    [`(unfold ,type ,e)
+     (eval-and-then e effects
+       (lambda (v effects)
+         (match v
+           [`(folded ,type ,val) (one-value-result val effects)]
+           [`(* (minfixpt ,name ,type))
+            (one-value-result (term (* (type-subst ,type name (minfixpt ,name ,type)))) effects)]
+           [_ (error 'eval-machine "Bad argument to unfold: ~s" v)])))]
     ;; Misc. Values
     [`(variant ,tag ,exps ...)
      (eval-and-then* exps effects
@@ -1219,19 +1240,17 @@
                        `(record [a (variant A)] [b (variant C)]))
   (check-exp-steps-to? `(! (* (Record [a (Union [A])] [b (Union [B] [C])])) [b (variant C)])
                        `(* (Record [a (Union [A])] [b (Union [B] [C])])))
-
-
-  ;; (check-exp-steps-to? (term (fold   (Union [A]) (variant A)))
-  ;;                      (term (folded (Union [A]) (variant A))))
-  ;; (define nat-list-type (term (minfixpt NatList (Union (Null) (Cons Nat NatList)))))
-  ;; (check-exp-steps-to? (term (fold   ,nat-list-type (variant Null)))
-  ;;                      (term (folded ,nat-list-type (variant Null))))
-  ;; (check-exp-steps-to? (term (fold   ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type))))
-  ;;                      (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
-  ;; (check-exp-steps-to? (term (fold ,nat-list-type (variant Cons (* Nat)
-  ;;                              (fold ,nat-list-type (variant Cons (* Nat)
-  ;;                                (fold ,nat-list-type (variant Null)))))))
-  ;;                      (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
+  (check-exp-steps-to? (term (fold   (Union [A]) (variant A)))
+                       (term (folded (Union [A]) (variant A))))
+  (define nat-list-type (term (minfixpt NatList (Union (Null) (Cons Nat NatList)))))
+  (check-exp-steps-to? (term (fold   ,nat-list-type (variant Null)))
+                       (term (folded ,nat-list-type (variant Null))))
+  (check-exp-steps-to? (term (fold   ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type))))
+                       (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
+  (check-exp-steps-to? (term (fold ,nat-list-type (variant Cons (* Nat)
+                               (fold ,nat-list-type (variant Cons (* Nat)
+                                 (fold ,nat-list-type (variant Null)))))))
+                       (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
 
 
   ;; ;; Equality checks
