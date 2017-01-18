@@ -516,6 +516,202 @@
          outputs
          spawns)))))
 
+;; ---------------------------------------------------------------------------------------------------
+;; Interpreter
+
+;; TODO: ideal thing would be a match-like macro that has special markers around the sub-terms to
+;; eval, and each clause only deals with the *values* (stuck states are returned automatically). I
+;; think that takes more macro-fu than I have time to learn right now, though (mostly because it
+;; requires handling ellipses in patterns). If I did ever write it, though, it would probably be a
+;; useful Racket package.
+;;
+;; Also, this should probably be written in a more canonical monad style (I think this is just a
+;; combination of a state monad and some kind of non-determinism monad), but I don't know enough about
+;; monads to do that right now.
+
+;; TODO: type definitions and names
+
+;; A MachineState is (Tuple Exp (Tuple Transmissions Spawns)), where Transmissions and Spawns are as in H#
+;;
+;; A ValueState is a MachineState where the Exp is a Value
+;;
+;; A StuckState is a MachineState where the Exp is a stuck expression
+;;
+;; An EvalResult is (Tuple (Listof ValueState) (Listof StuckState))
+
+;; MachineState -> (Tuple (Listof ValueState) (Listof StuckState))
+;;
+;; Reduces the given machine state into all reachable stuck states and value states
+(define (eval-machine exp effects)
+
+  ;; Tricky parts:
+  ;; * duplicates
+  ;; * stuck states
+  ;; * loops
+  ;; * non-determinism
+  ;; * effects (maybe, should be easy)
+
+  ;; TODO: figure out how to remove duplicate states
+
+  ;; TODO: add caching/memoization for for-loops. Although won't that return duplicates? Hmm...
+  (match exp
+    ;; Begin
+    [`(begin ,e1 ,e-rest ...)
+     (eval-and-then* (cons e1 e-rest) effects
+                     (lambda (vs effects) (one-value-result (last vs) effects))
+                     (lambda (stucks) `(begin ,@stucks)))]
+    ;; Case
+    [`(case ,e-variant ,clauses ...)
+     (eval-and-then e-variant effects
+       (lambda (v effects)
+         (match v
+           [`(variant ,_ ...)
+            ;; Find exactly one matching clause
+            (let loop ([clauses clauses])
+              (match clauses
+                [(list) (one-stuck-result `(case ,v) effects)]
+                [(list `(,pat ,body) other-clauses ...)
+                 (match (match-case-pattern v pat)
+                   [#f (loop other-clauses)]
+                   [bindings (eval-machine (term (csa#-subst-n/mf ,body ,@bindings)) effects)])]))]
+           [`(* (Union ,union-variants ...))
+            ;; Use *all* matching patterns for wildcard values
+            (for/fold ([result empty-eval-result])
+                      ([union-variant union-variants])
+              (match-define `(,tag ,sub-types ...) union-variant)
+              (match (findf (lambda (clause) (equal? (first (case-clause-pattern clause)) tag))
+                            clauses)
+                [#f result]
+                [clause
+                 (define vals (for/list ([sub-type sub-types]) `(* ,sub-type)))
+                 (define bindings (map list (cdr (case-clause-pattern clause)) vals))
+                 (combine-eval-results
+                  result
+                  (eval-machine (term (csa#-subst-n/mf ,(case-clause-body clause) ,@bindings)) effects))]))]))
+       (lambda (stuck) `(case ,stuck ,@clauses)))]
+    ;; [`(let ([,vars ,exps] ...) ,body)
+    ;;  (monad-thing* exps effects
+    ;;                (lambda (vs effects)
+    ;;                  (eval (csa#-subst-n/mf ,body ,@(map list vars vs)) effects))
+    ;;                (lambda (stucks effects) (one-stuck-result `(let ,(map list vars stucks) ,body))))]
+    ;; ;; TODO: idea: what if eval returns 2-tuple of value states and stuck states? Then I can do
+    ;; ;; direct-style
+    ;; [`(if test then-branch else-branch)
+    ;;  ;; assumes eval returns 2-tuple as above
+    ;;  (deal-with-eval-results (eval test effects)
+    ;;                          (lambda (v fx) ; kont that returns all possible results from this result (including more stuck states...
+    ;;                            (combine-results
+    ;;                             (eval then-branch fx)
+    ;;                             (eval else-branch fx)))
+    ;;                          (lambda (stuck fx) ; kont that says how to build stuck state if internal thing is stuck
+    ;;                            (list `(if ,stuck then-branch else-branch) fx))
+    ;;                          )
+    ;;  ]
+    [`(variant ,tag ,exps ...)
+     (eval-and-then* exps effects
+                     (lambda (vs effects) (one-value-result `(variant ,tag ,@vs) effects))
+                     (lambda (stucks) `(variant ,tag ,@stucks)))]
+    [`(* ,type) (one-value-result exp effects)]
+    ;; TODO: need clauses for value forms
+    [_ (error 'eval-machine "Don't know how to evaluate ~s\n" exp)]
+
+    ))
+
+;; (Listof Exp)
+;; Effects
+;; ((Listof ValueExp) Effects -> (Tuple (Listof ValueState) (Listof StuckState)))
+;; ((Listof MaybeStuckExp) -> Exp)
+;; -> (Tuple (Listof ValueState) (Listof StuckState))
+;;
+;; Reduces all of the exps in order, accumulating stuck states as they happen. This is essentially a
+;; fold over eval-and-then.
+;;
+;; Note: the value-kont and stuck-kont should each expect an exp-list whose length is equal to the
+;; number of exps
+(define (eval-and-then* exps effects value-kont stuck-kont)
+  (match exps
+    [(list) (value-kont (list) effects)]
+    [(list exp exps ...)
+     (eval-and-then
+      exp
+      effects
+      (lambda (v effects)
+        (eval-and-then* exps effects
+                        (lambda (other-vs effects) (value-kont (cons v other-vs) effects))
+                        (lambda (other-stucks effects) (stuck-kont (cons v other-stucks)))))
+      (lambda (stuck) (stuck-kont (cons stuck exps))))]))
+
+;; Exp
+;; Effects
+;; ValueExp Effects -> (Tuple (Listof ValueState) (Listof StuckState))
+;; Exp -> Exp
+;; -> (Tuple (Listof ValueState) (Listof StuckState))
+;;
+;; Reduces the expression to all possible reachable states. When a branch of the reduction leads to a
+;; value, a result is computed by calling value-kont on that value. If a branch leads to a stuck
+;; state, the stuck-kont is called on that expression and the effects up to that point to build the
+;; expected stuck state. All reachable values are combined and returned.
+(define (eval-and-then exp effects value-kont stuck-kont)
+  (match-define (list value-states stuck-states) (eval-machine exp effects))
+  (define value-result
+   ;; results from value states
+   (for/fold ([results empty-eval-result])
+             ([value-state value-states])
+     (match-define `(,value ,effects) value-state)
+     (combine-eval-results results (value-kont value effects))))
+  (eval-result-add-stuck-states value-result
+                                (map (curryr add-context-to-stuck-state stuck-kont) stuck-states)))
+
+(define empty-eval-result `(() ()))
+
+(define empty-effects `(() ()))
+
+;; Combines two eval results into one by appending their lists together
+(define (combine-eval-results r1 r2)
+  (match-define `(,values1 ,stucks1) r1)
+  (match-define `(,values2 ,stucks2) r2)
+  `(,(append values1 values2) ,(append stucks1 stucks2)))
+
+(define (add-context-to-stuck-state state add-context)
+  (match-define `(,exp ,effects) state)
+  `(,(add-context exp) ,effects))
+
+(define (eval-result-add-stuck-states result stuck-states)
+  (match-define `(,value-states ,old-stucks) result)
+  `(,value-states ,(append old-stucks stuck-states)))
+
+(define (one-stuck-result exp effects)
+  (eval-machine-result null (list (machine-state exp effects))))
+
+(define (one-value-result exp effects)
+  (eval-machine-result (list (machine-state exp effects)) null))
+
+(define (machine-state exp fx)
+  (list exp fx))
+
+(define (inject-machine exp)
+  (machine-state exp empty-effects))
+
+(define (eval-machine-result values stucks)
+  (list values stucks))
+
+;; Attempt to matche the given abstract variant against its pattern from a case clause, returning the
+;; list of bindings if it succeeds and #f if not
+(define (match-case-pattern variant-val pat)
+  (match-define `(variant ,val-tag ,vals ...) variant-val)
+  (match-define `(,pat-tag ,vars ...) pat)
+  (if (and (equal? val-tag pat-tag) (equal? (length vals) (length vars)))
+      (map list vars vals)
+      #f))
+
+(module+ test
+
+
+  ;; TODO: convert the normal reduction rule tests
+  )
+
+;; ---------------------------------------------------------------------------------------------------
+
 ;; Returns #t if the given handler machine state is unable to step because of an over-approximation in
 ;; the abstraction (assumes that there are no empty vector/list/hash references in the actual running
 ;; progrm)
@@ -917,144 +1113,160 @@
      (==> old new)]))
 
 (module+ test
+  (define (exp-reduce* e)
+    (match-define `(,value-states ,stuck-states) (eval-machine e empty-effects))
+    (match-define (list `(,final-exps ,_) ...) (append value-states stuck-states))
+    final-exps)
+
+  ;; TODO: rename this to something like check-exp-reduces*-to, since it reduces all the way to either
+  ;; a stuck state or a value
   (define-check (check-exp-steps-to? e1 e2)
-    (define next-steps (apply-reduction-relation handler-step# (inject/H# e1)))
-    (unless (equal? next-steps (list (inject/H# e2)))
-      (fail-check (format "There were ~s next steps: ~s" (length next-steps) next-steps))))
-  (define-check (check-exp-steps*-to? e1 e2)
-    (define next-steps (apply-reduction-relation* handler-step# (inject/H# e1)))
-    (unless (equal? next-steps (list (inject/H# e2)))
-      (fail-check (format "There were ~s next steps: ~s" (length next-steps) next-steps))))
+    (define terminal-exps (exp-reduce* e1))
+    (unless (equal? terminal-exps (list e2))
+      (fail-check (format "There were ~s final exps: ~s" (length terminal-exps) terminal-exps))))
 
-  (check-exp-steps*-to? (term (fold   (Union [A]) (variant A)))
-                        (term (folded (Union [A]) (variant A))))
-  (define nat-list-type (term (minfixpt NatList (Union (Null) (Cons Nat NatList)))))
-  (check-exp-steps*-to? (term (fold   ,nat-list-type (variant Null)))
-                        (term (folded ,nat-list-type (variant Null))))
-  (check-exp-steps*-to? (term (fold   ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type))))
-                        (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
-  (check-exp-steps*-to? (term (fold ,nat-list-type (variant Cons (* Nat)
-                               (fold ,nat-list-type (variant Cons (* Nat)
-                                 (fold ,nat-list-type (variant Null)))))))
-                        (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
-
-  (define-check (check-exp-steps-to-all exp expected-exp-results)
-    (define next-steps (apply-reduction-relation* handler-step# (inject/H# exp)))
-    ;; TODO: Pick up here on Wednesday
-    (unless (equal? (list->set next-steps) (list->set (map inject/H# expected-exp-results)))
+  (define-check (check-exp-steps-to-all? exp expected-exp-results)
+    (define terminal-exps (exp-reduce* exp))
+    (unless (equal? (list->set terminal-exps) (list->set expected-exp-results))
       (fail-check (format "Actual next steps were ~s, expected ~s"
-                          next-steps
-                          (map inject/H# expected-exp-results)))))
+                          terminal-exps
+                          expected-exp-results))))
 
-  ;; Equality checks
-  (check-exp-steps-to-all (term (= (* String) (* String)))
-                          (list (term (variant True)) (term (variant False))))
-  (check-exp-steps-to-all (term (= (* Nat) (* Nat)))
-                          (list (term (variant True)) (term (variant False))))
-  (check-exp-steps-to-all (term (= (* (Addr Nat)) (Nat (obs-ext 1))))
-                          (list (term (variant True)) (term (variant False))))
+  (check-exp-steps-to? `(variant B) `(variant B))
+  (check-exp-steps-to? `(begin (variant A) (variant B)) `(variant B))
+  (check-exp-steps-to? `(case (variant A (* Nat))
+                         [(A x) x]
+                         [(B) (variant X)]
+                         [(C) (variant Y)])
+                      `(* Nat))
+  (check-exp-steps-to-all? `(case (* (Union [A Nat] [B] [D]))
+                             [(A x) x]
+                             [(B) (variant X)]
+                             [(C) (variant Y)])
+                          (list `(* Nat) `(variant X)))
 
-  ;; Tests for sorting when adding to lists, vectors, and hashes
-  ;; list
-  (check-exp-steps-to?
-   (term (list (variant C) (variant B)))
-   (term (list-val (variant B) (variant C))))
-  (check-exp-steps-to?
-   (term (list))
-   (term (list-val)))
-  (check-exp-steps-to?
-   (term (cons (variant A) (list-val (variant B) (variant C))))
-   (term (list-val (variant A) (variant B) (variant C))))
-  (check-exp-steps-to?
-   (term (cons (variant A) (list-val)))
-   (term (list-val (variant A))))
-  (check-exp-steps-to?
-   (term (cons (variant D) (list-val (variant B) (variant C))))
-   (term (list-val (variant B) (variant C) (variant D))))
-  (check-exp-steps-to?
-   (term (cons (variant B) (list-val (variant B) (variant C))))
-   (term (list-val (variant B) (variant C))))
-  ;; vector
-  (check-exp-steps-to?
-   (term (vector (variant C) (variant B)))
-   (term (vector-val (variant B) (variant C))))
-  (check-exp-steps-to?
-   (term (vector))
-   (term (vector-val)))
-  (check-exp-steps-to?
-   (term (vector-append (vector-val (variant A) (variant B))
-                        (vector-val (variant C) (variant D))))
-   (term (vector-val (variant A) (variant B) (variant C) (variant D))))
-  (check-exp-steps-to?
-   (term (vector-append (vector-val (variant A) (variant B))
-                        (vector-val (variant C) (variant B))))
-   (term (vector-val (variant A) (variant B) (variant C))))
-  (check-exp-steps-to?
-   (term (vector-append (vector-val (variant C) (variant D))
-                        (vector-val (variant A) (variant B))))
-   (term (vector-val (variant A) (variant B) (variant C) (variant D))))
-  (check-exp-steps-to?
-  (term (vector-append (vector-val (variant C) (variant D))
-                       (vector-val (variant B) (variant A))))
-  (term (vector-val (variant A) (variant B) (variant C) (variant D))))
-  (check-exp-steps-to? (term (vector-append (vector-val) (vector-val))) (term (vector-val)))
-  (check-exp-steps-to?
-   (term (vector-append (vector-val (variant A)) (vector-val)))
-   (term (vector-val (variant A))))
-  (check-exp-steps-to?
-   (term (vector-append (vector-val) (vector-val (variant A))))
-   (term (vector-val (variant A))))
-  ;; hash
-  (check-exp-steps-to?
-   (term (hash [(* Nat) (variant B)] [(* Nat) (variant A)]))
-   (term (hash-val ((* Nat)) ((variant A) (variant B)))))
-  (check-exp-steps-to?
-   (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant A)))
-   (term (hash-val ((* Nat)) ((variant A) (variant B) (variant C)))))
-  (check-exp-steps-to?
-   (term (hash-set (hash-val ((* Nat)) ((variant C) (variant B))) (* Nat) (variant A)))
-   (term (hash-val ((* Nat)) ((variant A) (variant B) (variant C)))))
-  (check-exp-steps-to?
-   (term (hash-set (hash-val () ()) (* Nat) (variant A)))
-   (term (hash-val ((* Nat)) ((variant A)))))
-  (check-exp-steps-to?
-   (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant D)))
-   (term (hash-val ((* Nat)) ((variant B) (variant C) (variant D)))))
-  (check-exp-steps-to?
-   (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant B)))
-   (term (hash-val ((* Nat)) ((variant B) (variant C)))))
-  (check-exp-steps-to?
-   (term (hash-remove (hash-val ((* Nat)) ((variant B) (variant C))) (variant B)))
-   (term (hash-val ((* Nat)) ((variant B) (variant C)))))
-  (check-exp-steps-to-all (term (hash-ref (* (Hash Nat Nat)) (* Nat)))
-                          (list '(variant Nothing)
-                                '(variant Just (* Nat))))
-  (check-exp-steps-to-all (term (hash-ref (* (Hash Nat Nat)) (* Nat)))
-                          (list (term (variant Nothing))
-                                (term (variant Just (* Nat)))))
-  (check-exp-steps-to? (term (hash-remove (* (Hash Nat Nat)) (* Nat)))
-                       (term (* (Hash Nat Nat))))
-  (check-exp-steps-to-all (term (hash-empty? (hash-val ((* Nat)) ((variant A) (variant B)))))
-                          (list (term (variant True))
-                                (term (variant False))))
-  (check-exp-steps-to-all (term (hash-empty? (* (Hash Nat Nat))))
-                          (list (term (variant True))
-                                (term (variant False))))
-  (check-exp-steps-to-all (term (list-as-variant (list-val (variant A) (variant B))))
-                          (list (term (variant Empty))
-                                (term (variant Cons (variant A) (list-val (variant A) (variant B))))
-                                (term (variant Cons (variant B) (list-val (variant A) (variant B))))))
-  (check-exp-steps-to-all (term (list-as-variant (* (Listof Nat))))
-                          (list (term (variant Empty))
-                                (term (variant Cons (* Nat) (* (Listof Nat))))))
-  (check-exp-steps-to? (term (hash-keys (hash-val ((variant A) (variant B)) ((* Nat)))))
-                       (term (list-val (variant A) (variant B))))
-  (check-exp-steps-to? (term (hash-keys (* (Hash Nat (Union [A] [B])))))
-                       (term (* (Listof Nat))))
-  (check-exp-steps-to? (term (hash-values (hash-val ((* Nat)) ((variant A) (variant B)))))
-                       (term (list-val (variant A) (variant B))))
-  (check-exp-steps-to? (term (hash-values (* (Hash Nat (Union [A] [B])))))
-                       (term (* (Listof (Union [A] [B])))))
+  ;; (check-exp-steps-to? (term (fold   (Union [A]) (variant A)))
+  ;;                      (term (folded (Union [A]) (variant A))))
+  ;; (define nat-list-type (term (minfixpt NatList (Union (Null) (Cons Nat NatList)))))
+  ;; (check-exp-steps-to? (term (fold   ,nat-list-type (variant Null)))
+  ;;                      (term (folded ,nat-list-type (variant Null))))
+  ;; (check-exp-steps-to? (term (fold   ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type))))
+  ;;                      (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
+  ;; (check-exp-steps-to? (term (fold ,nat-list-type (variant Cons (* Nat)
+  ;;                              (fold ,nat-list-type (variant Cons (* Nat)
+  ;;                                (fold ,nat-list-type (variant Null)))))))
+  ;;                      (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
+
+
+  ;; ;; Equality checks
+  ;; (check-exp-steps-to-all? (term (= (* String) (* String)))
+  ;;                         (list (term (variant True)) (term (variant False))))
+  ;; (check-exp-steps-to-all? (term (= (* Nat) (* Nat)))
+  ;;                         (list (term (variant True)) (term (variant False))))
+  ;; (check-exp-steps-to-all? (term (= (* (Addr Nat)) (Nat (obs-ext 1))))
+  ;;                         (list (term (variant True)) (term (variant False))))
+
+  ;; ;; Tests for sorting when adding to lists, vectors, and hashes
+  ;; ;; list
+  ;; (check-exp-steps-to?
+  ;;  (term (list (variant C) (variant B)))
+  ;;  (term (list-val (variant B) (variant C))))
+  ;; (check-exp-steps-to?
+  ;;  (term (list))
+  ;;  (term (list-val)))
+  ;; (check-exp-steps-to?
+  ;;  (term (cons (variant A) (list-val (variant B) (variant C))))
+  ;;  (term (list-val (variant A) (variant B) (variant C))))
+  ;; (check-exp-steps-to?
+  ;;  (term (cons (variant A) (list-val)))
+  ;;  (term (list-val (variant A))))
+  ;; (check-exp-steps-to?
+  ;;  (term (cons (variant D) (list-val (variant B) (variant C))))
+  ;;  (term (list-val (variant B) (variant C) (variant D))))
+  ;; (check-exp-steps-to?
+  ;;  (term (cons (variant B) (list-val (variant B) (variant C))))
+  ;;  (term (list-val (variant B) (variant C))))
+  ;; ;; vector
+  ;; (check-exp-steps-to?
+  ;;  (term (vector (variant C) (variant B)))
+  ;;  (term (vector-val (variant B) (variant C))))
+  ;; (check-exp-steps-to?
+  ;;  (term (vector))
+  ;;  (term (vector-val)))
+  ;; (check-exp-steps-to?
+  ;;  (term (vector-append (vector-val (variant A) (variant B))
+  ;;                       (vector-val (variant C) (variant D))))
+  ;;  (term (vector-val (variant A) (variant B) (variant C) (variant D))))
+  ;; (check-exp-steps-to?
+  ;;  (term (vector-append (vector-val (variant A) (variant B))
+  ;;                       (vector-val (variant C) (variant B))))
+  ;;  (term (vector-val (variant A) (variant B) (variant C))))
+  ;; (check-exp-steps-to?
+  ;;  (term (vector-append (vector-val (variant C) (variant D))
+  ;;                       (vector-val (variant A) (variant B))))
+  ;;  (term (vector-val (variant A) (variant B) (variant C) (variant D))))
+  ;; (check-exp-steps-to?
+  ;; (term (vector-append (vector-val (variant C) (variant D))
+  ;;                      (vector-val (variant B) (variant A))))
+  ;; (term (vector-val (variant A) (variant B) (variant C) (variant D))))
+  ;; (check-exp-steps-to? (term (vector-append (vector-val) (vector-val))) (term (vector-val)))
+  ;; (check-exp-steps-to?
+  ;;  (term (vector-append (vector-val (variant A)) (vector-val)))
+  ;;  (term (vector-val (variant A))))
+  ;; (check-exp-steps-to?
+  ;;  (term (vector-append (vector-val) (vector-val (variant A))))
+  ;;  (term (vector-val (variant A))))
+  ;; ;; hash
+  ;; (check-exp-steps-to?
+  ;;  (term (hash [(* Nat) (variant B)] [(* Nat) (variant A)]))
+  ;;  (term (hash-val ((* Nat)) ((variant A) (variant B)))))
+  ;; (check-exp-steps-to?
+  ;;  (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant A)))
+  ;;  (term (hash-val ((* Nat)) ((variant A) (variant B) (variant C)))))
+  ;; (check-exp-steps-to?
+  ;;  (term (hash-set (hash-val ((* Nat)) ((variant C) (variant B))) (* Nat) (variant A)))
+  ;;  (term (hash-val ((* Nat)) ((variant A) (variant B) (variant C)))))
+  ;; (check-exp-steps-to?
+  ;;  (term (hash-set (hash-val () ()) (* Nat) (variant A)))
+  ;;  (term (hash-val ((* Nat)) ((variant A)))))
+  ;; (check-exp-steps-to?
+  ;;  (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant D)))
+  ;;  (term (hash-val ((* Nat)) ((variant B) (variant C) (variant D)))))
+  ;; (check-exp-steps-to?
+  ;;  (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant B)))
+  ;;  (term (hash-val ((* Nat)) ((variant B) (variant C)))))
+  ;; (check-exp-steps-to?
+  ;;  (term (hash-remove (hash-val ((* Nat)) ((variant B) (variant C))) (variant B)))
+  ;;  (term (hash-val ((* Nat)) ((variant B) (variant C)))))
+  ;; (check-exp-steps-to-all (term (hash-ref (* (Hash Nat Nat)) (* Nat)))
+  ;;                         (list '(variant Nothing)
+  ;;                               '(variant Just (* Nat))))
+  ;; (check-exp-steps-to-all (term (hash-ref (* (Hash Nat Nat)) (* Nat)))
+  ;;                         (list (term (variant Nothing))
+  ;;                               (term (variant Just (* Nat)))))
+  ;; (check-exp-steps-to? (term (hash-remove (* (Hash Nat Nat)) (* Nat)))
+  ;;                      (term (* (Hash Nat Nat))))
+  ;; (check-exp-steps-to-all (term (hash-empty? (hash-val ((* Nat)) ((variant A) (variant B)))))
+  ;;                         (list (term (variant True))
+  ;;                               (term (variant False))))
+  ;; (check-exp-steps-to-all (term (hash-empty? (* (Hash Nat Nat))))
+  ;;                         (list (term (variant True))
+  ;;                               (term (variant False))))
+  ;; (check-exp-steps-to-all (term (list-as-variant (list-val (variant A) (variant B))))
+  ;;                         (list (term (variant Empty))
+  ;;                               (term (variant Cons (variant A) (list-val (variant A) (variant B))))
+  ;;                               (term (variant Cons (variant B) (list-val (variant A) (variant B))))))
+  ;; (check-exp-steps-to-all (term (list-as-variant (* (Listof Nat))))
+  ;;                         (list (term (variant Empty))
+  ;;                               (term (variant Cons (* Nat) (* (Listof Nat))))))
+  ;; (check-exp-steps-to? (term (hash-keys (hash-val ((variant A) (variant B)) ((* Nat)))))
+  ;;                      (term (list-val (variant A) (variant B))))
+  ;; (check-exp-steps-to? (term (hash-keys (* (Hash Nat (Union [A] [B])))))
+  ;;                      (term (* (Listof Nat))))
+  ;; (check-exp-steps-to? (term (hash-values (hash-val ((* Nat)) ((variant A) (variant B)))))
+  ;;                      (term (list-val (variant A) (variant B))))
+  ;; (check-exp-steps-to? (term (hash-values (* (Hash Nat (Union [A] [B])))))
+  ;;                      (term (* (Listof (Union [A] [B])))))
 
   ;; NOTE: these are the old tests for checking sorting of loop-sent messages, which I don't do
   ;; anymore. Keeping them around in case I change my mind
@@ -1107,28 +1319,30 @@
 
   ;; Check that internal addresses in the transmissions do not change the evaluation (had a problem
   ;; with this before)
-  (check-equal?
-   (apply-reduction-relation* handler-step# (inject/H# (term (begin (send (Nat (init-addr 1)) (* Nat)) (goto A)))))
-   (list (term ((begin (goto A)) (((init-addr 1) (* Nat) single)) ()))))
+  ;; TODO: rewrite these tests
+  ;; (check-equal?
+  ;;  (apply-reduction-relation* handler-step# (inject/H# (term (begin (send (Nat (init-addr 1)) (* Nat)) (goto A)))))
+  ;;  (list (term ((begin (goto A)) (((init-addr 1) (* Nat) single)) ()))))
 
-  (check-equal?
-   (apply-reduction-relation* handler-step#
-     (inject/H# (term (begin (spawn L Nat (goto A) (define-state (A) (x) (goto A))) (goto B)))))
-   (list (term ((begin (goto B)) () ([(spawn-addr L NEW) [((define-state (A) (x) (goto A))) (goto A)]])))))
+  ;; (check-equal?
+  ;;  (apply-reduction-relation* handler-step#
+  ;;    (inject/H# (term (begin (spawn L Nat (goto A) (define-state (A) (x) (goto A))) (goto B)))))
+  ;;  (list (term ((begin (goto B)) () ([(spawn-addr L NEW) [((define-state (A) (x) (goto A))) (goto A)]])))))
 
-  ;; loop spawn test
-  (check-equal?
-   (list->set
-    (apply-reduction-relation* handler-step#
-                               (inject/H#
-                                (term
-                                 (begin
-                                   (for/fold ([x (* Nat)])
-                                             ([y (list-val (* Nat))])
-                                     (spawn L Nat (goto A) (define-state (A) (x) (goto A))))
-                                   (goto B))))))
-   (set (term ((begin (goto B)) () ()))
-        (term ((begin (goto B)) () ([(blurred-spawn-addr L) [((define-state (A) (x) (goto A))) (goto A)]]))))))
+  ;; ;; loop spawn test
+  ;; (check-equal?
+  ;;  (list->set
+  ;;   (apply-reduction-relation* handler-step#
+  ;;                              (inject/H#
+  ;;                               (term
+  ;;                                (begin
+  ;;                                  (for/fold ([x (* Nat)])
+  ;;                                            ([y (list-val (* Nat))])
+  ;;                                    (spawn L Nat (goto A) (define-state (A) (x) (goto A))))
+  ;;                                  (goto B))))))
+  ;;  (set (term ((begin (goto B)) () ()))
+  ;;       (term ((begin (goto B)) () ([(blurred-spawn-addr L) [((define-state (A) (x) (goto A))) (goto A)]])))))
+  )
 
 ;; Puts the given abstract collection value (a list, vector, or hash) and puts it into a canonical
 ;; form
@@ -2223,6 +2437,9 @@
 ;; Returns the state definitions of the given behavior
 (define (behavior-state-defs behavior)
   (first behavior))
+
+(define (case-clause-pattern clause) (first clause))
+(define (case-clause-body clause) (second clause))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Boolean Logic
