@@ -664,6 +664,12 @@
                      (lambda (vs effects) (value-result `(variant ,tag ,@vs) effects))
                      (lambda (stucks) `(variant ,tag ,@stucks)))]
     [`(* ,type) (value-result exp effects)]
+    [`(,_
+       ,(or `(init-addr ,_)
+            `(spawn-addr ,_ ,_)
+            `(blurred-spawn-addr ,_)
+            `(obs-ext ,_)))
+     (value-result exp effects)]
     ;; TODO: need clauses for value forms
     [_ (error 'eval-machine "Don't know how to evaluate ~s\n" exp)]
 
