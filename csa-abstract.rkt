@@ -555,19 +555,12 @@
 ;;
 ;; Reduces the given machine state into all reachable stuck states and value states
 (define (eval-machine/internal exp effects)
-
-  ;; Tricky parts:
-  ;; * effects (maybe, should be easy)
-
-  ;; TODO: figure out how to remove duplicate states
-
-  ;; TODO: add caching/memoization for for-loops. Although won't that return duplicates? Hmm...
   (match exp
     ;; Begin
     [`(begin ,e1 ,e-rest ...)
      (eval-and-then* (cons e1 e-rest) effects
-                     (lambda (vs effects) (value-result (last vs) effects))
-                     (lambda (stucks) `(begin ,@stucks)))]
+       (lambda (vs effects) (value-result (last vs) effects))
+       (lambda (stucks) `(begin ,@stucks)))]
     ;; Case
     [`(case ,e-variant ,clauses ...)
      (eval-and-then e-variant effects
@@ -585,18 +578,18 @@
            [`(* (Union ,union-variants ...))
             ;; Use *all* matching patterns for wildcard values
             (define clause-results
-             (for/fold ([result empty-eval-result])
-                       ([union-variant union-variants])
-               (match-define `(,tag ,sub-types ...) union-variant)
-               (match (findf (lambda (clause) (equal? (first (case-clause-pattern clause)) tag))
-                             clauses)
-                 [#f result]
-                 [clause
-                  (define vals (for/list ([sub-type sub-types]) `(* ,sub-type)))
-                  (define bindings (map list (cdr (case-clause-pattern clause)) vals))
-                  (combine-eval-results
-                   result
-                   (eval-machine/internal (term (csa#-subst-n/mf ,(case-clause-body clause) ,@bindings)) effects))])))
+              (for/fold ([result empty-eval-result])
+                        ([union-variant union-variants])
+                (match-define `(,tag ,sub-types ...) union-variant)
+                (match (findf (lambda (clause) (equal? (first (case-clause-pattern clause)) tag))
+                              clauses)
+                  [#f result]
+                  [clause
+                   (define vals (for/list ([sub-type sub-types]) `(* ,sub-type)))
+                   (define bindings (map list (cdr (case-clause-pattern clause)) vals))
+                   (combine-eval-results
+                    result
+                    (eval-machine/internal (term (csa#-subst-n/mf ,(case-clause-body clause) ,@bindings)) effects))])))
             (if (and (empty? (first clause-results)) (empty? (second clause-results)))
                 (one-stuck-result `(case ,v ,@clauses))
                 clause-results)]))
@@ -797,12 +790,12 @@
      (eval-and-then* (append* (for/list ([kvp kvps]) (list (first kvp) (second kvp)))) effects
        (lambda (results effects)
          (match-define (list keys vals)
-          (let loop ([results results]
-                     [keys null]
-                     [vals null])
-            (match results
-              [(list) (list keys vals)]
-              [(list key val rest ...) (loop rest (cons key keys) (cons val vals))])))
+           (let loop ([results results]
+                      [keys null]
+                      [vals null])
+             (match results
+               [(list) (list keys vals)]
+               [(list key val rest ...) (loop rest (cons key keys) (cons val vals))])))
          (value-result (term (normalize-collection (hash-val ,keys ,vals))) effects))
        (lambda (stucks) (error 'eval-machine/internal "Stuck evaluating hash: ~s" `(hash ,@stucks))))]
     ;; Loops
@@ -810,35 +803,37 @@
                 ([,item-var ,item-exp])
         ,body)
      (eval-and-then* (list result-exp item-exp) effects
-         (lambda (vs effects)
-           (match-define (list result-val items-val) vs)
-           (define this-loop `(for/fold ([,result-var ,result-val])
-                                        ([,item-var ,items-val])
-                                ,body))
-           (cond
-             [(set-member? (seen-loops) this-loop)
-              ;; already seen it, so we can return the empty result
-              empty-eval-result]
-             [else
-              ;; Haven't seen this loop yet: return the result of skipping the loop as well as
-              ;; iterating with every possible member of the collection
-              (set-add! (seen-loops) this-loop)
-              (define collection-members
-                (match items-val
-                  [`(,(or 'list-val 'vector-val) ,items ...) items]
-                  [`(* (,(or 'Listof 'Vectorof) ,type)) (list `(* ,type))]))
-              (define result-after-skipping (value-result result-val effects))
-              (for/fold ([full-result result-after-skipping])
-                        ([member collection-members])
-                (define unrolled-body
-                  (term (csa#-subst-n/mf ,body [,result-var ,result-val] [,item-var ,member])))
-                (combine-eval-results
-                 full-result
-                 (parameterize ([in-loop-context? #t])
-                   (eval-machine/internal `(for/fold ([,result-var ,unrolled-body])
-                                                     ([,item-var ,items-val])
-                                             ,body)
-                                          effects))))]))
+       (lambda (vs effects)
+         (match-define (list result-val items-val) vs)
+         (define this-loop (machine-state
+                            `(for/fold ([,result-var ,result-val])
+                                       ([,item-var ,items-val])
+                               ,body)
+                            effects))
+         (cond
+           [(set-member? (seen-loops) this-loop)
+            ;; already seen it, so we can return the empty result
+            empty-eval-result]
+           [else
+            ;; Haven't seen this loop yet: return the result of skipping the loop as well as
+            ;; iterating with every possible member of the collection
+            (set-add! (seen-loops) this-loop)
+            (define collection-members
+              (match items-val
+                [`(,(or 'list-val 'vector-val) ,items ...) items]
+                [`(* (,(or 'Listof 'Vectorof) ,type)) (list `(* ,type))]))
+            (define result-after-skipping (value-result result-val effects))
+            (for/fold ([full-result result-after-skipping])
+                      ([member collection-members])
+              (define unrolled-body
+                (term (csa#-subst-n/mf ,body [,result-var ,result-val] [,item-var ,member])))
+              (combine-eval-results
+               full-result
+               (parameterize ([in-loop-context? #t])
+                 (eval-machine/internal `(for/fold ([,result-var ,unrolled-body])
+                                                   ([,item-var ,items-val])
+                                           ,body)
+                                        effects))))]))
        (lambda (stucks)
          (match-define (list stuck-result stuck-items) stucks)
          `(for/fold ([,result-var ,stuck-result])
