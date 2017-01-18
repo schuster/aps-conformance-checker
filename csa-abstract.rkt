@@ -657,7 +657,7 @@
          (match v
            [`(folded ,type ,val) (value-result val effects)]
            [`(* (minfixpt ,name ,type))
-            (value-result (term (* (type-subst ,type name (minfixpt ,name ,type)))) effects)]
+            (value-result (term (* (type-subst ,type ,name (minfixpt ,name ,type)))) effects)]
            [_ (error 'eval-machine/internal "Bad argument to unfold: ~s" v)]))
        (lambda (stuck) `(unfold ,type ,stuck)))]
     [`(folded ,_ ...) (value-result exp effects)]
@@ -1471,6 +1471,10 @@
                                (fold ,nat-list-type (variant Cons (* Nat)
                                  (fold ,nat-list-type (variant Null)))))))
                        (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
+  (check-exp-steps-to? `(unfold (minfixpt NatAddrList (Union [Nil] [ConsIt (Addr Nat) NatAddrList]))
+                                (* (minfixpt NatAddrList (Union [Nil] [ConsIt (Addr Nat) NatAddrList]))))
+                       `(* (Union [Nil]
+                                  [ConsIt (Addr Nat) (minfixpt NatAddrList (Union [Nil] [ConsIt (Addr Nat) NatAddrList]))])))
   (check-exp-steps-to-all? `(< (* Nat) (let () (* Nat)))
                            (list `(variant True) `(variant False)))
   (check-exp-steps-to? `(+ (* Nat) (let () (* Nat)))
