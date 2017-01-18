@@ -558,7 +558,7 @@
     ;; Begin
     [`(begin ,e1 ,e-rest ...)
      (eval-and-then* (cons e1 e-rest) effects
-                     (lambda (vs effects) (one-value-result (last vs) effects))
+                     (lambda (vs effects) (value-result (last vs) effects))
                      (lambda (stucks) `(begin ,@stucks)))]
     ;; Case
     [`(case ,e-variant ,clauses ...)
@@ -602,7 +602,7 @@
     ;; Records
     [`(record [,labels ,exps] ...)
      (eval-and-then* exps effects
-       (lambda (vals effects) (one-value-result `(record ,@(map list labels vals)) effects))
+       (lambda (vals effects) (value-result `(record ,@(map list labels vals)) effects))
        (lambda (stucks) `(record ,@(map list labels stucks))))]
     [`(: ,e ,l)
      (eval-and-then e effects
@@ -611,11 +611,11 @@
            [`(record ,fields ...)
             (match (findf (lambda (f) (equal? (first f) l)) fields)
               [#f (one-stuck-result `(: ,v ,l) effects)]
-              [field (one-value-result (second field) effects)])]
+              [field (value-result (second field) effects)])]
            [`(* (Record ,fields ...))
             (match (findf (lambda (f) (equal? (first f) l)) fields)
               [#f (one-stuck-result `(: ,v ,l) effects)]
-              [field (one-value-result `(* ,(second field)) effects)])]
+              [field (value-result `(* ,(second field)) effects)])]
            [_ (one-stuck-result `(: ,v ,l) effects)]))
        (lambda (stuck) `(: ,stuck l)))]
     [`(! ,rec [,l ,field-exp])
@@ -630,11 +630,11 @@
            [`(record ,fields ...)
             (match (findf (lambda (f) (equal? (first f) l)) fields)
               [#f (one-stuck-result `(! ,v-rec [,l ,v-field]) effects)]
-              [field (one-value-result `(record ,@(map update-field fields)) effects)])]
+              [field (value-result `(record ,@(map update-field fields)) effects)])]
            [`(* (Record ,fields ...))
             (match (findf (lambda (f) (equal? (first f) l)) fields)
               [#f (one-stuck-result `(! ,v-rec [,l ,v-field]) effects)]
-              [_ (one-value-result v-rec effects)])]
+              [_ (value-result v-rec effects)])]
            [_ (one-stuck-result `(! ,v-rec [,l ,v-field]) effects)]))
        (lambda (stuck) `(! ,stuck l)))]
     ;; Recursive Types
@@ -642,28 +642,28 @@
      (eval-and-then exp effects
        (lambda (v effects)
          (match v
-           [`(* ,_) (one-value-result `(* ,type) effects)]
+           [`(* ,_) (value-result `(* ,type) effects)]
            [_
             (if (< (term (fold-depth/mf ,v)) MAX-RECURSION-DEPTH)
-                (one-value-result `(folded ,type ,v) effects)
+                (value-result `(folded ,type ,v) effects)
                 (if (csa#-contains-address? (term v#))
                     ((abort-evaluation-param))
-                    (one-value-result `(* ,type) effects)))]))
+                    (value-result `(* ,type) effects)))]))
        (lambda (stuck) `(fold ,type ,stuck)))]
     [`(unfold ,type ,e)
      (eval-and-then e effects
        (lambda (v effects)
          (match v
-           [`(folded ,type ,val) (one-value-result val effects)]
+           [`(folded ,type ,val) (value-result val effects)]
            [`(* (minfixpt ,name ,type))
-            (one-value-result (term (* (type-subst ,type name (minfixpt ,name ,type)))) effects)]
-           [_ (error 'eval-machine "Bad argument to unfold: ~s" v)])))]
+            (value-result (term (* (type-subst ,type name (minfixpt ,name ,type)))) effects)]
+           [_ (error 'eval-machine "Bad argument to unfold: ~s" v)]))
     ;; Misc. Values
     [`(variant ,tag ,exps ...)
      (eval-and-then* exps effects
-                     (lambda (vs effects) (one-value-result `(variant ,tag ,@vs) effects))
+                     (lambda (vs effects) (value-result `(variant ,tag ,@vs) effects))
                      (lambda (stucks) `(variant ,tag ,@stucks)))]
-    [`(* ,type) (one-value-result exp effects)]
+    [`(* ,type) (value-result exp effects)]
     ;; TODO: need clauses for value forms
     [_ (error 'eval-machine "Don't know how to evaluate ~s\n" exp)]
 
@@ -759,8 +759,9 @@
 (define (one-stuck-result exp effects)
   (eval-machine-result null (list (machine-state exp effects))))
 
-(define (one-value-result exp effects)
-  (eval-machine-result (list (machine-state exp effects)) null))
+(define (value-result . args)
+  (match-define (list exps ... effects) args)
+  (eval-machine-result (map (curryr machine-state effects) exps) null))
 
 (define (machine-state exp fx)
   (list exp fx))
