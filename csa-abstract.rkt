@@ -658,6 +658,53 @@
            [`(* (minfixpt ,name ,type))
             (value-result (term (* (type-subst ,type name (minfixpt ,name ,type)))) effects)]
            [_ (error 'eval-machine "Bad argument to unfold: ~s" v)]))
+       (lambda (stuck) `(unfold ,type ,stuck)))]
+    ;; Numeric/Boolean Operators
+    [`(,(and op (or '< '<= '> '>=)) ,arg1 ,arg2)
+     (eval-and-then* (list arg1 arg2) effects
+       (lambda (vs effects)
+         (match vs
+           [`((* Nat) (* Nat)) (value-result `(variant True) `(variant False) effects)]
+           [_ (error "Bad args to relative op: ~s\n" `(,op ,@vs))]))
+       (lambda (stucks) `(,op ,@stucks)))]
+    [`(,(and op (or '+ '- 'mult '/ 'arithmetic-shift)) ,arg1 ,arg2)
+     (eval-and-then* (list arg1 arg2) effects
+       (lambda (vs effects)
+         (match vs
+           [`((* Nat) (* Nat)) (value-result `(* Nat) effects)]
+           [_ (error "Bad args to binary arithmetic op: ~s\n" `(,op ,@vs))]))
+       (lambda (stucks) `(,op ,@stucks)))]
+    [`(,(and op (or 'random 'ceiling)) ,arg)
+     (eval-and-then arg effects
+       (lambda (v effects)
+         (match v
+           [`(* Nat) (value-result `(* Nat) effects)]
+           [_ (error "Bad args to unary arithmetic op: ~s\n" `(,op ,v))]))
+       (lambda (stuck) `(,op ,stuck)))]
+    [`(and ,e1 ,e2)
+     (eval-and-then* (list e1 e2) effects
+       (lambda (vs effects)
+         (match-define (list v1 v2) vs)
+         (value-result (term (csa#-and (canonicalize-boolean ,v1) (canonicalize-boolean ,v2)))
+                       effects))
+       (lambda (stucks) `(and ,@stucks)))]
+    [`(or ,e1 ,e2)
+     (eval-and-then* (list e1 e2) effects
+       (lambda (vs effects)
+         (match-define (list v1 v2) vs)
+         (value-result (term (csa#-or (canonicalize-boolean ,v1) (canonicalize-boolean ,v2)))
+                       effects))
+       (lambda (stucks) `(or ,@stucks)))]
+    [`(not ,e)
+     (eval-and-then e effects
+       (lambda (v effects)
+         (value-result (term (csa#-not (canonicalize-boolean ,v))) effects))
+       (lambda (stuck) `(not ,stuck)))]
+    [`(= ,e1 ,e2)
+     (eval-and-then* (list e1 e2) effects
+       (lambda (vs effects)
+         (value-result `(variant True) `(variant False) effects))
+       (lambda (stucks) `(= ,@stucks)))]
     ;; Misc. Values
     [`(variant ,tag ,exps ...)
      (eval-and-then* exps effects
@@ -786,12 +833,6 @@
   (if (and (equal? val-tag pat-tag) (equal? (length vals) (length vars)))
       (map list vars vals)
       #f))
-
-(module+ test
-
-
-  ;; TODO: convert the normal reduction rule tests
-  )
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -1258,15 +1299,29 @@
                                (fold ,nat-list-type (variant Cons (* Nat)
                                  (fold ,nat-list-type (variant Null)))))))
                        (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
-
-
-  ;; ;; Equality checks
-  ;; (check-exp-steps-to-all? (term (= (* String) (* String)))
-  ;;                         (list (term (variant True)) (term (variant False))))
-  ;; (check-exp-steps-to-all? (term (= (* Nat) (* Nat)))
-  ;;                         (list (term (variant True)) (term (variant False))))
-  ;; (check-exp-steps-to-all? (term (= (* (Addr Nat)) (Nat (obs-ext 1))))
-  ;;                         (list (term (variant True)) (term (variant False))))
+  (check-exp-steps-to-all? `(< (* Nat) (let () (* Nat)))
+                           (list `(variant True) `(variant False)))
+  (check-exp-steps-to? `(+ (* Nat) (let () (* Nat)))
+                       `(* Nat))
+  (check-exp-steps-to? `(random (* Nat))
+                       `(* Nat))
+  (check-exp-steps-to? `(or (variant True) (variant False))
+                       `(variant True))
+  (check-exp-steps-to? `(or (* (Union [True] [False])) (variant False))
+                       `(* (Union [True] [False])))
+  (check-exp-steps-to? `(and (variant True) (variant False))
+                       `(variant False))
+  (check-exp-steps-to? `(not (variant True))
+                       `(variant False))
+  (check-exp-steps-to? `(not (* (Union [True] [False])))
+                       `(* (Union [True] [False])))
+  ;; Equality checks
+  (check-exp-steps-to-all? (term (= (* String) (* String)))
+                          (list (term (variant True)) (term (variant False))))
+  (check-exp-steps-to-all? (term (= (* Nat) (* Nat)))
+                          (list (term (variant True)) (term (variant False))))
+  (check-exp-steps-to-all? (term (= (* (Addr Nat)) (Nat (obs-ext 1))))
+                          (list (term (variant True)) (term (variant False))))
 
   ;; ;; Tests for sorting when adding to lists, vectors, and hashes
   ;; ;; list
