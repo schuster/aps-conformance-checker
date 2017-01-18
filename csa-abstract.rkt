@@ -855,13 +855,14 @@
     ;; Spawns
     [`(spawn ,loc ,type ,init-exp ,raw-state-defs ...)
      (define address (if (in-loop-context?) `(blurred-spawn-addr ,loc) `(spawn-addr ,loc NEW)))
+     (define address-value `(,type ,address))
      (define state-defs
        (for/list ([def raw-state-defs])
-         (term (csa#-subst/Q# ,def self (,type ,address)))))
-     (eval-and-then init-exp effects
+         (term (csa#-subst/Q# ,def self ,address-value))))
+     (eval-and-then (term (csa#-subst-n/mf ,init-exp [self ,address-value])) effects
        (lambda (goto-val effects)
          (match-define (list sends spawns) effects)
-         (value-result `(,type ,address)
+         (value-result address-value
                        (list sends
                              (term (add-spawn ,spawns [,address (,state-defs ,goto-val)])))))
        (lambda (stuck) `(spawn ,loc ,type ,stuck ,@raw-state-defs)))]
