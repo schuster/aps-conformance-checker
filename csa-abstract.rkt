@@ -742,7 +742,7 @@
            [`(vector-ref ,v ,_)
             (match v
               [`(* (Vectorof ,type)) (value-result `(* ,type) effects)]
-              [`(vector-val ,items) (value-result items effects)]
+              [`(vector-val ,items ...) (value-result items effects)]
               [_ (error 'eval-machine/internal "Bad vector for vector-ref: ~s\n" v)])]
            [`(,(or 'vector-take 'vector-drop 'vector-copy) ,v ,_)
             (value-result v effects)]
