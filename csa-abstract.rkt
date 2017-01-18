@@ -647,7 +647,7 @@
            [_
             (if (< (term (fold-depth/mf ,v)) MAX-RECURSION-DEPTH)
                 (value-result `(folded ,type ,v) effects)
-                (if (csa#-contains-address? (term v#))
+                (if (csa#-contains-address? v)
                     ((abort-evaluation-param))
                     (value-result `(* ,type) effects)))]))
        (lambda (stuck) `(fold ,type ,stuck)))]
