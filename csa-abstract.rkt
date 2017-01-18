@@ -576,37 +576,68 @@
                    [bindings (eval-machine (term (csa#-subst-n/mf ,body ,@bindings)) effects)])]))]
            [`(* (Union ,union-variants ...))
             ;; Use *all* matching patterns for wildcard values
-            (for/fold ([result empty-eval-result])
-                      ([union-variant union-variants])
-              (match-define `(,tag ,sub-types ...) union-variant)
-              (match (findf (lambda (clause) (equal? (first (case-clause-pattern clause)) tag))
-                            clauses)
-                [#f result]
-                [clause
-                 (define vals (for/list ([sub-type sub-types]) `(* ,sub-type)))
-                 (define bindings (map list (cdr (case-clause-pattern clause)) vals))
-                 (combine-eval-results
-                  result
-                  (eval-machine (term (csa#-subst-n/mf ,(case-clause-body clause) ,@bindings)) effects))]))]))
+            (define clause-results
+             (for/fold ([result empty-eval-result])
+                       ([union-variant union-variants])
+               (match-define `(,tag ,sub-types ...) union-variant)
+               (match (findf (lambda (clause) (equal? (first (case-clause-pattern clause)) tag))
+                             clauses)
+                 [#f result]
+                 [clause
+                  (define vals (for/list ([sub-type sub-types]) `(* ,sub-type)))
+                  (define bindings (map list (cdr (case-clause-pattern clause)) vals))
+                  (combine-eval-results
+                   result
+                   (eval-machine (term (csa#-subst-n/mf ,(case-clause-body clause) ,@bindings)) effects))])))
+            (if (and (empty? (first clause-results)) (empty? (second clause-results)))
+                (one-stuck-result `(case ,v ,@clauses))
+                clause-results)]))
        (lambda (stuck) `(case ,stuck ,@clauses)))]
-    ;; [`(let ([,vars ,exps] ...) ,body)
-    ;;  (monad-thing* exps effects
-    ;;                (lambda (vs effects)
-    ;;                  (eval (csa#-subst-n/mf ,body ,@(map list vars vs)) effects))
-    ;;                (lambda (stucks effects) (one-stuck-result `(let ,(map list vars stucks) ,body))))]
-    ;; ;; TODO: idea: what if eval returns 2-tuple of value states and stuck states? Then I can do
-    ;; ;; direct-style
-    ;; [`(if test then-branch else-branch)
-    ;;  ;; assumes eval returns 2-tuple as above
-    ;;  (deal-with-eval-results (eval test effects)
-    ;;                          (lambda (v fx) ; kont that returns all possible results from this result (including more stuck states...
-    ;;                            (combine-results
-    ;;                             (eval then-branch fx)
-    ;;                             (eval else-branch fx)))
-    ;;                          (lambda (stuck fx) ; kont that says how to build stuck state if internal thing is stuck
-    ;;                            (list `(if ,stuck then-branch else-branch) fx))
-    ;;                          )
-    ;;  ]
+    ;; Let
+    [`(let ([,vars ,exps] ...) ,body)
+     (eval-and-then* exps effects
+       (lambda (vs effects)
+         (eval-machine (term (csa#-subst-n/mf ,body ,@(map list vars vs))) effects))
+       (lambda (stucks) `(let ,(map list vars stucks) ,body)))]
+    ;; Records
+    [`(record [,labels ,exps] ...)
+     (eval-and-then* exps effects
+       (lambda (vals effects) (one-value-result `(record ,@(map list labels vals)) effects))
+       (lambda (stucks) `(record ,@(map list labels stucks))))]
+    [`(: ,e ,l)
+     (eval-and-then e effects
+       (lambda (v effects)
+         (match v
+           [`(record ,fields ...)
+            (match (findf (lambda (f) (equal? (first f) l)) fields)
+              [#f (one-stuck-result `(: ,v ,l) effects)]
+              [field (one-value-result (second field) effects)])]
+           [`(* (Record ,fields ...))
+            (match (findf (lambda (f) (equal? (first f) l)) fields)
+              [#f (one-stuck-result `(: ,v ,l) effects)]
+              [field (one-value-result `(* ,(second field)) effects)])]
+           [_ (one-stuck-result `(: ,v ,l) effects)]))
+       (lambda (stuck) `(: ,stuck l)))]
+    [`(! ,rec [,l ,field-exp])
+     (eval-and-then* (list rec field-exp) effects
+       (lambda (vs effects)
+         (match-define (list v-rec v-field) vs)
+         (define (update-field f)
+           (if (equal? (first f) l)
+               `[,l ,v-field]
+               f))
+         (match v-rec
+           [`(record ,fields ...)
+            (match (findf (lambda (f) (equal? (first f) l)) fields)
+              [#f (one-stuck-result `(! ,v-rec [,l ,v-field]) effects)]
+              [field (one-value-result `(record ,@(map update-field fields)) effects)])]
+           [`(* (Record ,fields ...))
+            (match (findf (lambda (f) (equal? (first f) l)) fields)
+              [#f (one-stuck-result `(! ,v-rec [,l ,v-field]) effects)]
+              [_ (one-value-result v-rec effects)])]
+           [_ (one-stuck-result `(! ,v-rec [,l ,v-field]) effects)]))
+       (lambda (stuck) `(! ,stuck l)))]
+    ;; Misc. Values
     [`(variant ,tag ,exps ...)
      (eval-and-then* exps effects
                      (lambda (vs effects) (one-value-result `(variant ,tag ,@vs) effects))
@@ -638,8 +669,24 @@
       (lambda (v effects)
         (eval-and-then* exps effects
                         (lambda (other-vs effects) (value-kont (cons v other-vs) effects))
-                        (lambda (other-stucks effects) (stuck-kont (cons v other-stucks)))))
+                        (lambda (other-stucks) (stuck-kont (cons v other-stucks)))))
       (lambda (stuck) (stuck-kont (cons stuck exps))))]))
+
+(module+ test
+  (test-equal? "Eval-and-then* returns proper stuck state result for first value"
+    (eval-and-then* (list `(case (variant A))) empty-effects
+        (lambda (vs fx) (error "shouldn't do this"))
+        (lambda (stucks) `(variant B ,@stucks)))
+    (eval-machine-result null
+                         (list (machine-state `(variant B (case (variant A))) empty-effects))))
+
+  (test-equal? "Eval-and-then* returns proper stuck state result for later value"
+    (eval-and-then* (list `(* Nat) `(case (variant A))) empty-effects
+        (lambda (vs fx) (error "shouldn't do this"))
+        (lambda (stucks) `(variant B ,@stucks)))
+    (eval-machine-result
+     null
+     (list (machine-state `(variant B (* Nat) (case (variant A))) empty-effects)))))
 
 ;; Exp
 ;; Effects
@@ -661,6 +708,14 @@
      (combine-eval-results results (value-kont value effects))))
   (eval-result-add-stuck-states value-result
                                 (map (curryr add-context-to-stuck-state stuck-kont) stuck-states)))
+
+(module+ test
+  (test-equal? "Eval-and-then returns proper stuck state result"
+    (eval-and-then `(case (variant A)) empty-effects
+        (lambda (v fx) (error "shouldn't do this"))
+        (lambda (stuck) `(variant B ,stuck)))
+    (eval-machine-result null
+                         (list (machine-state `(variant B (case (variant A))) empty-effects)))))
 
 (define empty-eval-result `(() ()))
 
@@ -1140,10 +1195,31 @@
                          [(C) (variant Y)])
                       `(* Nat))
   (check-exp-steps-to-all? `(case (* (Union [A Nat] [B] [D]))
-                             [(A x) x]
-                             [(B) (variant X)]
-                             [(C) (variant Y)])
-                          (list `(* Nat) `(variant X)))
+                              [(A x) x]
+                              [(B) (variant X)]
+                              [(C) (variant Y)])
+                           (list `(* Nat) `(variant X)))
+  (check-exp-steps-to? `(let ([x (variant X)]
+                              [y (variant Y)])
+                          (variant A x y y))
+                       `(variant A (variant X) (variant Y) (variant Y)))
+  (check-exp-steps-to? `(record [a (let () (variant A))] [b (* Nat)])
+                       `(record [a (variant A)] [b (* Nat)]))
+  (check-exp-steps-to? `(record [a (let () (variant A))]
+                                [b (case (variant A) [(B) (* Nat)])]
+                                [c (let () (* Nat))])
+                       `(record [a (variant A)] [b (case (variant A))] [c (let () (* Nat))]))
+  (check-exp-steps-to? `(: (record [a (variant A)] [b (variant B)]) b)
+                       `(variant B))
+  (check-exp-steps-to? `(: (* (Record [a (Union [A])] [b (Union [B])])) b)
+                       `(* (Union [B])))
+  (check-exp-steps-to? `(: (record [a (variant A)] [b (variant B)]) c)
+                       `(: (record [a (variant A)] [b (variant B)]) c))
+  (check-exp-steps-to? `(! (record [a (variant A)] [b (variant B)]) [b (variant C)])
+                       `(record [a (variant A)] [b (variant C)]))
+  (check-exp-steps-to? `(! (* (Record [a (Union [A])] [b (Union [B] [C])])) [b (variant C)])
+                       `(* (Record [a (Union [A])] [b (Union [B] [C])])))
+
 
   ;; (check-exp-steps-to? (term (fold   (Union [A]) (variant A)))
   ;;                      (term (folded (Union [A]) (variant A))))
