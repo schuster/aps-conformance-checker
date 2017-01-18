@@ -83,7 +83,13 @@
      (goto Init)
      (define-state (Init)
        [unobs -> () (goto Running)]
-       [(variant PeerMessage *) -> () (goto Init)])
+       [(variant PeerMessage (variant RequestVote * candidate * *)) -> () (goto Init)]
+       [(variant PeerMessage (variant RequestVote * candidate * *)) -> () (goto Init)]
+       [(variant PeerMessage (variant VoteCandidate * *)) -> () (goto Init)]
+       [(variant PeerMessage (variant DeclineCandidate * *)) -> () (goto Init)]
+       [(variant PeerMessage (variant AppendEntries * * * * * leader *)) -> () (goto Init)]
+       [(variant PeerMessage (variant AppendRejected * * member)) -> () (goto Init)]
+       [(variant PeerMessage (variant AppendSuccessful * * *)) -> () (goto Init)])
      (define-state (Running)
        ;; TODO: consider removing the "PeerMessage" part of the type, just to make things more
        ;; concise, esp. for sending back *out*
