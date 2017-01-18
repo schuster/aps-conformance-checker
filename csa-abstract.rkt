@@ -659,6 +659,7 @@
             (value-result (term (* (type-subst ,type name (minfixpt ,name ,type)))) effects)]
            [_ (error 'eval-machine "Bad argument to unfold: ~s" v)]))
        (lambda (stuck) `(unfold ,type ,stuck)))]
+    [`(folded ,_ ...) (value-result exp effects)]
     ;; Numeric/Boolean Operators
     [`(,(and op (or '< '<= '> '>=)) ,arg1 ,arg2)
      (eval-and-then* (list arg1 arg2) effects
