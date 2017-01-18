@@ -861,7 +861,7 @@
      (eval-and-then init-exp effects
        (lambda (goto-val effects)
          (match-define (list sends spawns) effects)
-         (value-result address
+         (value-result `(,type ,address)
                        (list sends
                              (term (add-spawn ,spawns [,address (,state-defs ,goto-val)])))))
        (lambda (stuck) `(spawn ,loc ,type ,stuck ,@raw-state-defs)))]
@@ -1612,7 +1612,7 @@
                          (goto Foo (begin (variant A)))
                          (define-state (Foo) (m) (goto Foo)))
                  empty-effects)
-                (value-result `(spawn-addr loc NEW)
+                (value-result `(Nat (spawn-addr loc NEW))
                               `(() ([(spawn-addr loc NEW)
                                      (((define-state (Foo) (m) (goto Foo)))
                                       (goto Foo (variant A)))]))))
