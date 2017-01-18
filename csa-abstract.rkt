@@ -705,6 +705,99 @@
        (lambda (vs effects)
          (value-result `(variant True) `(variant False) effects))
        (lambda (stucks) `(= ,@stucks)))]
+    ;; Lists, Vectors, and Hashes
+    [`(,(and op (or 'list 'cons 'list-as-variant 'list-ref 'length 'vector 'vector-ref 'vector-take 'vector-drop 'vector-length 'vector-copy 'vector-append 'hash-ref 'hash-keys 'hash-values 'hash-set 'hash-remove 'hash-has-key? 'hash-empty?))
+       ,args ...)
+     (eval-and-then* args effects
+       (lambda (vs effects)
+         (match (cons op vs)
+           [`(list ,vs ...) (value-result (term (normalize-collection (list-val ,@vs))) effects)]
+           [`(cons ,v ,rest)
+            (match rest
+              [`(* ,_) rest]
+              [`(list-val ,vs ...)
+               (value-result (term (normalize-collection (list-val ,@vs ,v))) effects)])]
+           [`(list-as-variant ,l)
+            (match l
+              [`(* (Listof ,type)) (value-result `(variant Empty)
+                                                 `(variant Cons (* ,type) (* (Listof ,type)))
+                                                 effects)]
+              [`(list-val ,items ...)
+               (apply value-result
+                      `(variant Empty)
+                      (append (for/list ([item items]) `(variant Cons ,item ,l))
+                              (list effects)))]
+              [_ (error 'eval-machine "Bad list for list-as-variant: ~s\n" l)])]
+           [`(list-ref ,l ,_)
+            (match l
+              [`(* (Listof ,type)) (value-result `(* ,type))]
+              ;; NOTE: we can just return the empty list of results if there are no items in the list:
+              ;; we assume that that won't happen, and that therefore we only reached this state
+              ;; through over-abstraction
+              [`(list-val ,items ...) (value-result items effects)]
+              [_ (error 'eval-machine "Bad list for list-ref: ~s\n" l)])]
+           [`(length ,_) (value-result `(* Nat) effects)]
+           [`(vector ,vs ...) (value-result (term (normalize-collection (vector-val ,@vs))) effects)]
+           [`(vector-ref ,v ,_)
+            (match v
+              [`(* (Vectorof ,type)) (value-result `(* ,type) effects)]
+              [`(vector-val ,items) (value-result items effects)]
+              [_ (error 'eval-machine "Bad vector for vector-ref: ~s\n" v)])]
+           [`(,(or 'vector-take 'vector-drop 'vector-copy) ,v ,_)
+            (value-result v effects)]
+           [`(vector-length ,_) (value-result `(* Nat) effects)]
+           [`(vector-append (vector-val ,vs1 ...) (vector-val ,vs2 ...))
+            (value-result (term (normalize-collection (vector-val ,@vs1 ,@vs2))) effects)]
+           ;; TODO: figure out if the type is ever *not* big enough to also cover the other vector
+           [`(vector-append (* (Vectorof ,type)) ,_)
+            (value-result `(* (Vectorof ,type)))]
+           [`(vector-append ,_ (* (Vectorof ,type)))
+            (value-result `(* (Vectorof ,type)))]
+           [`(hash-ref ,h ,k)
+            (match h
+              [`(* (Hash ,key-type ,val-type))
+               (value-result `(variant Nothing) `(variant Just (* ,val-type)) effects)]
+              [`(hash-val ,_ ,vals)
+               (apply value-result
+                      `(variant Nothing)
+                      (append (for/list ([val vals]) `(variant Just ,val))
+                              effects))])]
+           [`(hash-keys ,h)
+            (match h
+              [`(* (Hash ,key-type ,_)) (value-result `(* (Listof ,key-type)) effects)]
+              [`(hash-val ,keys ,_) (value-result `(list-val ,@keys) effects)])]
+           [`(hash-values ,h)
+            (match h
+              [`(* (Hash ,_ ,value-type)) (value-result `(* (Listof ,value-type)) effects)]
+              [`(hash-val ,_ ,values) (value-result `(list-val ,@values) effects)])]
+           [`(hash-set ,h ,key ,val)
+            (match h
+              [`(* (Hash ,_ ,_)) (value-result h effects)]
+              [`(hash-val ,keys ,vals)
+               (value-result
+                (term (normalize-collection (hash-val ,(cons key keys) ,(cons val vals))))
+                effects)])]
+           [`(hash-remove ,h ,k) (value-result h effects)]
+           [`(hash-has-key? ,h ,k)
+            (value-result `(variant True) `(variant False) effects)]
+           [`(hash-empty? ,h)
+            (value-result `(variant True) `(variant False) effects)]
+           [_ (error 'eval-machine "Bad collection operation: ~s" `(,op ,@vs))]))
+       (lambda (stucks) `(,op ,@stucks)))]
+    [`(hash ,kvps ...)
+     (eval-and-then* (append* (for/list ([kvp kvps]) (list (first kvp) (second kvp)))) effects
+       (lambda (results effects)
+         (match-define (list keys vals)
+          (let loop ([results results]
+                     [keys null]
+                     [vals null])
+            (match results
+              [(list) (list keys vals)]
+              [(list key val rest ...) (loop rest (cons key keys) (cons val vals))])))
+         (value-result (term (normalize-collection (hash-val ,keys ,vals))) effects))
+       (lambda (stucks) (error 'eval-machine "Stuck evaluating hash: ~s" `(hash ,@stucks))))]
+    ;; TODO: add a goto rule
+    [`(,(or 'list-val 'vector-val 'hash-val) ,_ ...) (value-result exp effects)]
     ;; Misc. Values
     [`(variant ,tag ,exps ...)
      (eval-and-then* exps effects
@@ -1323,107 +1416,107 @@
   (check-exp-steps-to-all? (term (= (* (Addr Nat)) (Nat (obs-ext 1))))
                           (list (term (variant True)) (term (variant False))))
 
-  ;; ;; Tests for sorting when adding to lists, vectors, and hashes
-  ;; ;; list
-  ;; (check-exp-steps-to?
-  ;;  (term (list (variant C) (variant B)))
-  ;;  (term (list-val (variant B) (variant C))))
-  ;; (check-exp-steps-to?
-  ;;  (term (list))
-  ;;  (term (list-val)))
-  ;; (check-exp-steps-to?
-  ;;  (term (cons (variant A) (list-val (variant B) (variant C))))
-  ;;  (term (list-val (variant A) (variant B) (variant C))))
-  ;; (check-exp-steps-to?
-  ;;  (term (cons (variant A) (list-val)))
-  ;;  (term (list-val (variant A))))
-  ;; (check-exp-steps-to?
-  ;;  (term (cons (variant D) (list-val (variant B) (variant C))))
-  ;;  (term (list-val (variant B) (variant C) (variant D))))
-  ;; (check-exp-steps-to?
-  ;;  (term (cons (variant B) (list-val (variant B) (variant C))))
-  ;;  (term (list-val (variant B) (variant C))))
-  ;; ;; vector
-  ;; (check-exp-steps-to?
-  ;;  (term (vector (variant C) (variant B)))
-  ;;  (term (vector-val (variant B) (variant C))))
-  ;; (check-exp-steps-to?
-  ;;  (term (vector))
-  ;;  (term (vector-val)))
-  ;; (check-exp-steps-to?
-  ;;  (term (vector-append (vector-val (variant A) (variant B))
-  ;;                       (vector-val (variant C) (variant D))))
-  ;;  (term (vector-val (variant A) (variant B) (variant C) (variant D))))
-  ;; (check-exp-steps-to?
-  ;;  (term (vector-append (vector-val (variant A) (variant B))
-  ;;                       (vector-val (variant C) (variant B))))
-  ;;  (term (vector-val (variant A) (variant B) (variant C))))
-  ;; (check-exp-steps-to?
-  ;;  (term (vector-append (vector-val (variant C) (variant D))
-  ;;                       (vector-val (variant A) (variant B))))
-  ;;  (term (vector-val (variant A) (variant B) (variant C) (variant D))))
-  ;; (check-exp-steps-to?
-  ;; (term (vector-append (vector-val (variant C) (variant D))
-  ;;                      (vector-val (variant B) (variant A))))
-  ;; (term (vector-val (variant A) (variant B) (variant C) (variant D))))
-  ;; (check-exp-steps-to? (term (vector-append (vector-val) (vector-val))) (term (vector-val)))
-  ;; (check-exp-steps-to?
-  ;;  (term (vector-append (vector-val (variant A)) (vector-val)))
-  ;;  (term (vector-val (variant A))))
-  ;; (check-exp-steps-to?
-  ;;  (term (vector-append (vector-val) (vector-val (variant A))))
-  ;;  (term (vector-val (variant A))))
-  ;; ;; hash
-  ;; (check-exp-steps-to?
-  ;;  (term (hash [(* Nat) (variant B)] [(* Nat) (variant A)]))
-  ;;  (term (hash-val ((* Nat)) ((variant A) (variant B)))))
-  ;; (check-exp-steps-to?
-  ;;  (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant A)))
-  ;;  (term (hash-val ((* Nat)) ((variant A) (variant B) (variant C)))))
-  ;; (check-exp-steps-to?
-  ;;  (term (hash-set (hash-val ((* Nat)) ((variant C) (variant B))) (* Nat) (variant A)))
-  ;;  (term (hash-val ((* Nat)) ((variant A) (variant B) (variant C)))))
-  ;; (check-exp-steps-to?
-  ;;  (term (hash-set (hash-val () ()) (* Nat) (variant A)))
-  ;;  (term (hash-val ((* Nat)) ((variant A)))))
-  ;; (check-exp-steps-to?
-  ;;  (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant D)))
-  ;;  (term (hash-val ((* Nat)) ((variant B) (variant C) (variant D)))))
-  ;; (check-exp-steps-to?
-  ;;  (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant B)))
-  ;;  (term (hash-val ((* Nat)) ((variant B) (variant C)))))
-  ;; (check-exp-steps-to?
-  ;;  (term (hash-remove (hash-val ((* Nat)) ((variant B) (variant C))) (variant B)))
-  ;;  (term (hash-val ((* Nat)) ((variant B) (variant C)))))
-  ;; (check-exp-steps-to-all (term (hash-ref (* (Hash Nat Nat)) (* Nat)))
-  ;;                         (list '(variant Nothing)
-  ;;                               '(variant Just (* Nat))))
-  ;; (check-exp-steps-to-all (term (hash-ref (* (Hash Nat Nat)) (* Nat)))
-  ;;                         (list (term (variant Nothing))
-  ;;                               (term (variant Just (* Nat)))))
-  ;; (check-exp-steps-to? (term (hash-remove (* (Hash Nat Nat)) (* Nat)))
-  ;;                      (term (* (Hash Nat Nat))))
-  ;; (check-exp-steps-to-all (term (hash-empty? (hash-val ((* Nat)) ((variant A) (variant B)))))
-  ;;                         (list (term (variant True))
-  ;;                               (term (variant False))))
-  ;; (check-exp-steps-to-all (term (hash-empty? (* (Hash Nat Nat))))
-  ;;                         (list (term (variant True))
-  ;;                               (term (variant False))))
-  ;; (check-exp-steps-to-all (term (list-as-variant (list-val (variant A) (variant B))))
-  ;;                         (list (term (variant Empty))
-  ;;                               (term (variant Cons (variant A) (list-val (variant A) (variant B))))
-  ;;                               (term (variant Cons (variant B) (list-val (variant A) (variant B))))))
-  ;; (check-exp-steps-to-all (term (list-as-variant (* (Listof Nat))))
-  ;;                         (list (term (variant Empty))
-  ;;                               (term (variant Cons (* Nat) (* (Listof Nat))))))
-  ;; (check-exp-steps-to? (term (hash-keys (hash-val ((variant A) (variant B)) ((* Nat)))))
-  ;;                      (term (list-val (variant A) (variant B))))
-  ;; (check-exp-steps-to? (term (hash-keys (* (Hash Nat (Union [A] [B])))))
-  ;;                      (term (* (Listof Nat))))
-  ;; (check-exp-steps-to? (term (hash-values (hash-val ((* Nat)) ((variant A) (variant B)))))
-  ;;                      (term (list-val (variant A) (variant B))))
-  ;; (check-exp-steps-to? (term (hash-values (* (Hash Nat (Union [A] [B])))))
-  ;;                      (term (* (Listof (Union [A] [B])))))
+  ;; Tests for sorting when adding to lists, vectors, and hashes
+  ;; list
+  (check-exp-steps-to?
+   (term (list (variant C) (variant B)))
+   (term (list-val (variant B) (variant C))))
+  (check-exp-steps-to?
+   (term (list))
+   (term (list-val)))
+  (check-exp-steps-to?
+   (term (cons (variant A) (list-val (variant B) (variant C))))
+   (term (list-val (variant A) (variant B) (variant C))))
+  (check-exp-steps-to?
+   (term (cons (variant A) (list-val)))
+   (term (list-val (variant A))))
+  (check-exp-steps-to?
+   (term (cons (variant D) (list-val (variant B) (variant C))))
+   (term (list-val (variant B) (variant C) (variant D))))
+  (check-exp-steps-to?
+   (term (cons (variant B) (list-val (variant B) (variant C))))
+   (term (list-val (variant B) (variant C))))
+  ;; vector
+  (check-exp-steps-to?
+   (term (vector (variant C) (variant B)))
+   (term (vector-val (variant B) (variant C))))
+  (check-exp-steps-to?
+   (term (vector))
+   (term (vector-val)))
+  (check-exp-steps-to?
+   (term (vector-append (vector-val (variant A) (variant B))
+                        (vector-val (variant C) (variant D))))
+   (term (vector-val (variant A) (variant B) (variant C) (variant D))))
+  (check-exp-steps-to?
+   (term (vector-append (vector-val (variant A) (variant B))
+                        (vector-val (variant C) (variant B))))
+   (term (vector-val (variant A) (variant B) (variant C))))
+  (check-exp-steps-to?
+   (term (vector-append (vector-val (variant C) (variant D))
+                        (vector-val (variant A) (variant B))))
+   (term (vector-val (variant A) (variant B) (variant C) (variant D))))
+  (check-exp-steps-to?
+  (term (vector-append (vector-val (variant C) (variant D))
+                       (vector-val (variant B) (variant A))))
+  (term (vector-val (variant A) (variant B) (variant C) (variant D))))
+  (check-exp-steps-to? (term (vector-append (vector-val) (vector-val))) (term (vector-val)))
+  (check-exp-steps-to?
+   (term (vector-append (vector-val (variant A)) (vector-val)))
+   (term (vector-val (variant A))))
+  (check-exp-steps-to?
+   (term (vector-append (vector-val) (vector-val (variant A))))
+   (term (vector-val (variant A))))
+  ;; hash
+  (check-exp-steps-to?
+   (term (hash [(* Nat) (variant B)] [(* Nat) (variant A)]))
+   (term (hash-val ((* Nat)) ((variant A) (variant B)))))
+  (check-exp-steps-to?
+   (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant A)))
+   (term (hash-val ((* Nat)) ((variant A) (variant B) (variant C)))))
+  (check-exp-steps-to?
+   (term (hash-set (hash-val ((* Nat)) ((variant C) (variant B))) (* Nat) (variant A)))
+   (term (hash-val ((* Nat)) ((variant A) (variant B) (variant C)))))
+  (check-exp-steps-to?
+   (term (hash-set (hash-val () ()) (* Nat) (variant A)))
+   (term (hash-val ((* Nat)) ((variant A)))))
+  (check-exp-steps-to?
+   (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant D)))
+   (term (hash-val ((* Nat)) ((variant B) (variant C) (variant D)))))
+  (check-exp-steps-to?
+   (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant B)))
+   (term (hash-val ((* Nat)) ((variant B) (variant C)))))
+  (check-exp-steps-to?
+   (term (hash-remove (hash-val ((* Nat)) ((variant B) (variant C))) (variant B)))
+   (term (hash-val ((* Nat)) ((variant B) (variant C)))))
+  (check-exp-steps-to-all? (term (hash-ref (* (Hash Nat Nat)) (* Nat)))
+                           (list '(variant Nothing)
+                                 '(variant Just (* Nat))))
+  (check-exp-steps-to-all? (term (hash-ref (* (Hash Nat Nat)) (* Nat)))
+                           (list (term (variant Nothing))
+                                 (term (variant Just (* Nat)))))
+  (check-exp-steps-to? (term (hash-remove (* (Hash Nat Nat)) (* Nat)))
+                       (term (* (Hash Nat Nat))))
+  (check-exp-steps-to-all? (term (hash-empty? (hash-val ((* Nat)) ((variant A) (variant B)))))
+                           (list (term (variant True))
+                                 (term (variant False))))
+  (check-exp-steps-to-all? (term (hash-empty? (* (Hash Nat Nat))))
+                           (list (term (variant True))
+                                 (term (variant False))))
+  (check-exp-steps-to-all? (term (list-as-variant (list-val (variant A) (variant B))))
+                           (list (term (variant Empty))
+                                 (term (variant Cons (variant A) (list-val (variant A) (variant B))))
+                                 (term (variant Cons (variant B) (list-val (variant A) (variant B))))))
+  (check-exp-steps-to-all? (term (list-as-variant (* (Listof Nat))))
+                           (list (term (variant Empty))
+                                 (term (variant Cons (* Nat) (* (Listof Nat))))))
+  (check-exp-steps-to? (term (hash-keys (hash-val ((variant A) (variant B)) ((* Nat)))))
+                       (term (list-val (variant A) (variant B))))
+  (check-exp-steps-to? (term (hash-keys (* (Hash Nat (Union [A] [B])))))
+                       (term (* (Listof Nat))))
+  (check-exp-steps-to? (term (hash-values (hash-val ((* Nat)) ((variant A) (variant B)))))
+                       (term (list-val (variant A) (variant B))))
+  (check-exp-steps-to? (term (hash-values (* (Hash Nat (Union [A] [B])))))
+                       (term (* (Listof (Union [A] [B])))))
 
   ;; NOTE: these are the old tests for checking sorting of loop-sent messages, which I don't do
   ;; anymore. Keeping them around in case I change my mind
