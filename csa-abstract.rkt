@@ -1614,13 +1614,13 @@
                            (list `(variant X) `(variant Y)))
   (check-equal? (eval-machine
                  `(spawn loc Nat
-                         (goto Foo (begin (variant A)))
+                         (goto Foo self)
                          (define-state (Foo) (m) (goto Foo)))
                  empty-effects)
                 (value-result `(Nat (spawn-addr loc NEW))
                               `(() ([(spawn-addr loc NEW)
                                      (((define-state (Foo) (m) (goto Foo)))
-                                      (goto Foo (variant A)))]))))
+                                      (goto Foo (Nat (spawn-addr loc NEW))))]))))
 
   (test-case "Spawn in loop is a collective actor"
     (check-same-items?
