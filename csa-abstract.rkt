@@ -531,7 +531,8 @@
 
 ;; TODO: type definitions and names
 
-;; A MachineState is (Tuple Exp (Tuple Transmissions Spawns)), where Transmissions and Spawns are as in H#
+;; A MachineState is (Tuple Exp (Tuple Transmissions Spawns)), where Transmissions and Spawns are as
+;; in H#
 ;;
 ;; A ValueState is a MachineState where the Exp is a Value
 ;;
@@ -539,16 +540,23 @@
 ;;
 ;; An EvalResult is (Tuple (Listof ValueState) (Listof StuckState))
 
+(define in-loop-context? (make-parameter #f))
+(define seen-loops (make-parameter #f))
+
 ;; MachineState -> (Tuple (Listof ValueState) (Listof StuckState))
 ;;
 ;; Reduces the given machine state into all reachable stuck states and value states
 (define (eval-machine exp effects)
+  (parameterize ([in-loop-context? #f]
+                 [seen-loops (mutable-set)])
+    (eval-machine/internal exp effects)))
+
+;; MachineState -> (Tuple (Listof ValueState) (Listof StuckState))
+;;
+;; Reduces the given machine state into all reachable stuck states and value states
+(define (eval-machine/internal exp effects)
 
   ;; Tricky parts:
-  ;; * duplicates
-  ;; * stuck states
-  ;; * loops
-  ;; * non-determinism
   ;; * effects (maybe, should be easy)
 
   ;; TODO: figure out how to remove duplicate states
@@ -573,7 +581,7 @@
                 [(list `(,pat ,body) other-clauses ...)
                  (match (match-case-pattern v pat)
                    [#f (loop other-clauses)]
-                   [bindings (eval-machine (term (csa#-subst-n/mf ,body ,@bindings)) effects)])]))]
+                   [bindings (eval-machine/internal (term (csa#-subst-n/mf ,body ,@bindings)) effects)])]))]
            [`(* (Union ,union-variants ...))
             ;; Use *all* matching patterns for wildcard values
             (define clause-results
@@ -588,7 +596,7 @@
                   (define bindings (map list (cdr (case-clause-pattern clause)) vals))
                   (combine-eval-results
                    result
-                   (eval-machine (term (csa#-subst-n/mf ,(case-clause-body clause) ,@bindings)) effects))])))
+                   (eval-machine/internal (term (csa#-subst-n/mf ,(case-clause-body clause) ,@bindings)) effects))])))
             (if (and (empty? (first clause-results)) (empty? (second clause-results)))
                 (one-stuck-result `(case ,v ,@clauses))
                 clause-results)]))
@@ -597,7 +605,7 @@
     [`(let ([,vars ,exps] ...) ,body)
      (eval-and-then* exps effects
        (lambda (vs effects)
-         (eval-machine (term (csa#-subst-n/mf ,body ,@(map list vars vs))) effects))
+         (eval-machine/internal (term (csa#-subst-n/mf ,body ,@(map list vars vs))) effects))
        (lambda (stucks) `(let ,(map list vars stucks) ,body)))]
     ;; Records
     [`(record [,labels ,exps] ...)
@@ -657,7 +665,7 @@
            [`(folded ,type ,val) (value-result val effects)]
            [`(* (minfixpt ,name ,type))
             (value-result (term (* (type-subst ,type name (minfixpt ,name ,type)))) effects)]
-           [_ (error 'eval-machine "Bad argument to unfold: ~s" v)]))
+           [_ (error 'eval-machine/internal "Bad argument to unfold: ~s" v)]))
        (lambda (stuck) `(unfold ,type ,stuck)))]
     [`(folded ,_ ...) (value-result exp effects)]
     ;; Numeric/Boolean Operators
@@ -728,7 +736,7 @@
                       `(variant Empty)
                       (append (for/list ([item items]) `(variant Cons ,item ,l))
                               (list effects)))]
-              [_ (error 'eval-machine "Bad list for list-as-variant: ~s\n" l)])]
+              [_ (error 'eval-machine/internal "Bad list for list-as-variant: ~s\n" l)])]
            [`(list-ref ,l ,_)
             (match l
               [`(* (Listof ,type)) (value-result `(* ,type))]
@@ -736,14 +744,14 @@
               ;; we assume that that won't happen, and that therefore we only reached this state
               ;; through over-abstraction
               [`(list-val ,items ...) (value-result items effects)]
-              [_ (error 'eval-machine "Bad list for list-ref: ~s\n" l)])]
+              [_ (error 'eval-machine/internal "Bad list for list-ref: ~s\n" l)])]
            [`(length ,_) (value-result `(* Nat) effects)]
            [`(vector ,vs ...) (value-result (term (normalize-collection (vector-val ,@vs))) effects)]
            [`(vector-ref ,v ,_)
             (match v
               [`(* (Vectorof ,type)) (value-result `(* ,type) effects)]
               [`(vector-val ,items) (value-result items effects)]
-              [_ (error 'eval-machine "Bad vector for vector-ref: ~s\n" v)])]
+              [_ (error 'eval-machine/internal "Bad vector for vector-ref: ~s\n" v)])]
            [`(,(or 'vector-take 'vector-drop 'vector-copy) ,v ,_)
             (value-result v effects)]
            [`(vector-length ,_) (value-result `(* Nat) effects)]
@@ -783,7 +791,7 @@
             (value-result `(variant True) `(variant False) effects)]
            [`(hash-empty? ,h)
             (value-result `(variant True) `(variant False) effects)]
-           [_ (error 'eval-machine "Bad collection operation: ~s" `(,op ,@vs))]))
+           [_ (error 'eval-machine/internal "Bad collection operation: ~s" `(,op ,@vs))]))
        (lambda (stucks) `(,op ,@stucks)))]
     [`(hash ,kvps ...)
      (eval-and-then* (append* (for/list ([kvp kvps]) (list (first kvp) (second kvp)))) effects
@@ -796,7 +804,46 @@
               [(list) (list keys vals)]
               [(list key val rest ...) (loop rest (cons key keys) (cons val vals))])))
          (value-result (term (normalize-collection (hash-val ,keys ,vals))) effects))
-       (lambda (stucks) (error 'eval-machine "Stuck evaluating hash: ~s" `(hash ,@stucks))))]
+       (lambda (stucks) (error 'eval-machine/internal "Stuck evaluating hash: ~s" `(hash ,@stucks))))]
+    ;; Loops
+    [`(for/fold ([,result-var ,result-exp])
+                ([,item-var ,item-exp])
+        ,body)
+     (eval-and-then* (list result-exp item-exp) effects
+         (lambda (vs effects)
+           (match-define (list result-val items-val) vs)
+           (define this-loop `(for/fold ([,result-var ,result-val])
+                                        ([,item-var ,items-val])
+                                ,body))
+           (cond
+             [(set-member? (seen-loops) this-loop)
+              ;; already seen it, so we can return the empty result
+              empty-eval-result]
+             [else
+              ;; Haven't seen this loop yet: return the result of skipping the loop as well as
+              ;; iterating with every possible member of the collection
+              (set-add! (seen-loops) this-loop)
+              (define collection-members
+                (match items-val
+                  [`(,(or 'list-val 'vector-val) ,items ...) items]
+                  [`(* (,(or 'Listof 'Vectorof) ,type)) (list `(* ,type))]))
+              (define result-after-skipping (value-result result-val effects))
+              (for/fold ([full-result result-after-skipping])
+                        ([member collection-members])
+                (define unrolled-body
+                  (term (csa#-subst-n/mf ,body [,result-var ,result-val] [,item-var ,member])))
+                (combine-eval-results
+                 full-result
+                 (parameterize ([in-loop-context? #t])
+                   (eval-machine/internal `(for/fold ([,result-var ,unrolled-body])
+                                                     ([,item-var ,items-val])
+                                             ,body)
+                                          effects))))]))
+       (lambda (stucks)
+         (match-define (list stuck-result stuck-items) stucks)
+         `(for/fold ([,result-var ,stuck-result])
+                    ([,item-var ,stuck-items])
+            ,body)))]
     ;; TODO: add a goto rule
     [`(,(or 'list-val 'vector-val 'hash-val) ,_ ...) (value-result exp effects)]
     ;; Misc. Values
@@ -812,9 +859,7 @@
             `(obs-ext ,_)))
      (value-result exp effects)]
     ;; TODO: need clauses for value forms
-    [_ (error 'eval-machine "Don't know how to evaluate ~s\n" exp)]
-
-    ))
+    [_ (error 'eval-machine/internal "Don't know how to evaluate ~s\n" exp)]))
 
 ;; (Listof Exp)
 ;; Effects
@@ -867,7 +912,7 @@
 ;; state, the stuck-kont is called on that expression and the effects up to that point to build the
 ;; expected stuck state. All reachable values are combined and returned.
 (define (eval-and-then exp effects value-kont stuck-kont)
-  (match-define (list value-states stuck-states) (eval-machine exp effects))
+  (match-define (list value-states stuck-states) (eval-machine/internal exp effects))
   (define value-result
    ;; results from value states
    (for/fold ([results empty-eval-result])
@@ -1518,6 +1563,13 @@
                        (term (list-val (variant A) (variant B))))
   (check-exp-steps-to? (term (hash-values (* (Hash Nat (Union [A] [B])))))
                        (term (* (Listof (Union [A] [B])))))
+
+  (check-exp-steps-to-all? `(for/fold ([result (variant X)])
+                                      ([item (list (variant A) (variant B) (variant C))])
+                              (case (* (Union [True] [False]))
+                                [(True) item]
+                                [(False) result]))
+                           (list `(variant X) `(variant A) `(variant B)`(variant C)))
 
   ;; NOTE: these are the old tests for checking sorting of loop-sent messages, which I don't do
   ;; anymore. Keeping them around in case I change my mind
