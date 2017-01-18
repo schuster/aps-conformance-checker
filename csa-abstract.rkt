@@ -917,16 +917,6 @@
      (==> old new)]))
 
 (module+ test
-  (define (csa#-make-simple-test-config exp)
-    (redex-let* csa# ([a# (term (init-addr 0))]
-                      [b# (term (((define-state (Always) (long-unused-name) (begin ,exp (goto Always))))
-                                 (begin ,exp (goto Always))))]
-                      [α# (term ([a# b#]))]
-                      [μ# (term ())])
-                (term (α# μ# ()))))
-
-  (check-not-false (redex-match csa# i# (csa#-make-simple-test-config (term (* Nat)))))
-
   (define-check (check-exp-steps-to? e1 e2)
     (define next-steps (apply-reduction-relation handler-step# (inject/H# e1)))
     (unless (equal? next-steps (list (inject/H# e2)))
