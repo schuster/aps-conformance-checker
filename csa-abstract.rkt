@@ -709,7 +709,7 @@
          (value-result `(variant True) `(variant False) effects))
        (lambda (stucks) `(= ,@stucks)))]
     ;; Lists, Vectors, and Hashes
-    [`(,(and op (or 'list 'cons 'list-as-variant 'list-ref 'length 'vector 'vector-ref 'vector-take 'vector-drop 'vector-length 'vector-copy 'vector-append 'hash-ref 'hash-keys 'hash-values 'hash-set 'hash-remove 'hash-has-key? 'hash-empty?))
+    [`(,(and op (or 'list 'cons 'list-as-variant 'list-ref 'length 'vector 'vector-ref 'vector-take 'vector-drop 'vector-length 'vector-copy 'vector-append 'hash-ref 'hash-keys 'hash-values 'hash-set 'hash-remove 'hash-has-key? 'hash-empty? 'sort-numbers-descending))
        ,args ...)
      (eval-and-then* args effects
        (lambda (vs effects)
@@ -785,6 +785,7 @@
             (value-result `(variant True) `(variant False) effects)]
            [`(hash-empty? ,h)
             (value-result `(variant True) `(variant False) effects)]
+           [`(sort-numbers-descending ,v) (value-result v effects)]
            [_ (error 'eval-machine/internal "Bad collection operation: ~s" `(,op ,@vs))]))
        (lambda (stucks) `(,op ,@stucks)))]
     [`(hash ,kvps ...)
@@ -1244,7 +1245,8 @@
                        (term (list-val (variant A) (variant B))))
   (check-exp-steps-to? (term (hash-values (* (Hash Nat (Union [A] [B])))))
                        (term (* (Listof (Union [A] [B])))))
-
+  (check-exp-steps-to? (term (sort-numbers-descending (list-val (* Nat))))
+                       (term (list-val (* Nat))))
   (check-exp-steps-to-all? `(for/fold ([result (variant X)])
                                       ([item (list (variant A) (variant B) (variant C))])
                               (case (* (Union [True] [False]))
