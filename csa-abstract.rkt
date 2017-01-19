@@ -540,14 +540,16 @@
 ;; An EvalResult is (Tuple (Listof ValueState) (Listof StuckState))
 
 (define in-loop-context? (make-parameter #f))
-(define seen-loops (make-parameter #f))
+;; During evaluation, this is a hash table keyed by machine state (H#), and whose values are
+;; eval-mahcine-results indicating all possible results of reducing that machine state.
+(define loop-results (make-parameter #f))
 
 ;; MachineState -> (Tuple (Listof ValueState) (Listof StuckState))
 ;;
 ;; Reduces the given machine state into all reachable stuck states and value states
 (define (eval-machine exp effects)
   (parameterize ([in-loop-context? #f]
-                 [seen-loops (mutable-set)])
+                 [loop-results (make-hash)])
     (eval-machine/internal exp effects)))
 
 ;; MachineState -> (Tuple (Listof ValueState) (Listof StuckState))
@@ -801,6 +803,29 @@
     [`(for/fold ([,result-var ,result-exp])
                 ([,item-var ,item-exp])
         ,body)
+     ;; Without memoizing the results of evaluating for loops, we would enter an infinite loop in
+     ;; which we unroll the loop body, evaluate it, unroll the body again, etc. forever. However, we
+     ;; can't memoize the results until we finish evaluting an unrolling of the loop, so we have a
+     ;; bootstrapping problem.
+     ;;
+     ;; Here's the solution: if we come across a loop we have *seen* but have not memoized the results
+     ;; of yet, we must be nested inside that loop. This must be an instance of the same loop that
+     ;; we're nested inside of (i.e. generated from the same syntactic location in the program),
+     ;; because otherwise the current loop would have had to be in the original loop's body, and
+     ;; therefore we would detect that this loop is different (because of the different
+     ;; bodies). Because it is the same loop, the context is also the same: the only possibility is
+     ;; that the body of the loop finished evaluating and now we're at the top of the loop
+     ;; again. Because we encountered this exact state of the evaluation machine already (including
+     ;; its context, which is not covered in the memoization check below), we know that all paths
+     ;; through the loop are already being evaluated, so we can return the empty list of results and
+     ;; be confident that all possible results are explored in the original iteration through the
+     ;; loop.
+     ;;
+     ;; Of course, once we *have* memoized the results, we just return that result without
+     ;; re-evaluating the loop.
+     ;;
+     ;; There's probably some math based on least-fixpoints that backs this up, but I haven't yet
+     ;; formalized it.
      (eval-and-then* (list result-exp item-exp) effects
        (lambda (vs effects)
          (match-define (list result-val items-val) vs)
@@ -809,30 +834,37 @@
                                        ([,item-var ,items-val])
                                ,body)
                             effects))
-         (cond
-           [(set-member? (seen-loops) this-loop)
-            ;; already seen it, so we can return the empty result
-            empty-eval-result]
-           [else
+         (match (hash-ref (loop-results) this-loop #f)
+           [#f
             ;; Haven't seen this loop yet: return the result of skipping the loop as well as
-            ;; iterating with every possible member of the collection
-            (set-add! (seen-loops) this-loop)
+            ;; iterating with every possible member of the collection.
+            ;;
+            ;; We set the empty-eval-result as the loop-result while evaluating the loop body: this is
+            ;; what we expect to return if we reduce to this exact same state from here (the notes
+            ;; above explain why). After evaluation complete, we set the loop-result to the full set
+            ;; of resulting states.
+            (hash-set! (loop-results) this-loop empty-eval-result)
             (define collection-members
               (match items-val
                 [`(,(or 'list-val 'vector-val) ,items ...) items]
                 [`(* (,(or 'Listof 'Vectorof) ,type)) (list `(* ,type))]))
             (define result-after-skipping (value-result result-val effects))
-            (for/fold ([full-result result-after-skipping])
-                      ([member collection-members])
-              (define unrolled-body
-                (term (csa#-subst-n/mf ,body [,result-var ,result-val] [,item-var ,member])))
-              (combine-eval-results
-               full-result
-               (parameterize ([in-loop-context? #t])
-                 (eval-machine/internal `(for/fold ([,result-var ,unrolled-body])
-                                                   ([,item-var ,items-val])
-                                           ,body)
-                                        effects))))]))
+            ;; TODO: memoize the result
+            (define final-results
+              (for/fold ([full-result result-after-skipping])
+                        ([member collection-members])
+                (define unrolled-body
+                  (term (csa#-subst-n/mf ,body [,result-var ,result-val] [,item-var ,member])))
+                (combine-eval-results
+                 full-result
+                 (parameterize ([in-loop-context? #t])
+                   (eval-machine/internal `(for/fold ([,result-var ,unrolled-body])
+                                                     ([,item-var ,items-val])
+                                             ,body)
+                                          effects)))))
+            (hash-set! (loop-results) this-loop final-results)
+            final-results]
+           [memoized-result memoized-result]))
        (lambda (stucks)
          (match-define (list stuck-result stuck-items) stucks)
          `(for/fold ([,result-var ,stuck-result])
@@ -1223,6 +1255,16 @@
                                       ([item (list (* Nat))])
                               (variant Y))
                            (list `(variant X) `(variant Y)))
+  (test-case "Seeing the same loop twice in different contexts returns all results"
+    (check-exp-steps-to-all?
+     `(let ([a (case (* (Union [A] [B])) [(A) (variant A)] [(B) (variant B)])])
+        (begin
+          (for/fold ([dummy (* Nat)])
+                    ([item (list-val (* Nat))])
+            item)
+          a))
+     (list '(variant A) '(variant B))))
+
   (check-equal? (eval-machine
                  `(spawn loc Nat
                          (goto Foo self)
