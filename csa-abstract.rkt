@@ -762,7 +762,7 @@
                (apply value-result
                       `(variant Nothing)
                       (append (for/list ([val vals]) `(variant Just ,val))
-                              effects))])]
+                              (list effects)))])]
            [`(hash-keys ,h)
             (match h
               [`(* (Hash ,key-type ,_)) (value-result `(* (Listof ,key-type)) effects)]
@@ -1177,6 +1177,8 @@
   (check-exp-steps-to-all? (term (hash-ref (* (Hash Nat Nat)) (* Nat)))
                            (list (term (variant Nothing))
                                  (term (variant Just (* Nat)))))
+  (check-exp-steps-to? (term (hash-ref (hash-val () ()) (* Nat)))
+                       '(variant Nothing))
   (check-exp-steps-to? (term (hash-remove (* (Hash Nat Nat)) (* Nat)))
                        (term (* (Hash Nat Nat))))
   (check-exp-steps-to-all? (term (hash-empty? (hash-val ((* Nat)) ((variant A) (variant B)))))
