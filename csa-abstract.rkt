@@ -905,10 +905,10 @@
        (lambda (stucks) `(goto ,state-name ,@stucks)))]
     [`(,(or 'list-val 'vector-val 'hash-val) ,_ ...) (value-result exp effects)]
     ;; Debugging
-    [`(printf ,args ...)
+    [`(printf ,template ,args ...)
      (eval-and-then* args effects
        (lambda (vs effects)
-         (apply printf vs)
+         (apply printf template vs)
          (value-result `(* Nat) effects))
        (lambda (stucks) `(printf ,@stucks)))]
     ;; TODO: add print-len back in for lists and vectors
