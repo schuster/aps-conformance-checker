@@ -744,7 +744,7 @@
               [`(* (Vectorof ,type)) (value-result `(* ,type) effects)]
               [`(vector-val ,items ...) (apply value-result (append items (list effects)))]
               [_ (error 'eval-machine/internal "Bad vector for vector-ref: ~s\n" v)])]
-           [`(,(or 'vector-take 'vector-drop 'vector-copy) ,v ,_)
+           [`(,(or 'vector-take 'vector-drop 'vector-copy) ,v ,_ ...)
             (value-result v effects)]
            [`(vector-length ,_) (value-result `(* Nat) effects)]
            [`(vector-append (vector-val ,vs1 ...) (vector-val ,vs2 ...))
@@ -1155,6 +1155,10 @@
   (check-exp-steps-to-all?
    `(vector-ref (vector-val) (* Nat))
    null)
+  (check-exp-steps-to? `(vector-copy (vector-val (* Nat)) (* Nat) (* Nat))
+                       `(vector-val (* Nat)))
+  (check-exp-steps-to? `(vector-take (vector-val (* Nat)) (* Nat))
+                       `(vector-val (* Nat)))
   ;; hash
   (check-exp-steps-to?
    (term (hash [(* Nat) (variant B)] [(* Nat) (variant A)]))
