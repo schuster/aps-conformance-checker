@@ -735,14 +735,14 @@
               ;; NOTE: we can just return the empty list of results if there are no items in the list:
               ;; we assume that that won't happen, and that therefore we only reached this state
               ;; through over-abstraction
-              [`(list-val ,items ...) (value-result items effects)]
+              [`(list-val ,items ...) (apply value-result (append items (list effects)))]
               [_ (error 'eval-machine/internal "Bad list for list-ref: ~s\n" l)])]
            [`(length ,_) (value-result `(* Nat) effects)]
            [`(vector ,vs ...) (value-result (term (normalize-collection (vector-val ,@vs))) effects)]
            [`(vector-ref ,v ,_)
             (match v
               [`(* (Vectorof ,type)) (value-result `(* ,type) effects)]
-              [`(vector-val ,items ...) (value-result items effects)]
+              [`(vector-val ,items ...) (apply value-result (append items (list effects)))]
               [_ (error 'eval-machine/internal "Bad vector for vector-ref: ~s\n" v)])]
            [`(,(or 'vector-take 'vector-drop 'vector-copy) ,v ,_)
             (value-result v effects)]
@@ -1119,6 +1119,9 @@
   (check-exp-steps-to?
    (term (cons (variant B) (list-val (variant B) (variant C))))
    (term (list-val (variant B) (variant C))))
+  (check-exp-steps-to-all?
+   `(list-ref (list-val) (* Nat))
+   null)
   ;; vector
   (check-exp-steps-to?
    (term (vector (variant C) (variant B)))
@@ -1149,6 +1152,9 @@
   (check-exp-steps-to?
    (term (vector-append (vector-val) (vector-val (variant A))))
    (term (vector-val (variant A))))
+  (check-exp-steps-to-all?
+   `(vector-ref (vector-val) (* Nat))
+   null)
   ;; hash
   (check-exp-steps-to?
    (term (hash [(* Nat) (variant B)] [(* Nat) (variant A)]))
