@@ -1121,10 +1121,10 @@
          (goto Registered job-manager)]
         [unobs ->
                ([obligation job-manager (variant UpdateTaskExecutionState * *)])
-               (goto Unregistered job-manager)]
+               (goto Registered job-manager)]
         [unobs ->
                ([obligation job-manager (variant RequestNextInputSplit * *)])
-               (goto Unregistered job-manager)])))
+               (goto Registered job-manager)])))
 
   (define task-manager-spec
     `(specification (receptionists)
