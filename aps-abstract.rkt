@@ -227,7 +227,11 @@
    (filter
     values
     (map (lambda (t) (attempt-transition spec-config t from-observer? trigger))
-         (config-current-transitions spec-config)))))
+         ;; Remove the free-output transitions: these would cause the checker to make many "bad
+         ;; guesses" about what conforms to what, and the outputs they use can always be used for
+         ;; other transitions.
+         (filter (negate (curryr transition-free-output-info (aps#-config-current-state spec-config)))
+                 (config-current-transitions spec-config))))))
 
 (module+ test
   (test-equal? "Null step is possible"
@@ -783,12 +787,13 @@
                       satisfied-commitments
                       remaining-outputs)]
             [commitments
+             (define free-patterns (hash-ref free-output-patterns address null))
              (define patterns
-               ;; use regular patterns if the message was sent only once; have to use free-output
-               ;; patterns if it may have been sent more than once (e.g. in a loop)
+               ;; use regular patterns or free patterns if the message was sent only once; have to use
+               ;; free-output patterns if it may have been sent more than once (e.g. in a loop)
                (match (csa#-output-multiplicity output)
-                 ['single (map commitment-pattern commitments)]
-                 ['many (hash-ref free-output-patterns address null)]))
+                 ['single (append (map commitment-pattern commitments) free-patterns)]
+                 ['many free-patterns]))
              ;; for each possible way to match, loop again with the remaining config and append all
              ;; final results
              (append*
@@ -1024,14 +1029,20 @@
   (define current-state (aps#-config-current-state config))
   (for/fold ([free-pattern-map (hash)])
             ([trans (config-current-transitions config)])
-    (match trans
-      [`(unobs -> ([obligation ,addr ,pattern]) ,(== current-state))
+    (match (transition-free-output-info trans current-state)
+      [(list addr pattern)
        (hash-set free-pattern-map
                  addr
                  (match (hash-ref free-pattern-map addr #f)
                    [#f (list pattern)]
                    [other-patterns (cons pattern other-patterns)]))]
       [_ free-pattern-map])))
+
+(define (transition-free-output-info trans current-state)
+  (match trans
+    [`(unobs -> ([obligation ,addr ,pattern]) ,(== current-state))
+     (list addr pattern)]
+    [_ #f]))
 
 (module+ test
   (check-equal?
