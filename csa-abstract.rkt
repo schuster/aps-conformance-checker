@@ -32,6 +32,7 @@
  csa#-blur-addresses ; needed for blurring in APS#
  internals-in
  externals-in
+ csa#-sort-config-components
 
  ;; Required by APS#; should go into a "common" language instead
  csa#
@@ -2009,6 +2010,60 @@
     (term (((blurred-spawn-addr 1) (,behavior1 ,behavior2 ,behavior3))
            ((blurred-spawn-addr 2) (,behavior3))
            ((blurred-spawn-addr 3) (,behavior3))))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Canonicalization (the sorting of config components)
+
+;; Sorts the components of an impl configuration as follows:
+;; * atomic actors by address
+;; * collective actors by address
+;; * behaviors of a collective actor by the entire behavior
+;; * message packets by the entire packet
+(define (csa#-sort-config-components config)
+  (match-define `(,atomic-actors ,collective-actors ,packets) config)
+  (define (actor<? a b)
+    (sexp<? (csa#-actor-address a) (csa#-actor-address b)))
+  (define sorted-atomic-actors (sort atomic-actors actor<?))
+  (define sorted-collective-actors
+    (sort (map sort-collective-actor-behaviors collective-actors) actor<?))
+  (define sorted-packets (sort packets sexp<?))
+  `(,sorted-atomic-actors ,sorted-collective-actors ,sorted-packets))
+
+(define (sort-collective-actor-behaviors actor)
+  (match-define `(,addr ,behaviors) actor)
+  `(,addr ,(sort behaviors sexp<?)))
+
+(module+ test
+  (define sort-components-test-config
+    `(;; atomic actors
+      ([(init-addr 2) (() (goto A))]
+       [(init-addr 1) (() (goto Z))])
+      ;; collective actors
+      ([(blurred-spawn-addr Q) ((() (goto Z))
+                                (() (goto M))
+                                (() (goto A)))]
+       [(blurred-spawn-addr B) ((() (goto Z))
+                                (() (goto M))
+                                (() (goto A)))])
+      ;; messages
+      ([(init-addr 2) (* Nat) single]
+       [(init-addr 1) (* Nat) single])))
+  (check-true (redex-match? csa# i# sort-components-test-config))
+  (check-equal?
+   (csa#-sort-config-components sort-components-test-config)
+   `(;; atomic actors
+     ([(init-addr 1) (() (goto Z))]
+      [(init-addr 2) (() (goto A))])
+      ;; collective actors
+     ([(blurred-spawn-addr B) ((() (goto A))
+                               (() (goto M))
+                               (() (goto Z)))]
+      [(blurred-spawn-addr Q) ((() (goto A))
+                               (() (goto M))
+                               (() (goto Z)))])
+      ;; messages
+     ([(init-addr 1) (* Nat) single]
+      [(init-addr 2) (* Nat) single]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Duplicate message merging

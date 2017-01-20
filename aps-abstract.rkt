@@ -1418,7 +1418,7 @@
         (list (term natural) new-number))))
   (match-define (list renamed-impl-config renamed-spec-config)
     (rename-external-addresses (list aged-impl-config aged-spec-config) substitutions))
-  (list renamed-impl-config
+  (list (csa#-sort-config-components renamed-impl-config)
         (aps#-sort-receptionists renamed-spec-config)
         substitutions))
 
