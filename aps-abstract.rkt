@@ -1325,13 +1325,12 @@
      '(((obs-ext 0 Nat) (single *) (single (record [a *] [b *])))))))
 
 (define (aps#-completed-no-transition-config? s)
-  (define (aps#-make-no-transition-config receptionists commitments)
-  (term (UNKNOWN
-         ,receptionists
-         (goto DummySpecFsmState)
-         ((define-state (DummySpecFsmState)))
-         ,commitments)))
-  (redex-match? aps# (_ _ (goto DummySpecFsmState) _ ([_] ...)) s))
+  ;; A configuration is a completed, no-transition configuration if its only current transition is the
+  ;; implicit do-nothing transition and it has no remaining obligations
+  (and (= 1 (length (config-current-transitions s)))
+       (match (aps#-config-commitment-map s)
+         [(list `(,_) ...) #t]
+         [_ #f])))
 
 (module+ test
   ;; empty config set, non-empty configs, other kind of spec config with empty coms
