@@ -805,7 +805,7 @@
   (test-true "Expected widen config is valid" (redex-match? csa# i# expected-widened-config))
   (test-true "Valid spec for widen test" (redex-match? aps# s# widen-spec))
   (test-equal? "Basic widening test"
-    (widen-pair (config-pair init-widen-impl-config widen-spec))
+    (widen-pair (config-pair init-widen-impl-config widen-spec) 0 0 0)
     (config-pair expected-widened-config widen-spec)))
 
 ;; config-pair -> (Listof (List csa#-transition-effect Boolean))
