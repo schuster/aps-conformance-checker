@@ -1165,8 +1165,8 @@
   (define send-job-result-anytime-behavior
     `((goto SendAnytime dest)
       (define-state (SendAnytime dest)
-        [unobs -> ([obligation dest (variant JobResultSuccess *)]) (goto SendAnytime)]
-        [unobs -> ([obligation dest (variant JobResultFailure)]) (goto SendAnytime)])))
+        [unobs -> ([obligation dest (variant JobResultSuccess *)]) (goto SendAnytime dest)]
+        [unobs -> ([obligation dest (variant JobResultFailure)]) (goto SendAnytime dest)])))
 
   (define job-manager-client-pov-spec
     `(specification (receptionists [job-manager ,desugared-job-manager-command]) (externals)
