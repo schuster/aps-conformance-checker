@@ -1315,25 +1315,30 @@
 ;; Creates a spec config with a transition-less FSM and a commitment map with just the given
 ;; entry. The receptionists for the unobserved environment will be the given list plus the given FSM
 ;; address if it is not UNKONWN.
-(define (aps#-config-from-commitment-entry entry fsm-addr receptionists)
-  (define all-receptionists
-    (remove-duplicates
-     (append receptionists
-             (if (equal? fsm-addr 'UNKNOWN) '() (list fsm-addr)))))
-  (aps#-make-no-transition-config all-receptionists (list entry)))
+(define (aps#-config-from-commitment-entry entry obs-interface unobs-interface)
+  (aps#-make-no-transition-config (term (interface-add-address/mf ,unobs-interface ,obs-interface))
+                                  (list entry)))
 
 (module+ test
   (check-equal?
-   (aps#-config-from-commitment-entry (term ((obs-ext 0 Nat) (single *) (single (record [a *] [b *])))) 'UNKNOWN null)
-   (aps#-make-no-transition-config '() '(((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))))
+   (aps#-config-from-commitment-entry (term ((obs-ext 0) (single *) (single (record [a *] [b *])))) 'UNKNOWN null)
+   (aps#-make-no-transition-config '() '(((obs-ext 0) (single *) (single (record [a *] [b *]))))))
 
   (test-equal? "Commitment entry spec should also include old FSM address as unobs receptionist"
-    (aps#-config-from-commitment-entry (term ((obs-ext 0 Nat) (single *) (single (record [a *] [b *]))))
-                                     '(init-addr 0 Nat)
+    (aps#-config-from-commitment-entry (term ((obs-ext 0) (single *) (single (record [a *] [b *]))))
+                                     '(Nat (init-addr 0))
                                      null)
     (aps#-make-no-transition-config
-     '((init-addr 0 Nat))
-     '(((obs-ext 0 Nat) (single *) (single (record [a *] [b *])))))))
+     '((Nat (init-addr 0)))
+     '(((obs-ext 0) (single *) (single (record [a *] [b *]))))))
+
+  (test-equal? "Merge obs address into unobs addrs"
+    (aps#-config-from-commitment-entry (term ((obs-ext 0 Nat)))
+                                     `((Union [A]) (init-addr 0))
+                                     `(((Union [B]) (init-addr 0))))
+    (aps#-make-no-transition-config
+     `(((Union [A] [B]) (init-addr 0)))
+     '(((obs-ext 0 Nat))))))
 
 (define (aps#-completed-no-transition-config? s)
   ;; A configuration is a completed, no-transition configuration if its only current transition is the
