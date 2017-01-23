@@ -719,6 +719,22 @@
                   ([n (list 1 2)])
           (spawn runner-loc TaskRunner job-manager task-manager))
         (goto Done))))
+  (define-state (Done) (m) (goto Done)))
+
+(define-actor Nat
+  (TaskManagersCreator [manager-ids (Listof Nat)] [job-manager (Addr TaskManagerToJobManager)])
+  ()
+  (goto Init)
+  (define-state/timeout (Init) (m)
+    (goto Init)
+    (timeout 0
+      (for/fold ([dummy 0])
+                ([manager-id manager-ids])
+        (let ([task-manager (spawn task-manager-loc TaskManager manager-id job-manager)])
+          (for/fold ([dummy 0])
+                    ([n (list 1 2)])
+            (spawn runner-loc TaskRunner job-manager task-manager))))
+      (goto Done)))
   (define-state (Done) (m) (goto Done))))))
 
 (module+ test
@@ -794,6 +810,20 @@
       [CancelTask ,desugared-job-task-id (Addr ,desugared-submit-cancel-response)]))
   (check-true (redex-match? csa-eval τ desugared-tm-test-input-type))
 
+  ;; client-level API
+  (define desugared-task-description
+    `(Union [Map (Vectorof Nat)] [Reduce [left-task-id Nat] [right-task-id Nat]]))
+  (define desugared-task `(Record [id Nat] [type ,desugared-task-description]))
+  (define desugared-job `(Record [id Nat] [tasks (Listof ,desugared-task)] [final-task-id Nat]))
+  (define desugared-job-result
+    `(Union [JobResultSuccess (Hash String Nat)] [JobResultFailure]))
+  (define desugared-cancellation-result
+    `(Union (CancellationSuccess) (CancellationFailure)))
+  (define desugared-job-manager-command
+    `(Union [SubmitJob ,desugared-job (Addr ,desugared-job-result)]
+            [CancelJob Nat (Addr ,desugared-cancellation-result)]))
+  (check-true (redex-match? csa-eval τ desugared-job-manager-command))
+
   (define-match-expander JobTaskId/pat
     (lambda (stx)
       (syntax-parse stx
@@ -819,12 +849,8 @@
      `(program (receptionists [job-manager Nat]) (externals)
                ,@flink-definitions
                (actors [job-manager (spawn jm-loc JobManager)]
-                       [task-manager1 (spawn task-manager1-loc TaskManager 1 job-manager)]
-                       [task-manager2 (spawn task-manager2-loc TaskManager 2 job-manager)]
-                       [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager1)]
-                       [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager1)]
-                       [task-runner3 (spawn runner3-loc TaskRunner job-manager task-manager2)]
-                       [task-runner4 (spawn runner4-loc TaskRunner job-manager task-manager2)]))))
+                       [task-managers-creator
+                        (spawn creator-loc TaskManagersCreator (list 1 2) job-manager)]))))
 
   (define single-tm-job-manager-program
     (desugar
@@ -1134,24 +1160,36 @@
        (define-state (Done))))
 
   (test-true "Task manager conforms to its spec"
-    (check-conformance task-manager-program task-manager-spec)))
+    (check-conformance task-manager-program task-manager-spec))
+
+  (define send-job-result-anytime-behavior
+    `((goto SendAnytime dest)
+      (define-state (SendAnytime dest)
+        [unobs -> ([obligation dest (variant JobResultSuccess *)] (goto SendAnytime))]
+        [unobs -> ([obligation dest (variant JobResultFailure)] (goto SendAnytime))])))
+
+  (define job-manager-client-pov-spec
+    `(specification (receptionists [job-manager ,desugared-job-manager-command]) (externals)
+       [job-manager ,desugared-job-manager-command]
+       ([job-manager (Union [TaskManagerTerminated Nat])])
+       (goto Running)
+       (define-state (Running)
+         [(variant CancelJob * dest) ->
+          ([obligation dest (or (variant CancellationSuccess) (variant CancellationFailure))])
+          (goto Running)]
+         ;; In the AI, the best we can say is that we might get any number of results back on this
+         ;; address (because the abstraction never actually removes addresses from collections), so
+         ;; the spec just states the possible results.
+         [(variant SubmitJob * dest) -> ([fork ,@send-job-result-anytime-behavior]) (goto Running)])))
+
+  (test-true "Job manager conforms to its client POV spec"
+    (check-conformance job-manager-program job-manager-client-pov-spec)))
 
 ;; Specs to check:
 ;; * JobManager, from TaskManager/Task perspective:
 ;;   * respond to registration requests, then sends other commands (SubmitTask, CancelTask)
 ;;   * respond to RequestNextInputSplit
 
-;; * TaskManager, from JobManager perspective:
-;;   * send multiple registration requests until accepted
-;;   * unregister on JobManagerTerminated
-;;   * respond to SubmitTask (always cancel when not registered)
-;;   * respond to CancelTask (always failure when not registered)
-;;   * sends UpdateTaskExecutionState sometimes
-;; * JobManager (full program), from client POV:
-;;   * after Submit/Cancel, might get Finished/Canceled results
-;;   * Cancel gets a success or failure right away
-
-
 ;; Missed responses to check with specs:
-;; * ACK SubmitTask in TaskManager
+
 ;; * TaskManager registration acknowledgment
