@@ -607,8 +607,8 @@
     (==> (! (record any_1 ... [l _] any_2 ...) [l v#])
          (record any_1 ... [l v#] any_2 ...)
          RecordUpdate)
-    (==> (! (* (Record any_1 ... [l τ] any_2 ...)) [l v#])
-         (* (Record any_1 ... [l τ] any_2 ...))
+    (==> (! (* (Record [l_1 τ_1] ... [l τ] [l_2 τ_2] ...)) [l v#])
+         (record [l_1 (* τ_1)] ... [l v#] [l_2 (* τ_2)] ...)
          RecordWildcardUpdate)
 
     ;; Recursive Types
@@ -685,7 +685,7 @@
          (normalize-collection (list-val v#_new v# ...))
          Cons)
     (==> (cons v# (* (Listof τ)))
-         (* (Listof τ))
+         (normalize-collection (list-val v# (* τ)))
          WildcardCons)
     (==> (list-as-variant (list-val _ ...))
          (variant Empty)
@@ -744,16 +744,19 @@
     (==> (vector-copy (* (Vectorof τ)) (* Nat) (* Nat))
          (* (Vectorof τ))
          VectorWildcardCopy)
-    ;; TODO: figure out if the type is ever *not* big enough to also cover the other vector
-    (==> (vector-append (vector-val v#_1 ...) (vector-val v#_2 ...))
-         (normalize-collection (vector-val v#_1 ... v#_2 ...))
+
+    (==> (vector-append v#_1 v#_2)
+         (normalize-collection (vector-val v#_1vals ... v#_2vals ...))
+         (where (v#_1vals ...) (vector-values v#_1))
+         (where (v#_2vals ...) (vector-values v#_2))
+         (side-condition
+          (or (redex-match? csa# (vector-val _ ...) (term v#_1))
+              (redex-match? csa# (vector-val _ ...) (term v#_2))))
          VectorAppend)
-    (==> (vector-append (* (Vectorof τ)) _)
+    ;; TODO: figure out if the type is ever *not* big enough to also cover the other vector
+    (==> (vector-append (* (Vectorof τ)) (* (Vectorof τ)))
          (* (Vectorof τ))
-         VectorWildcardAppend1)
-    (==> (vector-append _ (* (Vectorof τ)))
-         (* (Vectorof τ))
-         VectorWildcardAppend2)
+         VectorWildcardAppend)
     (==> (hash [v#_key v#_val] ...)
          (normalize-collection (hash-val (v#_key ...) (v#_val ...)))
          HashEval)
@@ -785,7 +788,7 @@
          (normalize-collection (hash-val (v#_keys ... v#_new-key) (v#_vals ... v#_new-val)))
          HashSet)
     (==> (hash-set (* (Hash τ_1 τ_2)) v#_key v#_value)
-         (* (Hash τ_1 τ_2))
+         (normalize-collection (hash-val ((* τ_1) v#_key) ((* τ_2) v#_value)))
          HashWildcardSet)
     (==> (hash-remove (hash-val any_keys any_vals) v#_remove)
          (hash-val any_keys any_vals)
@@ -982,6 +985,10 @@
   (check-exp-steps-to?
    (term (cons (variant B) (list-val (variant B) (variant C))))
    (term (list-val (variant B) (variant C))))
+  (check-exp-steps-to?
+   (term (cons (variant A) (* (Listof (Union [A] [B] [C])))))
+   (term (list-val (* (Union [A] [B] [C])) (variant A))))
+
   ;; vector
   (check-exp-steps-to?
    (term (vector (variant C) (variant B)))
@@ -1012,6 +1019,15 @@
   (check-exp-steps-to?
    (term (vector-append (vector-val) (vector-val (variant A))))
    (term (vector-val (variant A))))
+  (check-exp-steps-to?
+   (term (vector-append (vector-val (variant A) (variant B))
+                        (* (Vectorof (Union [A] [B] [C])))))
+   (term (vector-val (* (Union [A] [B] [C])) (variant A) (variant B))))
+  (check-exp-steps-to?
+   (term (vector-append (* (Vectorof (Union [A] [B] [C])))
+                        (vector-val (variant A) (variant B))))
+   (term (vector-val (* (Union [A] [B] [C])) (variant A) (variant B))))
+
   ;; hash
   (check-exp-steps-to?
    (term (hash [(* Nat) (variant B)] [(* Nat) (variant A)]))
@@ -1031,6 +1047,9 @@
   (check-exp-steps-to?
    (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant B)))
    (term (hash-val ((* Nat)) ((variant B) (variant C)))))
+  (check-exp-steps-to?
+   (term (hash-set (* (Hash Nat (Union [A] [B] [C]))) (* Nat) (variant B)))
+   (term (hash-val ((* Nat)) ((* (Union [A] [B] [C])) (variant B)))))
   (check-exp-steps-to?
    (term (hash-remove (hash-val ((* Nat)) ((variant B) (variant C))) (variant B)))
    (term (hash-val ((* Nat)) ((variant B) (variant C)))))
@@ -1063,6 +1082,9 @@
                        (term (list-val (variant A) (variant B))))
   (check-exp-steps-to? (term (hash-values (* (Hash Nat (Union [A] [B])))))
                        (term (* (Listof (Union [A] [B])))))
+  (check-exp-steps-to? (term (! (* (Record [a Nat] [b (Union [A] [B] [C])] [c String]))
+                                [b (variant C)]))
+                       (term (record [a (* Nat)] [b (variant C)] [c (* String)])))
 
   ;; NOTE: these are the old tests for checking sorting of loop-sent messages, which I don't do
   ;; anymore. Keeping them around in case I change my mind
@@ -1137,6 +1159,11 @@
                                    (goto B))))))
    (set (term ((begin (goto B)) () ()))
         (term ((begin (goto B)) () ([(blurred-spawn-addr L) [((define-state (A) (x) (goto A))) (goto A)]]))))))
+
+(define-metafunction csa#
+  vector-values : v# -> (v# ...)
+  [(vector-values (vector-val v# ...)) (v# ...)]
+  [(vector-values (* (Vectorof τ))) ((* τ))])
 
 ;; Puts the given abstract collection value (a list, vector, or hash) and puts it into a canonical
 ;; form
