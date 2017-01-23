@@ -207,13 +207,13 @@
       (set! next-generated-address (add1 next-generated-address))
       (term ((τ (obs-ext ,next-generated-address)))))]
   [(messages-of-type/mf (Listof τ) natural_max-depth)
-   (normalize-collection (list-val v# ...))
+   ((normalize-collection (list-val v# ...)))
    (where (v# ...) (messages-of-type/mf τ natural_max-depth))]
   [(messages-of-type/mf (Vectorof τ) natural_max-depth)
-   (normalize-collection (vector-val v# ...))
+   ((normalize-collection (vector-val v# ...)))
    (where (v# ...) (messages-of-type/mf τ natural_max-depth))]
-  [(messages-of-type/mf (Hash τ_1 τ_2) _)
-   (normalize-collection (hash-val (v#_keys ...) (v#_vals ...)))
+  [(messages-of-type/mf (Hash τ_1 τ_2) natural_max-depth)
+   ((normalize-collection (hash-val (v#_keys ...) (v#_vals ...))))
    (where (v#_keys ...) (messages-of-type/mf τ_1 natural_max-depth))
    (where (v#_vals ...) (messages-of-type/mf τ_2 natural_max-depth))])
 
@@ -280,7 +280,16 @@
    (term (messages-of-type/mf (Union [A] [B String (Union [C] [D])]) 0))
    '((variant A)
      (variant B (* String) (variant C))
-     (variant B (* String) (variant D)))))
+     (variant B (* String) (variant D))))
+  (test-same-items?
+   (term (messages-of-type/mf (Vectorof Nat) 0))
+   (list `(vector-val (* Nat))))
+  (test-same-items?
+   (term (messages-of-type/mf (Listof Nat) 0))
+   (list `(list-val (* Nat))))
+  (test-same-items?
+   (term (messages-of-type/mf (Hash Nat (Union [A] [B] [C])) 0))
+   (list `(hash-val ((* Nat)) ((variant A) (variant B) [variant C])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
