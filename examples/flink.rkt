@@ -119,8 +119,8 @@
 (define-type TaskManagerCommand
   (Union
    [AcknowledgeRegistration]
-   [SubmitTask ReadyTask (Addr SubmitCancelRespons)]
-   [CancelTask JobTaskId (Addr SubmitCancelRespons)]))
+   [SubmitTask ReadyTask (Addr SubmitCancelResponse)]
+   [CancelTask JobTaskId (Addr SubmitCancelResponse)]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; TaskRunner -> JobManager Communication
