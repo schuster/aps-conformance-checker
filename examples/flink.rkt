@@ -708,8 +708,7 @@
                   partitions))])])))
 
 (define-actor Nat
-  (TaskManagerCreator [tm-receiver (Addr (Addr TaskManagerCommand))]
-                      [job-manager (Addr TaskManagerToJobManager)])
+  (TaskManagerCreator [job-manager (Addr TaskManagerToJobManager)])
   ()
   (goto Init)
   (define-state/timeout (Init) (m)
@@ -719,7 +718,6 @@
         (for/fold ([dummy 0])
                   ([n (list 1 2)])
           (spawn runner-loc TaskRunner job-manager task-manager))
-        (send tm-receiver task-manager)
         (goto Done))))
   (define-state (Done) (m) (goto Done))))))
 
@@ -812,10 +810,9 @@
   (define task-manager-program
     (desugar
      `(program (receptionists)
-               (externals [tm-receiver (Addr ,desugared-tm-test-input-type)]
-                          [job-manager ,desugared-tm-to-jm-type])
+               (externals [job-manager ,desugared-tm-to-jm-type])
                ,@flink-definitions
-               (actors [creator (spawn creator-loc TaskManagerCreator tm-receiver job-manager)]))))
+               (actors [creator (spawn creator-loc TaskManagerCreator job-manager)]))))
 
   (define job-manager-program
     (desugar
@@ -880,10 +877,9 @@
 
   (test-case "TaskManager can run three tasks to completion (waiting for TaskRunner completions)"
     (define jm (make-async-channel))
-    (define tm-receiver (make-async-channel))
-    (csa-run task-manager-program tm-receiver jm)
-    (define task-manager (async-channel-get tm-receiver))
-    (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 _))
+    (csa-run task-manager-program jm)
+    (define task-manager
+      (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 tm) #:result tm))
     (async-channel-put task-manager (AcknowledgeRegistration))
     (sleep 0.5) ; give some time for the TaskRunner registrations to happen first
     (async-channel-put task-manager (variant SubmitTask
@@ -933,10 +929,9 @@
 
   (test-case "TaskManager fails a SubmitTask if all its runners are busy"
     (define jm (make-async-channel))
-    (define tm-receiver (make-async-channel))
-    (csa-run task-manager-program tm-receiver jm)
-    (define task-manager (async-channel-get tm-receiver))
-    (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 _))
+    (csa-run task-manager-program jm)
+    (define task-manager
+      (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 tm) #:result tm))
     (async-channel-put task-manager (AcknowledgeRegistration))
     (sleep 0.5) ; give some time for the TaskRunner registrations to happen first
     (async-channel-put task-manager (variant SubmitTask
@@ -1089,7 +1084,7 @@
 
 (module+ test
   (define task-manager-spec-behavior
-    `((goto Unregistered job-manager)
+    `((goto Registered job-manager)
       (define-state (Unregistered job-manager)
         [(variant JobManagerTerminated) -> () (goto Unregistered job-manager)]
         [(variant AcknowledgeRegistration) -> () (goto Registered job-manager)]
@@ -1100,7 +1095,7 @@
          ([obligation ack-dest (variant Failure *)])
          (goto Unregistered job-manager)]
         [unobs ->
-               ([obligation job-manager (variant RegisterTaskManager * * *)])
+               ([obligation job-manager (variant RegisterTaskManager * * self)])
                (goto Unregistered job-manager)]
         ;; These two messages might still happen during Unregistered because the runners are
         ;; cancelled later
@@ -1127,15 +1122,16 @@
                (goto Registered job-manager)])))
 
   (define task-manager-spec
-    `(specification (receptionists)
-                    (externals [tm-receiver (Addr ,desugared-tm-test-input-type)]
-                               [job-manager ,desugared-tm-to-jm-type])
-                    UNKNOWN
-                    ()
-                    (goto Init tm-receiver job-manager)
-                    (define-state (Init tm-receiver job-manager)
-                      [unobs -> ([obligation tm-receiver (fork ,@task-manager-spec-behavior)]) (goto Done)])
-                    (define-state (Done))))
+    `(specification (receptionists) (externals [job-manager ,desugared-tm-to-jm-type])
+       UNKNOWN
+       ()
+       (goto Init tm-receiver job-manager)
+       (define-state (Init job-manager)
+         [unobs ->
+           ([obligation job-manager
+                        (variant RegisterTaskManager * * (fork ,@task-manager-spec-behavior))])
+           (goto Done)])
+       (define-state (Done))))
 
   (test-true "Task manager conforms to its spec"
     (check-conformance task-manager-program task-manager-spec)))
