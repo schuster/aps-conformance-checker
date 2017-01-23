@@ -1084,7 +1084,7 @@
 
 (module+ test
   (define task-manager-spec-behavior
-    `((goto Registered job-manager)
+    `((goto Unregistered job-manager)
       (define-state (Unregistered job-manager)
         [(variant JobManagerTerminated) -> () (goto Unregistered job-manager)]
         [(variant AcknowledgeRegistration) -> () (goto Registered job-manager)]
