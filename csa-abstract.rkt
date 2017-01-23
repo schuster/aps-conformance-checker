@@ -206,9 +206,16 @@
    ,(begin
       (set! next-generated-address (add1 next-generated-address))
       (term ((τ (obs-ext ,next-generated-address)))))]
-  [(messages-of-type/mf (Listof τ) _) ((* (Listof τ)))]
-  [(messages-of-type/mf (Vectorof τ) _) ((* (Vectorof τ)))]
-  [(messages-of-type/mf (Hash τ_1 τ_2) _) ((* (Hash τ_1 τ_2)))])
+  [(messages-of-type/mf (Listof τ) natural_max-depth)
+   (normalize-collection (list-val v# ...))
+   (where (v# ...) (messages-of-type/mf τ natural_max-depth))]
+  [(messages-of-type/mf (Vectorof τ) natural_max-depth)
+   (normalize-collection (vector-val v# ...))
+   (where (v# ...) (messages-of-type/mf τ natural_max-depth))]
+  [(messages-of-type/mf (Hash τ_1 τ_2) _)
+   (normalize-collection (hash-val (v#_keys ...) (v#_vals ...)))
+   (where (v#_keys ...) (messages-of-type/mf τ_1 natural_max-depth))
+   (where (v#_vals ...) (messages-of-type/mf τ_2 natural_max-depth))])
 
 ;; Generate an exhaustive list of variant values for the given tag and type, with the natural argument
 ;; acting as max-depth for the number of recursive type unfoldings
