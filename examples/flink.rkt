@@ -516,7 +516,7 @@
   ;; queue to avoid starvation of any tasks/jobs, but I'm making the simplifying assumption that that
   ;; won't be an issue in my uses
   (define-state (ManagingJobs
-                 [task-managers (Hash Nat ManagedTaskManagerp)]
+                 [task-managers (Hash Nat ManagedTaskManager)]
                  [active-jobs (Hash Nat JobCompletionInfo)]
                  ;; Tasks that are waiting on their input tasks to complete
                  [waiting-tasks (Listof WatingReduceTask)]
