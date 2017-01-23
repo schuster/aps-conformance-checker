@@ -3268,8 +3268,10 @@
      (compare-value-sets args1 args2)]
     [(list (list 'vector-val args1 ...) (list 'vector-val args2 ...))
      (compare-value-sets args1 args2)]
-    [(list (list 'hash-val args1 ...) (list 'hash-val args2 ...))
-     (compare-value-sets args1 args2)]
+    [(list (list 'hash-val (list keys1 ...) (list vals1 ...))
+           (list 'hash-val (list keys2 ...) (list vals2 ...)))
+     (comp-result-and (compare-value-sets keys1 keys2)
+                      (compare-value-sets vals1 vals2))]
     [_ (if (equal? v1 v2) 'eq 'not-gteq)]))
 
 (module+ test
@@ -3324,6 +3326,35 @@
   (test-equal? "compare-value vector-val 3"
     (compare-value '(vector-val)
                    '(vector-val (* Nat)))
+    'not-gteq)
+
+  (test-equal? "compare-value hash-val 1"
+    (compare-value '(hash-val () ())
+                   '(hash-val () ()))
+    'eq)
+  (test-equal? "compare-value hash-val 2"
+    (compare-value '(hash-val ((* Nat)) ((variant A)))
+                   '(hash-val () ()))
+    'gt)
+  (test-equal? "compare-value hash-val 3"
+    (compare-value '(hash-val ((* Nat)) ((variant A) (variant B)))
+                   '(hash-val ((* Nat)) ((variant A))))
+    'gt)
+  (test-equal? "compare-value hash-val 4"
+    (compare-value '(hash-val ((variant A) (variant B)) ((* Nat)))
+                   '(hash-val ((variant A)) ((* Nat))))
+    'gt)
+  (test-equal? "compare-value hash-val 5"
+    (compare-value '(hash-val ((* Nat)) ((variant A)))
+                   '(hash-val ((* Nat)) ((variant A) (variant B))))
+    'not-gteq)
+  (test-equal? "compare-value hash-val 6"
+    (compare-value '(hash-val ((variant A)) ((* Nat)))
+                   '(hash-val ((variant A) (variant B)) ((* Nat))))
+    'not-gteq)
+  (test-equal? "compare-value hash-val 7"
+    (compare-value '(hash-val ((variant A)) ((* Nat)))
+                   '(hash-val ((variant B)) ((* Nat))))
     'not-gteq)
 
   (test-equal? "compare-value addresses 1"
