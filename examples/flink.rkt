@@ -696,7 +696,7 @@
                             ([waiting-task waiting-tasks])
                     (if (= (: (: waiting-task id) job-id) id-to-cancel)
                         remaining-waiting-tasks
-                        (cons waiting-task remaining-waiting--tasks)))])
+                        (cons waiting-task remaining-waiting-tasks)))])
             (send (: job-info client) (JobResultFailure))
             (send result-dest (CancellationSuccess))
             (goto ManagingJobs
@@ -812,7 +812,7 @@
 
   ;; client-level API
   (define desugared-task-description
-    `(Union [Map (Vectorof Nat)] [Reduce [left-task-id Nat] [right-task-id Nat]]))
+    `(Union [Map (Vectorof Nat)] [Reduce Nat Nat]))
   (define desugared-task `(Record [id Nat] [type ,desugared-task-description]))
   (define desugared-job `(Record [id Nat] [tasks (Listof ,desugared-task)] [final-task-id Nat]))
   (define desugared-job-result
@@ -1165,8 +1165,8 @@
   (define send-job-result-anytime-behavior
     `((goto SendAnytime dest)
       (define-state (SendAnytime dest)
-        [unobs -> ([obligation dest (variant JobResultSuccess *)] (goto SendAnytime))]
-        [unobs -> ([obligation dest (variant JobResultFailure)] (goto SendAnytime))])))
+        [unobs -> ([obligation dest (variant JobResultSuccess *)]) (goto SendAnytime)]
+        [unobs -> ([obligation dest (variant JobResultFailure)]) (goto SendAnytime)])))
 
   (define job-manager-client-pov-spec
     `(specification (receptionists [job-manager ,desugared-job-manager-command]) (externals)
