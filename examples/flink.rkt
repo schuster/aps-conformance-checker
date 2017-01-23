@@ -1125,7 +1125,7 @@
     `(specification (receptionists) (externals [job-manager ,desugared-tm-to-jm-type])
        UNKNOWN
        ()
-       (goto Init tm-receiver job-manager)
+       (goto Init job-manager)
        (define-state (Init job-manager)
          [unobs ->
            ([obligation job-manager
