@@ -1194,14 +1194,14 @@
   [(add-output (any_1 ... [a# v# _] any_2 ...) [a# v# _])
    (any_1 ... [a# v# many] any_2 ...)]
   [(add-output (any ...) [a# v# m])
-   (any ... [a# v# m])])
+   ,(sort (term (any ... [a# v# m])) sexp<?)])
 
 (define-metafunction csa#
   add-spawn : ([a# b#] ...) [a# b#] -> ([a# b#] ...)
   [(add-spawn (any_1 ... [a# b#] any_2 ...) [a# b#])
    (any_1 ... [a# b#] any_2 ...)]
   [(add-spawn (any ...) [a# b#])
-   (any ... [a# b#])])
+   ,(sort (term (any ... [a# b#])) sexp<?)])
 
 ;; i# csa#-transition-effect -> csa#-transition
 (define (csa#-apply-transition config transition-effect)
