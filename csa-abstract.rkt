@@ -2190,18 +2190,15 @@
 
 ;; Returns a list of actors ([a# b#] tuples)
 (define (csa#-config-actors config)
-  (redex-let csa# ([(α# _ ...) config])
-             (term α#)))
+  (first config))
 
 ;; Returns the list of blurred actors in the config
 (define (csa#-config-blurred-actors config)
-  (redex-let csa# ([(_ β# _) config])
-    (term β#)))
+  (second config))
 
 ;; Returns the configuration's set of in-flight message packets
 (define (csa#-config-message-packets config)
-  (redex-let csa# ([(_ _ μ#) config])
-             (term μ#)))
+  (third config))
 
 (define (config-actor-and-rest-by-address config addr)
   (term (config-actor-and-rest-by-address/mf ,config ,addr)))
@@ -2214,15 +2211,8 @@
 
 ;; Returns the given precise actor with the given address, or #f if it's not in the given config
 (define (csa#-config-actor-by-address config addr)
-  (term (actor-by-address/mf ,(csa#-config-actors config) ,addr)))
-
-(define-metafunction csa#
-  actor-by-address/mf : α# a#int -> #f or [a# b#]
-  [(actor-by-address/mf () _) #f]
-  [(actor-by-address/mf ((a#int any_behavior) _ ...) a#int)
-   (a#int any_behavior)]
-  [(actor-by-address/mf (_ any_rest ...) a#int)
-   (actor-by-address/mf (any_rest ...) a#int)])
+  (findf (lambda (actor) (equal? (csa#-actor-address actor) addr))
+         (csa#-config-actors config)))
 
 ;; Returns the collective actor with the given address, or #f if it doesn't exist
 (define (csa#-config-collective-actor-by-address config addr)
@@ -2250,16 +2240,13 @@
   [(address-strip-type/mf (_ a#)) a#])
 
 (define (csa#-actor-address a)
-  (redex-let* csa# ([(a#int _) a])
-    (term a#int)))
+  (first a))
 
 (define (csa#-blurred-actor-address a)
-  (redex-let csa# ([(a#int _) a])
-    (term a#int)))
+  (first a))
 
 (define (csa#-blurred-actor-behaviors a)
-  (redex-let csa# ([(_ (b# ...)) a])
-    (term (b# ...))))
+  (second a))
 
 ;; (a#int v# multiplicity) -> (a#int v#)
 (define (csa#-packet-entry->packet entry)
