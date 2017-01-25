@@ -423,14 +423,14 @@
                                       [ready-tasks (Listof ReadyTask)]
                                       [running-tasks (Hash JobTaskId RunningTaskExecution)])
      (for/fold ([state (record [task-managers task-managers]
-                               [unsent-tasks (list)]
+                               [remaining-ready-tasks ready-tasks]
                                [running-tasks running-tasks])])
                ([task ready-tasks])
        (case (find-available-slot (: state task-managers))
          [(Nothing)
           ;; no slot available, so have to wait
           (record [task-managers (: state task-managers)]
-                  [unsent-tasks (cons task (: state unsent-tasks))]
+                  [remaining-ready-tasks (: state remaining-ready-tasks)]
                   [running-tasks (: state running-tasks)])]
          [(Just task-manager-id)
           (case (hash-ref (: state task-managers) task-manager-id)
@@ -442,7 +442,7 @@
                                         (: manager-record address)
                                         (- (: manager-record available-slots) 1))])
                (record [task-managers (hash-set (: state task-managers) task-manager-id new-manager-record)]
-                       [unsent-tasks (: state unsent-tasks)]
+                       [remaining-ready-tasks (remove task (: state remaining-ready-tasks))]
                        [running-tasks (hash-set (: state running-tasks)
                                                 (: task id)
                                                 (RunningTaskExecution task task-manager-id))]))])])))
@@ -482,23 +482,24 @@
                                       [task-result (Hash String Nat)]
                                       [waiting-tasks (Listof WaitingTask)]
                                       [ready-tasks (Listof ReadyTask)])
-     (for/fold ([result (record [waiting-tasks (list)] [ready-tasks ready-tasks])])
+     (for/fold ([result (record [waiting-tasks waiting-tasks] [ready-tasks ready-tasks])])
                ([waiting-task waiting-tasks])
-       (let* ([new-left (maybe-populate-input (: waiting-task left) id task-result)]
+       (let* ([waiting-tasks (remove waiting-task (: result waiting-tasks))]
+              [new-left (maybe-populate-input (: waiting-task left) id task-result)]
               [new-right (maybe-populate-input (: waiting-task right) id task-result)]
               [new-waiting-task (WaitingReduceTask (: waiting-task id) new-left new-right)])
          (case new-left
            [(Ready left-data)
             (case new-right
               [(Ready right-data)
-               (record [waiting-tasks (: result waiting-tasks)]
+               (record [waiting-tasks waiting-tasks]
                        [ready-tasks (cons (ReadyTask (: waiting-task id) (ReduceWork left-data right-data))
                                           (: result ready-tasks))])]
               [(WaitingOn t)
-               (record [waiting-tasks (cons new-waiting-task (: result waiting-tasks))]
+               (record [waiting-tasks (cons new-waiting-task waiting-tasks)]
                        [ready-tasks (: result ready-tasks)])])]
            [(WaitingOn t)
-            (record [waiting-tasks (cons new-waiting-task (: result waiting-tasks))]
+            (record [waiting-tasks (cons new-waiting-task waiting-tasks)]
                     [ready-tasks (: result ready-tasks)])]))))
 
    (define-function (reset-partition [partitions (Hash JobTaskId UsedPartition)] [task-id JobTaskId])
@@ -532,7 +533,7 @@
                (: submission-result task-managers)
                active-jobs
                waiting-tasks
-               (: submission-result unsent-tasks)
+               (: submission-result remaining-ready-tasks)
                (: submission-result running-tasks)
                partitions))]
       [(SubmitJob job client)
@@ -548,7 +549,7 @@
                (: submission-result task-managers)
                (hash-set active-jobs (: job id) (JobCompletionInfo (: job final-task-id) client))
                (: triage-result need-data)
-               (: submission-result unsent-tasks)
+               (: submission-result remaining-ready-tasks)
                (: submission-result running-tasks)
                (: triage-result partitions)))]
       ;; My implementation doesn't actually do anything with acknowldgments adn failures, for now
@@ -586,7 +587,7 @@
                    ;; 3. send more ready tasks
                    [submission-result (send-ready-tasks task-managers ready-tasks running-tasks)]
                    [task-managers (: submission-result task-managers)]
-                   [ready-tasks (: submission-result unsent-tasks)]
+                   [ready-tasks (: submission-result remaining-ready-tasks)]
                    [running-tasks (: submission-result running-tasks)])
               ;; 4. if job is finished: send result to client and remove from active jobs
               (case (hash-ref active-jobs (: id job-id))
@@ -646,7 +647,7 @@
                (: submission-result task-managers)
                active-jobs
                waiting-tasks
-               (: submission-result unsent-tasks)
+               (: submission-result remaining-ready-tasks)
                (: submission-result running-tasks)
                partitions))]
       [(CancelJob id-to-cancel result-dest)
