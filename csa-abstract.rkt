@@ -733,7 +733,7 @@
               [_ (error 'eval-machine/internal "Bad list for list-as-variant: ~s\n" l)])]
            [`(list-ref ,l ,_)
             (match l
-              [`(* (Listof ,type)) (value-result `(* ,type))]
+              [`(* (Listof ,type)) (value-result `(* ,type) effects)]
               ;; NOTE: we can just return the empty list of results if there are no items in the list:
               ;; we assume that that won't happen, and that therefore we only reached this state
               ;; through over-abstraction
@@ -753,9 +753,9 @@
             (value-result (term (normalize-collection (vector-val ,@vs1 ,@vs2))) effects)]
            ;; TODO: figure out if the type is ever *not* big enough to also cover the other vector
            [`(vector-append (* (Vectorof ,type)) ,_)
-            (value-result `(* (Vectorof ,type)))]
+            (value-result `(* (Vectorof ,type)) effects)]
            [`(vector-append ,_ (* (Vectorof ,type)))
-            (value-result `(* (Vectorof ,type)))]
+            (value-result `(* (Vectorof ,type)) effects)]
            [`(hash-ref ,h ,k)
             (match h
               [`(* (Hash ,key-type ,val-type))
@@ -1155,6 +1155,9 @@
   (check-exp-steps-to-all?
    `(list-ref (list-val) (* Nat))
    null)
+  (check-exp-steps-to?
+   (term (list-ref (* (Listof Nat)) (* Nat)))
+   (term (* Nat)))
   ;; vector
   (check-exp-steps-to?
    (term (vector (variant C) (variant B)))
@@ -1185,6 +1188,12 @@
   (check-exp-steps-to?
    (term (vector-append (vector-val) (vector-val (variant A))))
    (term (vector-val (variant A))))
+  (check-exp-steps-to?
+   (term (vector-append (vector-val) (* (Vectorof (Union [A])))))
+   (term (* (Vectorof (Union [A])))))
+  (check-exp-steps-to?
+   (term (vector-append (* (Vectorof (Union [A]))) (vector-val)))
+   (term (* (Vectorof (Union [A])))))
   (check-exp-steps-to-all?
    `(vector-ref (vector-val) (* Nat))
    null)
@@ -1192,6 +1201,9 @@
                        `(vector-val (* Nat)))
   (check-exp-steps-to? `(vector-take (vector-val (* Nat)) (* Nat))
                        `(vector-val (* Nat)))
+  (check-exp-steps-to?
+   (term (vector-take (* (Vectorof (Union [A]))) (* Nat)))
+   (term (* (Vectorof (Union [A])))))
   ;; hash
   (check-exp-steps-to?
    (term (hash [(* Nat) (variant B)] [(* Nat) (variant A)]))
