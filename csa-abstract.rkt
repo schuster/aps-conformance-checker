@@ -1336,7 +1336,7 @@
     (if (precise-internal-address? new-addr)
         (list (append atomic-actors (list (list new-addr new-behavior))) collective-actors messages)
         (list atomic-actors
-              (term (add-blurred-behavior/mf ,collective-actors [,new-addr ,new-behavior]))
+              (add-blurred-behaviors collective-actors (list `[,new-addr ,new-behavior]))
               messages))))
 
 (module+ test
@@ -2027,18 +2027,37 @@
 ;; β# (Listof (List a#int b#)) -> β#
 ;;
 ;; Adds each address/behavior pair in behaviors-to-add as possible behaviors in blurred-actors.
-(define (add-blurred-behaviors blurred-actors behaviors-to-add)
+(define (add-blurred-behaviors blurred-actors new-addr-behavior-pairs)
   (for/fold ([blurred-actors blurred-actors])
-            ([behavior-to-add behaviors-to-add])
-    (term (add-blurred-behavior/mf ,blurred-actors ,behavior-to-add))))
+            ([new-addr-behavior-pair new-addr-behavior-pairs])
+    (match-define `(,target-address ,new-behavior) new-addr-behavior-pair)
+    (match (find-with-rest (lambda (actor)
+                             (equal? (csa#-blurred-actor-address actor) target-address))
+                           blurred-actors)
+      [(list before `(,_ ,found-behaviors) after)
+       (append before
+               (list `(,target-address
+                       ,(remove-duplicates (append found-behaviors (list new-behavior)))))
+               after)]
+      [#f (append blurred-actors (list `(,target-address (,new-behavior))))])))
 
-;; Adds the given address/behavior pair as a possible behavior in the given set of blurred actors.
-(define-metafunction csa#
-  add-blurred-behavior/mf : β# (a#int-collective b#) -> β#
-  [(add-blurred-behavior/mf (any_1 ... (a#int (b#_old ...)) any_2 ...) (a#int b#_new))
-   (any_1 ... (a#int ,(remove-duplicates (term (b#_old ... b#_new)))) any_2 ...)]
-  [(add-blurred-behavior/mf (any ...) (a#int b#))
-   (any ... (a#int (b#)))])
+;; like findf, but also returns the items before and after the element in the list
+(define (find-with-rest pred? xs)
+  (let loop ([before null]
+             [after xs])
+    (match after
+      [(list) #f]
+      [(list x after ...)
+       (if (pred? x)
+           (list (reverse before) x after)
+           (loop (cons x before) after))])))
+
+(module+ test
+  (check-equal?
+   (find-with-rest (lambda (x) (equal? x 3)) (list 1 2 3 4 5))
+   (list (list 1 2) 3 (list 4 5)))
+  (check-false
+   (find-with-rest (lambda (x) (equal? x 6)) (list 1 2 3 4 5))))
 
 (module+ test
   (define behavior1
