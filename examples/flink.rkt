@@ -689,7 +689,7 @@
                   (for/fold ([ready-tasks ready-tasks])
                             ([ready-task ready-tasks])
                     (if (= (: (: ready-task id) job-id) id-to-cancel)
-                        (remove read-task ready-tasks)
+                        (remove ready-task ready-tasks)
                         ready-tasks))]
                  ;; 4. Remove waiting tasks
                  [waiting-tasks
