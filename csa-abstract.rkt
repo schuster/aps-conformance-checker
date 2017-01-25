@@ -32,6 +32,7 @@
  csa#-blur-addresses ; needed for blurring in APS#
  internals-in
  externals-in
+ csa#-sort-config-components
 
  ;; Required by APS#; should go into a "common" language instead
  csa#
@@ -205,9 +206,16 @@
    ,(begin
       (set! next-generated-address (add1 next-generated-address))
       (term ((τ (obs-ext ,next-generated-address)))))]
-  [(messages-of-type/mf (Listof τ) _) ((* (Listof τ)))]
-  [(messages-of-type/mf (Vectorof τ) _) ((* (Vectorof τ)))]
-  [(messages-of-type/mf (Hash τ_1 τ_2) _) ((* (Hash τ_1 τ_2)))])
+  [(messages-of-type/mf (Listof τ) natural_max-depth)
+   ((normalize-collection (list-val v# ...)))
+   (where (v# ...) (messages-of-type/mf τ natural_max-depth))]
+  [(messages-of-type/mf (Vectorof τ) natural_max-depth)
+   ((normalize-collection (vector-val v# ...)))
+   (where (v# ...) (messages-of-type/mf τ natural_max-depth))]
+  [(messages-of-type/mf (Hash τ_1 τ_2) natural_max-depth)
+   ((normalize-collection (hash-val (v#_keys ...) (v#_vals ...))))
+   (where (v#_keys ...) (messages-of-type/mf τ_1 natural_max-depth))
+   (where (v#_vals ...) (messages-of-type/mf τ_2 natural_max-depth))])
 
 ;; Generate an exhaustive list of variant values for the given tag and type, with the natural argument
 ;; acting as max-depth for the number of recursive type unfoldings
@@ -272,7 +280,16 @@
    (term (messages-of-type/mf (Union [A] [B String (Union [C] [D])]) 0))
    '((variant A)
      (variant B (* String) (variant C))
-     (variant B (* String) (variant D)))))
+     (variant B (* String) (variant D))))
+  (test-same-items?
+   (term (messages-of-type/mf (Vectorof Nat) 0))
+   (list `(vector-val (* Nat))))
+  (test-same-items?
+   (term (messages-of-type/mf (Listof Nat) 0))
+   (list `(list-val (* Nat))))
+  (test-same-items?
+   (term (messages-of-type/mf (Hash Nat (Union [A] [B] [C])) 0))
+   (list `(hash-val ((* Nat)) ((variant A) (variant B) [variant C])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
@@ -633,10 +650,12 @@
             (match (findf (lambda (f) (equal? (first f) l)) fields)
               [#f (one-stuck-result `(! ,v-rec [,l ,v-field]) effects)]
               [field (value-result `(record ,@(map update-field fields)) effects)])]
-           [`(* (Record ,fields ...))
-            (match (findf (lambda (f) (equal? (first f) l)) fields)
-              [#f (one-stuck-result `(! ,v-rec [,l ,v-field]) effects)]
-              [_ (value-result v-rec effects)])]
+           [`(* (Record ,field-types ...))
+            (define fields
+              (for/list ([field-type field-types])
+                (match-define `[,name ,type] field-type)
+                `[,name (* ,type)]))
+            (value-result `(record ,@(map update-field fields)) effects)]
            [_ (one-stuck-result `(! ,v-rec [,l ,v-field]) effects)]))
        (lambda (stuck) `(! ,stuck l)))]
     ;; Recursive Types
@@ -709,17 +728,18 @@
          (value-result `(variant True) `(variant False) effects))
        (lambda (stucks) `(= ,@stucks)))]
     ;; Lists, Vectors, and Hashes
-    [`(,(and op (or 'list 'cons 'list-as-variant 'list-ref 'length 'vector 'vector-ref 'vector-take 'vector-drop 'vector-length 'vector-copy 'vector-append 'hash-ref 'hash-keys 'hash-values 'hash-set 'hash-remove 'hash-has-key? 'hash-empty? 'sort-numbers-descending))
+    [`(,(and op (or 'list 'cons 'list-as-variant 'list-ref 'remove 'length 'vector 'vector-ref 'vector-take 'vector-drop 'vector-length 'vector-copy 'vector-append 'hash-ref 'hash-keys 'hash-values 'hash-set 'hash-remove 'hash-has-key? 'hash-empty? 'sort-numbers-descending))
        ,args ...)
      (eval-and-then* args effects
        (lambda (vs effects)
          (match (cons op vs)
            [`(list ,vs ...) (value-result (term (normalize-collection (list-val ,@vs))) effects)]
            [`(cons ,v ,rest)
-            (match rest
-              [`(* ,_) rest]
-              [`(list-val ,vs ...)
-               (value-result (term (normalize-collection (list-val ,@vs ,v))) effects)])]
+            (define existing-list-vals
+             (match rest
+               [`(* (Listof ,type)) (list `(* ,type))]
+               [`(list-val ,vs ...) vs]))
+            (value-result (term (normalize-collection (list-val ,@existing-list-vals ,v))) effects)]
            [`(list-as-variant ,l)
             (match l
               [`(* (Listof ,type)) (value-result `(variant Empty)
@@ -739,6 +759,7 @@
               ;; through over-abstraction
               [`(list-val ,items ...) (apply value-result (append items (list effects)))]
               [_ (error 'eval-machine/internal "Bad list for list-ref: ~s\n" l)])]
+           [`(remove ,_ ,l) (value-result l effects)]
            [`(length ,_) (value-result `(* Nat) effects)]
            [`(vector ,vs ...) (value-result (term (normalize-collection (vector-val ,@vs))) effects)]
            [`(vector-ref ,v ,_)
@@ -749,13 +770,15 @@
            [`(,(or 'vector-take 'vector-drop 'vector-copy) ,v ,_ ...)
             (value-result v effects)]
            [`(vector-length ,_) (value-result `(* Nat) effects)]
-           [`(vector-append (vector-val ,vs1 ...) (vector-val ,vs2 ...))
-            (value-result (term (normalize-collection (vector-val ,@vs1 ,@vs2))) effects)]
            ;; TODO: figure out if the type is ever *not* big enough to also cover the other vector
-           [`(vector-append (* (Vectorof ,type)) ,_)
+           [`(vector-append (* (Vectorof ,type)) (* (Vectorof ,type2)))
             (value-result `(* (Vectorof ,type)) effects)]
-           [`(vector-append ,_ (* (Vectorof ,type)))
-            (value-result `(* (Vectorof ,type)) effects)]
+           ;; at least one of the vectors is precise, so convert the whole thing to a precise vector
+           ;; (so that we don't lose a precise address)
+           [`(vector-append ,v1 ,v2)
+            (value-result
+             (term (normalize-collection (vector-val ,@(vector-values v1) ,@(vector-values v2))))
+             effects)]
            [`(hash-ref ,h ,k)
             (match h
               [`(* (Hash ,key-type ,val-type))
@@ -775,7 +798,10 @@
               [`(hash-val ,_ ,values) (value-result `(list-val ,@values) effects)])]
            [`(hash-set ,h ,key ,val)
             (match h
-              [`(* (Hash ,_ ,_)) (value-result h effects)]
+              [`(* (Hash ,key-type ,value-type))
+               (value-result
+                (term (normalize-collection (hash-val ((* ,key-type) ,key) ((* ,value-type) ,val))))
+                effects)]
               [`(hash-val ,keys ,vals)
                (value-result
                 (term (normalize-collection (hash-val ,(cons key keys) ,(cons val vals))))
@@ -1091,8 +1117,9 @@
                        `(: (record [a (variant A)] [b (variant B)]) c))
   (check-exp-steps-to? `(! (record [a (variant A)] [b (variant B)]) [b (variant C)])
                        `(record [a (variant A)] [b (variant C)]))
-  (check-exp-steps-to? `(! (* (Record [a (Union [A])] [b (Union [B] [C])])) [b (variant C)])
-                       `(* (Record [a (Union [A])] [b (Union [B] [C])])))
+  (check-exp-steps-to? (term (! (* (Record [a Nat] [b (Union [A] [B] [C])] [c String]))
+                                [b (variant C)]))
+                       (term (record [a (* Nat)] [b (variant C)] [c (* String)])))
   (check-exp-steps-to? (term (fold   (Union [A]) (variant A)))
                        (term (folded (Union [A]) (variant A))))
   (define nat-list-type (term (minfixpt NatList (Union (Null) (Cons Nat NatList)))))
@@ -1152,6 +1179,15 @@
   (check-exp-steps-to?
    (term (cons (variant B) (list-val (variant B) (variant C))))
    (term (list-val (variant B) (variant C))))
+  (check-exp-steps-to?
+   (term (cons (variant A) (* (Listof (Union [A] [B] [C])))))
+   (term (list-val (* (Union [A] [B] [C])) (variant A))))
+  (check-exp-steps-to?
+   (term (remove (variant A) (list-val (variant A) (variant B))))
+   (term (list-val (variant A) (variant B))))
+  (check-exp-steps-to?
+   (term (remove (variant A) (* (Listof (Union [A] [B])))))
+   (term (* (Listof (Union [A] [B])))))
   (check-exp-steps-to-all?
    `(list-ref (list-val) (* Nat))
    null)
@@ -1188,12 +1224,6 @@
   (check-exp-steps-to?
    (term (vector-append (vector-val) (vector-val (variant A))))
    (term (vector-val (variant A))))
-  (check-exp-steps-to?
-   (term (vector-append (vector-val) (* (Vectorof (Union [A])))))
-   (term (* (Vectorof (Union [A])))))
-  (check-exp-steps-to?
-   (term (vector-append (* (Vectorof (Union [A]))) (vector-val)))
-   (term (* (Vectorof (Union [A])))))
   (check-exp-steps-to-all?
    `(vector-ref (vector-val) (* Nat))
    null)
@@ -1204,6 +1234,15 @@
   (check-exp-steps-to?
    (term (vector-take (* (Vectorof (Union [A]))) (* Nat)))
    (term (* (Vectorof (Union [A])))))
+  (check-exp-steps-to?
+   (term (vector-append (vector-val (variant A) (variant B))
+                        (* (Vectorof (Union [A] [B] [C])))))
+   (term (vector-val (* (Union [A] [B] [C])) (variant A) (variant B))))
+  (check-exp-steps-to?
+   (term (vector-append (* (Vectorof (Union [A] [B] [C])))
+                        (vector-val (variant A) (variant B))))
+   (term (vector-val (* (Union [A] [B] [C])) (variant A) (variant B))))
+
   ;; hash
   (check-exp-steps-to?
    (term (hash [(* Nat) (variant B)] [(* Nat) (variant A)]))
@@ -1223,6 +1262,9 @@
   (check-exp-steps-to?
    (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant B)))
    (term (hash-val ((* Nat)) ((variant B) (variant C)))))
+  (check-exp-steps-to?
+   (term (hash-set (* (Hash Nat (Union [A] [B] [C]))) (* Nat) (variant B)))
+   (term (hash-val ((* Nat)) ((* (Union [A] [B] [C])) (variant B)))))
   (check-exp-steps-to?
    (term (hash-remove (hash-val ((* Nat)) ((variant B) (variant C))) (variant B)))
    (term (hash-val ((* Nat)) ((variant B) (variant C)))))
@@ -1401,6 +1443,11 @@
   ;;       (term ((begin (goto B)) () ([(blurred-spawn-addr L) [((define-state (A) (x) (goto A))) (goto A)]])))))
   )
 
+(define (vector-values v)
+  (match v
+    [`(vector-val ,vs ...) vs]
+    [`(* (Vectorof ,type)) (list `(* ,type))]))
+
 ;; Puts the given abstract collection value (a list, vector, or hash) and puts it into a canonical
 ;; form
 (define-metafunction csa#
@@ -1421,14 +1468,14 @@
   [(add-output (any_1 ... [a# v# _] any_2 ...) [a# v# _])
    (any_1 ... [a# v# many] any_2 ...)]
   [(add-output (any ...) [a# v# m])
-   (any ... [a# v# m])])
+   ,(sort (term (any ... [a# v# m])) sexp<?)])
 
 (define-metafunction csa#
   add-spawn : ([a# b#] ...) [a# b#] -> ([a# b#] ...)
   [(add-spawn (any_1 ... [a# b#] any_2 ...) [a# b#])
    (any_1 ... [a# b#] any_2 ...)]
   [(add-spawn (any ...) [a# b#])
-   (any ... [a# b#])])
+   ,(sort (term (any ... [a# b#])) sexp<?)])
 
 ;; i# csa#-transition-effect -> csa#-transition
 (define (csa#-apply-transition config transition-effect)
@@ -1554,7 +1601,7 @@
     (if (precise-internal-address? new-addr)
         (list (append atomic-actors (list (list new-addr new-behavior))) collective-actors messages)
         (list atomic-actors
-              (term (add-blurred-behavior/mf ,collective-actors [,new-addr ,new-behavior]))
+              (add-blurred-behaviors collective-actors (list `[,new-addr ,new-behavior]))
               messages))))
 
 (module+ test
@@ -2245,18 +2292,37 @@
 ;; β# (Listof (List a#int b#)) -> β#
 ;;
 ;; Adds each address/behavior pair in behaviors-to-add as possible behaviors in blurred-actors.
-(define (add-blurred-behaviors blurred-actors behaviors-to-add)
+(define (add-blurred-behaviors blurred-actors new-addr-behavior-pairs)
   (for/fold ([blurred-actors blurred-actors])
-            ([behavior-to-add behaviors-to-add])
-    (term (add-blurred-behavior/mf ,blurred-actors ,behavior-to-add))))
+            ([new-addr-behavior-pair new-addr-behavior-pairs])
+    (match-define `(,target-address ,new-behavior) new-addr-behavior-pair)
+    (match (find-with-rest (lambda (actor)
+                             (equal? (csa#-blurred-actor-address actor) target-address))
+                           blurred-actors)
+      [(list before `(,_ ,found-behaviors) after)
+       (append before
+               (list `(,target-address
+                       ,(remove-duplicates (append found-behaviors (list new-behavior)))))
+               after)]
+      [#f (append blurred-actors (list `(,target-address (,new-behavior))))])))
 
-;; Adds the given address/behavior pair as a possible behavior in the given set of blurred actors.
-(define-metafunction csa#
-  add-blurred-behavior/mf : β# (a#int-collective b#) -> β#
-  [(add-blurred-behavior/mf (any_1 ... (a#int (b#_old ...)) any_2 ...) (a#int b#_new))
-   (any_1 ... (a#int ,(remove-duplicates (term (b#_old ... b#_new)))) any_2 ...)]
-  [(add-blurred-behavior/mf (any ...) (a#int b#))
-   (any ... (a#int (b#)))])
+;; like findf, but also returns the items before and after the element in the list
+(define (find-with-rest pred? xs)
+  (let loop ([before null]
+             [after xs])
+    (match after
+      [(list) #f]
+      [(list x after ...)
+       (if (pred? x)
+           (list (reverse before) x after)
+           (loop (cons x before) after))])))
+
+(module+ test
+  (check-equal?
+   (find-with-rest (lambda (x) (equal? x 3)) (list 1 2 3 4 5))
+   (list (list 1 2) 3 (list 4 5)))
+  (check-false
+   (find-with-rest (lambda (x) (equal? x 6)) (list 1 2 3 4 5))))
 
 (module+ test
   (define behavior1
@@ -2280,6 +2346,60 @@
     (term (((blurred-spawn-addr 1) (,behavior1 ,behavior2 ,behavior3))
            ((blurred-spawn-addr 2) (,behavior3))
            ((blurred-spawn-addr 3) (,behavior3))))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Canonicalization (the sorting of config components)
+
+;; Sorts the components of an impl configuration as follows:
+;; * atomic actors by address
+;; * collective actors by address
+;; * behaviors of a collective actor by the entire behavior
+;; * message packets by the entire packet
+(define (csa#-sort-config-components config)
+  (match-define `(,atomic-actors ,collective-actors ,packets) config)
+  (define (actor<? a b)
+    (sexp<? (csa#-actor-address a) (csa#-actor-address b)))
+  (define sorted-atomic-actors (sort atomic-actors actor<?))
+  (define sorted-collective-actors
+    (sort (map sort-collective-actor-behaviors collective-actors) actor<?))
+  (define sorted-packets (sort packets sexp<?))
+  `(,sorted-atomic-actors ,sorted-collective-actors ,sorted-packets))
+
+(define (sort-collective-actor-behaviors actor)
+  (match-define `(,addr ,behaviors) actor)
+  `(,addr ,(sort behaviors sexp<?)))
+
+(module+ test
+  (define sort-components-test-config
+    `(;; atomic actors
+      ([(init-addr 2) (() (goto A))]
+       [(init-addr 1) (() (goto Z))])
+      ;; collective actors
+      ([(blurred-spawn-addr Q) ((() (goto Z))
+                                (() (goto M))
+                                (() (goto A)))]
+       [(blurred-spawn-addr B) ((() (goto Z))
+                                (() (goto M))
+                                (() (goto A)))])
+      ;; messages
+      ([(init-addr 2) (* Nat) single]
+       [(init-addr 1) (* Nat) single])))
+  (check-true (redex-match? csa# i# sort-components-test-config))
+  (check-equal?
+   (csa#-sort-config-components sort-components-test-config)
+   `(;; atomic actors
+     ([(init-addr 1) (() (goto Z))]
+      [(init-addr 2) (() (goto A))])
+      ;; collective actors
+     ([(blurred-spawn-addr B) ((() (goto A))
+                               (() (goto M))
+                               (() (goto Z)))]
+      [(blurred-spawn-addr Q) ((() (goto A))
+                               (() (goto M))
+                               (() (goto Z)))])
+      ;; messages
+     ([(init-addr 1) (* Nat) single]
+      [(init-addr 2) (* Nat) single]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Duplicate message merging
@@ -2354,18 +2474,15 @@
 
 ;; Returns a list of actors ([a# b#] tuples)
 (define (csa#-config-actors config)
-  (redex-let csa# ([(α# _ ...) config])
-             (term α#)))
+  (first config))
 
 ;; Returns the list of blurred actors in the config
 (define (csa#-config-blurred-actors config)
-  (redex-let csa# ([(_ β# _) config])
-    (term β#)))
+  (second config))
 
 ;; Returns the configuration's set of in-flight message packets
 (define (csa#-config-message-packets config)
-  (redex-let csa# ([(_ _ μ#) config])
-             (term μ#)))
+  (third config))
 
 (define (config-actor-and-rest-by-address config addr)
   (term (config-actor-and-rest-by-address/mf ,config ,addr)))
@@ -2378,15 +2495,8 @@
 
 ;; Returns the given precise actor with the given address, or #f if it's not in the given config
 (define (csa#-config-actor-by-address config addr)
-  (term (actor-by-address/mf ,(csa#-config-actors config) ,addr)))
-
-(define-metafunction csa#
-  actor-by-address/mf : α# a#int -> #f or [a# b#]
-  [(actor-by-address/mf () _) #f]
-  [(actor-by-address/mf ((a#int any_behavior) _ ...) a#int)
-   (a#int any_behavior)]
-  [(actor-by-address/mf (_ any_rest ...) a#int)
-   (actor-by-address/mf (any_rest ...) a#int)])
+  (findf (lambda (actor) (equal? (csa#-actor-address actor) addr))
+         (csa#-config-actors config)))
 
 ;; Returns the collective actor with the given address, or #f if it doesn't exist
 (define (csa#-config-collective-actor-by-address config addr)
@@ -2414,16 +2524,13 @@
   [(address-strip-type/mf (_ a#)) a#])
 
 (define (csa#-actor-address a)
-  (redex-let* csa# ([(a#int _) a])
-    (term a#int)))
+  (first a))
 
 (define (csa#-blurred-actor-address a)
-  (redex-let csa# ([(a#int _) a])
-    (term a#int)))
+  (first a))
 
 (define (csa#-blurred-actor-behaviors a)
-  (redex-let csa# ([(_ (b# ...)) a])
-    (term (b# ...))))
+  (second a))
 
 ;; (a#int v# multiplicity) -> (a#int v#)
 (define (csa#-packet-entry->packet entry)
@@ -3487,8 +3594,10 @@
      (compare-value-sets args1 args2)]
     [(list (list 'vector-val args1 ...) (list 'vector-val args2 ...))
      (compare-value-sets args1 args2)]
-    [(list (list 'hash-val args1 ...) (list 'hash-val args2 ...))
-     (compare-value-sets args1 args2)]
+    [(list (list 'hash-val (list keys1 ...) (list vals1 ...))
+           (list 'hash-val (list keys2 ...) (list vals2 ...)))
+     (comp-result-and (compare-value-sets keys1 keys2)
+                      (compare-value-sets vals1 vals2))]
     [_ (if (equal? v1 v2) 'eq 'not-gteq)]))
 
 (module+ test
@@ -3543,6 +3652,35 @@
   (test-equal? "compare-value vector-val 3"
     (compare-value '(vector-val)
                    '(vector-val (* Nat)))
+    'not-gteq)
+
+  (test-equal? "compare-value hash-val 1"
+    (compare-value '(hash-val () ())
+                   '(hash-val () ()))
+    'eq)
+  (test-equal? "compare-value hash-val 2"
+    (compare-value '(hash-val ((* Nat)) ((variant A)))
+                   '(hash-val () ()))
+    'gt)
+  (test-equal? "compare-value hash-val 3"
+    (compare-value '(hash-val ((* Nat)) ((variant A) (variant B)))
+                   '(hash-val ((* Nat)) ((variant A))))
+    'gt)
+  (test-equal? "compare-value hash-val 4"
+    (compare-value '(hash-val ((variant A) (variant B)) ((* Nat)))
+                   '(hash-val ((variant A)) ((* Nat))))
+    'gt)
+  (test-equal? "compare-value hash-val 5"
+    (compare-value '(hash-val ((* Nat)) ((variant A)))
+                   '(hash-val ((* Nat)) ((variant A) (variant B))))
+    'not-gteq)
+  (test-equal? "compare-value hash-val 6"
+    (compare-value '(hash-val ((variant A)) ((* Nat)))
+                   '(hash-val ((variant A) (variant B)) ((* Nat))))
+    'not-gteq)
+  (test-equal? "compare-value hash-val 7"
+    (compare-value '(hash-val ((variant A)) ((* Nat)))
+                   '(hash-val ((variant B)) ((* Nat))))
     'not-gteq)
 
   (test-equal? "compare-value addresses 1"

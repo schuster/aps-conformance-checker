@@ -118,6 +118,7 @@
        (cons e1 e2)
        (list-as-variant e)
        (list-ref e1 e2)
+       (remove e1 e2)
        (length e)
        (vector e ...)
        (vector-length e)

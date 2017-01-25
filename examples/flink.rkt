@@ -119,8 +119,8 @@
 (define-type TaskManagerCommand
   (Union
    [AcknowledgeRegistration]
-   [SubmitTask ReadyTask (Addr SubmitCancelRespons)]
-   [CancelTask JobTaskId (Addr SubmitCancelRespons)]))
+   [SubmitTask ReadyTask (Addr SubmitCancelResponse)]
+   [CancelTask JobTaskId (Addr SubmitCancelResponse)]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; TaskRunner -> JobManager Communication
@@ -423,14 +423,14 @@
                                       [ready-tasks (Listof ReadyTask)]
                                       [running-tasks (Hash JobTaskId RunningTaskExecution)])
      (for/fold ([state (record [task-managers task-managers]
-                               [unsent-tasks (list)]
+                               [remaining-ready-tasks ready-tasks]
                                [running-tasks running-tasks])])
                ([task ready-tasks])
        (case (find-available-slot (: state task-managers))
          [(Nothing)
           ;; no slot available, so have to wait
           (record [task-managers (: state task-managers)]
-                  [unsent-tasks (cons task (: state unsent-tasks))]
+                  [remaining-ready-tasks (: state remaining-ready-tasks)]
                   [running-tasks (: state running-tasks)])]
          [(Just task-manager-id)
           (case (hash-ref (: state task-managers) task-manager-id)
@@ -442,7 +442,7 @@
                                         (: manager-record address)
                                         (- (: manager-record available-slots) 1))])
                (record [task-managers (hash-set (: state task-managers) task-manager-id new-manager-record)]
-                       [unsent-tasks (: state unsent-tasks)]
+                       [remaining-ready-tasks (remove task (: state remaining-ready-tasks))]
                        [running-tasks (hash-set (: state running-tasks)
                                                 (: task id)
                                                 (RunningTaskExecution task task-manager-id))]))])])))
@@ -482,23 +482,24 @@
                                       [task-result (Hash String Nat)]
                                       [waiting-tasks (Listof WaitingTask)]
                                       [ready-tasks (Listof ReadyTask)])
-     (for/fold ([result (record [waiting-tasks (list)] [ready-tasks ready-tasks])])
+     (for/fold ([result (record [waiting-tasks waiting-tasks] [ready-tasks ready-tasks])])
                ([waiting-task waiting-tasks])
-       (let* ([new-left (maybe-populate-input (: waiting-task left) id task-result)]
+       (let* ([waiting-tasks (remove waiting-task (: result waiting-tasks))]
+              [new-left (maybe-populate-input (: waiting-task left) id task-result)]
               [new-right (maybe-populate-input (: waiting-task right) id task-result)]
               [new-waiting-task (WaitingReduceTask (: waiting-task id) new-left new-right)])
          (case new-left
            [(Ready left-data)
             (case new-right
               [(Ready right-data)
-               (record [waiting-tasks (: result waiting-tasks)]
+               (record [waiting-tasks waiting-tasks]
                        [ready-tasks (cons (ReadyTask (: waiting-task id) (ReduceWork left-data right-data))
                                           (: result ready-tasks))])]
               [(WaitingOn t)
-               (record [waiting-tasks (cons new-waiting-task (: result waiting-tasks))]
+               (record [waiting-tasks (cons new-waiting-task waiting-tasks)]
                        [ready-tasks (: result ready-tasks)])])]
            [(WaitingOn t)
-            (record [waiting-tasks (cons new-waiting-task (: result waiting-tasks))]
+            (record [waiting-tasks (cons new-waiting-task waiting-tasks)]
                     [ready-tasks (: result ready-tasks)])]))))
 
    (define-function (reset-partition [partitions (Hash JobTaskId UsedPartition)] [task-id JobTaskId])
@@ -516,7 +517,7 @@
   ;; queue to avoid starvation of any tasks/jobs, but I'm making the simplifying assumption that that
   ;; won't be an issue in my uses
   (define-state (ManagingJobs
-                 [task-managers (Hash Nat ManagedTaskManagerp)]
+                 [task-managers (Hash Nat ManagedTaskManager)]
                  [active-jobs (Hash Nat JobCompletionInfo)]
                  ;; Tasks that are waiting on their input tasks to complete
                  [waiting-tasks (Listof WatingReduceTask)]
@@ -532,7 +533,7 @@
                (: submission-result task-managers)
                active-jobs
                waiting-tasks
-               (: submission-result unsent-tasks)
+               (: submission-result remaining-ready-tasks)
                (: submission-result running-tasks)
                partitions))]
       [(SubmitJob job client)
@@ -548,7 +549,7 @@
                (: submission-result task-managers)
                (hash-set active-jobs (: job id) (JobCompletionInfo (: job final-task-id) client))
                (: triage-result need-data)
-               (: submission-result unsent-tasks)
+               (: submission-result remaining-ready-tasks)
                (: submission-result running-tasks)
                (: triage-result partitions)))]
       ;; My implementation doesn't actually do anything with acknowldgments adn failures, for now
@@ -586,7 +587,7 @@
                    ;; 3. send more ready tasks
                    [submission-result (send-ready-tasks task-managers ready-tasks running-tasks)]
                    [task-managers (: submission-result task-managers)]
-                   [ready-tasks (: submission-result unsent-tasks)]
+                   [ready-tasks (: submission-result remaining-ready-tasks)]
                    [running-tasks (: submission-result running-tasks)])
               ;; 4. if job is finished: send result to client and remove from active jobs
               (case (hash-ref active-jobs (: id job-id))
@@ -646,7 +647,7 @@
                (: submission-result task-managers)
                active-jobs
                waiting-tasks
-               (: submission-result unsent-tasks)
+               (: submission-result remaining-ready-tasks)
                (: submission-result running-tasks)
                partitions))]
       [(CancelJob id-to-cancel result-dest)
@@ -685,18 +686,18 @@
                         remaining-partitions))]
                  ;; 3. Remove ready tasks
                  [ready-tasks
-                  (for/fold ([remaining-ready-tasks (list)])
+                  (for/fold ([ready-tasks ready-tasks])
                             ([ready-task ready-tasks])
                     (if (= (: (: ready-task id) job-id) id-to-cancel)
-                        remaining-ready-tasks
-                        (cons ready-task remaining-ready-tasks)))]
+                        (remove ready-task ready-tasks)
+                        ready-tasks))]
                  ;; 4. Remove waiting tasks
                  [waiting-tasks
-                  (for/fold ([remaining-waiting-tasks (list)])
+                  (for/fold ([waiting-tasks waiting-tasks])
                             ([waiting-task waiting-tasks])
                     (if (= (: (: waiting-task id) job-id) id-to-cancel)
-                        remaining-waiting-tasks
-                        (cons waiting-task remaining-waiting--tasks)))])
+                        (remove waiting-task waiting-tasks)
+                        waiting-tasks))])
             (send (: job-info client) (JobResultFailure))
             (send result-dest (CancellationSuccess))
             (goto ManagingJobs
@@ -705,7 +706,37 @@
                   waiting-tasks
                   ready-tasks
                   running-tasks
-                  partitions))])]))))))
+                  partitions))])])))
+
+(define-actor Nat
+  (TaskManagerCreator [job-manager (Addr TaskManagerToJobManager)])
+  ()
+  (goto Init)
+  (define-state/timeout (Init) (m)
+    (goto Init)
+    (timeout 0
+      (let ([task-manager (spawn task-manager-loc TaskManager 1 job-manager)])
+        (for/fold ([dummy 0])
+                  ([n (list 1 2)])
+          (spawn runner-loc TaskRunner job-manager task-manager))
+        (goto Done))))
+  (define-state (Done) (m) (goto Done)))
+
+(define-actor Nat
+  (TaskManagersCreator [manager-ids (Listof Nat)] [job-manager (Addr TaskManagerToJobManager)])
+  ()
+  (goto Init)
+  (define-state/timeout (Init) (m)
+    (goto Init)
+    (timeout 0
+      (for/fold ([dummy 0])
+                ([manager-id manager-ids])
+        (let ([task-manager (spawn task-manager-loc TaskManager manager-id job-manager)])
+          (for/fold ([dummy 0])
+                    ([n (list 1 2)])
+            (spawn runner-loc TaskRunner job-manager task-manager))))
+      (goto Done)))
+  (define-state (Done) (m) (goto Done))))))
 
 (module+ test
   (require
@@ -780,6 +811,20 @@
       [CancelTask ,desugared-job-task-id (Addr ,desugared-submit-cancel-response)]))
   (check-true (redex-match? csa-eval τ desugared-tm-test-input-type))
 
+  ;; client-level API
+  (define desugared-task-description
+    `(Union [Map (Vectorof Nat)] [Reduce Nat Nat]))
+  (define desugared-task `(Record [id Nat] [type ,desugared-task-description]))
+  (define desugared-job `(Record [id Nat] [tasks (Listof ,desugared-task)] [final-task-id Nat]))
+  (define desugared-job-result
+    `(Union [JobResultSuccess (Hash String Nat)] [JobResultFailure]))
+  (define desugared-cancellation-result
+    `(Union (CancellationSuccess) (CancellationFailure)))
+  (define desugared-job-manager-command
+    `(Union [SubmitJob ,desugared-job (Addr ,desugared-job-result)]
+            [CancelJob Nat (Addr ,desugared-cancellation-result)]))
+  (check-true (redex-match? csa-eval τ desugared-job-manager-command))
+
   (define-match-expander JobTaskId/pat
     (lambda (stx)
       (syntax-parse stx
@@ -795,24 +840,18 @@
 
   (define task-manager-program
     (desugar
-     `(program (receptionists [task-manager ,desugared-tm-test-input-type])
+     `(program (receptionists)
                (externals [job-manager ,desugared-tm-to-jm-type])
                ,@flink-definitions
-               (actors [task-manager (spawn task-manager-loc TaskManager 1 job-manager)]
-                       [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager)]
-                       [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager)]))))
+               (actors [creator (spawn creator-loc TaskManagerCreator job-manager)]))))
 
   (define job-manager-program
     (desugar
      `(program (receptionists [job-manager Nat]) (externals)
                ,@flink-definitions
                (actors [job-manager (spawn jm-loc JobManager)]
-                       [task-manager1 (spawn task-manager1-loc TaskManager 1 job-manager)]
-                       [task-manager2 (spawn task-manager2-loc TaskManager 2 job-manager)]
-                       [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager1)]
-                       [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager1)]
-                       [task-runner3 (spawn runner3-loc TaskRunner job-manager task-manager2)]
-                       [task-runner4 (spawn runner4-loc TaskRunner job-manager task-manager2)]))))
+                       [task-managers-creator
+                        (spawn creator-loc TaskManagersCreator (list 1 2) job-manager)]))))
 
   (define single-tm-job-manager-program
     (desugar
@@ -865,8 +904,9 @@
 
   (test-case "TaskManager can run three tasks to completion (waiting for TaskRunner completions)"
     (define jm (make-async-channel))
-    (define task-manager (csa-run task-manager-program jm))
-    (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 _))
+    (csa-run task-manager-program jm)
+    (define task-manager
+      (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 tm) #:result tm))
     (async-channel-put task-manager (AcknowledgeRegistration))
     (sleep 0.5) ; give some time for the TaskRunner registrations to happen first
     (async-channel-put task-manager (variant SubmitTask
@@ -916,8 +956,9 @@
 
   (test-case "TaskManager fails a SubmitTask if all its runners are busy"
     (define jm (make-async-channel))
-    (define task-manager (csa-run task-manager-program jm))
-    (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 _))
+    (csa-run task-manager-program jm)
+    (define task-manager
+      (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 tm) #:result tm))
     (async-channel-put task-manager (AcknowledgeRegistration))
     (sleep 0.5) ; give some time for the TaskRunner registrations to happen first
     (async-channel-put task-manager (variant SubmitTask
@@ -1069,67 +1110,87 @@
     (check-unicast canceller (CancellationFailure))))
 
 (module+ test
+  (define task-manager-spec-behavior
+    `((goto Unregistered job-manager)
+      (define-state (Unregistered job-manager)
+        [(variant JobManagerTerminated) -> () (goto Unregistered job-manager)]
+        [(variant AcknowledgeRegistration) -> () (goto Registered job-manager)]
+        [(variant SubmitTask * ack-dest) ->
+         ([obligation ack-dest (variant Failure *)])
+         (goto Unregistered job-manager)]
+        [(variant CancelTask * ack-dest) ->
+         ([obligation ack-dest (variant Failure *)])
+         (goto Unregistered job-manager)]
+        [unobs ->
+               ([obligation job-manager (variant RegisterTaskManager * * self)])
+               (goto Unregistered job-manager)]
+        ;; These two messages might still happen during Unregistered because the runners are
+        ;; cancelled later
+        [unobs ->
+               ([obligation job-manager (variant UpdateTaskExecutionState * *)])
+               (goto Unregistered job-manager)]
+        [unobs ->
+               ([obligation job-manager (variant RequestNextInputSplit * *)])
+               (goto Unregistered job-manager)])
+      (define-state (Registered job-manager)
+        [(variant JobManagerTerminated) -> () (goto Unregistered job-manager)]
+        [(variant AcknowledgeRegistration) -> () (goto Registered job-manager)]
+        [(variant SubmitTask * ack-dest) ->
+         ([obligation ack-dest (or (variant Acknowledge *) (variant Failure *))])
+         (goto Registered job-manager)]
+        [(variant CancelTask * ack-dest) ->
+         ([obligation ack-dest (or (variant Acknowledge *) (variant Failure *))])
+         (goto Registered job-manager)]
+        [unobs ->
+               ([obligation job-manager (variant UpdateTaskExecutionState * *)])
+               (goto Registered job-manager)]
+        [unobs ->
+               ([obligation job-manager (variant RequestNextInputSplit * *)])
+               (goto Registered job-manager)])))
+
   (define task-manager-spec
-    `(specification (receptionists [task-manager ,desugared-tm-test-input-type])
-                    (externals [job-manager ,desugared-tm-to-jm-type])
-       (task-manager ,desugared-tm-test-input-type)
+    `(specification (receptionists) (externals [job-manager ,desugared-tm-to-jm-type])
+       UNKNOWN
        ()
-       (goto Unregistered job-manager)
-       (define-state (Unregistered job-manager)
-         [(variant JobManagerTerminated) -> () (goto Unregistered job-manager)]
-         [(variant AcknowledgeRegistration) -> () (goto Registered job-manager)]
-         [(variant SubmitTask * ack-dest) ->
-          ([obligation ack-dest (variant Failure *)])
-          (goto Unregistered job-manager)]
-         [(variant CancelTask * ack-dest) ->
-          ([obligation ack-dest (variant Failure *)])
-          (goto Unregistered job-manager)]
+       (goto Init job-manager)
+       (define-state (Init job-manager)
          [unobs ->
-          ([obligation job-manager (variant RegisterTaskManager * * *)])
-          (goto Unregistered job-manager)]
-         ;; These two messages might still happen during Unregistered because the runners are
-         ;; cancelled later
-         [unobs ->
-          ([obligation job-manager (variant UpdateTaskExecutionState * *)])
-          (goto Unregistered job-manager)]
-         [unobs ->
-          ([obligation job-manager (variant RequestNextInputSplit * *)])
-          (goto Unregistered job-manager)])
-       (define-state (Registered job-manager)
-         [(variant JobManagerTerminated) -> () (goto Unregistered job-manager)]
-         [(variant AcknowledgeRegistration) -> () (goto Registered job-manager)]
-         [(variant SubmitTask * ack-dest) ->
-          ([obligation ack-dest (or (variant Acknowledge *) (variant Failure *))])
-          (goto Registered job-manager)]
-         [(variant CancelTask * ack-dest) ->
-          ([obligation ack-dest (or (variant Acknowledge *) (variant Failure *))])
-          (goto Registered job-manager)]
-         [unobs ->
-          ([obligation job-manager (variant UpdateTaskExecutionState * *)])
-          (goto Unregistered job-manager)]
-         [unobs ->
-          ([obligation job-manager (variant RequestNextInputSplit * *)])
-          (goto Unregistered job-manager)])))
+           ([obligation job-manager
+                        (variant RegisterTaskManager * * (fork ,@task-manager-spec-behavior))])
+           (goto Done)])
+       (define-state (Done))))
 
   (test-true "Task manager conforms to its spec"
-    (check-conformance task-manager-program task-manager-spec)))
+    (check-conformance task-manager-program task-manager-spec))
+
+  (define send-job-result-anytime-behavior
+    `((goto SendAnytime dest)
+      (define-state (SendAnytime dest)
+        [unobs -> ([obligation dest (variant JobResultSuccess *)]) (goto SendAnytime dest)]
+        [unobs -> ([obligation dest (variant JobResultFailure)]) (goto SendAnytime dest)])))
+
+  (define job-manager-client-pov-spec
+    `(specification (receptionists [job-manager ,desugared-job-manager-command]) (externals)
+       [job-manager ,desugared-job-manager-command]
+       ([job-manager (Union [TaskManagerTerminated Nat])])
+       (goto Running)
+       (define-state (Running)
+         [(variant CancelJob * dest) ->
+          ([obligation dest (or (variant CancellationSuccess) (variant CancellationFailure))])
+          (goto Running)]
+         ;; In the AI, the best we can say is that we might get any number of results back on this
+         ;; address (because the abstraction never actually removes addresses from collections), so
+         ;; the spec just states the possible results.
+         [(variant SubmitJob * dest) -> ([fork ,@send-job-result-anytime-behavior]) (goto Running)])))
+
+  (test-true "Job manager conforms to its client POV spec"
+    (check-conformance job-manager-program job-manager-client-pov-spec)))
 
 ;; Specs to check:
 ;; * JobManager, from TaskManager/Task perspective:
 ;;   * respond to registration requests, then sends other commands (SubmitTask, CancelTask)
 ;;   * respond to RequestNextInputSplit
 
-;; * TaskManager, from JobManager perspective:
-;;   * send multiple registration requests until accepted
-;;   * unregister on JobManagerTerminated
-;;   * respond to SubmitTask (always cancel when not registered)
-;;   * respond to CancelTask (always failure when not registered)
-;;   * sends UpdateTaskExecutionState sometimes
-;; * JobManager (full program), from client POV:
-;;   * after Submit/Cancel, might get Finished/Canceled results
-;;   * Cancel gets a success or failure right away
-
-
 ;; Missed responses to check with specs:
-;; * ACK SubmitTask in TaskManager
+
 ;; * TaskManager registration acknowledgment
