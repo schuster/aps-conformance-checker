@@ -686,18 +686,18 @@
                         remaining-partitions))]
                  ;; 3. Remove ready tasks
                  [ready-tasks
-                  (for/fold ([remaining-ready-tasks (list)])
+                  (for/fold ([ready-tasks ready-tasks])
                             ([ready-task ready-tasks])
                     (if (= (: (: ready-task id) job-id) id-to-cancel)
-                        remaining-ready-tasks
-                        (cons ready-task remaining-ready-tasks)))]
+                        (remove read-task ready-tasks)
+                        ready-tasks))]
                  ;; 4. Remove waiting tasks
                  [waiting-tasks
-                  (for/fold ([remaining-waiting-tasks (list)])
+                  (for/fold ([waiting-tasks waiting-tasks])
                             ([waiting-task waiting-tasks])
                     (if (= (: (: waiting-task id) job-id) id-to-cancel)
-                        remaining-waiting-tasks
-                        (cons waiting-task remaining-waiting-tasks)))])
+                        (remove waiting-task waiting-tasks)
+                        waiting-tasks))])
             (send (: job-info client) (JobResultFailure))
             (send result-dest (CancellationSuccess))
             (goto ManagingJobs
