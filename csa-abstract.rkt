@@ -714,6 +714,9 @@
     (==> (list-ref (* (Listof τ)) (* Nat))
          (* τ)
          WildcardListRef)
+    (==> (remove v# v#_list)
+         v#_list
+         ListRemove)
     (==> (length (list-val v# ...))
          (* Nat)
          ListLength)
@@ -997,6 +1000,12 @@
   (check-exp-steps-to?
    (term (cons (variant A) (* (Listof (Union [A] [B] [C])))))
    (term (list-val (* (Union [A] [B] [C])) (variant A))))
+  (check-exp-steps-to?
+   (term (remove (variant A) (list-val (variant A) (variant B))))
+   (term (list-val (variant A) (variant B))))
+  (check-exp-steps-to?
+   (term (remove (variant A) (* (Listof (Union [A] [B])))))
+   (term (* (Listof (Union [A] [B])))))
 
   ;; vector
   (check-exp-steps-to?
