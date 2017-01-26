@@ -673,6 +673,12 @@
 
 ;; config-pair -> config-pair
 (define (widen-pair the-pair pair-number i-step-number i-step-total)
+  (widen-printf "Starting widen\n")
+  (widen-printf "The impl config: ~s\n"
+                (impl-config-without-state-defs (config-pair-impl-config the-pair)))
+  (widen-printf "The spec config: ~s\n"
+                (spec-config-without-state-defs (config-pair-spec-config the-pair)))
+
   ;; Algorithm:
   ;;
   ;; * Evaluate all possible handlers of this configuration and add each result (goto, spawns,
@@ -695,19 +701,30 @@
   ;; transition-effects-from should return a list of tuples of the form: (trigger#, goto, outputs,
   ;; internal-sends, spawns)
   (define possible-transitions (apply queue (impl-transition-effects-from the-pair)))
+  (widen-printf "Starting widen with ~s transitions\n" (queue-length possible-transitions))
   (define processed-transitions (mutable-set))
   (define loop-count 0)
   (define widen-use-count 0)
   (let worklist-loop ([widened-pair the-pair])
     (match (dequeue-if-non-empty! possible-transitions)
-      [#f widened-pair]
+      [#f
+       (widen-printf "Finished widen\n")
+       widened-pair]
       [transition-result-with-obs
        (set! loop-count (add1 loop-count))
        (cond
          [(set-member? processed-transitions transition-result-with-obs)
           ;; Skip this transition if we already processed it
+          (widen-printf "Skipping transition\n")
+          ;; (widen-printf "Trigger: ~s\n" (csa#-transition-effect-trigger (first transition-result-with-obs)))
+          ;; (widen-printf "Outputs: ~s\n" (csa#-transition-effect-sends (first transition-result-with-obs)))
+
           (worklist-loop widened-pair)]
          [else
+          (widen-printf "Trying transition\n")
+          (widen-printf "Trigger: ~s\n" (csa#-transition-effect-trigger (first transition-result-with-obs)))
+          (widen-printf "Outputs: ~s\n" (csa#-transition-effect-sends (first transition-result-with-obs)))
+
           (set-add! processed-transitions transition-result-with-obs)
           (define transition-result (first transition-result-with-obs))
           (define trigger (csa#-transition-effect-trigger transition-result))
@@ -743,6 +760,7 @@
                 (widen-printf "Remaining transitions: ~s\n" (queue-length possible-transitions))
                 (for-each (curry enqueue! possible-transitions)
                           (impl-transition-effects-from new-widened-pair))
+                (widen-printf "Added transitions, total is now ~s\n" (queue-length possible-transitions))
                 (worklist-loop new-widened-pair)]
                [else (worklist-loop widened-pair)])])])])))
 
@@ -819,7 +837,15 @@
      (append*
       (for/list ([trigger-with-obs triggers])
         (define observed? (second trigger-with-obs))
-        (map (curryr list observed?) (csa#-eval-trigger i (first trigger-with-obs) abort)))))
+        (widen-printf "~s Eval trigger: ~s\n"
+                (date->string (seconds->date (current-seconds)) #t)
+                trigger-with-obs)
+        (flush-output)
+        (define results (map (curryr list observed?) (csa#-eval-trigger i (first trigger-with-obs) abort)))
+        (widen-printf "~s: Finished trigger, ~s transitions\n" (date->string (seconds->date (current-seconds)) #t)
+                (length results))
+        (flush-output)
+        results)))
     (widen-printf "Widen: Found ~s transitions\n" (length final-results))
     final-results))
 
