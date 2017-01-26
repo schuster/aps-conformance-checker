@@ -2303,14 +2303,14 @@
                          `((spawn-addr 1 OLD))
                          `((obs-ext 3)))
     ;; Some reordering happens as a result of normalize-collection
-    `(vector-val ((Union [A] [B]) (blurred-spawn-addr 1))
-                 ((Union [A] [B]) (obs-ext 3))
-                 ((Union [A] [B]) (spawn-addr 2 OLD))
+    `(vector-val (* (Addr (Union [A])))
+                 (* (Addr (Union [A] [B])))
                  ((Union [A]) (blurred-spawn-addr 1))
                  ((Union [A]) (obs-ext 3))
                  ((Union [A]) (spawn-addr 2 OLD))
-                 (* (Addr (Union [A] [B])))
-                 (* (Addr (Union [A]))))))
+                 ((Union [A] [B]) (blurred-spawn-addr 1))
+                 ((Union [A] [B]) (obs-ext 3))
+                 ((Union [A] [B]) (spawn-addr 2 OLD)))))
 
 ;; Returns #t if the address is of the form (spawn-addr _ flag _), #f otherwise.
 (define (has-spawn-flag? addr flag)
