@@ -551,7 +551,12 @@
          ;;
          ;; REFACTOR: don't return stuck states; just error if we run into them
          (match-define (list init-exp init-effects) handler-machine)
-         (match-define (list value-states stuck-states) (eval-machine init-exp init-effects))
+         (match-define (list maybe-duplicate-value-states stuck-states)
+           (eval-machine init-exp init-effects))
+         ;; OPTIMIZE: find out if there's a way to prevent the eval from generating duplicate states
+         ;; in the first place (for loops probably make this hard). My hunch is there's no easy way to
+         ;; do it.
+         (define value-states (remove-duplicates maybe-duplicate-value-states))
          (unless (empty? stuck-states)
            (error 'eval-handler
                   "Abstract evaluation did not complete\nInitial state: ~s\nFinal stuck states:~s"
