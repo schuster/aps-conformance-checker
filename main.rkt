@@ -83,8 +83,10 @@
      (match (get-initial-abstract-pairs initial-impl-config initial-spec-config)
        [#f #f]
        [unwidened-initial-pairs
-        (define initial-pairs (map (curryr widen-pair 0 0 0)
-                                   unwidened-initial-pairs))
+        (define initial-pairs
+          (if USE-WIDEN?
+              (map (curryr widen-pair 0 0 0) unwidened-initial-pairs)
+              unwidened-initial-pairs))
         (match-define (list rank1-pairs
                             rank1-unrelated-successors
                             incoming-steps
@@ -296,10 +298,13 @@
                       ;; TODO: add the address binding here, too, and adjust other uses of incoming
                       ;; (e.g. in prune-unsupported) to take that structure into account
                       (match-define (list unwidened-sbc-pair rename-map) sbc-result)
-                      (define sbc-pair (widen-pair unwidened-sbc-pair
-                                                   visited-pairs-count
-                                                   i-step-num
-                                                   (length i-steps)))
+                      (define sbc-pair
+                        (if USE-WIDEN?
+                            (widen-pair unwidened-sbc-pair
+                                        visited-pairs-count
+                                        i-step-num
+                                        (length i-steps))
+                            unwidened-sbc-pair))
                       (log-incoming log-file sbc-pair (list pair i-step s-step rename-map))
                       (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step rename-map))
                       ;; unless it's already in the queue, or we have already explored it (and
@@ -1087,6 +1092,8 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debugging
+
+(define USE-WIDEN? #t)
 
 (define DEBUG-WIDEN #f)
 
