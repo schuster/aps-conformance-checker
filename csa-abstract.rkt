@@ -402,12 +402,14 @@
 ;; Returns a handler machine primed with the handler expression from the given behavior, with all
 ;; state arguments and the message substituted for the appropriate variables
 (define (handler-machine-for-message behavior message)
-  (redex-let csa#
-      ([((_ ... (define-state (q [x_q τ_q] ..._n) (x_m) e# any_timeout-clause ...) _ ...)
-         (goto q v# ..._n))
-        behavior])
-    ;; TODO: deal with the case where x_m shadows an x_q
-    (inject/H# (apply csa#-subst-n (term e#) (term [x_m ,message]) (term ([x_q v#] ...))))))
+  (match-define `(,state-defs (goto ,state-name ,state-args ...)) behavior)
+  (match-define `(define-state (,_ [,state-arg-formals ,_] ...) (,message-formal) ,body ,_ ...)
+    (findf (lambda (state-def) (equal? state-name (first (second state-def)))) state-defs))
+  ;; TODO: deal with the case where x_m shadows an x_q
+  (inject/H# (apply csa#-subst-n
+                    body
+                    `[,message-formal ,message]
+                    (map list state-arg-formals state-args))))
 
 ;; Abstractly removes the entry in i# corresponding to the packet (a# v#), which will actually remove
 ;; it if its multiplicity is single, else leave it there if its multiplicity is many (because removing
@@ -490,8 +492,7 @@
   (cond
     [(precise-internal-address? address)
      (list (actor-behavior (csa#-config-actor-by-address config address)))]
-    [else
-     (term (blurred-actor-behaviors-by-address/mf ,config ,address))]))
+    [else (blurred-actor-behaviors-by-address config address)]))
 
 ;; just like apply-reduction-relation*, but with debug messages
 (define (apply-reduction-relation*/debug rel t)
@@ -2605,10 +2606,8 @@
     (list '(() (goto B)) '(() (goto C)))))
 
 ;; Returns all behaviors assigned to the blurred actor with the given address in the given config
-(define-metafunction csa#
-  blurred-actor-behaviors-by-address/mf : i# a#int -> (b# ...)
-  [(blurred-actor-behaviors-by-address/mf (_ (_ ... (a#int any_behaviors) _ ...) _) a#int)
-   any_behaviors])
+(define (blurred-actor-behaviors-by-address config address)
+  (csa#-blurred-actor-behaviors (csa#-config-collective-actor-by-address config address)))
 
 (module+ test
   (test-case "Blurred actor behaviors by address"
@@ -2616,7 +2615,7 @@
                                 (((blurred-spawn-addr 1) ())
                                  ((blurred-spawn-addr 2) ((() (goto A)))))
                                 ()))])
-      (check-equal? (term (blurred-actor-behaviors-by-address/mf i# (blurred-spawn-addr 2)))
+      (check-equal? (blurred-actor-behaviors-by-address (term i#) `(blurred-spawn-addr 2))
                     (list (term (() (goto A))))))))
 
 ;; Returns the state definitions of the given behavior
