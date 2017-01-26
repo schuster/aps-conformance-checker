@@ -2558,16 +2558,9 @@
 
 ;; Returns the behaviors of the actor for the indicated collective OR atomic address
 (define (csa#-behaviors-of config addr)
-  (term (csa#-behaviors-of/mf ,config ,addr)))
-
-(define-metafunction csa#
-  csa#-behaviors-of/mf : i# a#int -> (b# ...)
-  [(csa#-behaviors-of/mf i# a#int-precise)
-   ,(list (actor-behavior (csa#-config-actor-by-address (term i#) (term a#int-precise))))]
-  [(csa#-behaviors-of/mf i# a#int-collective)
-   ,(csa#-blurred-actor-behaviors
-     (findf (lambda (a) (equal? (csa#-blurred-actor-address a) (term a#int-collective)))
-            (csa#-config-blurred-actors (term i#))))])
+  (if (precise-internal-address? addr)
+      (list (actor-behavior (csa#-config-actor-by-address config addr)))
+      (csa#-blurred-actor-behaviors (csa#-config-collective-actor-by-address config addr))))
 
 (module+ test
   (define behavior-test-config
