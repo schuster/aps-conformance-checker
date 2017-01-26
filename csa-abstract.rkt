@@ -412,13 +412,52 @@
 ;; Abstractly removes the entry in i# corresponding to the packet (a# v#), which will actually remove
 ;; it if its multiplicity is single, else leave it there if its multiplicity is many (because removing
 ;; a message from an abstract list of 0 or more yields a list of 0 or more).
+(define (config-remove-packet config addr-val-pair)
+  (match-define `(,atomics ,collectives ,packets) config)
+  (define new-packets
+    ;; if the multiplicity is not single, it must be many, so we just return the original config
+    ;; because nothing is actually removed
+    (remove (append addr-val-pair `(single)) packets))
+  `(,atomics ,collectives ,new-packets))
+
+(module+ test
+  (check-equal?
+   (config-remove-packet `(() () ([(init-addr 1) (* Nat) single]
+                                  [(init-addr 2) (* Nat) single]
+                                  [(init-addr 1) (* String) single]))
+                         `((init-addr 1) (* Nat)))
+   `(() () ([(init-addr 2) (* Nat) single]
+            [(init-addr 1) (* String) single])))
+  (check-equal?
+   (config-remove-packet `(() () ([(init-addr 1) (* Nat) single]
+                                  [(init-addr 2) (* Nat) single]
+                                  [(init-addr 1) (* String) single]))
+                         `((init-addr 2) (* Nat)))
+   `(() () ([(init-addr 1) (* Nat) single]
+            [(init-addr 1) (* String) single])))
+  (check-equal?
+   (config-remove-packet `(() () ([(init-addr 1) (* Nat) single]
+                                  [(init-addr 2) (* Nat) many]
+                                  [(init-addr 1) (* String) single]))
+                         `((init-addr 2) (* Nat)))
+   `(() () ([(init-addr 1) (* Nat) single]
+            [(init-addr 2) (* Nat) many]
+            [(init-addr 1) (* String) single])))
+  (check-equal?
+   (config-remove-packet `(() () ([(init-addr 1) (* Nat) single]
+                                  [(init-addr 2) (* Nat) many]
+                                  [(init-addr 1) (* String) single]))
+                         `((init-addr 3) (* Nat)))
+    `(() () ([(init-addr 1) (* Nat) single]
+                                  [(init-addr 2) (* Nat) many]
+                                  [(init-addr 1) (* String) single]))))
+
 (define-metafunction csa#
   config-remove-packet/mf : i# (a# v#) -> i#
   [(config-remove-packet/mf (any_precise any_blurred (any_pkt1 ... (a# v# single) any_pkt2 ...))
                             (a# v#))
    (any_precise any_blurred (any_pkt1 ... any_pkt2 ...))]
-  ;; Case 2: if the multiplicity is not single, it must be many, so we just return the original config
-  ;; because nothing is actually removed
+
   [(config-remove-packet/mf any_config _) any_config])
 
 ;; Returns the behavior's current timeout handler expression with all state arguments substituted in
@@ -1484,7 +1523,7 @@
   ;; 1. If the handler was triggered by an internal message, remove the message
   (define with-trigger-message-removed
     (match trigger
-      [`(internal-receive ,_ ,message) (term (config-remove-packet/mf ,config ,(list addr message)))]
+      [`(internal-receive ,_ ,message) (config-remove-packet config (list addr message))]
       [_ config]))
   ;; 2. update the behavior
   (define new-behavior (csa#-transition-effect-behavior transition-effect))
@@ -1503,32 +1542,22 @@
 
 ;; Sets the behavior for the actor with the given precise address to the given expression
 (define (update-behavior/precise config address behavior)
-  (redex-let csa# ([((any_actors1 ...) (a# _) (any_actors2 ...))
-                    (config-actor-and-rest-by-address config address)])
-    (term ((any_actors1 ... (a# ,behavior) any_actors2 ...)
-           ,(csa#-config-blurred-actors config)
-           ,(csa#-config-message-packets config)))))
+  (match-define `(,first-actors ,_ ,later-actors)
+    (config-actor-and-rest-by-address config address))
+  `((,@first-actors (,address ,behavior) ,@later-actors)
+    ,(csa#-config-blurred-actors config)
+    ,(csa#-config-message-packets config)))
 
 (define (update-behavior/blurred config address behavior)
-  (term (update-behavior/blurred/mf ,config ,address ,behavior)))
+  (match-define `(,first-actors (,_ ,old-behaviors) ,later-actors)
+    (config-collective-actor-and-rest-by-address config address))
 
-;; Adds the given behavior as a possible behavior for the given blurred address in the given config
-(define-metafunction csa#
-  update-behavior/blurred/mf : i# a#int-collective b# -> i#
-  [(update-behavior/blurred/mf
-    (any_precise-actors
-     (any_blurred1 ... (a#int-collective (b#_old ...)) any_blurred2 ...)
-     any_packets)
-    a#int-collective
-    b#_new)
-   (any_precise-actors
-    (any_blurred1 ...
-     (a#int-collective ,(remove-duplicates (term (b#_old ... b#_new))))
-     any_blurred2 ...)
-    any_packets)])
+  `(,(csa#-config-actors config)
+    (,@first-actors (,address ,(remove-duplicates `(,@old-behaviors ,behavior))) ,@later-actors)
+    ,(csa#-config-message-packets config)))
 
 (module+ test
-  (test-case "update-behavior/blurred/mf"
+  (test-case "update-behavior/blurred"
   (redex-let* csa# ([b#_1 '(() (goto A))]
                     [b#_2 '(() (goto B))]
                     [b#_3 '(() (goto C))]
@@ -1538,10 +1567,10 @@
                                 ((blurred-spawn-addr 2) (b#_3)))
                                ()))])
     (check-equal?
-      (term (update-behavior/blurred/mf i# (blurred-spawn-addr 1) b#_2))
+      (update-behavior/blurred (term i#) `(blurred-spawn-addr 1) (term b#_2))
       (term i#))
     (check-equal?
-     (term (update-behavior/blurred/mf i# (blurred-spawn-addr 1) b#_4))
+     (update-behavior/blurred (term i#) `(blurred-spawn-addr 1) (term b#_4))
      (term (()
             (((blurred-spawn-addr 1) (b#_1 b#_2 b#_4))
              ((blurred-spawn-addr 2) (b#_3)))
@@ -2306,24 +2335,6 @@
                after)]
       [#f (append blurred-actors (list `(,target-address (,new-behavior))))])))
 
-;; like findf, but also returns the items before and after the element in the list
-(define (find-with-rest pred? xs)
-  (let loop ([before null]
-             [after xs])
-    (match after
-      [(list) #f]
-      [(list x after ...)
-       (if (pred? x)
-           (list (reverse before) x after)
-           (loop (cons x before) after))])))
-
-(module+ test
-  (check-equal?
-   (find-with-rest (lambda (x) (equal? x 3)) (list 1 2 3 4 5))
-   (list (list 1 2) 3 (list 4 5)))
-  (check-false
-   (find-with-rest (lambda (x) (equal? x 6)) (list 1 2 3 4 5))))
-
 (module+ test
   (define behavior1
     (term (((define-state (A) (x) (goto A))) (goto A))))
@@ -2485,13 +2496,30 @@
   (third config))
 
 (define (config-actor-and-rest-by-address config addr)
-  (term (config-actor-and-rest-by-address/mf ,config ,addr)))
+  (find-with-rest (lambda (actor) (equal? (csa#-actor-address actor) addr))
+                  (csa#-config-actors config)))
 
-(define-metafunction csa#
-  config-actor-and-rest-by-address/mf : i# a#int -> (([a# b#] ...) [a# b#] ([a# b#] ...))
-  [(config-actor-and-rest-by-address/mf ((any_1 ... (name the-actor (a#int _)) any_2 ...) _ ...)
-                                        a#int)
-   ((any_1 ...) the-actor (any_2 ...))])
+(define (config-collective-actor-and-rest-by-address config addr)
+  (find-with-rest (lambda (actor) (equal? (csa#-blurred-actor-address actor) addr))
+                  (csa#-config-blurred-actors config)))
+
+;; like findf, but also returns the items before and after the element in the list
+(define (find-with-rest pred? xs)
+  (let loop ([before null]
+             [after xs])
+    (match after
+      [(list) #f]
+      [(list x after ...)
+       (if (pred? x)
+           (list (reverse before) x after)
+           (loop (cons x before) after))])))
+
+(module+ test
+  (check-equal?
+   (find-with-rest (lambda (x) (equal? x 3)) (list 1 2 3 4 5))
+   (list (list 1 2) 3 (list 4 5)))
+  (check-false
+   (find-with-rest (lambda (x) (equal? x 6)) (list 1 2 3 4 5))))
 
 ;; Returns the given precise actor with the given address, or #f if it's not in the given config
 (define (csa#-config-actor-by-address config addr)
