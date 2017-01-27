@@ -43,6 +43,7 @@
  "aps.rkt"
  "csa.rkt"
  "csa-abstract.rkt"
+ "list-helpers.rkt"
  "sexp-helpers.rkt")
 
 (module+ test
@@ -749,73 +750,113 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Commitment Satisfaction
 
-;; s# ((a#ext v# m) ...) ->  (Listof [s# (s# ...) ([a po] ...)])
+;; (s# ...) ((a#ext v# m) ...) ->  (Listof [(s# ...) ([a po] ...)])
 ;;
-;; Returns a list of tuples of the specification config after having resolved all of the given outputs
-;; (removing output commitments as necessary), a list of the satisfied commitments, and the spawned
-;; configs.
-(define (aps#-resolve-outputs spec-config outputs)
-  (define initial-commitment-map (aps#-config-commitment-map spec-config))
-  (define free-output-patterns (build-free-output-map spec-config))
-  (let loop ([commitment-map (aps#-config-commitment-map spec-config)]
-             [self-address (aps#-config-obs-interface spec-config)]
-             [spawn-infos null]
-             [added-unobs-receptionists null]
+;; Given a list of all active spec configs (the current one plus any new forks), returns a list of
+;; tuples of the specification configs after having resolved all of the given outputs (removing output
+;; commitments as necessary) and a list of the satisfied commitments. The list represents all possible
+;; ways to match the outputs.
+(define (aps#-resolve-outputs spec-configs outputs)
+  ;; REFACTOR: rewrite this function for readability (probably need to split some tasks into helper
+  ;; functions)
+  (let loop ([spec-configs spec-configs]
              [satisfied-commitments null]
              [remaining-outputs outputs])
     (match remaining-outputs
-      [(list)
-       (define updated-config
-         (term (,self-address
-                ,(merge-receptionists (aps#-config-receptionists spec-config)
-                                      added-unobs-receptionists)
-                ,(aps#-config-current-state spec-config)
-                ,(aps#-config-state-defs spec-config)
-                ,commitment-map)))
-       (match-define (list remaining-config spawned-configs)
-         (fork-configs updated-config spawn-infos))
-       (list (list remaining-config spawned-configs satisfied-commitments))]
+      [(list) (list `(,spec-configs ,satisfied-commitments))]
       [(list output remaining-outputs ...)
        (define address (csa#-output-address output))
-       (match (commitments-for-address commitment-map address)
-            ;; we can ignore outputs on unobserved addresses
-            ;; TODO: need to pull out escaped receptionists from this message
-            [#f (loop commitment-map
-                      self-address
-                      spawn-infos
-                      added-unobs-receptionists
-                      satisfied-commitments
-                      remaining-outputs)]
-            [commitments
-             (define free-patterns (hash-ref free-output-patterns address null))
-             (define patterns
-               ;; use regular patterns or free patterns if the message was sent only once; have to use
-               ;; free-output patterns if it may have been sent more than once (e.g. in a loop)
-               (match (csa#-output-multiplicity output)
-                 ['single (append (map commitment-pattern commitments) free-patterns)]
-                 ['many free-patterns]))
-             ;; for each possible way to match, loop again with the remaining config and append all
-             ;; final results
-             (append*
-              (for/list ([match-result
-                          (find-matching-patterns patterns (csa#-output-message output) self-address)])
-                (match-define (list pat self-address new-spawn-infos new-receptionists) match-result)
-                (loop (aps#-remove-commitment-pattern commitment-map address pat)
-                      self-address
-                      (append spawn-infos new-spawn-infos)
-                      (append added-unobs-receptionists new-receptionists)
-                      (append satisfied-commitments (list (term (,address ,pat))))
-                      remaining-outputs)))])])))
+       (define message (csa#-output-message output))
+       (match (find-with-rest (curryr config-observes-address? address) spec-configs)
+         [#f
+          ;; we can ignore outputs on unobserved addresses, but need to add any escaped internal
+          ;; addresses as part of the unobserved interface on all configs
+          (loop (map (curryr config-merge-unobs-addresses (internals-in message)) spec-configs)
+                satisfied-commitments
+                remaining-outputs)]
+         [(list earlier-configs config later-configs)
+          (define old-obs-interface (aps#-config-obs-interface config))
+
+          ;; Defines how to continue once a match has been found
+          (define (handle-match-success match-results)
+            (append*
+             ;; for each possible way to match, loop again to resolve the remaining outputs
+             (for/list ([match-result match-results])
+               (match-define `(,config (,pat ,new-obs-interface ,new-spawn-infos ,new-receptionists))
+                 match-result)
+               (define obs-interface-changed? (not (equal? new-obs-interface old-obs-interface)))
+               ;; update this config (obs and unobs interfaces, commitments)
+               (define updated-config
+                 `(,new-obs-interface
+                   ,(merge-receptionists (aps#-config-receptionists config) new-receptionists)
+                   ,(aps#-config-current-state config)
+                   ,(aps#-config-state-defs config)
+                   ,(aps#-remove-commitment-pattern (aps#-config-commitment-map config) address pat)))
+               ;; add unobs (and new self address, if updated) to all other configs
+               (define new-unobs-for-others
+                 (append new-receptionists (if obs-interface-changed? (list new-obs-interface) null)))
+               (define updated-earlier-configs
+                 (map (curryr config-merge-unobs-addresses new-unobs-for-others) earlier-configs))
+               (define updated-later-configs
+                 (map (curryr config-merge-unobs-addresses new-unobs-for-others) later-configs))
+               ;; add spawns
+               (match-define (list final-updated-config (list spawned-configs ...))
+                 (fork-configs updated-config new-spawn-infos))
+               (loop (append updated-earlier-configs
+                             (list final-updated-config)
+                             updated-later-configs
+                             spawned-configs)
+                     (append satisfied-commitments (list `[,address ,pat]))
+                     remaining-outputs))))
+
+          (match (csa#-output-multiplicity output)
+            ['single
+             (define commitment-patterns
+               (map commitment-pattern
+                    (commitments-for-address (aps#-config-commitment-map config) address)))
+             (match (find-matching-patterns commitment-patterns message old-obs-interface)
+               [(list)
+                ;; if we can't find a match with existing patterns, try the free-output patterns
+                (define free-patterns (hash-ref (build-free-output-map config) address null))
+                (match (find-matching-patterns free-patterns message old-obs-interface)
+                  [(list)
+                   ;; if free-output patterns also don't match, try the other unobs-transition
+                   ;; patterns as a last resort
+                   (define transition-patterns (get-unobs-transition-patterns config address))
+                   (define match-results
+                     (find-matching-patterns (hash-keys transition-patterns)
+                                             message
+                                             old-obs-interface))
+                   (define match-results-with-config
+                     (for/list ([match-result match-results])
+                       (define matched-pattern (first match-result))
+                       (define transitioned-config
+                         `(,(aps#-config-obs-interface config)
+                           ,(aps#-config-receptionists config)
+                           ,(hash-ref transition-patterns matched-pattern)
+                           ,(aps#-config-state-defs config)
+                           ,(aps#-config-commitment-map config)))
+                       (list transitioned-config match-result)))
+                   (handle-match-success match-results-with-config)]
+                  [results (handle-match-success (map (curry list config) results))])]
+               [results (handle-match-success (map (curry list config) results))])]
+            ['many
+             ;; have to use free-output patterns if output may have been sent more than once (e.g. in
+             ;; a loop)
+             (define free-patterns (hash-ref (build-free-output-map config) address null))
+             (handle-match-success
+              (map (curry list config)
+                   (find-matching-patterns free-patterns message old-obs-interface)))])])])))
+
+(define (config-observes-address? config addr)
+  (match (commitments-for-address (aps#-config-commitment-map config) addr)
+    [#f #f]
+    [_ #t]))
 
 ;; (listof pattern) v# σ# -> (listof output-match-result)
 ;;
 ;; Returns all possible match results
 ;; (i.e. pattern/self-address/list-of-spawn-infos/list-of-unobs-receptionists) tuples
-
-;; Returns the
-;; output-match-result if a single pattern in the list matches the message (where the current known
-;; observed environment interface is self-address); #f otherwise. Overlapping patterns are not
-;; supported, which is why we return #f if more than one pattern matches.
 (define (find-matching-patterns patterns message self-address)
   (append*
    (for/list ([pattern patterns])
@@ -832,33 +873,30 @@
     (term (UNKNOWN () (goto DummyState) ((define-state (DummyState))) ,commitments)))
   (test-equal? "resolve test 1"
     (aps#-resolve-outputs
-     (make-dummy-spec `(((obs-ext 1))))
+     (list (make-dummy-spec `(((obs-ext 1)))))
      (term (((obs-ext 1) (* Nat) single))))
     null)
   (test-equal? "resolve test 2"
     (aps#-resolve-outputs
-     (make-dummy-spec `(((obs-ext 1) (single *))))
+     (list (make-dummy-spec `(((obs-ext 1) (single *)))))
      (term (((obs-ext 1) (* Nat) single))))
-    (list (list (make-dummy-spec `(((obs-ext 1))))
-                `()
-                `(((obs-ext 1) *)))))
+    (list `[,(list (make-dummy-spec `(((obs-ext 1)))))
+            (((obs-ext 1) *))]))
   (test-equal? "resolve test 3"
     (aps#-resolve-outputs
-     (make-dummy-spec `(((obs-ext 1) (single *) (single (record)))))
+     (list (make-dummy-spec `(((obs-ext 1) (single *) (single (record))))))
      (term (((obs-ext 1) (* Nat) single))))
-    (list (list (make-dummy-spec `(((obs-ext 1) (single (record)))))
-                `()
-                `(((obs-ext 1) *)))))
+    (list `[,(list (make-dummy-spec `(((obs-ext 1) (single (record))))))
+            (((obs-ext 1) *))]))
   (test-equal? "resolve test 4"
     (aps#-resolve-outputs
-     (make-dummy-spec `(((obs-ext 1) (many *) (single (record)))))
+     (list (make-dummy-spec `(((obs-ext 1) (many *) (single (record))))))
      (term (((obs-ext 1) (* Nat) single))))
-    (list (list (make-dummy-spec `(((obs-ext 1) (many *) (single (record)))))
-                `()
-                `(((obs-ext 1) *)))))
+    (list `[,(list (make-dummy-spec `(((obs-ext 1) (many *) (single (record))))))
+            (((obs-ext 1) *))]))
   (test-equal? "resolve loop test"
     (aps#-resolve-outputs
-     (make-dummy-spec `(((obs-ext 1) (many *) (single (record)))))
+     (list (make-dummy-spec `(((obs-ext 1) (many *) (single (record))))))
      (term ([(obs-ext 1) (* Nat) many])))
     null)
   (define free-output-spec
@@ -875,51 +913,89 @@
          [unobs -> ([obligation b (variant D)]) (goto S1 a b)]))
       ([(obs-ext 1)] [(obs-ext 2)]))))
   (test-equal? "resolve against free outputs"
-    (aps#-resolve-outputs free-output-spec (term ([(obs-ext 1) (variant C) many])))
-    (list (list free-output-spec null (list `[(obs-ext 1) (variant C)]))))
+    (aps#-resolve-outputs (list free-output-spec) (term ([(obs-ext 1) (variant C) many])))
+    (list `[,(list free-output-spec) ([(obs-ext 1) (variant C)])]))
 
   (test-equal? "resolve against two different branches of an 'or' pattern"
     (aps#-resolve-outputs
-     (term
-      (UNKNOWN
-       ()
-       (goto S1)
-       ((define-state (S1)))
-       ([(obs-ext 1) (single (or * (fork (goto B))))])))
+     (list
+      (term
+       (UNKNOWN
+        ()
+        (goto S1)
+        ((define-state (S1)))
+        ([(obs-ext 1) (single (or * (fork (goto B))))]))))
      (term ([(obs-ext 1) (Nat (init-addr 2)) single])))
     (list
      ;; result 1 (match against the fork)
-     (list
-      (term
-       (UNKNOWN
-        ((Nat (init-addr 2)))
-        (goto S1)
-        ((define-state (S1)))
-        ([(obs-ext 1)])))
-      (list
-       (term
-        ((Nat (init-addr 2))
-         ()
-         (goto B)
-         ()
-         ())))
-      (list (term [(obs-ext 1) (or * (fork (goto B)))])))
+     `[,(list
+         (term
+          (UNKNOWN
+           ((Nat (init-addr 2)))
+           (goto S1)
+           ((define-state (S1)))
+           ([(obs-ext 1)])))
+         (term
+          ((Nat (init-addr 2))
+           ()
+           (goto B)
+           ()
+           ())))
+       ,(list (term [(obs-ext 1) (or * (fork (goto B)))]))]
      ;; result 2 (match against *)
-     (list
-      (term
-       (UNKNOWN
-        ((Nat (init-addr 2)))
-        (goto S1)
-        ((define-state (S1)))
-        ([(obs-ext 1)])))
-      null
-      (list (term [(obs-ext 1) (or * (fork (goto B)))])))))
+     `[,(list
+         (term
+          (UNKNOWN
+           ((Nat (init-addr 2)))
+           (goto S1)
+           ((define-state (S1)))
+           ([(obs-ext 1)]))))
+       ,(list (term [(obs-ext 1) (or * (fork (goto B)))]))]))
 
   ;; TODO: test aps#-resolve-outputs for (along with normal cases):
   ;; * spec that observes an address but neither saves it nor has output commtiments for it
   ;; * POV unobservables
   ;; * wildcard unobservables
-  )
+
+  (test-equal? "Resolve against spawned spec"
+    (aps#-resolve-outputs
+     (list `(UNKNOWN () (goto S1) ((define-state (S1))) ([(obs-ext 1) [single (variant A *)]]))
+           `(UNKNOWN () (goto S2) ((define-state (S2))) ([(obs-ext 2) [single (variant B *)]])))
+     (list `[(obs-ext 1) (variant A (Nat (init-addr 1))) single]
+           `[(obs-ext 2) (variant B (Nat (init-addr 2))) single]))
+    (list `[,(list `(UNKNOWN
+                     ((Nat (init-addr 1))
+                      (Nat (init-addr 2)))
+                     (goto S1)
+                     ((define-state (S1)))
+                     ([(obs-ext 1)]))
+                   `(UNKNOWN
+                     ((Nat (init-addr 1))
+                      (Nat (init-addr 2)))
+                     (goto S2)
+                     ((define-state (S2)))
+                     ([(obs-ext 2)])))
+            ,(list '[(obs-ext 1) (variant A *)]
+                   '[(obs-ext 2) (variant B *)])]))
+
+  (test-equal? "Addresses in unobserved messages are added to receptionists"
+    (aps#-resolve-outputs
+     (list `(UNKNOWN () (goto S1) ((define-state (S1))) ())
+           `(UNKNOWN () (goto S2) ((define-state (S2))) ()))
+     (list `[(obs-ext 1) (variant A (Nat (init-addr 1)) (String (init-addr 2))) single]))
+    (list `[,(list `(UNKNOWN
+                     ((Nat (init-addr 1))
+                      (String (init-addr 2)))
+                     (goto S1)
+                     ((define-state (S1)))
+                     ())
+                   `(UNKNOWN
+                     ((Nat (init-addr 1))
+                      (String (init-addr 2)))
+                     (goto S2)
+                     ((define-state (S2)))
+                     ()))
+            ()])))
 
 (define (aps#-remove-commitment-pattern commitment-map address pat)
   (term (remove-commitment-pattern/mf ,commitment-map ,address ,pat)))
@@ -961,6 +1037,13 @@
     (term (obs-ext 1))
     (term *))
    (term (((obs-ext 1) (single (record)) (many (record [a *]))) ((obs-ext 2) (single *))))))
+
+(define (config-merge-unobs-addresses config new-addrs)
+  `(,(aps#-config-obs-interface config)
+    ,(merge-receptionists (aps#-config-receptionists config) new-addrs)
+    ,(aps#-config-current-state config)
+    ,(aps#-config-state-defs config)
+    ,(aps#-config-commitment-map config)))
 
 ;; Merges the list of new receptionists into the old one, taking the join of types for duplicate
 ;; entries and adding new entries otherwise
@@ -1050,6 +1133,42 @@
     free-output-spec)
    (hash '(obs-ext 1) (list '(variant C) '(variant B))
          '(obs-ext 2) (list '(variant D)))))
+
+;; s# a# -> (Hash po (goto φ u ...))
+(define (get-unobs-transition-patterns config target-addr)
+  (define current-state (aps#-config-current-state config))
+  (for/fold ([unobs-transition-patterns (hash)])
+            ([trans (config-current-transitions config)])
+    (match trans
+      [`(unobs -> ([obligation ,obligation-addr ,pattern]) ,new-state)
+       (if (and (equal? obligation-addr target-addr)
+                (not (equal? new-state current-state)))
+           (hash-set unobs-transition-patterns pattern new-state)
+           unobs-transition-patterns)]
+      [_ unobs-transition-patterns])))
+
+(module+ test
+  (define unobs-transition-spec
+    (term
+     (UNKNOWN
+      ()
+      (goto S1 (obs-ext 1) (obs-ext 2))
+      ((define-state (S1 a b)
+         [x -> ([obligation x *]) (goto S1)]
+         [x -> ([obligation b *]) (goto S1)]
+         [unobs -> ([obligation a (variant A)]) (goto S2 a b)]
+         [unobs -> ([obligation a (variant B)]) (goto S2 a a)]
+         [unobs -> ([obligation a (variant C)]) (goto S1 a b)]
+         [unobs -> ([obligation b (variant D)]) (goto S1 a b)]
+         [unobs -> ([obligation b (variant E)]) (goto S2 a b)]))
+      ([(obs-ext 1)] [(obs-ext 2)]))))
+  (check-equal?
+   (get-unobs-transition-patterns unobs-transition-spec `(obs-ext 1))
+   (hash `(variant A) `(goto S2 (obs-ext 1) (obs-ext 2))
+         `(variant B) `(goto S2 (obs-ext 1) (obs-ext 1))))
+  (check-equal?
+   (get-unobs-transition-patterns unobs-transition-spec `(obs-ext 2))
+   (hash `(variant E) `(goto S2 (obs-ext 1) (obs-ext 2)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors

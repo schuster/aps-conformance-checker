@@ -386,13 +386,13 @@
                                              (impl-step-from-observer? i-step)
                                              (impl-step-trigger i-step))])
     (match-define (list config spawns1) trigger-result)
-    (match (aps#-resolve-outputs config (impl-step-outputs i-step))
+    (match (aps#-resolve-outputs (cons config spawns1) (impl-step-outputs i-step))
       [(list) (void)]
       [(list results ...)
        (for ([result results])
-         (match-define (list stepped-spec-config spawns2 satisfied-commitments) result)
+         (match-define `[,(list stepped-spec-config all-spawns ...) ,satisfied-commitments] result)
          (set-add! matched-stepped-configs
-                   (spec-step stepped-spec-config (append spawns1 spawns2) satisfied-commitments)))]))
+                   (spec-step stepped-spec-config all-spawns satisfied-commitments)))]))
   matched-stepped-configs)
 
 (module+ test
