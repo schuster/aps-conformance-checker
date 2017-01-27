@@ -824,6 +824,19 @@
     `(Union [SubmitJob ,desugared-job (Addr ,desugared-job-result)]
             [CancelJob Nat (Addr ,desugared-cancellation-result)]))
   (check-true (redex-match? csa-eval τ desugared-job-manager-command))
+  (define desugared-job-manager-input
+    `(Union
+      (Union
+       [RegisterTaskManager Nat Nat (Addr ,desugared-task-manager-command)]
+       [SubmitJob ,desugared-job (Addr ,desugared-job-result)]
+       [Acknowledge ,desugared-job-task-id]
+       [Failure ,desugared-job-task-id]
+       [RequestNextInputSplit ,desugared-job-task-id
+                              (Addr (Union [NextInputSplit (Vectorof String)]))]
+       [UpdateTaskExecutionState ,desugared-job-task-id ,desugared-execution-state]
+       [TaskManagerTerminated Nat]
+       [CancelJob Nat (Addr ,desugared-cancellation-result)])))
+  (check-true (redex-match? csa-eval τ desugared-job-manager-input))
 
   (define-match-expander JobTaskId/pat
     (lambda (stx)
@@ -1184,13 +1197,22 @@
          [(variant SubmitJob * dest) -> ([fork ,@send-job-result-anytime-behavior]) (goto Running)])))
 
   (test-true "Job manager conforms to its client POV spec"
-    (check-conformance job-manager-program job-manager-client-pov-spec)))
+    (check-conformance job-manager-program job-manager-client-pov-spec))
 
-;; Specs to check:
-;; * JobManager, from TaskManager/Task perspective:
-;;   * respond to registration requests, then sends other commands (SubmitTask, CancelTask)
-;;   * respond to RequestNextInputSplit
+  (define registered-tm-behavior
+    `((goto SendAck tm)
+      (define-state (SendAck tm)
+        [unobs -> ([obligation tm (variant AcknowledgeRegistration)]) (goto SubmitOrCancelAnytime tm)])
+      (define-state (SubmitOrCancelAnytime tm)
+        [unobs -> ([obligation tm (variant SubmitTask * *)]) (goto SubmitOrCancelAnytime tm)]
+        [unobs -> ([obligation tm (variant CancelTask * *)]) (goto SubmitOrCancelAnytime tm)])))
 
-;; Missed responses to check with specs:
-
-;; * TaskManager registration acknowledgment
+  (test-true "Job manager conforms to its TaskManager POV spec"
+    `(specification (receptionists [job-manager ,desugared-job-manager-input]) (externals)
+       [job-manager ,desugared-tm-to-jm-type]
+       ([job-manager (Union ,@(cdr desugared-job-manager-command) [TaskManagerTerminated Nat])])
+       (goto Running)
+       (define-state (Running)
+         [(variant RequestNextInputSplit * dest) -> ([obligation dest (variant NextInputSplit *)]) (goto Running)]
+         [(variant RegisterTaskManager * * tm) -> ([fork ,@registered-tm-behavior]) (goto Running)]
+         [(variant UpdateTaskExecutionState * *) -> () (goto Running)]))))
