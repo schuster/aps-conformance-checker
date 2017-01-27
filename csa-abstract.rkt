@@ -53,6 +53,7 @@
  redex/reduction-semantics
  (for-syntax syntax/parse)
  "csa.rkt"
+ "list-helpers.rkt"
  "sexp-helpers.rkt")
 
 ;; Abstract-interpretation version of CSA
@@ -2508,24 +2509,6 @@
 (define (config-collective-actor-and-rest-by-address config addr)
   (find-with-rest (lambda (actor) (equal? (csa#-blurred-actor-address actor) addr))
                   (csa#-config-blurred-actors config)))
-
-;; like findf, but also returns the items before and after the element in the list
-(define (find-with-rest pred? xs)
-  (let loop ([before null]
-             [after xs])
-    (match after
-      [(list) #f]
-      [(list x after ...)
-       (if (pred? x)
-           (list (reverse before) x after)
-           (loop (cons x before) after))])))
-
-(module+ test
-  (check-equal?
-   (find-with-rest (lambda (x) (equal? x 3)) (list 1 2 3 4 5))
-   (list (list 1 2) 3 (list 4 5)))
-  (check-false
-   (find-with-rest (lambda (x) (equal? x 6)) (list 1 2 3 4 5))))
 
 ;; Returns the given precise actor with the given address, or #f if it's not in the given config
 (define (csa#-config-actor-by-address config addr)
