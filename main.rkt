@@ -246,7 +246,7 @@
             [i-steps
              ;; Find the matching s-steps
              (define found-unmatchable-step? #f)
-             (widen-printf "Finding matching s-steps\n")
+             (widen-printf "Finding matching s-steps for ~s i-steps\n" (length i-steps))
              (for ([i-step i-steps])
                ;; Debugging:
                ;; (printf "Impl step: ~s\n" (debug-impl-step i-step))
@@ -678,7 +678,7 @@
 
 ;; config-pair -> config-pair
 (define (widen-pair the-pair pair-number i-step-number i-step-total)
-  (widen-printf "Starting widen\n")
+  (widen-printf "Starting widen for pair ~s, i-step ~s of ~s\n" pair-number i-step-number i-step-total)
   (widen-printf "The impl config: ~s\n"
                 (impl-config-without-state-defs (config-pair-impl-config the-pair)))
   (widen-printf "The spec config: ~s\n"
@@ -726,7 +726,9 @@
 
           (worklist-loop widened-pair)]
          [else
-          (widen-printf "Trying transition\n")
+          (widen-printf
+           "Trying transition for pair ~s, i-step ~s of ~s. Loop count = ~s, use count = ~s, ~s remaining transitions\n"
+           pair-number i-step-number i-step-total loop-count widen-use-count (queue-length possible-transitions))
           (widen-printf "Trigger: ~s\n" (csa#-transition-effect-trigger (first transition-result-with-obs)))
           (widen-printf "Outputs: ~s\n" (csa#-transition-effect-sends (first transition-result-with-obs)))
 
@@ -743,7 +745,7 @@
           (define new-i-step (apply-transition i transition-result observed?))
           (match (first-spec-step-to-same-state (config-pair-spec-config widened-pair) new-i-step)
             [#f
-             ;; (displayln "bail out 3")
+             (widen-printf "Transition has no spec transition to same state\n")
              (worklist-loop widened-pair)]
             [new-s
              ;; TODO: what should I do with the rename map? I don't remember what that was used for. I
@@ -758,16 +760,19 @@
                 (define repeated-i-step (apply-transition (config-pair-impl-config sbc-pair) transition-result observed?))
                 (define repeated-s (first-spec-step-to-same-state (config-pair-spec-config sbc-pair) repeated-i-step))
                 (define new-widened-pair (first (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
-                (widen-printf "Widen: applied a transition for pair ~s, i-step ~s of ~s. Loop count = ~s, use count = ~s\nTransition result: ~s\n~s\n\n"
+                (widen-printf "Widen: applied a transition for pair ~s, i-step ~s of ~s. Loop count = ~s, use count = ~s\n"
                         pair-number i-step-number i-step-total loop-count widen-use-count
-                        (debug-transition-result transition-result)
-                        (impl-config-without-state-defs (config-pair-impl-config new-widened-pair)))
+                        ;; (debug-transition-result transition-result)
+                        ;; (impl-config-without-state-defs (config-pair-impl-config new-widened-pair))
+                        )
                 (widen-printf "Remaining transitions: ~s\n" (queue-length possible-transitions))
                 (for-each (curry enqueue! possible-transitions)
                           (impl-transition-effects-from new-widened-pair))
                 (widen-printf "Added transitions, total is now ~s\n" (queue-length possible-transitions))
                 (worklist-loop new-widened-pair)]
-               [else (worklist-loop widened-pair)])])])])))
+               [else
+                (widen-printf "Transition is not valid for widen\n")
+                (worklist-loop widened-pair)])])])])))
 
 (module+ test
   (define init-widen-impl-config
@@ -838,17 +843,16 @@
     (define (abort) (return-continuation null))
     (define triggers (impl-triggers-from i s))
     (widen-printf "Widen: gettings effects from ~s triggers\n" (length triggers))
+    (define trigger-count 0)
     (define final-results
      (append*
       (for/list ([trigger-with-obs triggers])
+        (set! trigger-count (add1 trigger-count))
         (define observed? (second trigger-with-obs))
-        (widen-printf "~s Eval trigger: ~s\n"
-                (date->string (seconds->date (current-seconds)) #t)
-                trigger-with-obs)
+        (widen-printf "Eval trigger (~s of ~s): ~s\n" trigger-count (length triggers) trigger-with-obs)
         (flush-output)
         (define results (map (curryr list observed?) (csa#-eval-trigger i (first trigger-with-obs) abort)))
-        (widen-printf "~s: Finished trigger, ~s transitions\n" (date->string (seconds->date (current-seconds)) #t)
-                (length results))
+        (widen-printf "Finished trigger, ~s transitions\n" (length results))
         (flush-output)
         results)))
     (widen-printf "Widen: Found ~s transitions\n" (length final-results))
