@@ -826,16 +826,15 @@
   (check-true (redex-match? csa-eval τ desugared-job-manager-command))
   (define desugared-job-manager-input
     `(Union
-      (Union
-       [RegisterTaskManager Nat Nat (Addr ,desugared-task-manager-command)]
-       [SubmitJob ,desugared-job (Addr ,desugared-job-result)]
-       [Acknowledge ,desugared-job-task-id]
-       [Failure ,desugared-job-task-id]
-       [RequestNextInputSplit ,desugared-job-task-id
-                              (Addr (Union [NextInputSplit (Vectorof String)]))]
-       [UpdateTaskExecutionState ,desugared-job-task-id ,desugared-execution-state]
-       [TaskManagerTerminated Nat]
-       [CancelJob Nat (Addr ,desugared-cancellation-result)])))
+      [RegisterTaskManager Nat Nat (Addr ,desugared-task-manager-command)]
+      [SubmitJob ,desugared-job (Addr ,desugared-job-result)]
+      [Acknowledge ,desugared-job-task-id]
+      [Failure ,desugared-job-task-id]
+      [RequestNextInputSplit ,desugared-job-task-id
+                             (Addr (Union [NextInputSplit (Vectorof String)]))]
+      [UpdateTaskExecutionState ,desugared-job-task-id ,desugared-execution-state]
+      [TaskManagerTerminated Nat]
+      [CancelJob Nat (Addr ,desugared-cancellation-result)]))
   (check-true (redex-match? csa-eval τ desugared-job-manager-input))
 
   (define-match-expander JobTaskId/pat
@@ -1207,12 +1206,17 @@
         [unobs -> ([obligation tm (variant SubmitTask * *)]) (goto SubmitOrCancelAnytime tm)]
         [unobs -> ([obligation tm (variant CancelTask * *)]) (goto SubmitOrCancelAnytime tm)])))
 
-  (test-true "Job manager conforms to its TaskManager POV spec"
+  (define job-manager-tm-pov-spec
     `(specification (receptionists [job-manager ,desugared-job-manager-input]) (externals)
        [job-manager ,desugared-tm-to-jm-type]
        ([job-manager (Union ,@(cdr desugared-job-manager-command) [TaskManagerTerminated Nat])])
        (goto Running)
        (define-state (Running)
-         [(variant RequestNextInputSplit * dest) -> ([obligation dest (variant NextInputSplit *)]) (goto Running)]
+         [(variant RequestNextInputSplit * dest) ->
+          ([obligation dest (variant NextInputSplit *)])
+          (goto Running)]
          [(variant RegisterTaskManager * * tm) -> ([fork ,@registered-tm-behavior]) (goto Running)]
-         [(variant UpdateTaskExecutionState * *) -> () (goto Running)]))))
+         [(variant UpdateTaskExecutionState * *) -> () (goto Running)])))
+
+  (test-true "Job manager conforms to its TaskManager POV spec"
+    (check-conformance job-manager-program job-manager-tm-pov-spec)))
