@@ -7,6 +7,7 @@
  (struct-out csa#-transition)
  csa#-messages-of-type
  csa#-enabled-internal-actions
+ csa#-action-enabled?
  csa#-make-external-trigger
  csa#-abstract-config
  csa#-blur-config
@@ -15,10 +16,9 @@
  csa#-address-strip-type
  ;; required for widening
  (struct-out csa#-transition-effect)
- csa#-transition-valid-for-widen?
+ csa#-config<?
  csa#-eval-trigger
  csa#-apply-transition
- csa#-blur-and-duplicate-message
 
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
  csa#-spawn-address?
@@ -1679,6 +1679,35 @@
                                          (folded Nat (variant A (folded Nat (variant B))))))))
     3))
 
+;; Returns true if the given expression contains *any* address
+(define (csa#-contains-address? e)
+  (not (empty? (csa#-contained-addresses e))))
+
+;; Returns the list of all addresses in the given term (possibly with duplicates)
+(define (csa#-contained-addresses t)
+  (match t
+    [(or `(init-addr ,_)
+         `(spawn-addr ,_ ,_)
+         `(blurred-spawn-addr ,_)
+         `(* (Addr ,_))
+         `(obs-ext ,_))
+     (list t)]
+    [(list subterms ...) (append* (map csa#-contained-addresses subterms))]
+    [_ null]))
+
+(module+ test
+  (test-equal? "csa#-contained-addresses"
+    (csa#-contained-addresses (term ((Nat (init-addr 1)) (Nat (obs-ext 2)))))
+    (list `(init-addr 1) `(obs-ext 2)))
+
+  (test-equal? "csa#-contained-addresses"
+    (csa#-contained-addresses (term ((abc 1 Nat) (def 2 Nat))))
+    null)
+
+  (test-equal? "csa#-contained-address?"
+    (csa#-contained-addresses (term (((abc) (Nat (spawn-addr 3 OLD))) ())))
+    (list `(spawn-addr 3 OLD))))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
 
@@ -2953,74 +2982,50 @@
 ;; NOTE: for various comparisons here, I need to record if a transition takes the config to a new
 ;; configuration that is greater than the old one (in terms of the abstract interpretation), the same
 ;; as the old one, or neither of those. I represent those results with 'gt, 'eq, and 'not-gteq,
-;; respectively
+;; respectively, and call them "comp-results"
 
 ;; i# csa#-transition-effect -> Boolean
 ;;
 ;; Returns #t if multiple applications of this transition effect would result in a configuration
 ;; strictly larger than the given one
-(define (csa#-transition-valid-for-widen? i transition-result new-i)
-  ;; REFACTOR: make the spawn and self behavior comparisons all happen in one place
+(define (csa#-config<? i1 i2)
+  ;; NOTE: I removed the check for non-existent internal addresses in the effect: now that I'm only
+  ;; checking against fully transitioned and sbc'ed configurations rather than transition effects,
+  ;; that should no longer be possible.
 
-  ;; If any spawned actor has a behavior different than an existing current atomic actor for the
-  ;; same spawn location, throw this effect out. Blurring makes this step lead to a state that
-  ;; might not be greater than the current one
-  (define spawn-behavior-comp (csa#-transition-effect-compare-spawn-behavior transition-result i new-i))
+  (define atomics-comp (config-compare-atomics i2 i1))
+  (define collectives-comp (config-compare-collectives i2 i1))
+  (define messages-comp (config-compare-messages i2 i1))
 
-  ;; if any internal address mentioned in these effects has been blurred into a collective actor
-  ;; since we ran this transition, just throw the transition away. The same transition with the
-  ;; blurred instance of that address would have been picked up and enqueued after the blurring
-  ;; action
-  (define nonex-address
-    (if (csa#-transition-effect-has-nonexistent-addresses? transition-result i) 'not-gteq 'eq))
+  (match (comp-result-and atomics-comp collectives-comp messages-comp)
+    ['gt #t]
+    [_ #f]))
 
-  (define new-message-comp (csa#-compare-new-messages i transition-result new-i))
-
-  ;; If the transition was on an atomic actor, then the new behavior must be the same as the old
-  ;; one
-  (define self-behavior-comp (csa#-actor-compare-behavior i transition-result new-i))
-
-  ;; The action must be repeatable (timeouts are always repeatable in the same behavior, but an
-  ;; internal message is only repeatable if there is another in the queue)
-  (define repeatable-comp (if (csa#-repeatable-action? i transition-result) 'eq 'not-gteq))
-
-  ;; TODO: also account for the case where growth happens by expanding the set of receptionists
-
-  (define all-comparisons
-    (list spawn-behavior-comp nonex-address new-message-comp self-behavior-comp repeatable-comp))
-  ;; nothing is not-gteq, at least one is gt
-  (define is-valid?
-    (and (andmap (negate (curry eq? 'not-gteq)) all-comparisons)
-         (ormap (curry eq? 'gt) all-comparisons)))
-  ;; (when is-valid?
-  ;;   (printf "all comparisons: ~s\n" all-comparisons))
-  is-valid?)
-
-;; Returns 'gt if the behaviors of the effect's spawn would make for a greater config, 'eq for the
-;; same config (i.e. no effect), and 'not-gteq otherwise
-(define (csa#-transition-effect-compare-spawn-behavior transition-result i new-i)
-  (for/fold ([comp-result 'eq])
-            ([spawn (csa#-transition-effect-spawns transition-result)])
-    (define spawn-addr (first spawn))
-    (define existing-addr `(spawn-addr ,(second spawn-addr) OLD))
-    (define collective-addr `(blurred-spawn-addr ,(second spawn-addr)))
-    (comp-result-and
-     comp-result
-     (match (csa#-config-actor-by-address i existing-addr)
-       [#f 'not-gteq]
-       [(list _ existing-behavior)
-        (cond
-          [(not (equal? existing-behavior
-                        (actor-behavior (csa#-config-actor-by-address new-i existing-addr))))
-           'not-gteq]
-          [else
-           (match (csa#-config-collective-actor-by-address i collective-addr)
-             [#f 'gt]
-             [collective-actor
-              (if (equal? (csa#-blurred-actor-behaviors collective-actor)
-                          (csa#-blurred-actor-behaviors (csa#-config-collective-actor-by-address new-i collective-addr)))
-                  'eq
-                  'gt)])])]))))
+;; Returns:
+;;
+;; * 'gt if i1 contains no atomic actors not in i2 and at least one of its behaviors subsumes the
+;; corresponding behavior in i2
+;;
+;; * 'eq if the atomics are all exactly the same
+;;
+;; * 'not-gteq otherwise
+(define (config-compare-atomics i1 i2)
+  (let loop ([comp-result 'eq]
+             [i1-actors (csa#-config-actors i1)])
+    (match i1-actors
+      [(list) comp-result]
+      [(list i1-actor i1-actors ...)
+       (match (csa#-config-actor-by-address i2 (csa#-actor-address i1-actor))
+         [#f 'not-gteq]
+         [i2-actor
+          (define i1-behavior (actor-behavior i1-actor))
+          (define i2-behavior (actor-behavior i2-actor))
+          (cond
+            [(equal? (behavior-state-defs i1-behavior) (behavior-state-defs i2-behavior))
+             (match (compare-behavior i1-behavior i2-behavior)
+               ['not-gteq 'not-gteq]
+               [this-result (loop (comp-result-and comp-result this-result) i1-actors)])]
+            [else 'not-gteq])])])))
 
 (module+ test
   ;; TODO: update these tests
@@ -3039,267 +3044,248 @@
                           ((() (goto B)))])
                         ()))])
       (term i#)))
-  (test-equal? "effect matches existing spawn behavior, no blurred version"
-   (csa#-transition-effect-compare-spawn-behavior
-    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
-                            '(() (goto B))
-                            null
-                            (list '((spawn-addr third-loc NEW) (() (goto A)))))
-    spawn-behavior-change-test-config
-    (term
-     (([(spawn-addr the-loc OLD)
-        (() (goto A))]
-       [(spawn-addr second-loc OLD)
-        (() (goto A))]
-       [(spawn-addr third-loc OLD)
-        (() (goto A))])
-      ([(blurred-spawn-addr the-loc)
-        ((() (goto A)))]
-       [(blurred-spawn-addr second-loc)
-        ((() (goto B)))]
-       [(spawn-addr third-loc)
-        (() (goto A))])
-      ())))
-   'gt)
-  (test-equal? "effect matches existing spawn behavior, blurred behavior also exists"
-   (csa#-transition-effect-compare-spawn-behavior
-    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
-                            '(() (goto B))
-                            null
-                            (list '((spawn-addr the-loc NEW) (() (goto A)))))
-    spawn-behavior-change-test-config
-    (term
-     (([(spawn-addr the-loc OLD)
-        (() (goto A))]
-       [(spawn-addr second-loc OLD)
-        (() (goto A))]
-       [(spawn-addr third-loc OLD)
-        (() (goto A))])
-      ([(blurred-spawn-addr the-loc)
-        ((() (goto A)))]
-       [(blurred-spawn-addr second-loc)
-        ((() (goto B)))])
-      ())))
-   'eq)
-  (test-equal? "effect matches existing spawn behavior, blurred actor with other behavior exists"
-   (csa#-transition-effect-compare-spawn-behavior
-    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
-                            '(() (goto B))
-                            null
-                            (list '((spawn-addr second-loc NEW) (() (goto A)))))
-    spawn-behavior-change-test-config
-    (term
-     (([(spawn-addr the-loc OLD)
-        (() (goto A))]
-       [(spawn-addr second-loc OLD)
-        (() (goto A))]
-       [(spawn-addr third-loc OLD)
-        (() (goto A))])
-      ([(blurred-spawn-addr the-loc)
-        ((() (goto A)))]
-       [(blurred-spawn-addr second-loc)
-        ((() (goto A)) (() (goto B)))])
-      ())))
-   'gt)
-  (test-equal? "effect changes existing spawn behavior"
-   (csa#-transition-effect-compare-spawn-behavior
-    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
-                            '(() (goto B))
-                            null
-                            (list '((spawn-addr the-loc NEW) (() (goto C)))))
-    spawn-behavior-change-test-config
-    (term
-     (([(spawn-addr the-loc OLD)
-        (() (goto C))]
-       [(spawn-addr second-loc OLD)
-        (() (goto A))]
-       [(spawn-addr third-loc OLD)
-        (() (goto A))])
-      ([(blurred-spawn-addr the-loc)
-        ((() (goto A)))]
-       [(blurred-spawn-addr second-loc)
-        ((() (goto B)))])
-      ())))
-   'not-gteq)
-  (test-equal? "config has no actor for corresponding spawn"
-   (csa#-transition-effect-compare-spawn-behavior
-    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
-                            '(() (goto B))
-                            null
-                            (list '((spawn-addr other-loc NEW) (() (goto C)))))
-    spawn-behavior-change-test-config
-    (term
-     (([(spawn-addr the-loc OLD)
-        (() (goto A))]
-       [(spawn-addr second-loc OLD)
-        (() (goto A))]
-       [(spawn-addr third-loc OLD)
-        (() (goto A))]
-       [(spawn-addr other-loc OLD)
-        (() (goto C))])
-      ([(blurred-spawn-addr the-loc)
-        ((() (goto A)))]
-       [(blurred-spawn-addr second-loc)
-        ((() (goto B)))])
-      ())))
-   'not-gteq)
-  (test-equal? "effect has no spawns"
-   (csa#-transition-effect-compare-spawn-behavior
-    (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
-                            '(() (goto B))
-                            null
-                            null)
-    spawn-behavior-change-test-config
-    (term
-     (([(spawn-addr the-loc OLD)
-        (() (goto A))]
-       [(spawn-addr second-loc OLD)
-        (() (goto A))]
-       [(spawn-addr third-loc OLD)
-        (() (goto A))])
-      ([(blurred-spawn-addr the-loc)
-        ((() (goto A)))]
-       [(blurred-spawn-addr second-loc)
-        ((() (goto B)))])
-      ())))
-   'eq))
 
-;; comparison-result comparison-result -> comparison-result
-(define-syntax (comp-result-and stx)
-  (syntax-parse stx
-    [(_ exp1 exp2)
-     #`(let ([result1 exp1])
-         (if (eq? result1 'not-gteq)
-             'not-gteq
-             (comp-result-and/internal result1 exp2)))]))
+  ;; (test-equal? "effect matches existing spawn behavior, no blurred version"
+  ;;  (csa#-transition-effect-compare-spawn-behavior
+  ;;   (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+  ;;                           '(() (goto B))
+  ;;                           null
+  ;;                           (list '((spawn-addr third-loc NEW) (() (goto A)))))
+  ;;   spawn-behavior-change-test-config
+  ;;   (term
+  ;;    (([(spawn-addr the-loc OLD)
+  ;;       (() (goto A))]
+  ;;      [(spawn-addr second-loc OLD)
+  ;;       (() (goto A))]
+  ;;      [(spawn-addr third-loc OLD)
+  ;;       (() (goto A))])
+  ;;     ([(blurred-spawn-addr the-loc)
+  ;;       ((() (goto A)))]
+  ;;      [(blurred-spawn-addr second-loc)
+  ;;       ((() (goto B)))]
+  ;;      [(spawn-addr third-loc)
+  ;;       (() (goto A))])
+  ;;     ())))
+  ;;  'gt)
+  ;; (test-equal? "effect matches existing spawn behavior, blurred behavior also exists"
+  ;;  (csa#-transition-effect-compare-spawn-behavior
+  ;;   (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+  ;;                           '(() (goto B))
+  ;;                           null
+  ;;                           (list '((spawn-addr the-loc NEW) (() (goto A)))))
+  ;;   spawn-behavior-change-test-config
+  ;;   (term
+  ;;    (([(spawn-addr the-loc OLD)
+  ;;       (() (goto A))]
+  ;;      [(spawn-addr second-loc OLD)
+  ;;       (() (goto A))]
+  ;;      [(spawn-addr third-loc OLD)
+  ;;       (() (goto A))])
+  ;;     ([(blurred-spawn-addr the-loc)
+  ;;       ((() (goto A)))]
+  ;;      [(blurred-spawn-addr second-loc)
+  ;;       ((() (goto B)))])
+  ;;     ())))
+  ;;  'eq)
+  ;; (test-equal? "effect matches existing spawn behavior, blurred actor with other behavior exists"
+  ;;  (csa#-transition-effect-compare-spawn-behavior
+  ;;   (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+  ;;                           '(() (goto B))
+  ;;                           null
+  ;;                           (list '((spawn-addr second-loc NEW) (() (goto A)))))
+  ;;   spawn-behavior-change-test-config
+  ;;   (term
+  ;;    (([(spawn-addr the-loc OLD)
+  ;;       (() (goto A))]
+  ;;      [(spawn-addr second-loc OLD)
+  ;;       (() (goto A))]
+  ;;      [(spawn-addr third-loc OLD)
+  ;;       (() (goto A))])
+  ;;     ([(blurred-spawn-addr the-loc)
+  ;;       ((() (goto A)))]
+  ;;      [(blurred-spawn-addr second-loc)
+  ;;       ((() (goto A)) (() (goto B)))])
+  ;;     ())))
+  ;;  'gt)
+  ;; (test-equal? "effect changes existing spawn behavior"
+  ;;  (csa#-transition-effect-compare-spawn-behavior
+  ;;   (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+  ;;                           '(() (goto B))
+  ;;                           null
+  ;;                           (list '((spawn-addr the-loc NEW) (() (goto C)))))
+  ;;   spawn-behavior-change-test-config
+  ;;   (term
+  ;;    (([(spawn-addr the-loc OLD)
+  ;;       (() (goto C))]
+  ;;      [(spawn-addr second-loc OLD)
+  ;;       (() (goto A))]
+  ;;      [(spawn-addr third-loc OLD)
+  ;;       (() (goto A))])
+  ;;     ([(blurred-spawn-addr the-loc)
+  ;;       ((() (goto A)))]
+  ;;      [(blurred-spawn-addr second-loc)
+  ;;       ((() (goto B)))])
+  ;;     ())))
+  ;;  'not-gteq)
+  ;; (test-equal? "config has no actor for corresponding spawn"
+  ;;  (csa#-transition-effect-compare-spawn-behavior
+  ;;   (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+  ;;                           '(() (goto B))
+  ;;                           null
+  ;;                           (list '((spawn-addr other-loc NEW) (() (goto C)))))
+  ;;   spawn-behavior-change-test-config
+  ;;   (term
+  ;;    (([(spawn-addr the-loc OLD)
+  ;;       (() (goto A))]
+  ;;      [(spawn-addr second-loc OLD)
+  ;;       (() (goto A))]
+  ;;      [(spawn-addr third-loc OLD)
+  ;;       (() (goto A))]
+  ;;      [(spawn-addr other-loc OLD)
+  ;;       (() (goto C))])
+  ;;     ([(blurred-spawn-addr the-loc)
+  ;;       ((() (goto A)))]
+  ;;      [(blurred-spawn-addr second-loc)
+  ;;       ((() (goto B)))])
+  ;;     ())))
+  ;;  'not-gteq)
+  ;; (test-equal? "effect has no spawns"
+  ;;  (csa#-transition-effect-compare-spawn-behavior
+  ;;   (csa#-transition-effect '(timeout/empty-queue (init-addr 0))
+  ;;                           '(() (goto B))
+  ;;                           null
+  ;;                           null)
+  ;;   spawn-behavior-change-test-config
+  ;;   (term
+  ;;    (([(spawn-addr the-loc OLD)
+  ;;       (() (goto A))]
+  ;;      [(spawn-addr second-loc OLD)
+  ;;       (() (goto A))]
+  ;;      [(spawn-addr third-loc OLD)
+  ;;       (() (goto A))])
+  ;;     ([(blurred-spawn-addr the-loc)
+  ;;       ((() (goto A)))]
+  ;;      [(blurred-spawn-addr second-loc)
+  ;;       ((() (goto B)))])
+  ;;     ())))
+  ;;  'eq)
+  )
 
-(define (comp-result-and/internal c1 c2)
-  (cond
-    [(or (eq? c1 'not-gteq) (eq? c2 'not-gteq))
-     'not-gteq]
-    [(or (eq? c1 'gt) (eq? c2 'gt))
-     'gt]
-    [else 'eq]))
+;; (module+ test
+;;   (test-equal? "actor-compare-behavior: new atomic behavior"
+;;     (csa#-actor-compare-behavior
+;;      behavior-test-config
+;;      (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto D)) null null)
+;;      (term (([(init-addr 1) (() (goto D))])
+;;            ([(blurred-spawn-addr 2)
+;;              ((() (goto B))
+;;               (() (goto C)))])
+;;            ())))
+;;     'not-gteq)
+;;   (test-equal? "actor-compare-behavior: old atomic behavior"
+;;     (csa#-actor-compare-behavior
+;;      behavior-test-config
+;;      (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto A)) null null)
+;;      behavior-test-config)
+;;     'eq)
+;;   (test-equal? "actor-compare-behavior: adding to vector in old atomic behavior"
+;;     (csa#-actor-compare-behavior
+;;      (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
+;;             ([(blurred-spawn-addr 2)
+;;               ((() (goto B))
+;;                (() (goto C)))])
+;;             ()))
+;;      (csa#-transition-effect
+;;       `(timeout/empty-queue (init-addr 1)) '(() (goto A (vector-val (variant B) (variant A)) )) null null)
+;;      (term (([(init-addr 1) (() (goto A (vector-val (variant B) (variant A))))])
+;;             ([(blurred-spawn-addr 2)
+;;               ((() (goto B))
+;;                (() (goto C)))])
+;;             ())))
+;;     'gt)
+;;   (test-equal? "actor-compare-behavior: same vector in old atomic behavior"
+;;     (csa#-actor-compare-behavior
+;;      (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
+;;             ([(blurred-spawn-addr 2)
+;;               ((() (goto B))
+;;                (() (goto C)))])
+;;             ()))
+;;      (csa#-transition-effect
+;;       `(timeout/empty-queue (init-addr 1)) '(() (goto A (vector-val (variant A)))) null null)
+;;      (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
+;;             ([(blurred-spawn-addr 2)
+;;               ((() (goto B))
+;;                (() (goto C)))])
+;;             ())))
+;;     'eq)
+;;   (test-equal? "actor-compare-behavior: smaller vector in old atomic behavior"
+;;     (csa#-actor-compare-behavior
+;;      (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
+;;             ([(blurred-spawn-addr 2)
+;;               ((() (goto B))
+;;                (() (goto C)))])
+;;             ()))
+;;      (csa#-transition-effect
+;;       `(timeout/empty-queue (init-addr 1)) '(() (goto A (vector-val))) null null)
+;;      (term (([(init-addr 1) (() (goto A (vector-val)))])
+;;             ([(blurred-spawn-addr 2)
+;;               ((() (goto B))
+;;                (() (goto C)))])
+;;             ())))
+;;     'not-gteq)
+;;   (test-equal? "actor-compare-behavior: new collective behavior"
+;;     (csa#-actor-compare-behavior
+;;      behavior-test-config
+;;      (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto D)) null null)
+;;      (term (([(init-addr 1) (() (goto A))])
+;;             ([(blurred-spawn-addr 2)
+;;               ((() (goto B))
+;;                (() (goto C))
+;;                (() (goto D)))])
+;;             ())))
+;;     'gt)
+;;   (test-equal? "actor-compare-behavior: old collective behavior"
+;;     (csa#-actor-compare-behavior
+;;      behavior-test-config
+;;      (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto B)) null null)
+;;      behavior-test-config)
+;;     'eq))
 
-(module+ test
-  (test-equal? "comp-result-and gt eq" (comp-result-and 'gt 'eq) 'gt)
-  (test-equal? "comp-result-and not-gteq eq" (comp-result-and 'not-gteq 'eq) 'not-gteq)
-  (test-equal? "comp-result-and not-gteq gt" (comp-result-and 'not-gteq 'gt) 'not-gteq)
-  (test-equal? "comp-result-and gt eq 2" (comp-result-and 'eq 'gt) 'gt)
-  (test-equal? "comp-result-and not-gteq eq 2" (comp-result-and 'eq 'not-gteq) 'not-gteq)
-  (test-equal? "comp-result-and not-gteq gt 2" (comp-result-and 'gt 'not-gteq) 'not-gteq)
-  (test-equal? "comp-result-and short-circuits" (comp-result-and 'not-gteq (error "foo")) 'not-gteq))
+;; TODO: test this
 
-;; Returns #t if the transition effect contains any internal addresses that no longer refer
-;; to actors (atomic or collective), other than those referring to spawns of the effect
-(define (csa#-transition-effect-has-nonexistent-addresses? effect config)
-  (define effect-term
-    (match-let ([(csa#-transition-effect e1 e2 e3 e4) effect])
-      (list e1 e2 e3 e4)))
-  (define all-internal-effect-addresses
-    (filter csa#-internal-address? (csa#-contained-addresses effect-term)))
-  (define all-current-and-new-spawn-addresses
-    (append
-     (map first (csa#-config-actors config))
-     (map first (csa#-config-blurred-actors config))
-     (map first (csa#-transition-effect-spawns effect))))
-  (not (andmap (curryr member all-current-and-new-spawn-addresses) all-internal-effect-addresses)))
+;; Returns:
+;;
+;; * 'gt if i1 has at least one collective actor with a behavior different than the one in i1, or a
+;; collective actor not in i1 at all
+;;
+;; * 'eq if the collective actors of i1 and i2 are exactly the same
+;;
+;; NOTE: this function assumes that i1 was reached by some number of transitions from i2, so any
+;; behavior that was present in i2 *must* still be present (or subsumed) in i1
+(define (config-compare-collectives i1 i2)
+  (let loop ([i1-collectives (csa#-config-blurred-actors i1)])
+    (match i1-collectives
+      [(list) 'eq]
+      [(list i1-collective i1-collectives ...)
+       (match (csa#-config-collective-actor-by-address i2 (csa#-blurred-actor-address i1-collective))
+         [#f 'gt]
+         [i2-collective
+          (if (equal? (csa#-blurred-actor-behaviors i1-collective)
+                      (csa#-blurred-actor-behaviors i2-collective))
+              (loop i1-collectives)
+              'gt)])])))
 
-(module+ test
-  (define old-address-test-config
-    (redex-let csa# ([i#
-                      (term
-                       (([(spawn-addr the-loc OLD)
-                          (() (goto A))]
-                         [(init-addr 0)
-                          (() (goto A))])
-                        ([(blurred-spawn-addr the-loc)
-                          ((() (goto A)))])
-                        ()))])
-      (term i#)))
-  (test-false "nonexistent address: none"
-    (csa#-transition-effect-has-nonexistent-addresses?
-     (csa#-transition-effect '(timeout/empty-queue (init-addr 0)) '(() (goto A)) null null)
-     old-address-test-config))
-  (test-not-false "nonexistent address: atomic"
-    (csa#-transition-effect-has-nonexistent-addresses?
-     (csa#-transition-effect '(timeout/empty-queue (spawn-addr other-loc OLD)) '(() (goto A)) null null)
-     old-address-test-config))
-  (test-not-false "nonexistent address: collective"
-    (csa#-transition-effect-has-nonexistent-addresses?
-     (csa#-transition-effect '(timeout/empty-queue (blurred-spawn-addr other-loc)) '(goto A) null null)
-     old-address-test-config))
-  (test-false "nonexistent address: address from a new spawn"
-    (csa#-transition-effect-has-nonexistent-addresses?
-     (csa#-transition-effect '(timeout/empty-queue (blurred-spawn-addr the-loc))
-                             '(goto A)
-                             null
-                             '([(spawn-addr the-loc NEW) (() (goto A (spawn-addr the-loc NEW)))]))
-     old-address-test-config))
-  (test-false "nonexistent address: external address"
-    (csa#-transition-effect-has-nonexistent-addresses?
-     (csa#-transition-effect '(external-receive (init-addr 0) (Nat (obs-ext 1))) '(goto A) null null)
-     old-address-test-config)))
+;; TODO: test this
 
-;; Returns true if the given expression contains *any* address
-(define (csa#-contains-address? e)
-  (not (empty? (csa#-contained-addresses e))))
-
-;; Returns the list of all addresses in the given term (possibly with duplicates)
-(define (csa#-contained-addresses t)
-  (match t
-    [(or `(init-addr ,_)
-         `(spawn-addr ,_ ,_)
-         `(blurred-spawn-addr ,_)
-         `(* (Addr ,_))
-         `(obs-ext ,_))
-     (list t)]
-    [(list subterms ...) (append* (map csa#-contained-addresses subterms))]
-    [_ null]))
-
-(module+ test
-  (test-equal? "csa#-contained-addresses"
-    (csa#-contained-addresses (term ((Nat (init-addr 1)) (Nat (obs-ext 2)))))
-    (list `(init-addr 1) `(obs-ext 2)))
-
-  (test-equal? "csa#-contained-addresses"
-    (csa#-contained-addresses (term ((abc 1 Nat) (def 2 Nat))))
-    null)
-
-  (test-equal? "csa#-contained-address?"
-    (csa#-contained-addresses (term (((abc) (Nat (spawn-addr 3 OLD))) ())))
-    (list `(spawn-addr 3 OLD))))
-
-(define (csa#-internal-address? a)
-  (redex-match? csa# a#int a))
-
-(module+ test
-  (check-true (csa#-internal-address? `(init-addr 0)))
-  (check-true (csa#-internal-address? `(spawn-addr the-loc NEW)))
-  (check-true (csa#-internal-address? `(blurred-spawn-addr the-loc)))
-  (check-false (csa#-internal-address? `(* (Addr Nat))))
-  (check-false (csa#-internal-address? `(obs-ext 1))))
-
-
-;; Returns 'gt if adding the new messages from the transition result to the impl config *twice* would
-;; result in a strictly greater configuration than i, 'eq if it results in the same configuration, and
-;; 'not-gteq otherwise
-(define (csa#-compare-new-messages i transition-result new-i)
-  ;; 1. Check for all existing messages to an OLD spawn in the old impl that there is a "matching"
-  ;; number of that message in the new impl to an OLD spawn (because a transition that blurs the
-  ;; original spawn could break validity by not sending a "replacement" message to the new spawn).
-  ;;
-  ;; 2. For every message sent by the transition, compare its multiplicity in the new configuration to
-  ;; that of the old configuration. For messages to anything but a spawn-addr, if the previous
-  ;; configuration did not have a many-of before, the result is 'gt, else 'eq. For spawn-addrs, it's
-  ;; trickier: see the code below.
-
-  (define (get-existing-multiplicity addr message)
-    (get-multiplicity addr message i))
-
-  (define (get-new-multiplicity addr message)
-    (get-multiplicity addr message new-i))
-
+;; Returns:
+;;
+;; * 'gt if i1 has the same or greater multiplicity for every message from i2 plus a "many"
+;; multiplicity for any new messages
+;;
+;; * 'eq if the in-transit message sets are the same
+;;
+;; * 'not-gteq otherwise
+(define (config-compare-messages i1 i2)
   (define (get-multiplicity addr message config)
     (match (findf (lambda (pkt)
                     (and (equal? (csa#-message-packet-address pkt) addr)
@@ -3308,22 +3294,15 @@
       [#f 'none]
       [found-packet (csa#-message-packet-multiplicity found-packet)]))
 
-  (define packets-to-OLD-in-previous-config
-    (filter
-     (lambda (pkt)
-       (match (csa#-message-packet-address pkt)
-         [`(spawn-addr ,_ OLD) #t]
-         [else #f]))
-     (csa#-config-message-packets i)))
-
-  (define OLD-spawns-have-enough-messages
+  (define old-message-comp
    (for/fold ([comp-result 'eq])
-             ([previous-packet packets-to-OLD-in-previous-config])
+             ([packet (csa#-config-message-packets i2)])
      (comp-result-and
       comp-result
-      (match (list (csa#-message-packet-multiplicity previous-packet)
-                   (get-new-multiplicity (csa#-message-packet-address previous-packet)
-                                         (csa#-message-packet-value previous-packet)))
+      (match (list (csa#-message-packet-multiplicity packet)
+                   (get-multiplicity (csa#-message-packet-address packet)
+                                     (csa#-message-packet-value packet)
+                                     i1))
         [`(single none)   'not-gteq]
         [`(single single) 'eq]
         [`(single many)   'gt]
@@ -3331,237 +3310,119 @@
         [`(many   single) 'not-gteq]
         [`(many   many)   'eq]))))
 
-  ;; Step 2:
-  (for/fold ([comp-result OLD-spawns-have-enough-messages])
-            ([new-packet (filter internal-output? (csa#-transition-effect-sends transition-result))])
-    (define message (csa#-message-packet-value new-packet))
-    (comp-result-and
-     comp-result
-     (match (csa#-message-packet-address new-packet)
-       [`(spawn-addr ,loc ,flag)
-        ;; for spawn-addrs, we need to do special checking for both the atomic and collective versions
-        ;; of this address
-        (comp-result-and
-         ;; spawn-addr
-         (match (list (get-new-multiplicity      `(spawn-addr ,loc OLD) message)
-                      (get-existing-multiplicity `(spawn-addr ,loc OLD) message))
-           ['(none   none)   'eq]
-           ['(none   single) 'not-gteq]
-           ['(none   many)   'not-gteq]
-           ['(single none)   (if (eq? flag 'OLD) 'gt 'not-gteq)]
-           ['(single single) (if (eq? flag 'OLD) 'gt 'eq)]
-           ['(single many)   'not-gteq] ; the multiplicity decreases, so the flag MUST be NEW
-           ['(many   none)   'gt]
-           ['(many   single) 'gt]
-           ['(many   many)   'eq])
-         ;; blurred-spawn-addr: applying the transition repeatedly may or may not add messages to the
-         ;; blurred actor in this case, so check those too
-         (match (list (get-new-multiplicity      `(blurred-spawn-addr ,loc) message)
-                      (get-existing-multiplicity `(blurred-spawn-addr ,loc) message))
-           ['(none   none)   'eq]
-           ['(single none)   'gt]
-           ['(single single) 'eq]
-           ['(many   none)   'gt]
-           ['(many   single) 'gt]
-           ['(many   many)   'eq]))]
-       [addr ; all non-spawn-addr cases are easy
-        (match (get-existing-multiplicity addr message)
-          ['many 'eq]
-          [_ 'gt])]))))
+  (match old-message-comp
+    ['not-gteq 'not-gteq]
+    [_
+     ;; Step 2: check multiplicity on new messages
+     (for/fold ([comp-result old-message-comp])
+               ([packet (csa#-config-message-packets i1)])
+       (comp-result-and
+        comp-result
+        (match (list (csa#-message-packet-multiplicity packet)
+                     (get-multiplicity (csa#-message-packet-address packet)
+                                       (csa#-message-packet-value packet)
+                                       i2))
+          [`(single single) 'eq]
+          [`(single ,_)     'not-gteq]
+          [`(many   many)   'eq]
+          [`(many   ,_)      'gt])))]))
 
+;; TODO: for real, write some tests
 ;; TODO: test the new message rule
 
-(module+ test
+;; (module+ test
 
-  (define new-message-test-config
-    (term (([(spawn-addr 0 OLD) (() (goto A))]
-            [(spawn-addr 1 OLD) (() (goto A))]
-            [(spawn-addr 2 OLD) (() (goto A))])
-           ()
-           ([(spawn-addr 1 OLD) (* Nat) single]
-            [(spawn-addr 2 OLD) (* Nat) many]))))
+;;   (define new-message-test-config
+;;     (term (([(spawn-addr 0 OLD) (() (goto A))]
+;;             [(spawn-addr 1 OLD) (() (goto A))]
+;;             [(spawn-addr 2 OLD) (() (goto A))])
+;;            ()
+;;            ([(spawn-addr 1 OLD) (* Nat) single]
+;;             [(spawn-addr 2 OLD) (* Nat) many]))))
 
-  (test-equal? "Ensure that only internal messages are compared"
-    (csa#-compare-new-messages
-     new-message-test-config
-     (csa#-transition-effect #f #f (list `[(obs-ext 1) (* Nat) single]) null)
-     new-message-test-config)
-    'eq)
+;;   (test-equal? "Ensure that only internal messages are compared"
+;;     (csa#-compare-new-messages
+;;      new-message-test-config
+;;      (csa#-transition-effect #f #f (list `[(obs-ext 1) (* Nat) single]) null)
+;;      new-message-test-config)
+;;     'eq)
 
-  ;; (define (compare-one-message m)
-  ;;   (csa#-compare-new-messages
-  ;;    new-message-test-config
-  ;;    (csa#-transition-effect #f #f (list m) null)))
+;;   ;; (define (compare-one-message m)
+;;   ;;   (csa#-compare-new-messages
+;;   ;;    new-message-test-config
+;;   ;;    (csa#-transition-effect #f #f (list m) null)))
 
-  ;; (test-equal? "single message to init-addr"
-  ;;   (compare-one-message `((init-addr 3) (* Nat) single))
-  ;;   'gt)
-  ;; (test-equal? "single message to OLD spawn-addr"
-  ;;   (compare-one-message `((spawn-addr 1 OLD) (* Nat) single))
-  ;;   'gt)
-  ;; (test-equal? "single message to collective address"
-  ;;   (compare-one-message `((blurred-spawn-addr 3) (* Nat) single))
-  ;;   'gt)
-  ;; (test-equal? "to NEW: had zero, send one"
-  ;;   (compare-one-message `((spawn-addr 0 NEW) (* Nat) single))
-  ;;   'not-gteq)
-  ;; (test-equal? "to NEW: OLD doesn't exist, send one"
-  ;;   (compare-one-message `((spawn-addr 4 NEW) (* Nat) single))
-  ;;   'gt)
-  ;; (test-equal? "to NEW: had zero, send many"
-  ;;   (compare-one-message `((spawn-addr 0 NEW) (* Nat) many))
-  ;;   'gt)
-  ;; (test-equal? "to NEW: had one, send one"
-  ;;   (compare-one-message `((spawn-addr 1 NEW) (* Nat) single))
-  ;;   'gt)
-  ;; (test-equal? "to NEW: had one, send many"
-  ;;   (compare-one-message `((spawn-addr 1 NEW) (* Nat) many))
-  ;;   'gt)
-  ;; (test-equal? "to NEW: had many, send one"
-  ;;   (compare-one-message `((spawn-addr 2 NEW) (* Nat) single))
-  ;;   'not-gteq)
-  ;; (test-equal? "to NEW: had many, send many"
-  ;;   (compare-one-message `((spawn-addr 2 NEW) (* Nat) many))
-  ;;   'gt)
-  ;; (test-equal? "to NEW: had zero, send zero"
-  ;;   (csa#-compare-new-messages
-  ;;    (term (() () ()))
-  ;;    (csa#-transition-effect #f #f null (list `((spawn-addr 0 NEW) (() (goto A))))))
-  ;;   'eq)
-  ;; (test-equal? "to NEW: had one, send zero"
-  ;;   (csa#-compare-new-messages
-  ;;    (term (() () ([(spawn-addr 1 OLD) (* Nat) single])))
-  ;;    (csa#-transition-effect #f #f null (list `((spawn-addr 1 NEW) (() (goto A))))))
-  ;;   'not-gteq)
-  ;; (test-equal? "to NEW: had many, send zero"
-  ;;   (csa#-compare-new-messages
-  ;;    (term (() () ([(spawn-addr 2 OLD) (* Nat) many])))
-  ;;    (csa#-transition-effect #f #f null (list `((spawn-addr 2 NEW) (() (goto A))))))
-  ;;   'not-gteq)
-  ;; (test-equal? "had 1, NEW does not exist"
-  ;;   (csa#-compare-new-messages
-  ;;    (term (() () ([(spawn-addr 1 OLD) (* Nat) single])))
-  ;;    (csa#-transition-effect #f #f null null))
-  ;;   'eq)
-  ;; (test-equal? "had many, NEW does not exist"
-  ;;   (csa#-compare-new-messages
-  ;;    (term (() () ([(spawn-addr 2 OLD) (* Nat) many])))
-  ;;    (csa#-transition-effect #f #f null null))
-  ;;   'eq)
-  )
+;;   ;; (test-equal? "single message to init-addr"
+;;   ;;   (compare-one-message `((init-addr 3) (* Nat) single))
+;;   ;;   'gt)
+;;   ;; (test-equal? "single message to OLD spawn-addr"
+;;   ;;   (compare-one-message `((spawn-addr 1 OLD) (* Nat) single))
+;;   ;;   'gt)
+;;   ;; (test-equal? "single message to collective address"
+;;   ;;   (compare-one-message `((blurred-spawn-addr 3) (* Nat) single))
+;;   ;;   'gt)
+;;   ;; (test-equal? "to NEW: had zero, send one"
+;;   ;;   (compare-one-message `((spawn-addr 0 NEW) (* Nat) single))
+;;   ;;   'not-gteq)
+;;   ;; (test-equal? "to NEW: OLD doesn't exist, send one"
+;;   ;;   (compare-one-message `((spawn-addr 4 NEW) (* Nat) single))
+;;   ;;   'gt)
+;;   ;; (test-equal? "to NEW: had zero, send many"
+;;   ;;   (compare-one-message `((spawn-addr 0 NEW) (* Nat) many))
+;;   ;;   'gt)
+;;   ;; (test-equal? "to NEW: had one, send one"
+;;   ;;   (compare-one-message `((spawn-addr 1 NEW) (* Nat) single))
+;;   ;;   'gt)
+;;   ;; (test-equal? "to NEW: had one, send many"
+;;   ;;   (compare-one-message `((spawn-addr 1 NEW) (* Nat) many))
+;;   ;;   'gt)
+;;   ;; (test-equal? "to NEW: had many, send one"
+;;   ;;   (compare-one-message `((spawn-addr 2 NEW) (* Nat) single))
+;;   ;;   'not-gteq)
+;;   ;; (test-equal? "to NEW: had many, send many"
+;;   ;;   (compare-one-message `((spawn-addr 2 NEW) (* Nat) many))
+;;   ;;   'gt)
+;;   ;; (test-equal? "to NEW: had zero, send zero"
+;;   ;;   (csa#-compare-new-messages
+;;   ;;    (term (() () ()))
+;;   ;;    (csa#-transition-effect #f #f null (list `((spawn-addr 0 NEW) (() (goto A))))))
+;;   ;;   'eq)
+;;   ;; (test-equal? "to NEW: had one, send zero"
+;;   ;;   (csa#-compare-new-messages
+;;   ;;    (term (() () ([(spawn-addr 1 OLD) (* Nat) single])))
+;;   ;;    (csa#-transition-effect #f #f null (list `((spawn-addr 1 NEW) (() (goto A))))))
+;;   ;;   'not-gteq)
+;;   ;; (test-equal? "to NEW: had many, send zero"
+;;   ;;   (csa#-compare-new-messages
+;;   ;;    (term (() () ([(spawn-addr 2 OLD) (* Nat) many])))
+;;   ;;    (csa#-transition-effect #f #f null (list `((spawn-addr 2 NEW) (() (goto A))))))
+;;   ;;   'not-gteq)
+;;   ;; (test-equal? "had 1, NEW does not exist"
+;;   ;;   (csa#-compare-new-messages
+;;   ;;    (term (() () ([(spawn-addr 1 OLD) (* Nat) single])))
+;;   ;;    (csa#-transition-effect #f #f null null))
+;;   ;;   'eq)
+;;   ;; (test-equal? "had many, NEW does not exist"
+;;   ;;   (csa#-compare-new-messages
+;;   ;;    (term (() () ([(spawn-addr 2 OLD) (* Nat) many])))
+;;   ;;    (csa#-transition-effect #f #f null null))
+;;   ;;   'eq)
+;;   )
 
-(define (csa#-actor-compare-behavior config transition-result new-i)
-  (define addr (trigger-address (csa#-transition-effect-trigger transition-result)))
-  (define old-behaviors (csa#-behaviors-of config addr))
-  (for/fold ([comp-result 'eq])
-            ([new-behavior (csa#-behaviors-of new-i addr)])
-    (comp-result-and
-     comp-result
-     ;; TODO: think about: blurring might change around what address is what. Am I sure that this
-     ;; comparison (and the spawn one) check the right things? Need to know this for the soundness
-     ;; proof
-     (cond
-       [(precise-internal-address? addr)
-        (match-define (list old-behavior) old-behaviors)
-        (compare-behavior new-behavior old-behavior)]
-       ;; remaining cases are for collective addresses
-       [(member new-behavior old-behaviors)
-        'eq]
-       [else 'gt]))))
-
-(module+ test
-  (test-equal? "actor-compare-behavior: new atomic behavior"
-    (csa#-actor-compare-behavior
-     behavior-test-config
-     (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto D)) null null)
-     (term (([(init-addr 1) (() (goto D))])
-           ([(blurred-spawn-addr 2)
-             ((() (goto B))
-              (() (goto C)))])
-           ())))
-    'not-gteq)
-  (test-equal? "actor-compare-behavior: old atomic behavior"
-    (csa#-actor-compare-behavior
-     behavior-test-config
-     (csa#-transition-effect `(timeout/empty-queue (init-addr 1)) '(() (goto A)) null null)
-     behavior-test-config)
-    'eq)
-  (test-equal? "actor-compare-behavior: adding to vector in old atomic behavior"
-    (csa#-actor-compare-behavior
-     (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
-            ([(blurred-spawn-addr 2)
-              ((() (goto B))
-               (() (goto C)))])
-            ()))
-     (csa#-transition-effect
-      `(timeout/empty-queue (init-addr 1)) '(() (goto A (vector-val (variant B) (variant A)) )) null null)
-     (term (([(init-addr 1) (() (goto A (vector-val (variant B) (variant A))))])
-            ([(blurred-spawn-addr 2)
-              ((() (goto B))
-               (() (goto C)))])
-            ())))
-    'gt)
-  (test-equal? "actor-compare-behavior: same vector in old atomic behavior"
-    (csa#-actor-compare-behavior
-     (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
-            ([(blurred-spawn-addr 2)
-              ((() (goto B))
-               (() (goto C)))])
-            ()))
-     (csa#-transition-effect
-      `(timeout/empty-queue (init-addr 1)) '(() (goto A (vector-val (variant A)))) null null)
-     (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
-            ([(blurred-spawn-addr 2)
-              ((() (goto B))
-               (() (goto C)))])
-            ())))
-    'eq)
-  (test-equal? "actor-compare-behavior: smaller vector in old atomic behavior"
-    (csa#-actor-compare-behavior
-     (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
-            ([(blurred-spawn-addr 2)
-              ((() (goto B))
-               (() (goto C)))])
-            ()))
-     (csa#-transition-effect
-      `(timeout/empty-queue (init-addr 1)) '(() (goto A (vector-val))) null null)
-     (term (([(init-addr 1) (() (goto A (vector-val)))])
-            ([(blurred-spawn-addr 2)
-              ((() (goto B))
-               (() (goto C)))])
-            ())))
-    'not-gteq)
-  (test-equal? "actor-compare-behavior: new collective behavior"
-    (csa#-actor-compare-behavior
-     behavior-test-config
-     (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto D)) null null)
-     (term (([(init-addr 1) (() (goto A))])
-            ([(blurred-spawn-addr 2)
-              ((() (goto B))
-               (() (goto C))
-               (() (goto D)))])
-            ())))
-    'gt)
-  (test-equal? "actor-compare-behavior: old collective behavior"
-    (csa#-actor-compare-behavior
-     behavior-test-config
-     (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 2)) '(() (goto B)) null null)
-     behavior-test-config)
-    'eq))
 
 ;; b# b# -> ('eq or 'gt or 'not-gteq)
-(define (compare-behavior new-behavior old-behavior)
-  (match-define `(,old-state-defs (goto ,old-state ,old-state-args ...)) old-behavior)
-  (match-define `(,new-state-defs (goto ,new-state ,new-state-args ...)) new-behavior)
+(define (compare-behavior behavior1 behavior2)
+  (match-define `(,state-defs1 (goto ,state1 ,state-args1 ...)) behavior1)
+  (match-define `(,state-defs2 (goto ,state2 ,state-args2 ...)) behavior2)
 
   (cond
     ;; state names and state definitions must be equal
-    [(and (equal? new-state old-state)
-          (equal? new-state-defs old-state-defs))
+    [(and (equal? state1 state2)
+          (equal? state-defs1 state-defs2))
      (for/fold ([comp-result 'eq])
-               ([new-arg new-state-args]
-                [old-arg old-state-args])
-       (comp-result-and comp-result (compare-value new-arg old-arg)))]
+               ([arg1 state-args1]
+                [arg2 state-args2])
+       (comp-result-and comp-result (compare-value arg1 arg2)))]
     [else 'not-gteq]))
 
 (module+ test
@@ -3704,62 +3565,72 @@
                    `((* Nat) (init-addr 1)))
     'eq))
 
-;; Returns #t if the action represented by the effect's trigger can happen again after applying the
-;; given transition effect to the config, assuming the transition effect transitions the actor to the
-;; exact same behavior
-(define (csa#-repeatable-action? config transition-effect)
+;; comparison-result comparison-result -> comparison-result
+(define-syntax (comp-result-and stx)
+  (syntax-parse stx
+    [(_) #''eq]
+    [(_ exp1 exp2 ...)
+     #`(let ([result1 exp1])
+         (if (eq? result1 'not-gteq)
+             'not-gteq
+             (comp-result-and/internal result1 (comp-result-and exp2 ...))))]))
+
+(define (comp-result-and/internal c1 c2)
+  (cond
+    [(or (eq? c1 'not-gteq) (eq? c2 'not-gteq))
+     'not-gteq]
+    [(or (eq? c1 'gt) (eq? c2 'gt))
+     'gt]
+    [else 'eq]))
+
+(module+ test
+  (test-equal? "comp-result-and gt eq" (comp-result-and 'gt 'eq) 'gt)
+  (test-equal? "comp-result-and not-gteq eq" (comp-result-and 'not-gteq 'eq) 'not-gteq)
+  (test-equal? "comp-result-and not-gteq gt" (comp-result-and 'not-gteq 'gt) 'not-gteq)
+  (test-equal? "comp-result-and gt eq 2" (comp-result-and 'eq 'gt) 'gt)
+  (test-equal? "comp-result-and not-gteq eq 2" (comp-result-and 'eq 'not-gteq) 'not-gteq)
+  (test-equal? "comp-result-and not-gteq gt 2" (comp-result-and 'gt 'not-gteq) 'not-gteq)
+  (test-equal? "comp-result-and short-circuits" (comp-result-and 'not-gteq (error "foo")) 'not-gteq)
+  (test-equal? "comp-result-and with no args" (comp-result-and) 'eq)
+  (test-equal? "comp-result-and takes many args" (comp-result-and 'eq 'eq 'gt 'eq) 'gt))
+
+;; Returns a true value (i.e. non-#f) if the action represented by the given trigger is enabled in the
+;; given configuration; #f otherwise
+(define (csa#-action-enabled? config trigger)
   ;; if it's not an internal messsage, or the received message will be available in the new config
-  (match (csa#-transition-effect-trigger transition-effect)
+  (match trigger
     [`(internal-receive ,addr ,message)
-     ;; the message is in the effects, or it's in the config with a many-of multiplicity
-     (or (for/or ([effect-send (csa#-transition-effect-sends transition-effect)])
-           (match-define (list effect-addr effect-message _) effect-send)
-           (and (equal? effect-addr addr) (equal? message effect-message)))
-         (member (list addr message 'many) (csa#-config-message-packets config)))]
+     (findf (lambda (packet)
+              (and (equal? (csa#-message-packet-address packet) addr)
+                   (equal? (csa#-message-packet-value packet) message)))
+            (csa#-config-message-packets config))]
     [_ #t]))
 
-(module+ test
-  ;; timeout, internal receive repeatable (in effects), internal repeatable (many-of in config),
-  ;; internal not repeatable
-  (define repeatable-action-test-config
-    (redex-let csa# ([i# `(() () ([(init-addr 0) (* Nat) many] [(init-addr 1) (* Nat) single]))])
-      (term i#)))
-  (define (make-trigger-only-effect trigger)
-    (csa#-transition-effect trigger '(() (goto A)) null null))
-  (test-false "Not repeatable action"
-    (csa#-repeatable-action? repeatable-action-test-config
-                             (make-trigger-only-effect '(internal-receive (init-addr 1) (* Nat)))))
-  (test-not-false "Repeatable timeout"
-    (csa#-repeatable-action? repeatable-action-test-config
-                             (make-trigger-only-effect '(timeout/empty-queue (init-addr 1)))))
-  (test-not-false "Repeatable internal receive (many-of message)"
-    (csa#-repeatable-action? repeatable-action-test-config
-                             (make-trigger-only-effect '(internal-receive (init-addr 0) (* Nat)))))
-  (test-not-false "Repeatable internal receive (from effect)"
-    (csa#-repeatable-action? repeatable-action-test-config
-                             (csa#-transition-effect '(internal-receive (init-addr 1) (* Nat))
-                                                     '(() (goto A))
-                                                     (list `((init-addr 1) (* Nat) single))
-                                                     null))))
+;; TODO: redo these tests
 
-;; Blurs the destination address of the given message and ensures it is represented as a "many-of"
-;; value in the config (assuming at least one instance of the message already exists)
-(define (csa#-blur-and-duplicate-message impl message)
-  (term (csa#-blur-and-duplicate-message/mf ,impl ,message)))
-
-(define-metafunction csa#
-  csa#-blur-and-duplicate-message/mf : i# [a# v#] -> i#
-  [(csa#-blur-and-duplicate-message/mf
-    (any_atomic any_collective (any_msg1 ... [(blurred-spawn-addr any_loc) v# _] any_msg2 ...))
-    [(spawn-addr any_loc _) v#])
-   (any_atomic any_collective (any_msg1 ... [(blurred-spawn-addr any_loc) v# many] any_msg2 ...))])
-
-(module+ test
-  (test-equal? "blur and duplicate message"
-    (csa#-blur-and-duplicate-message
-     (term (() () ([(blurred-spawn-addr the-loc) (* Nat) single])))
-     (term [(spawn-addr the-loc NEW) (* Nat)]))
-    (term (() () ([(blurred-spawn-addr the-loc) (* Nat) many])))))
+;; (module+ test
+;;   ;; timeout, internal receive repeatable (in effects), internal repeatable (many-of in config),
+;;   ;; internal not repeatable
+;;   (define repeatable-action-test-config
+;;     (redex-let csa# ([i# `(() () ([(init-addr 0) (* Nat) many] [(init-addr 1) (* Nat) single]))])
+;;       (term i#)))
+;;   (define (make-trigger-only-effect trigger)
+;;     (csa#-transition-effect trigger '(() (goto A)) null null))
+;;   (test-false "Not repeatable action"
+;;     (csa#-repeatable-action? repeatable-action-test-config
+;;                              (make-trigger-only-effect '(internal-receive (init-addr 1) (* Nat)))))
+;;   (test-not-false "Repeatable timeout"
+;;     (csa#-repeatable-action? repeatable-action-test-config
+;;                              (make-trigger-only-effect '(timeout/empty-queue (init-addr 1)))))
+;;   (test-not-false "Repeatable internal receive (many-of message)"
+;;     (csa#-repeatable-action? repeatable-action-test-config
+;;                              (make-trigger-only-effect '(internal-receive (init-addr 0) (* Nat)))))
+;;   (test-not-false "Repeatable internal receive (from effect)"
+;;     (csa#-repeatable-action? repeatable-action-test-config
+;;                              (csa#-transition-effect '(internal-receive (init-addr 1) (* Nat))
+;;                                                      '(() (goto A))
+;;                                                      (list `((init-addr 1) (* Nat) single))
+;;                                                      null))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debug helpers

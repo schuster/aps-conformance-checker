@@ -738,10 +738,6 @@
           ;; (printf "trigger for widen: ~s\n" trigger)
           (define i (config-pair-impl-config widened-pair))
           (define observed? (second transition-result-with-obs))
-          ;; NOTE: I think we have to apply and sbc the transition here so that when we compare old
-          ;; and new behaviors, we compare the post-canonicalization versions so that the addresses
-          ;; are truly equal (otherwise we need to come up with some sort of name-matching scheme for
-          ;; external addresses in the old and new configs)
           (define new-i-step (apply-transition i transition-result observed?))
           (match (first-spec-step-to-same-state (config-pair-spec-config widened-pair) new-i-step)
             [#f
@@ -752,27 +748,46 @@
              ;; think maybe to correlate output commitments across multiple steps? So yeah, I probably
              ;; need to adjust that here... (although if the spec didn't change, then aren't I okay to
              ;; leave it as is?)
-             (define sbc-pair (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
+
+             ;; If there's a possible way for a spec to match this step, then apply the transition
+             ;; once more to get "many-of" instances of new spawns and messages, so we have the best
+             ;; chance of this configuration being greater than its predecessor
+             (define once-applied-pair
+               (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
              (cond
-               [(csa#-transition-valid-for-widen? i transition-result (config-pair-impl-config sbc-pair))
-                ;; (displayln "not bailing out")
-                (set! widen-use-count (add1 widen-use-count))
-                (define repeated-i-step (apply-transition (config-pair-impl-config sbc-pair) transition-result observed?))
-                (define repeated-s (first-spec-step-to-same-state (config-pair-spec-config sbc-pair) repeated-i-step))
-                (define new-widened-pair (first (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
-                (widen-printf "Widen: applied a transition for pair ~s, i-step ~s of ~s. Loop count = ~s, use count = ~s\n"
-                        pair-number i-step-number i-step-total loop-count widen-use-count
-                        ;; (debug-transition-result transition-result)
-                        ;; (impl-config-without-state-defs (config-pair-impl-config new-widened-pair))
-                        )
-                (widen-printf "Remaining transitions: ~s\n" (queue-length possible-transitions))
-                (for-each (curry enqueue! possible-transitions)
-                          (impl-transition-effects-from new-widened-pair))
-                (widen-printf "Added transitions, total is now ~s\n" (queue-length possible-transitions))
-                (worklist-loop new-widened-pair)]
+               [(csa#-action-enabled? (config-pair-impl-config once-applied-pair) trigger)
+                (define repeated-i-step
+                  (apply-transition (config-pair-impl-config once-applied-pair)
+                                    transition-result
+                                    observed?))
+                (define repeated-s
+                  (first-spec-step-to-same-state (config-pair-spec-config once-applied-pair)
+                                                 repeated-i-step))
+                (define twice-applied-pair
+                  (first
+                   (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
+                (cond
+                  ;; OPTIMIZE: check first if the transitioned actor is even in the same state
+                  [(csa#-config<? i (config-pair-impl-config twice-applied-pair))
+                   (set! widen-use-count (add1 widen-use-count))
+                   (widen-printf "Widen: applied a transition for pair ~s, i-step ~s of ~s. Loop count = ~s, use count = ~s\n"
+                                 pair-number i-step-number i-step-total loop-count widen-use-count
+                                 ;; (debug-transition-result transition-result)
+                                 ;; (impl-config-without-state-defs (config-pair-impl-config new-widened-pair))
+                                 )
+                   (widen-printf "Remaining transitions: ~s\n" (queue-length possible-transitions))
+                   (for-each (curry enqueue! possible-transitions)
+                             (impl-transition-effects-from twice-applied-pair))
+                   (widen-printf "Added transitions, total is now ~s\n" (queue-length possible-transitions))
+                   (worklist-loop twice-applied-pair)]
+                  [else
+                   (widen-printf "Transition is not valid for widen\n")
+                   (worklist-loop widened-pair)])
+                ]
                [else
-                (widen-printf "Transition is not valid for widen\n")
-                (worklist-loop widened-pair)])])])])))
+                (widen-printf "Transition is not repeatable\n")
+                (worklist-loop widened-pair)])
+])])])))
 
 (module+ test
   (define init-widen-impl-config
@@ -913,22 +928,6 @@
                 `(([(init-addr 1) (() (goto S))])
                   ()
                   ())))))
-
-;; config-pair csa#-transition-effect -> config-pair
-;;
-;; For each message-send in the effect sent to an actor spawned by this effect, sets the number of
-;; messages to the collective version of that actor as "many-of"
-(define (duplicate-messages-to-new-spawns the-pair effect)
-  (define original-impl-config (config-pair-impl-config the-pair))
-  (define new-spawn-addrs (map first (csa#-transition-effect-spawns effect)))
-  (define sends-to-new-spawn-addrs
-    (filter (lambda (packet) (member (first packet) new-spawn-addrs))
-            (csa#-transition-effect-sends effect)))
-  (define new-impl
-    (for/fold ([impl original-impl-config])
-              ([packet sends-to-new-spawn-addrs])
-      (csa#-blur-and-duplicate-message impl packet)))
-  (config-pair new-impl (config-pair-spec-config the-pair)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pair-removal back-propagation
