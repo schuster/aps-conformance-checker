@@ -1537,7 +1537,7 @@
   (define with-updated-behavior
     (if (precise-internal-address? addr)
         (update-behavior/precise with-trigger-message-removed addr new-behavior)
-        (update-behavior/blurred with-trigger-message-removed addr new-behavior)))
+        (config-add-blurred-behaviors with-trigger-message-removed (list `[,addr ,new-behavior]))))
   ;; 3. add spawned actors
   (define with-spawns (merge-new-actors with-updated-behavior (csa#-transition-effect-spawns transition-effect)))
   ;; 4. add sent messages
@@ -1554,34 +1554,6 @@
   `((,@first-actors (,address ,behavior) ,@later-actors)
     ,(csa#-config-blurred-actors config)
     ,(csa#-config-message-packets config)))
-
-(define (update-behavior/blurred config address behavior)
-  (match-define `(,first-actors (,_ ,old-behaviors) ,later-actors)
-    (config-collective-actor-and-rest-by-address config address))
-
-  `(,(csa#-config-actors config)
-    (,@first-actors (,address ,(remove-duplicates `(,@old-behaviors ,behavior))) ,@later-actors)
-    ,(csa#-config-message-packets config)))
-
-(module+ test
-  (test-case "update-behavior/blurred"
-  (redex-let* csa# ([b#_1 '(() (goto A))]
-                    [b#_2 '(() (goto B))]
-                    [b#_3 '(() (goto C))]
-                    [b#_4 '(() (goto D))]
-                    [i# (term (()
-                               (((blurred-spawn-addr 1) (b#_1 b#_2))
-                                ((blurred-spawn-addr 2) (b#_3)))
-                               ()))])
-    (check-equal?
-      (update-behavior/blurred (term i#) `(blurred-spawn-addr 1) (term b#_2))
-      (term i#))
-    (check-equal?
-     (update-behavior/blurred (term i#) `(blurred-spawn-addr 1) (term b#_4))
-     (term (()
-            (((blurred-spawn-addr 1) (b#_1 b#_2 b#_4))
-             ((blurred-spawn-addr 2) (b#_3)))
-           ()))))))
 
 ;; Abstractly adds the set of new packets to the packet set in the given config.
 (define (merge-messages-into-config config new-message-list)
@@ -2128,9 +2100,14 @@
   ;; 3. Deduplicate message packets in the packet set that now have the same content (the renaming
   ;; might have caused messages with differing content or address to now be the same)
   (define deduped-packets (deduplicate-packets (csa#-config-message-packets renamed-config)))
-  ;; 4. Merge blurred behaviors in
+  ;; 4. Merge blurred behaviors in and subsume others as necessary
+  (define existing-addr-behavior-pairs
+    (append*
+     (for/list ([collective (csa#-config-blurred-actors renamed-config)])
+       (map (curry list (csa#-blurred-actor-address collective))
+            (csa#-blurred-actor-behaviors collective)))))
   (define updated-blurred-actors
-    (add-blurred-behaviors (csa#-config-blurred-actors renamed-config) renamed-removed-actors))
+    (add-blurred-behaviors null (append existing-addr-behavior-pairs renamed-removed-actors)))
   (list
    (term (,(csa#-config-actors renamed-config)
           ,updated-blurred-actors
@@ -2166,7 +2143,22 @@
      (term (([(spawn-addr 1 NEW) (() (goto A))])
             ([(blurred-spawn-addr 1) ((() (goto A)))])
             ()))
-     (list '(spawn-addr 1 OLD)))))
+     (list '(spawn-addr 1 OLD))))
+
+  (test-equal? "Merge collective behaviors when they become the same"
+    (csa#-blur-config
+     (term (()
+            ([(blurred-spawn-addr 1)
+              ((() (goto A (Nat (obs-ext 1))))
+               (() (goto A (* (Addr Nat)))))])
+            ()))
+     'OLD
+     null)
+    (list
+     (term (()
+            ([(blurred-spawn-addr 1) ((() (goto A (* (Addr Nat)))))])
+            ()))
+     (list))))
 
 ;; impl-config spawn-flag -> impl-config ((a# b#) ...)
 ;;
@@ -2354,6 +2346,11 @@
      (equal? addr-flag flag)]
     [_ #f]))
 
+;; i# (Listof (List a#int b#)) -> i#
+(define (config-add-blurred-behaviors config new-addr-behavior-pairs)
+  (match-define `(,atomics ,collectives ,messages) config)
+  `(,atomics ,(add-blurred-behaviors collectives new-addr-behavior-pairs) ,messages))
+
 ;; β# (Listof (List a#int b#)) -> β#
 ;;
 ;; Adds each address/behavior pair in behaviors-to-add as possible behaviors in blurred-actors.
@@ -2361,14 +2358,23 @@
   (for/fold ([blurred-actors blurred-actors])
             ([new-addr-behavior-pair new-addr-behavior-pairs])
     (match-define `(,target-address ,new-behavior) new-addr-behavior-pair)
-    (match (find-with-rest (lambda (actor)
-                             (equal? (csa#-blurred-actor-address actor) target-address))
+    (match (find-with-rest (lambda (actor) (equal? (csa#-blurred-actor-address actor) target-address))
                            blurred-actors)
       [(list before `(,_ ,found-behaviors) after)
-       (append before
-               (list `(,target-address
-                       ,(remove-duplicates (append found-behaviors (list new-behavior)))))
-               after)]
+       ;; check if any existing behavior subsumes this one, and remove any behaviors that this one
+       ;; subsumes
+       (define updated-behaviors
+         (let loop ([behaviors-to-check found-behaviors]
+                    [checked-behaviors null])
+           (match behaviors-to-check
+             [(list) (append checked-behaviors (list new-behavior))]
+             [(list current-behavior behaviors-to-check ...)
+              (match (compare-behavior new-behavior current-behavior)
+                [(or 'eq 'lt) (append checked-behaviors (list current-behavior) behaviors-to-check)]
+                ['gt (loop behaviors-to-check checked-behaviors)]
+                ['not-gteq
+                 (loop behaviors-to-check (append checked-behaviors (list current-behavior)))])])))
+       (append before (list `(,target-address ,updated-behaviors)) after)]
       [#f (append blurred-actors (list `(,target-address (,new-behavior))))])))
 
 (module+ test
@@ -2377,12 +2383,21 @@
   (define behavior2
     (term (((define-state (B) (r) (begin (send r (* Nat)) (goto B)))) (goto B))))
   (define behavior3
-    (term (((define-state (C) (r) (begin (send r (* Nat)) (goto C)))) (goto C))))
+    (term (((define-state (C [x (Listof Nat)]) (r) (begin (send r (* Nat)) (goto C x))))
+           (goto C (list-val)))))
+  (define behavior3-greater
+    (term (((define-state (C [x (Listof Nat)]) (r) (begin (send r (* Nat)) (goto C x))))
+           (goto C (list-val (* Nat))))))
 
   (test-begin
     (check-true (redex-match? csa# b# behavior1))
     (check-true (redex-match? csa# b# behavior2))
     (check-true (redex-match? csa# b# behavior3)))
+
+  (test-equal? "config-add-blurred-behaviors same behavior"
+    (config-add-blurred-behaviors (term (() (((blurred-spawn-addr 1) (,behavior1))) ()))
+                                  (list (term ((blurred-spawn-addr 1) ,behavior1))))
+    (term (() (((blurred-spawn-addr 1) (,behavior1))) ())))
 
   (test-equal? "add-blurred-behaviors"
     (add-blurred-behaviors (term (((blurred-spawn-addr 1) (,behavior1 ,behavior2))
@@ -2392,7 +2407,23 @@
                                  (term ((blurred-spawn-addr 1) ,behavior1))))
     (term (((blurred-spawn-addr 1) (,behavior1 ,behavior2 ,behavior3))
            ((blurred-spawn-addr 2) (,behavior3))
-           ((blurred-spawn-addr 3) (,behavior3))))))
+           ((blurred-spawn-addr 3) (,behavior3)))))
+
+  (test-equal? "add-blurred-behaviors greater behavior"
+    (add-blurred-behaviors (term (((blurred-spawn-addr 1) (,behavior1 ,behavior2 ,behavior3))))
+                           (list (term ((blurred-spawn-addr 1) ,behavior3-greater))))
+    (term (((blurred-spawn-addr 1) (,behavior1 ,behavior2 ,behavior3-greater)))))
+
+  (test-equal? "add-blurred-behaviors lesser behavior"
+    (add-blurred-behaviors
+     (term (((blurred-spawn-addr 1) (,behavior1 ,behavior2 ,behavior3-greater))))
+     (list (term ((blurred-spawn-addr 1) ,behavior3))))
+    (term (((blurred-spawn-addr 1) (,behavior1 ,behavior2 ,behavior3-greater)))))
+
+  (test-equal? "add-blurred-behaviors same behavior"
+    (add-blurred-behaviors (term (((blurred-spawn-addr 1) (,behavior1))))
+                           (list (term ((blurred-spawn-addr 1) ,behavior1))))
+    (term (((blurred-spawn-addr 1) (,behavior1))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Canonicalization (the sorting of config components)
@@ -3410,7 +3441,7 @@
 ;;   )
 
 
-;; b# b# -> ('eq or 'gt or 'not-gteq)
+;; b# b# -> ('eq or 'gt or 'lt or 'not-gteq)
 (define (compare-behavior behavior1 behavior2)
   (match-define `(,state-defs1 (goto ,state1 ,state-args1 ...)) behavior1)
   (match-define `(,state-defs2 (goto ,state2 ,state-args2 ...)) behavior2)
@@ -3479,8 +3510,11 @@
      (define val-set1 (list->set vals1))
      (define val-set2 (list->set vals2))
      (cond
-       [(set=? val-set1 val-set2) 'eq]
-       [(proper-subset? val-set2 val-set1) 'gt]
+       [(subset? val-set1 val-set2)
+        (cond
+          [(subset? val-set2 val-set1) 'eq]
+          [else 'lt])]
+       [(subset? val-set2 val-set1) 'gt]
        [else 'not-gteq]))
 
 (module+ test
@@ -3508,7 +3542,7 @@
   (test-equal? "compare-value variant 3"
     (compare-value `(variant A (vector-val) (* Nat))
                    `(variant A (vector-val (* Nat)) (* Nat)))
-    'not-gteq)
+    'lt)
 
   (test-equal? "compare-value vector-val 1"
     (compare-value '(vector-val (* Nat))
@@ -3521,6 +3555,10 @@
   (test-equal? "compare-value vector-val 3"
     (compare-value '(vector-val)
                    '(vector-val (* Nat)))
+    'lt)
+  (test-equal? "compare-value vector-val 4"
+    (compare-value '(vector-val (variant A))
+                   '(vector-val (variant B)))
     'not-gteq)
 
   (test-equal? "compare-value hash-val 1"
@@ -3542,11 +3580,11 @@
   (test-equal? "compare-value hash-val 5"
     (compare-value '(hash-val ((* Nat)) ((variant A)))
                    '(hash-val ((* Nat)) ((variant A) (variant B))))
-    'not-gteq)
+    'lt)
   (test-equal? "compare-value hash-val 6"
     (compare-value '(hash-val ((variant A)) ((* Nat)))
                    '(hash-val ((variant A) (variant B)) ((* Nat))))
-    'not-gteq)
+    'lt)
   (test-equal? "compare-value hash-val 7"
     (compare-value '(hash-val ((variant A)) ((* Nat)))
                    '(hash-val ((variant B)) ((* Nat))))
@@ -3579,8 +3617,13 @@
   (cond
     [(or (eq? c1 'not-gteq) (eq? c2 'not-gteq))
      'not-gteq]
+    [(or (and (eq? c1 'lt) (eq? c2 'gt))
+         (and (eq? c1 'gt) (eq? c2 'lt)))
+     'not-gteq]
     [(or (eq? c1 'gt) (eq? c2 'gt))
      'gt]
+    [(or (eq? c1 'lt) (eq? c2 'lt))
+     'lt]
     [else 'eq]))
 
 (module+ test
@@ -3592,7 +3635,11 @@
   (test-equal? "comp-result-and not-gteq gt 2" (comp-result-and 'gt 'not-gteq) 'not-gteq)
   (test-equal? "comp-result-and short-circuits" (comp-result-and 'not-gteq (error "foo")) 'not-gteq)
   (test-equal? "comp-result-and with no args" (comp-result-and) 'eq)
-  (test-equal? "comp-result-and takes many args" (comp-result-and 'eq 'eq 'gt 'eq) 'gt))
+  (test-equal? "comp-result-and takes many args" (comp-result-and 'eq 'eq 'gt 'eq) 'gt)
+  (test-equal? "comp-result-and lt/gt" (comp-result-and 'lt 'gt) 'not-gteq)
+  (test-equal? "comp-result-and lt/gt" (comp-result-and 'lt 'gt) 'not-gteq)
+  (test-equal? "comp-result-and lt/eq" (comp-result-and 'lt 'eq) 'lt)
+  (test-equal? "comp-result-and lt/not-gteq" (comp-result-and 'lt 'not-gteq) 'not-gteq))
 
 ;; Returns a true value (i.e. non-#f) if the action represented by the given trigger is enabled in the
 ;; given configuration; #f otherwise
