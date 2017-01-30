@@ -197,17 +197,6 @@
                 (: s buffer)))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Sink
-
-  ;; just a simple actor to swallow messages to the user when we're closing before the user registered
-  ;; a handler
-  (define-actor TcpSessionEvent
-    (Sink)
-    ()
-    (goto Sink)
-    (define-state (Sink) (m) (goto Sink)))
-
-;; ---------------------------------------------------------------------------------------------------
 ;; Timer
 
   (define-variant TimerCommand
@@ -240,11 +229,7 @@
         (goto Stopped))))
 
 ;; ---------------------------------------------------------------------------------------------------
-
-  (define-type WriteResponse
-    (Union (CommandFailed) ; CommandFailed defined below
-           (WriteAck)))
-  (define-function (WriteAck) (variant WriteAck))
+;; Some types for TCP
 
   (define-variant TcpSessionEvent
     [ReceivedData [bytes (Vectorof Byte)]]
@@ -254,13 +239,32 @@
     [PeerClosed]
     [ErrorClosed])
 
+;; ---------------------------------------------------------------------------------------------------
+;; Sink
+
+  ;; just a simple actor to swallow messages to the user when we're closing before the user registered
+  ;; a handler
+  (define-actor TcpSessionEvent
+    (Sink)
+    ()
+    (goto Sink)
+    (define-state (Sink) (m) (goto Sink)))
+
+;; ---------------------------------------------------------------------------------------------------
+;; TCP
+
+  (define-type WriteResponse
+    (Union (CommandFailed) ; CommandFailed defined below
+           (WriteAck)))
+  (define-function (WriteAck) (variant WriteAck))
+
   (define-type TcpSessionCommand
     (Union
      (Register (Addr TcpSessionEvent))
      (Write (Vectorof Byte) (Addr WriteResponse))
-     (Close (Addr TcpSessionEvent))
-     (ConfirmedClose (Addr TcpSessionEvent))
-     (Abort (Addr TcpSessionEvent))))
+     (Close (Addr (Union [CommandFailed] [Closed])))
+     (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+     (Abort (Addr (Union [CommandFailed] [Aborted])))))
 
   (define-variant ConnectionStatus
     (CommandFailed)
@@ -326,9 +330,9 @@
     (OrderedTcpPacket [packet TcpPacket])
     (Register [handler (Addr TcpSessionEvent)])
     (Write [data (Vectorof Byte)] [handler (Addr WriteResponse)])
-    (Close [close-handler (Addr TcpSessionEvent)])
-    (ConfirmedClose [close-handler (Addr TcpSessionEvent)])
-    (Abort [close-handler (Addr TcpSessionEvent)])
+    (Close [close-handler (Addr (Union [CommandFailed] [Closed]))])
+    (ConfirmedClose [close-handler (Addr (Union [CommandFailed] [ConfirmedClosed]))])
+    (Abort [close-handler (Addr (Union [CommandFailed] [Aborted]))])
     ;; timeouts
     (RegisterTimeout)
     (RetransmitTimeout)
@@ -568,10 +572,10 @@
              [(< (vector-length last-segment) max-segment-size)
               (let ([previous-segments (vector-copy segments 0 (- (vector-length segments) 1))]
                     [updated-segment (vector-append last-segment (vector b))])
-              (vector-append previous-segments (vector updated-segment)))]
+                (vector-append previous-segments (vector updated-segment)))]
              [else
               (let ([new-segment (vector b)])
-                (vector-append previous-segments new-segment))]))))
+                (vector-append segments new-segment))]))))
 
      ;; Accepts new octets to send from the user, sends the ones it can, and returns the new send
      ;; buffer with the new octets
@@ -1078,9 +1082,11 @@
          (send write-handler (CommandFailed))
          (goto Closing send-buffer rcv-nxt receive-buffer close-type closing-state octet-stream rxmt-timer)]
         [(Close close-handler)
-         (send close-handler (CommandFailed))]
+         (send close-handler (CommandFailed))
+         (goto Closing send-buffer rcv-nxt receive-buffer close-type closing-state octet-stream rxmt-timer)]
         [(ConfirmedClose close-handler)
-         (send close-handler (CommandFailed))]
+         (send close-handler (CommandFailed))
+         (goto Closing send-buffer rcv-nxt receive-buffer close-type closing-state octet-stream rxmt-timer)]
         [(Abort close-handler)
          (abort-connection (: send-buffer send-next))
          (send close-handler (Aborted))
@@ -1133,9 +1139,11 @@
          (send write-handler (CommandFailed))
          (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)]
         [(Close close-handler)
-         (send close-handler (CommandFailed))]
+         (send close-handler (CommandFailed))
+         (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)]
         [(ConfirmedClose close-handler)
-         (send close-handler (CommandFailed))]
+         (send close-handler (CommandFailed))
+         (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)]
         [(Abort close-handler)
          (abort-connection (: send-buffer send-next))
          (send close-handler (Aborted))
@@ -1163,9 +1171,11 @@
          (send handler (CommandFailed))
          (goto Closed)]
         [(Close close-handler)
-         (send close-handler (CommandFailed))]
+         (send close-handler (CommandFailed))
+         (goto Closed)]
         [(ConfirmedClose close-handler)
-         (send close-handler (CommandFailed))]
+         (send close-handler (CommandFailed))
+         (goto Closed)]
         [(Abort close-handler)
          (send close-handler (CommandFailed))
          (halt-with-notification)]
@@ -1966,13 +1976,18 @@
       [PeerClosed]
       [ErrorClosed]))
 
+  (define desugared-write-response
+    `(Union
+      [CommandFailed]
+      [WriteAck]))
+
   (define desugared-session-command
     `(Union
       (Register (Addr ,desugared-tcp-session-event))
-      (Write (Vectorof Nat) (Addr ,desugared-tcp-session-event))
-      (Close (Addr ,desugared-tcp-session-event))
-      (ConfirmedClose (Addr ,desugared-tcp-session-event))
-      (Abort (Addr ,desugared-tcp-session-event))))
+      (Write (Vectorof Nat) (Addr ,desugared-write-response))
+      (Close (Addr (Union [CommandFailed] [Closed])))
+      (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+      (Abort (Addr (Union [CommandFailed] [Aborted])))))
 
   (define desugared-connection-status
     `(Union
