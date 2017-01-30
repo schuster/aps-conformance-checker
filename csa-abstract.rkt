@@ -553,7 +553,9 @@
          ;; REFACTOR: don't return stuck states; just error if we run into them
          (match-define (list init-exp init-effects) handler-machine)
          (match-define (list maybe-duplicate-value-states stuck-states)
-           (eval-machine init-exp init-effects))
+           (eval-machine init-exp
+                         init-effects
+                         (not (precise-internal-address? (trigger-address trigger)))))
          ;; OPTIMIZE: find out if there's a way to prevent the eval from generating duplicate states
          ;; in the first place (for loops probably make this hard). My hunch is there's no easy way to
          ;; do it.
@@ -577,6 +579,27 @@
          (term (,state-defs (goto q v#_param ...)))
          outputs
          spawns)))))
+
+(module+ test
+  (test-equal? "Atomic actor spawns atomic actors"
+    (eval-handler `((begin (spawn 1 Nat (goto S1)) (goto S2)) (() ()))
+                  `(timeout/empty-queue (init-addr 1))
+                  null
+                  #f)
+    (list (csa#-transition-effect `(timeout/empty-queue (init-addr 1))
+                                  `(() (goto S2))
+                                  null
+                                  (list `[(spawn-addr 1 NEW) (() (goto S1))]))))
+
+  (test-equal? "Collective actor spawns collective actors"
+    (eval-handler `((begin (spawn 2 Nat (goto S1)) (goto S2)) (() ()))
+                  `(timeout/empty-queue (blurred-spawn-addr 1))
+                  null
+                  #f)
+    (list (csa#-transition-effect `(timeout/empty-queue (blurred-spawn-addr 1))
+                                  `(() (goto S2))
+                                  null
+                                  (list `[(blurred-spawn-addr 2) (() (goto S1))])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Interpreter
@@ -603,6 +626,7 @@
 ;; An EvalResult is (Tuple (Listof ValueState) (Listof StuckState))
 
 (define in-loop-context? (make-parameter #f))
+(define in-collective-handler? (make-parameter #f))
 ;; During evaluation, this is a hash table keyed by machine state (H#), and whose values are
 ;; eval-mahcine-results indicating all possible results of reducing that machine state.
 (define loop-results (make-parameter #f))
@@ -610,9 +634,10 @@
 ;; MachineState -> (Tuple (Listof ValueState) (Listof StuckState))
 ;;
 ;; Reduces the given machine state into all reachable stuck states and value states
-(define (eval-machine exp effects)
+(define (eval-machine exp effects collective-actor?)
   (parameterize ([in-loop-context? #f]
-                 [loop-results (make-hash)])
+                 [loop-results (make-hash)]
+                 [in-collective-handler? collective-actor?])
     (eval-machine/internal exp effects)))
 
 ;; MachineState -> (Tuple (Listof ValueState) (Listof StuckState))
@@ -960,7 +985,10 @@
        (lambda (stucks) `(send ,@stucks)))]
     ;; Spawns
     [`(spawn ,loc ,type ,init-exp ,raw-state-defs ...)
-     (define address (if (in-loop-context?) `(blurred-spawn-addr ,loc) `(spawn-addr ,loc NEW)))
+     (define address
+       (if (or (in-collective-handler?) (in-loop-context?))
+           `(blurred-spawn-addr ,loc)
+           `(spawn-addr ,loc NEW)))
      (define address-value `(,type ,address))
      (define state-defs
        (for/list ([def raw-state-defs])
@@ -1117,7 +1145,7 @@
 
 (module+ test
   (define (exp-reduce* e)
-    (match-define `(,value-states ,stuck-states) (eval-machine e empty-effects))
+    (match-define `(,value-states ,stuck-states) (eval-machine e empty-effects #f))
     (match-define (list `(,final-exps ,_) ...) (append value-states stuck-states))
     final-exps)
 
@@ -1381,7 +1409,8 @@
                  `(spawn loc Nat
                          (goto Foo self)
                          (define-state (Foo) (m) (goto Foo)))
-                 empty-effects)
+                 empty-effects
+                 #f)
                 (value-result `(Nat (spawn-addr loc NEW))
                               `(() ([(spawn-addr loc NEW)
                                      (((define-state (Foo) (m) (goto Foo)))
@@ -1396,7 +1425,8 @@
           (begin
             (spawn loc Nat (goto Foo (variant A)))
             (* Nat)))
-       empty-effects))
+       empty-effects
+       #f))
      (list
       (machine-state `(* Nat) `(() ()))
       (machine-state `(* Nat) `(() ([(blurred-spawn-addr loc) (() (goto Foo (variant A)))]))))))
@@ -1407,7 +1437,8 @@
   (check-equal?
    (eval-machine
     `(begin (send (Nat (init-addr 1)) (* Nat)) (variant X))
-    empty-effects)
+    empty-effects
+    #f)
    (eval-machine-result (list (machine-state `(variant X) `(([(init-addr 1) (* Nat) single]) ())))
                         null))
 
@@ -1418,7 +1449,8 @@
        `(for/fold ([dummy (* Nat)])
                   ([item (* (Listof Nat))])
           (send (Nat (init-addr 1)) item))
-       empty-effects))
+       empty-effects
+       #f))
      (list
       (machine-state `(* Nat) `(() ()))
       (machine-state `(* Nat) `(([(init-addr 1) (* Nat) many]) ())))))
