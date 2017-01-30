@@ -899,50 +899,52 @@
      ;;
      ;; There's probably some math based on least-fixpoints that backs this up, but I haven't yet
      ;; formalized it.
-     (eval-and-then* (list result-exp item-exp) effects
-       (lambda (vs effects)
-         (match-define (list result-val items-val) vs)
-         (define this-loop (machine-state
-                            `(for/fold ([,result-var ,result-val])
-                                       ([,item-var ,items-val])
-                               ,body)
-                            effects))
-         (match (hash-ref (loop-results) this-loop #f)
-           [#f
-            ;; Haven't seen this loop yet: return the result of skipping the loop as well as
-            ;; iterating with every possible member of the collection.
-            ;;
-            ;; We set the empty-eval-result as the loop-result while evaluating the loop body: this is
-            ;; what we expect to return if we reduce to this exact same state from here (the notes
-            ;; above explain why). After evaluation complete, we set the loop-result to the full set
-            ;; of resulting states.
-            (hash-set! (loop-results) this-loop empty-eval-result)
-            (define collection-members
-              (match items-val
-                [`(,(or 'list-val 'vector-val) ,items ...) items]
-                [`(* (,(or 'Listof 'Vectorof) ,type)) (list `(* ,type))]))
-            (define result-after-skipping (value-result result-val effects))
-            ;; TODO: memoize the result
-            (define final-results
-              (for/fold ([full-result result-after-skipping])
-                        ([member collection-members])
-                (define unrolled-body
-                  (term (csa#-subst-n/mf ,body [,result-var ,result-val] [,item-var ,member])))
-                (combine-eval-results
-                 full-result
-                 (parameterize ([in-loop-context? #t])
-                   (eval-machine/internal `(for/fold ([,result-var ,unrolled-body])
-                                                     ([,item-var ,items-val])
-                                             ,body)
-                                          effects)))))
-            (hash-set! (loop-results) this-loop final-results)
-            final-results]
-           [memoized-result memoized-result]))
-       (lambda (stucks)
-         (match-define (list stuck-result stuck-items) stucks)
-         `(for/fold ([,result-var ,stuck-result])
-                    ([,item-var ,stuck-items])
-            ,body)))]
+     (match-define `(,final-value-states ,final-stuck-states)
+      (eval-and-then* (list result-exp item-exp) effects
+        (lambda (vs effects)
+          (match-define (list result-val items-val) vs)
+          (define this-loop (machine-state
+                             `(for/fold ([,result-var ,result-val])
+                                        ([,item-var ,items-val])
+                                ,body)
+                             effects))
+          (match (hash-ref (loop-results) this-loop #f)
+            [#f
+             ;; Haven't seen this loop yet: return the result of skipping the loop as well as
+             ;; iterating with every possible member of the collection.
+             ;;
+             ;; We set the empty-eval-result as the loop-result while evaluating the loop body: this is
+             ;; what we expect to return if we reduce to this exact same state from here (the notes
+             ;; above explain why). After evaluation complete, we set the loop-result to the full set
+             ;; of resulting states.
+             (hash-set! (loop-results) this-loop empty-eval-result)
+             (define collection-members
+               (match items-val
+                 [`(,(or 'list-val 'vector-val) ,items ...) items]
+                 [`(* (,(or 'Listof 'Vectorof) ,type)) (list `(* ,type))]))
+             (define result-after-skipping (value-result result-val effects))
+             ;; TODO: memoize the result
+             (define final-results
+               (for/fold ([full-result result-after-skipping])
+                         ([member collection-members])
+                 (define unrolled-body
+                   (term (csa#-subst-n/mf ,body [,result-var ,result-val] [,item-var ,member])))
+                 (combine-eval-results
+                  full-result
+                  (parameterize ([in-loop-context? #t])
+                    (eval-machine/internal `(for/fold ([,result-var ,unrolled-body])
+                                                      ([,item-var ,items-val])
+                                              ,body)
+                                           effects)))))
+             (hash-set! (loop-results) this-loop final-results)
+             final-results]
+            [memoized-result memoized-result]))
+        (lambda (stucks)
+          (match-define (list stuck-result stuck-items) stucks)
+          `(for/fold ([,result-var ,stuck-result])
+                     ([,item-var ,stuck-items])
+             ,body))))
+     `(,(remove-duplicates final-value-states) ,final-stuck-states)]
     ;; Communication
     [`(send ,e-addr ,e-message)
      (eval-and-then* (list e-addr e-message) effects
@@ -1366,6 +1368,14 @@
             item)
           a))
      (list '(variant A) '(variant B))))
+
+  (test-case "Loops do not return duplicate values"
+    (define terminal-exps (exp-reduce* `(for/fold ([result (variant X)])
+                                                  ([item (list (variant A) (variant B) (variant C))])
+                                          (case (* (Union [True] [False]))
+                                            [(True) item]
+                                            [(False) result]))))
+    (check-equal? (length terminal-exps) (length (remove-duplicates terminal-exps))))
 
   (check-equal? (eval-machine
                  `(spawn loc Nat
