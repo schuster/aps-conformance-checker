@@ -1145,7 +1145,7 @@
          (send close-handler (CommandFailed))
          (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)]
         [(Abort close-handler)
-         (abort-connection (: send-buffer send-next))
+         (abort-connection snd-nxt)
          (send close-handler (Aborted))
          (send octet-stream (Aborted))
          (halt-with-notification)]
