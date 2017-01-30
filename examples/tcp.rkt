@@ -1207,7 +1207,7 @@
                   (let* ([session-id
                           (SessionId (InetSocketAddress source-ip (: packet source-port))
                                      (: packet destination-port))]
-                         [session (spawn passive-open
+                         [session (spawn tcp-session
                                          TcpSession
                                          session-id
                                          (PassiveOpen (: packet seq))
@@ -1236,7 +1236,7 @@
          (case cmd
            [(Connect dest status-updates)
             (let* ([id (SessionId dest (get-new-port))]
-                   [session-actor (spawn active-session
+                   [session-actor (spawn tcp-session
                                          TcpSession
                                          id
                                          (ActiveOpen)
