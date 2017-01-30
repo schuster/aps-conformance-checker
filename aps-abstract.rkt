@@ -995,6 +995,20 @@
                      (goto S2)
                      ((define-state (S2)))
                      ()))
+            ()]))
+
+  (test-equal? "Addresses in messages to wildcard addresses are added to receptionists"
+    (aps#-resolve-outputs
+     (list `(UNKNOWN () (goto S1) ((define-state (S1))) ()))
+     (list `[(* (Addr (Union [A (Addr Nat) (Addr String)])))
+             (variant A (Nat (init-addr 1)) (String (init-addr 2)))
+             single]))
+    (list `[,(list `(UNKNOWN
+                     ((Nat (init-addr 1))
+                      (String (init-addr 2)))
+                     (goto S1)
+                     ((define-state (S1)))
+                     ()))
             ()])))
 
 (define (aps#-remove-commitment-pattern commitment-map address pat)
