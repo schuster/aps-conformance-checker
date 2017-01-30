@@ -713,7 +713,8 @@
   (let worklist-loop ([widened-pair the-pair])
     (match (dequeue-if-non-empty! possible-transitions)
       [#f
-       (widen-printf "Finished widen\n")
+       (widen-printf "Finished widen. Final config: ~s\n"
+                     (impl-config-without-state-defs (config-pair-impl-config widened-pair)))
        widened-pair]
       [transition-result-with-obs
        (set! loop-count (add1 loop-count))
@@ -775,6 +776,8 @@
                                  ;; (debug-transition-result transition-result)
                                  ;; (impl-config-without-state-defs (config-pair-impl-config new-widened-pair))
                                  )
+                   (widen-printf "Newly widened impl config: ~s\n" (impl-config-without-state-defs (config-pair-impl-config twice-applied-pair)))
+                   (widen-printf "Newly widened spec config: ~s\n" (spec-config-without-state-defs (config-pair-spec-config twice-applied-pair)))
                    (widen-printf "Remaining transitions: ~s\n" (queue-length possible-transitions))
                    (for-each (curry enqueue! possible-transitions)
                              (impl-transition-effects-from twice-applied-pair))
