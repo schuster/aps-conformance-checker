@@ -406,11 +406,8 @@
   (match-define `(,state-defs (goto ,state-name ,state-args ...)) behavior)
   (match-define `(define-state (,_ [,state-arg-formals ,_] ...) (,message-formal) ,body ,_ ...)
     (findf (lambda (state-def) (equal? state-name (first (second state-def)))) state-defs))
-  ;; TODO: deal with the case where x_m shadows an x_q
-  (inject/H# (apply csa#-subst-n
-                    body
-                    `[,message-formal ,message]
-                    (map list state-arg-formals state-args))))
+  (define bindings (cons `[,message-formal ,message] (map list state-arg-formals state-args)))
+  (inject/H# (csa#-subst-n body bindings)))
 
 ;; Abstractly removes the entry in i# corresponding to the packet (a# v#), which will actually remove
 ;; it if its multiplicity is single, else leave it there if its multiplicity is many (because removing
@@ -469,7 +466,7 @@
   get-timeout-handler-exp/mf : b# -> e# or #f
   [(get-timeout-handler-exp/mf ((_ ... (define-state (q [x_q τ_q] ..._n) _ _ [(timeout _) e#]) _ ...)
                                 (goto q v# ..._n)))
-   (csa#-subst-n/mf e# [x_q v#] ...)]
+   ,(csa#-subst-n (term e#) (term ([x_q v#] ...)))]
   [(get-timeout-handler-exp/mf _) #f])
 
 ;; Returns #t if the configuration has any in-transit messages for the given internal address; #f
@@ -663,7 +660,7 @@
                 [(list `(,pat ,body) other-clauses ...)
                  (match (match-case-pattern v pat)
                    [#f (loop other-clauses)]
-                   [bindings (eval-machine/internal (term (csa#-subst-n/mf ,body ,@bindings)) effects)])]))]
+                   [bindings (eval-machine/internal (csa#-subst-n body bindings) effects)])]))]
            [`(* (Union ,union-variants ...))
             ;; Use *all* matching patterns for wildcard values
             (define clause-results
@@ -678,7 +675,7 @@
                    (define bindings (map list (cdr (case-clause-pattern clause)) vals))
                    (combine-eval-results
                     result
-                    (eval-machine/internal (term (csa#-subst-n/mf ,(case-clause-body clause) ,@bindings)) effects))])))
+                    (eval-machine/internal (csa#-subst-n (case-clause-body clause) bindings) effects))])))
             (if (and (empty? (first clause-results)) (empty? (second clause-results)))
                 (one-stuck-result `(case ,v ,@clauses))
                 clause-results)]))
@@ -687,7 +684,7 @@
     [`(let ([,vars ,exps] ...) ,body)
      (eval-and-then* exps effects
        (lambda (vs effects)
-         (eval-machine/internal (term (csa#-subst-n/mf ,body ,@(map list vars vs))) effects))
+         (eval-machine/internal (csa#-subst-n body (map list vars vs)) effects))
        (lambda (stucks) `(let ,(map list vars stucks) ,body)))]
     ;; Records
     [`(record [,labels ,exps] ...)
@@ -953,7 +950,7 @@
                (for/fold ([full-result result-after-skipping])
                          ([member collection-members])
                  (define unrolled-body
-                   (term (csa#-subst-n/mf ,body [,result-var ,result-val] [,item-var ,member])))
+                   (csa#-subst-n body (list `[,result-var ,result-val] `[,item-var ,member])))
                  (combine-eval-results
                   full-result
                   (parameterize ([in-loop-context? #t])
@@ -992,8 +989,8 @@
      (define address-value `(,type ,address))
      (define state-defs
        (for/list ([def raw-state-defs])
-         (term (csa#-subst/Q# ,def self ,address-value))))
-     (eval-and-then (term (csa#-subst-n/mf ,init-exp [self ,address-value])) effects
+         (csa#-subst-n/Q# def (list `[self ,address-value]))))
+     (eval-and-then (csa#-subst-n init-exp (list `[self ,address-value])) effects
        (lambda (goto-val effects)
          (match-define (list sends spawns) effects)
          (value-result address-value
@@ -1727,38 +1724,33 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
 
-(define (csa#-subst-n exp . bindings)
-  (for/fold ([exp-so-far exp])
-            ([binding bindings])
-    (csa#-subst exp-so-far (first binding) (second binding))))
+(define (binding var val) `[,var ,val])
+(define (binding-var binding) (first binding))
+(define (binding-val binding) (second binding))
+(define (remove-bindings bindings vars-to-remove)
+  (filter (lambda (binding) (not (memq (binding-var binding) vars-to-remove))) bindings))
 
-(define-metafunction csa#
-  ;; TODO: look into whether making this contract more precise causes performance issues
-  csa#-subst-n/mf : any_1 any_2 ... -> any_3
-  [(csa#-subst-n/mf any_exp any_bindings ...)
-   ,(apply csa#-subst-n (term any_exp) (term (any_bindings ...)))])
-
-(define typed-address? (redex-match csa# τa#))
-(define primop? (redex-match csa# primop))
-
-(module+ test
-  (check-not-false (typed-address? '(Nat (obs-ext 1))))
-  (check-equal? (typed-address? '(foobar)) #f))
-
-(define (csa#-subst exp var val)
-  ;; NOTE: substitution written in Racket rather than Redex for performance
-  (define (do-subst other-exp) (csa#-subst other-exp var val))
+;; e# (listof [x v#]) -> e#
+(define (csa#-subst-n exp bindings)
+  ;; NOTE: substitution written in Racket rather than Redex for performance. We also do all bindings
+  ;; at once, rather than one at a time, to reduce the number of times we traverse the full AST
+  (define (do-subst other-exp) (csa#-subst-n other-exp bindings))
+  (define (shadow vars) (remove-bindings bindings vars))
   (match exp
-    [(? symbol?) (if (eq? exp var) val exp)]
-    ;; NOTE: if multiplication is added, this pattern must be more precise
+    [(? symbol?)
+     (match (findf (lambda (binding) (eq? (binding-var binding) exp)) bindings)
+       [#f exp]
+       [binding (binding-val binding)])]
     [`(* ,type) exp]
     [(? typed-address?) exp]
     [`(spawn ,loc ,type ,init ,states ...)
-     (if (eq? var 'self)
+     (define non-self-bindings (shadow (list 'self)))
+     (if (empty? non-self-bindings)
          exp
-         `(spawn ,loc ,type ,(csa#-subst init var val) ,@(map (lambda (s)
-                                                                (term (csa#-subst/Q# ,s ,var ,val)))
-                                                              states)))]
+         `(spawn ,loc
+                 ,type
+                 ,(csa#-subst-n init non-self-bindings)
+                 ,@(map (lambda (s) (csa#-subst-n/Q# s non-self-bindings)) states)))]
     [`(goto ,s ,args ...) `(goto ,s ,@(map do-subst args))]
     [`(printf ,str ,args ...) `(printf ,str ,@(map do-subst args))]
     [(list (and kw (or 'send 'begin (? primop?) 'list 'list-val 'vector 'vector-val 'loop-context)) args ...)
@@ -1766,12 +1758,10 @@
     [`(hash-val ,args1 ,args2)
      `(hash-val ,(map do-subst args1) ,(map do-subst args2))]
     [`(let ([,new-vars ,new-vals] ...) ,body)
-     (define bindings (map (lambda (nvar nval) `(,nvar ,(do-subst nval))) new-vars new-vals))
-     (if (member var new-vars)
-         `(let ,bindings ,body)
-         `(let ,bindings ,(do-subst body)))]
+     (define new-let-bindings (map binding new-vars (map do-subst new-vals)))
+     `(let ,new-let-bindings ,(csa#-subst-n body (shadow new-vars)))]
     [`(case ,body ,clauses ...)
-     `(case ,(do-subst body) ,@(map (lambda (cl) (term (csa#-subst/case-clause ,cl ,var ,val))) clauses))]
+     `(case ,(do-subst body) ,@(map (curryr csa#-subst-n/case-clause bindings) clauses))]
     [`(variant ,tag ,args ...) `(variant ,tag ,@(map do-subst args))]
     [`(record [,labels ,fields] ...)
      `(record ,@(map (lambda (l f) `(,l ,(do-subst f))) labels fields))]
@@ -1784,97 +1774,106 @@
     [`(for/fold ([,x1 ,e1]) ([,x2 ,e2]) ,body)
      `(for/fold ([,x1 ,(do-subst e1)])
                 ([,x2 ,(do-subst e2)])
-        ,(if (member var (list x1 x2))
-             body
-             (do-subst body)))]))
+        ,(csa#-subst-n body (shadow (list x1 x2))))]))
 
-;; TODO: refactor this out
-(define-metafunction csa#
-  csa#-subst/mf : e# x v# -> e#
-  [(csa#-subst/mf any_1 any_2 any_3)
-   ,(csa#-subst (term any_1) (term any_2) (term any_3))])
-
-(define-metafunction csa#
-  csa#-subst/case-clause : [(t x ...) e#] x v# -> [(t x ...) e#]
-  [(csa#-subst/case-clause [(t x_1 ... x x_2 ...) e#] x v#)
-   [(t x_1 ... x x_2 ...) e#]]
-  [(csa#-subst/case-clause [(t x_other ...) e#] x v#)
-   [(t x_other ...) ,(csa#-subst (term e#) (term x) (term v#))]])
-
-(define-metafunction csa#
-  csa#-subst/Q# : Q# x v# -> Q#
-  ;; Case 1: no timeout, var is shadowed
-  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e#) x v#)
-   (define-state (q [x_q τ] ...) (x_m) e#)
-   (where (_ ... x _ ...) (x_q ... x_m))]
-  ;; Case 2: timeout, var shadowed by state param
-  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e# [(timeout e#_tv) e#_t]) x v#)
-   (define-state (q [x_q τ] ...) (x_m) e# [(timeout e#_tv) e#_t])
-   (where (_ ... x _ ...) (x_q ...))]
-  ;; Case 3: timeout, var shadowed by message param
-  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e# [(timeout e#_tv) e#_t]) x_m v#)
-   (define-state (q [x_q τ] ...) (x_m)
-     e#
-     [(timeout ,(csa#-subst (term v#_t) (term x_m) (term v#)))
-      ,(csa#-subst (term e#_t) (term x_m) (term v#))])]
-  ;; Case 4: timeout, no shadowing
-  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e# [(timeout e#_tv) e#_t]) x v#)
-   (define-state (q [x_q τ] ...) (x_m)
-     ,(csa#-subst (term e#) (term x) (term v#))
-     [(timeout ,(csa#-subst (term e#_tv) (term x) (term v#)))
-      ,(csa#-subst (term e#_t) (term x) (term v#))])]
-  ;; Case 5: no timeout, no shadowing
-  [(csa#-subst/Q# (define-state (q [x_q τ] ...) (x_m) e#) x v#)
-   (define-state (q [x_q τ] ...) (x_m) ,(csa#-subst (term e#) (term x) (term v#)))])
+;; OPTIMIZE: perhaps this should use non-Redex match instead?
+(define typed-address? (redex-match csa# τa#))
+(define primop? (redex-match csa# primop))
 
 (module+ test
-  (check-equal? (csa#-subst '(begin x) 'x '(* Nat)) '(begin (* Nat)))
-  (check-equal? (csa#-subst '(send x y) 'y '(* Nat)) '(send x (* Nat)))
-  (check-equal? (csa#-subst '(Nat (obs-ext 1)) 'x '(* Nat)) '(Nat (obs-ext 1)))
-  (check-equal? (csa#-subst '(= x y) 'x '(* Nat)) '(= (* Nat) y))
-  (check-equal? (csa#-subst '(! (record [a x]) [a (* Nat)]) 'x '(* Nat))
+  (check-not-false (typed-address? '(Nat (obs-ext 1))))
+  (check-equal? (typed-address? '(foobar)) #f))
+
+(define (csa#-subst-n/case-clause clause bindings)
+  (match-define `[(,tag ,vars ...) ,body] clause)
+  `[(,tag ,@vars) ,(csa#-subst-n body (remove-bindings bindings vars))])
+
+(define (csa#-subst-n/Q# Q bindings)
+  (match Q
+    ;; No timeout
+    [`(define-state (,q ,(and full-args `[,state-args ,arg-types]) ...) (,message-arg) ,body)
+     `(define-state (,q ,@full-args) (,message-arg)
+        ,(csa#-subst-n body (remove-bindings bindings (cons message-arg state-args))))]
+    ;; Has timeout
+    [`(define-state (,q ,(and full-args `[,state-args ,arg-types]) ...) (,message-arg)
+        ,body
+        [(timeout ,timeout-exp) ,timeout-body])
+     `(define-state (,q ,@full-args) (,message-arg)
+        ,(csa#-subst-n body (remove-bindings bindings (cons message-arg state-args)))
+        [(timeout ,(csa#-subst-n timeout-exp (remove-bindings bindings state-args)))
+         ,(csa#-subst-n timeout-body (remove-bindings bindings state-args))])]))
+
+(module+ test
+  (check-equal? (csa#-subst-n '(begin x) (list `[x (* Nat)])) '(begin (* Nat)))
+  (check-equal? (csa#-subst-n '(send x y) (list `[y (* Nat)])) '(send x (* Nat)))
+  (check-equal? (csa#-subst-n '(Nat (obs-ext 1)) (list `[x (* Nat)])) '(Nat (obs-ext 1)))
+  (check-equal? (csa#-subst-n '(= x y) (list `[x (* Nat)])) '(= (* Nat) y))
+  (check-equal? (csa#-subst-n '(! (record [a x]) [a (* Nat)]) (list `[x (* Nat)]))
                 '(! (record [a (* Nat)]) [a (* Nat)]))
-  (check-equal? (term (csa#-subst/case-clause [(Cons p) (begin p x)] p (* Nat)))
+  (check-equal? (csa#-subst-n/case-clause `[(Cons p) (begin p x)] (list `[p (* Nat)]))
                 (term [(Cons p) (begin p x)]))
-  (check-equal? (term (csa#-subst/case-clause [(Cons p) (begin p x)] x (* Nat)))
+  (check-equal? (csa#-subst-n/case-clause `[(Cons p) (begin p x)] (list `[x (* Nat)]))
                 (term [(Cons p) (begin p (* Nat))]))
-  (check-equal? (term (csa#-subst/mf (list (* Nat) x) x (* Nat)))
+  (check-equal? (csa#-subst-n `(list (* Nat) x) (list `[x (* Nat)]))
                 (term (list (* Nat) (* Nat))))
-  (check-equal? (term (csa#-subst/mf (vector (* Nat) x) x (* Nat)))
+  (check-equal? (csa#-subst-n `(vector (* Nat) x) (list `[x (* Nat)]))
                 (term (vector (* Nat) (* Nat))))
-  (check-equal? (term (csa#-subst/mf (variant Foo (* Nat)) a (* Nat))) (term (variant Foo (* Nat))))
-  (test-equal? "spawn subst 1" (term (csa#-subst/mf (spawn loc
-                                         Nat
-                                         (goto A self (* Nat))
-                                         (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
-                                  self
-                                  (Nat (init-addr 2))))
-                (term (spawn loc
-                             Nat
-                             (goto A self (* Nat))
-                             (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))))
+  (check-equal? (csa#-subst-n `(variant Foo (* Nat)) (list `[a (* Nat)]))
+                (term (variant Foo (* Nat))))
+  (test-equal? "spawn subst 1"
+    (csa#-subst-n `(spawn loc
+                          Nat
+                          (goto A self (* Nat))
+                          (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
+                  (list `[self (Nat (init-addr 2))]))
+    (term (spawn loc
+                 Nat
+                 (goto A self (* Nat))
+                 (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))))
   (test-equal? "spawn subst 2"
-               (term (csa#-subst/mf (spawn loc
-                                         Nat
-                                         (goto A self (* Nat))
-                                         (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
-                                  x
-                                  (Nat (init-addr 2))))
-                (term (spawn loc
-                             Nat
-                             (goto A self (* Nat))
-                             (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))))
+    (csa#-subst-n `(spawn loc
+                          Nat
+                          (goto A self (* Nat))
+                          (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
+                  (list `[x (Nat (init-addr 2))]))
+    (term (spawn loc
+                 Nat
+                 (goto A self (* Nat))
+                 (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))))
   (test-equal? "spawn subst 3"
-               (term (csa#-subst/mf (spawn loc
-                                         Nat
-                                         (goto A self (* Nat))
-                                         (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
-                                  y
-                                  (Nat (init-addr 2))))
-                (term (spawn loc
-                             Nat
-                             (goto A self (* Nat))
-                             (define-state (A [s Nat] [a Nat]) (x) (goto A x (Nat (init-addr 2)) self))))))
+    (csa#-subst-n `(spawn loc
+                          Nat
+                          (goto A self (* Nat))
+                          (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
+                  (list `[y (Nat (init-addr 2))]))
+    (term (spawn loc
+                 Nat
+                 (goto A self (* Nat))
+                 (define-state (A [s Nat] [a Nat]) (x) (goto A x (Nat (init-addr 2)) self)))))
+
+  (test-equal? "shadowing works as expected"
+    (csa#-subst-n `(begin (let ([x (* Nat)]) x) x) (list (binding 'x '(* String))))
+    `(begin (let ([x (* Nat)]) x) (* String)))
+
+    (test-equal? "let-binding test"
+      (csa#-subst-n `(let ([x (* Nat)] [y (* Nat)]) (begin a x y z))
+                    (list (binding 'x '(* String))
+                          (binding 'z '(* String))))
+      `(let ([x (* Nat)] [y (* Nat)]) (begin a x y (* String))))
+
+  (test-equal? "state-def subst 1"
+    (csa#-subst-n/Q# `(define-state (A [x Nat] [y String]) (m) (begin x y z (goto A x y)))
+                     (list `[z (* Nat)]))
+    `(define-state (A [x Nat] [y String]) (m) (begin x y (* Nat) (goto A x y))))
+
+    (test-equal? "state-def subst with timeout"
+      (csa#-subst-n/Q# `(define-state (A [x Nat] [y String]) (m)
+                          (begin x y z (goto A x y))
+                          [(timeout z) (begin z (goto A x y))])
+                     (list `[z (* Nat)]))
+      `(define-state (A [x Nat] [y String]) (m)
+         (begin x y (* Nat) (goto A x y))
+         [(timeout (* Nat)) (begin (* Nat) (goto A x y))])))
 
 ;; Substitutes the second type for X in the first type
 (define-metafunction csa#
