@@ -1777,12 +1777,28 @@
         ,(csa#-subst-n body (shadow (list x1 x2))))]))
 
 ;; OPTIMIZE: perhaps this should use non-Redex match instead?
-(define typed-address? (redex-match csa# τa#))
-(define primop? (redex-match csa# primop))
+(define (typed-address? exp)
+  (match exp
+    [`(* (Addr ,_)) #t]
+    [`(,_ (,(or 'init-addr 'spawn-addr 'blurred-spawn-addr 'obs-ext) ,_ ...)) #t]
+    [_ #f]))
 
 (module+ test
+  (check-true (typed-address? '(* (Addr Nat))))
+  (check-false (typed-address? '(* (Union [A (Addr Nat)]))))
+  (check-true (typed-address? '((Union [A] [B]) (obs-ext 1))))
+  (check-true (typed-address? '((Union [A] [B]) (init-addr 1))))
+  (check-true (typed-address? '((Union [A] [B]) (spawn-addr 1 OLD))))
+  (check-true (typed-address? '((Union [A] [B]) (blurred-spawn-addr 1))))
+  (check-false (typed-address? '((Union [A] [B]) (record))))
+  (check-false (typed-address? '(obs-ext 1)))
+  (check-false (typed-address? '(init-addr 1)))
+  (check-false (typed-address? '(spawn-addr 1 OLD)))
+  (check-false (typed-address? '(blurred-spawn-addr 1)))
   (check-not-false (typed-address? '(Nat (obs-ext 1))))
   (check-equal? (typed-address? '(foobar)) #f))
+
+(define primop? (redex-match csa# primop))
 
 (define (csa#-subst-n/case-clause clause bindings)
   (match-define `[(,tag ,vars ...) ,body] clause)
@@ -1820,6 +1836,8 @@
                 (term (vector (* Nat) (* Nat))))
   (check-equal? (csa#-subst-n `(variant Foo (* Nat)) (list `[a (* Nat)]))
                 (term (variant Foo (* Nat))))
+  (check-equal? (csa#-subst-n `((Union [A] [B]) (init-addr 1)) (list `[x (* Nat)]))
+                `((Union [A] [B]) (init-addr 1)))
   (test-equal? "spawn subst 1"
     (csa#-subst-n `(spawn loc
                           Nat
