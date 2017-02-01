@@ -167,10 +167,14 @@
 ;; TODO: create a second type of "fresh" external address instead (one that gets converted into the
 ;; other one during canonicalization), so I don't have to worry about overlapping with existing
 ;; addresses
-(define next-generated-address 100)
+(define FIRST-GENERATED-ADDRESS 100)
+(define next-generated-address FIRST-GENERATED-ADDRESS)
 
 ;; Returns an exhaustive list of abstract messages for the type of the given address
 (define (csa#-messages-of-type type)
+  ;; reset the generated address, so that we don't keep finding different numbers for different types
+  ;; (or even the same type, if metafunction caching ever goes away here)
+  (set! next-generated-address FIRST-GENERATED-ADDRESS)
   (term (messages-of-type/mf ,type ,MAX-RECURSION-DEPTH)))
 
 ;; Returns an exhaustive list of abstract messages for the given type with the natural argument
@@ -290,7 +294,10 @@
    (list `(list-val (* Nat))))
   (test-same-items?
    (term (messages-of-type/mf (Hash Nat (Union [A] [B] [C])) 0))
-   (list `(hash-val ((* Nat)) ((variant A) (variant B) [variant C])))))
+   (list `(hash-val ((* Nat)) ((variant A) (variant B) [variant C]))))
+  (test-case "Generated address number is re-used for each top-level generation"
+    (check-equal? (second (first (csa#-messages-of-type `(Addr Nat))))
+                  (second (first (csa#-messages-of-type `(Addr String)))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
