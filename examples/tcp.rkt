@@ -1182,7 +1182,7 @@
         [(RegisterTimeout) (goto Closed)]
         ;; shouldn't happen here:
         [(RetransmitTimeout) (goto Closed)]
-        [(TimeoutWaitTimeout) (goto Closed)])))
+        [(TimeWaitTimeout) (goto Closed)])))
 
   ;;;; The main TCP actor
 
