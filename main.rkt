@@ -860,7 +860,7 @@
   (let/cc return-continuation
     (define (abort) (return-continuation null))
     (define triggers (impl-triggers-from i s))
-    (widen-printf "Widen: gettings effects from ~s triggers\n" (length triggers))
+    (widen-printf "Widen: getting effects from ~s triggers\n" (length triggers))
     (define trigger-count 0)
     (define final-results
      (append*
