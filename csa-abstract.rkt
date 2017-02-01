@@ -2258,7 +2258,7 @@
 
 ;; term (a#int-without-type ...) (a#ext-without-type ...) -> term
 ;;
-;; Renames internal addresses in internals-to-bour and external addresses *not* in
+;; Renames internal addresses in internals-to-blur and external addresses *not* in
 ;; relevant-externals to their respective imprecise forms
 (define (csa#-blur-addresses some-term internals-to-blur relevant-externals)
   (match some-term
