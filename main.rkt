@@ -779,8 +779,10 @@
                    (widen-printf "Newly widened impl config: ~s\n" (impl-config-without-state-defs (config-pair-impl-config twice-applied-pair)))
                    (widen-printf "Newly widened spec config: ~s\n" (spec-config-without-state-defs (config-pair-spec-config twice-applied-pair)))
                    (widen-printf "Remaining transitions: ~s\n" (queue-length possible-transitions))
-                   (for-each (curry enqueue! possible-transitions)
-                             (impl-transition-effects-from twice-applied-pair))
+                   ;; We just throw away any remaining transitions, because the transitions from this
+                   ;; configuration supercede those from a different one
+                   (set! possible-transitions
+                         (apply queue (impl-transition-effects-from twice-applied-pair)))
                    (widen-printf "Added transitions, total is now ~s\n" (queue-length possible-transitions))
                    (worklist-loop twice-applied-pair)]
                   [else
