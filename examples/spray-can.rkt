@@ -15,6 +15,7 @@
 
 (define RESPONSE-WAIT-TIME-IN-MS 2000)
 (define REGISTER-WAIT-TIME-IN-MS 2000)
+(define BIND-WAIT-TIME-IN-MS 2000)
 
 (define spray-can-definitions
   (quasiquote
@@ -56,6 +57,23 @@
   (ConfirmedClose [close-handler (Addr (Union [CommandFailed] [ConfirmedClosed]))])
   (Abort [close-handler (Addr (Union [CommandFailed] [Aborted]))]))
 
+(define-type BindStatus
+  (Union [Bound] [CommandFailed]))
+(define-function (Bound) (variant Bound))
+
+(define-type ConnectionStatus
+  (Union
+   (CommandFailed)
+   (Connected SessionId (Addr TcpSessionCommand))))
+(define-function (Connected [session-id SessionId] [session (Addr TcpSessionCommand)])
+  (variant Connected session-id session))
+
+(define-variant TcpCommand
+  ;; spray-can doesn't directly connect
+  ;; (Connect [remote-address InetSocketAddress]
+  ;;          [status-updates (Addr ConnectionStatus)])
+  (Bind [port Nat] [bind-status (Addr BindStatus)] [bind-handler (Addr ConnectionStatus)]))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; HTTP types
 
@@ -74,6 +92,15 @@
   [PeerClosed]
   [ErrorClosed]
   [HttpRegister [handler (Addr IncomingRequest)]])
+
+(define-variant HttpListenerInput
+  (Bound)
+  (CommandFailed)
+  (Unbind [commander (Addr (Union [Unbound] [CommandFailed]))])
+  (BindTimeout)
+  (Connected [session-id SessionId] [session (Addr TcpSessionCommand)]))
+
+(define-function (Unbound) (variant Unbound))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Application Layer Protocol
@@ -123,6 +150,36 @@
   ()
   (goto Sink)
   (define-state (Sink) (m) (goto Sink)))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Timer
+
+  (define-variant TimerCommand
+    (Stop)
+    (Start [timeout-in-milliseconds Nat]))
+
+  (define-type ExpirationMessage
+    (Union
+     [BindTimeout]))
+
+  (define-actor TimerCommand
+    (Timer [expiration-message ExpirationMessage]
+           [expiration-target (Addr ExpirationMessage)])
+    ()
+    (goto Stopped)
+    (define-state (Stopped) (m)
+      (case m
+        [(Stop) (goto Stopped)]
+        [(Start timeout-in-milliseconds)
+         (goto Running timeout-in-milliseconds)]))
+    (define-state/timeout (Running [timeout-in-milliseconds Nat]) (m)
+      (case m
+        [(Stop) (goto Stopped)]
+        [(Start new-timeout-in-milliseconds)
+         (goto Running new-timeout-in-milliseconds)])
+      (timeout timeout-in-milliseconds
+        (send expiration-target expiration-message)
+        (goto Stopped))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; RequestHandler: given a request, send to application layer and wait for their response (or
@@ -214,6 +271,26 @@
 
   (define-state (Closed) (m) (goto Closed)))
 
+;; ---------------------------------------------------------------------------------------------------
+;; HttpListener
+
+(define-actor HttpListenerInput
+  (HttpListener [port Nat]
+                [bind-commander (Addr BindStatus)]
+                [app-listener (Addr HttpListenerEvent)]
+                [tcp (Addr TcpCommand)])
+  ()
+  (let ([bind-timer (spawn bind-timer Timer (BindTimeout) self)])
+    (send tcp (Bind port self self))
+    (send bind-timer (Start ,BIND-WAIT-TIME-IN-MS))
+    (goto Binding bind-timer))
+  (define-state (Binding [bind-timer (Addr TimerCommand)]) (m)
+    (case m
+      [(BindTimeout)
+       (send bind-commander (CommandFailed))
+       (goto Closed)]))
+  (define-state (Closed) (m) (goto Closed)))
+
 )))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -251,6 +328,25 @@
        (define-state (Done) (m) (goto Done)))
      (actors [launcher (spawn 1 Launcher app-listener tcp-session)])))
 
+(define listener-program
+  `(program (receptionists)
+            (externals [bind-commander BindStatus]
+                       [app-listener HttpListenerEvent]
+                       [tcp TcpCommand])
+     ,@spray-can-definitions
+     (define-actor Nat
+       (Launcher [bind-commander (Addr BindStatus) ]
+                 [app-listener (Addr HttpListenerEvent)]
+                 [tcp (Addr TcpCommand)])
+       ()
+       (goto Init)
+       (define-state/timeout (Init) (m) (goto Init)
+         (timeout 0
+           (spawn listener HttpListener 80 bind-commander app-listener tcp)
+           (goto Done)))
+       (define-state (Done) (m) (goto Done)))
+     (actors [launcher (spawn 1 Launcher bind-commander app-listener tcp)])))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Tests
 
@@ -268,7 +364,8 @@
     (HttpRegister handler)
     (Register handler)
     (ReceivedData data)
-    (Closed))
+    (Closed)
+    (CommandFailed))
 
   (define desugared-request-handler-only-program (desugar request-handler-only-program))
 
@@ -361,4 +458,27 @@
     (async-channel-put connection (Closed))
     (sleep 0.5)
     (async-channel-put connection (HttpRegister handler))
-    (check-no-message handler)))
+    (check-no-message handler))
+
+  ;; HttpListener Tests
+
+  (define desugared-listener-program (desugar listener-program))
+
+  (test-case "HttpListener responds with CommandFailed if it times out while binding"
+    (define bind-commander (make-async-channel))
+    (define tcp (make-async-channel))
+    (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
+    (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
+    (sleep (/ BIND-WAIT-TIME-IN-MS 1000))
+    (check-unicast bind-commander (CommandFailed)))
+
+;; Tests:
+;; * if get timeout while trying to bind, respond with CommandFailed
+;; * if bound by TCP, send the app layer a Bound response with our address
+;; * if new TCP connection, send it to the registered app layer (listener from Bind message)
+;; * if get Unbind during Running, try to unbind: send back either succeed or fail
+;; * if get Unbind while waiting to bind, abort the binding (send TCP.Unbind as soon as we get a Bound)
+;; * if multiple actors try to unbind, send them each the response
+;; * unbind while closed: ???
+
+  )
