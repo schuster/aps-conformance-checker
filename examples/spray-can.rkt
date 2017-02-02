@@ -221,7 +221,7 @@
 
 (define request-handler-only-program
   `(program (receptionists)
-            (externals [app-layer (Addr IncomingRequest)] [tcp (Addr TcpWriteOnlyCommanpd)])
+            (externals [app-layer IncomingRequest] [tcp TcpWriteOnlyCommanpd])
      ,@spray-can-definitions
      (define-actor Nat
        (Launcher [app-layer (Addr IncomingRequest)]
@@ -237,7 +237,7 @@
 
 (define connection-program
   `(program (receptionists)
-            (externals [app-listener (Addr HttpListenerEvent)] [tcp-session (Addr TcpSessionCommand)])
+            (externals [app-listener HttpListenerEvent] [tcp-session TcpSessionCommand])
      ,@spray-can-definitions
      (define-actor Nat
        (Launcher [app-listener (Addr HttpListenerEvent)] [tcp-session (Addr TcpSessionCommand)])
