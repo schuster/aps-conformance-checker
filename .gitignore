@@ -1,3 +1,6 @@
+auth_debug
+chat_debug
+ensime_debug
 sandbox.rkt
 tuple_log.dat
 flink_debug
