@@ -14,6 +14,7 @@
    "../main.rkt"))
 
 (define RESPONSE-WAIT-TIME-IN-MS 2000)
+(define REGISTER-WAIT-TIME-IN-MS 2000)
 
 (define spray-can-definitions
   (quasiquote
@@ -24,12 +25,30 @@
 
 (define-type Byte Nat) ; fake bytes with natural numbers
 
-(define-variant WriteResponse
-  (CommandFailed)
-  (WriteAck))
+(define-type WriteResponse
+  (Union
+   (CommandFailed)
+   (WriteAck)))
 
-(define-variant TcpWriteOnlyCommand
-  (Write (Vectorof Byte) (Addr WriteResponse)))
+(define-type TcpWriteOnlyCommand
+  (Union
+   (Write (Vectorof Byte) (Addr WriteResponse))))
+
+(define-type TcpSessionEvent
+  (Union
+   [ReceivedData (Vectorof Byte)]
+   [Closed]
+   [ConfirmedClosed]
+   [Aborted]
+   [PeerClosed]
+   [ErrorClosed]))
+
+(define-variant TcpSessionCommand
+  (Register [handler (Addr TcpSessionEvent)])
+  (Write [data (Vectorof Byte)] [handler (Addr WriteResponse)])
+  (Close [close-handler (Addr (Union [CommandFailed] [Closed]))])
+  (ConfirmedClose [close-handler (Addr (Union [CommandFailed] [ConfirmedClosed]))])
+  (Abort [close-handler (Addr (Union [CommandFailed] [Aborted]))]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; HTTP types
@@ -38,17 +57,62 @@
 (define-type HttpResponse (Vectorof Bytes))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Internal Types
+
+(define-variant HttpServerConnectionInput
+  ;; handles all TCP messages, plus HttpRegister
+  [ReceivedData [bytes (Vectorof Byte)]]
+  [Closed]
+  [ConfirmedClosed]
+  [Aborted]
+  [PeerClosed]
+  [ErrorClosed]
+  [HttpRegister [handler (Addr IncomingRequest)]])
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Application Layer Protocol
 
 (define-record IncomingRequest
   [request HttpRequest]
   [response-dest (Addr HttpResponse)])
 
+(define-type HttpUnbindResponse
+  (Union
+   [HttpUnbound]
+   ;; CommandFailed happens when we timeout waiting for TCP to unbind, but if TCP returns
+   ;; CommandFailed, we still return HttpUnbound
+   [CommandFailed]))
+
+(define-variant HttpListenerCommand
+  (HttpUnbind [commander (Addr HttpUnbindResponse)]))
+
+(define-variant BindResponse
+  (HttpBound [listener (Addr HttpListenerCommand)])
+  (HttpCommandFailed))
+
+(define-type HttpConnectionCommand
+  (Union
+   [HttpRegister (Addr IncomingRequest)]))
+
+(define-variant HttpListenerEvent
+  (HttpConnected [connection (Addr HttpConnectionCommand)]))
+
+(define-type HttpManagerCommands
+  (Union
+   [HttpBind (Addr BindResponse) ; commander, listener
+             (Addr HttpListenerEvent)]))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Sink
 
-;; just a simple actor to swallow TCP events
-(define-actor WriteResponse
+;; just a simple actor to swallow various TCP events
+(define-actor (Union [CommandFailed]
+                     [WriteAck]
+                     [Closed]
+                     [ConfirmedClosed]
+                     [Aborted]
+                     [PeerClosed]
+                     [ErrorClosed])
   (Sink)
   ()
   (goto Sink)
@@ -73,7 +137,77 @@
     (timeout ,RESPONSE-WAIT-TIME-IN-MS
       ;; don't notify the application layer here: just assume they'll watch for the stop notification
       (goto Done)))
-  (define-state (Done) (m) (goto Done))))))
+  (define-state (Done) (m) (goto Done)))
+
+;; ---------------------------------------------------------------------------------------------------
+;; HttpServerConnection
+
+(define-actor HttpServerConnectionInput
+  (HttpServerConnection [app-listener (Addr HttpListenerEvent)]
+                        [tcp-session (Addr TcpSessionCommand)])
+  (
+   ;; Finds the first prefix of the given data that ends in 0, if such a prefix exists.
+   ;;
+   ;; This fakes the idea of parsing an HTTP request from various received segments from the TCP
+   ;; session.
+   (define-function (find-request-tail [data (Vectorof Byte)])
+     ;; returns (Union [FoundTail [prefix (Vectorof Byte)] [rest (Vectorof Byte)]] [TailNotFound])
+     (let ([loop-result
+            (for/fold ([result-so-far (variant LookingForTail (vector))])
+                      ([byte data])
+              (case result-so-far
+                [(LookingForTail seen-bytes)
+                 (if (= 0 byte)
+                     (variant FoundTail seen-bytes (vector))
+                     (variant LookingForTail (vector-append seen-bytes (vector byte))))]
+                [(FoundTail prefix rest)
+                 (variant FoundTail prefix (vector-append rest (vector byte)))]))])
+       (case loop-result
+         [(LookingForTail seen-bytes) (variant TailNotFound)]
+         [(FoundTail prefix rest) (variant FoundTail prefix rest)]))))
+
+  (let ()
+    (send app-listener (HttpConnected self))
+    (goto AwaitingRegistration))
+
+  (define-state/timeout (AwaitingRegistration) (m)
+    (case m
+      [(ReceivedData data)
+       ;; this shouldn't happen here yet, because we haven't registered with TCP
+       (goto AwaitingRegistration)]
+      [(Closed) (goto Closed)]
+      [(ConfirmedClosed) (goto Closed)]
+      [(Aborted) (goto Closed)]
+      [(PeerClosed) (goto Closed)]
+      [(ErrorClosed) (goto Closed)]
+      [(HttpRegister handler)
+       (send tcp-session (Register self))
+       (goto Running (vector) handler)])
+    (timeout ,REGISTER-WAIT-TIME-IN-MS
+      (send tcp-session (Close (spawn close-session Sink)))
+      (goto Closed)))
+
+  (define-state (Running [held-data (Vectorof Byte)] [handler (Addr IncomingRequest)]) (m)
+    (case m
+      [(ReceivedData data)
+       (case (find-request-tail data)
+         [(FoundTail tail rest)
+          (spawn request-handler RequestHandler (vector-append held-data tail) handler tcp-session)
+          (goto Running rest handler)]
+         [(TailNotFound)
+          (goto Running (vector-append held-data data) handler)])]
+      [(Closed) (goto Closed)]
+      [(ConfirmedClosed) (goto Closed)]
+      [(Aborted) (goto Closed)]
+      [(PeerClosed) (goto Closed)]
+      [(ErrorClosed) (goto Closed)]
+      [(HttpRegister handler)
+       ;; just ignore extra registration messages
+       (goto Running handler)]))
+
+  (define-state (Closed) (m) (goto Closed)))
+
+)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Programs
@@ -94,6 +228,21 @@
        (define-state (Done) (m) (goto Done)))
      (actors [launcher (spawn 1 Launcher app-layer tcp)])))
 
+(define connection-program
+  `(program (receptionists)
+            (externals [app-listener (Addr HttpListenerEvent)] [tcp-session (Addr TcpSessionCommand)])
+     ,@spray-can-definitions
+     (define-actor Nat
+       (Launcher [app-listener (Addr HttpListenerEvent)] [tcp-session (Addr TcpSessionCommand)])
+       ()
+       (goto Init)
+       (define-state/timeout (Init) (m) (goto Init)
+         (timeout 0
+           (spawn connection HttpServerConnection app-listener tcp-session)
+           (goto Done)))
+       (define-state (Done) (m) (goto Done)))
+     (actors [launcher (spawn 1 Launcher app-listener tcp-session)])))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Tests
 
@@ -107,7 +256,10 @@
   (define-test-variants
     (Write data handler)
     (IncomingRequest request response-dest)
-    (FinishedRequest))
+    (FinishedRequest)
+    (HttpRegister handler)
+    (Register handler)
+    (ReceivedData data))
 
   (define desugared-request-handler-only-program (desugar request-handler-only-program))
 
@@ -127,5 +279,47 @@
     (define tcp (make-async-channel))
     (csa-run desugared-request-handler-only-program app-layer tcp)
     (check-unicast-match app-layer (csa-record [request (vector 1 2 3)] [response-dest _]))
-    (check-no-message tcp #:timeout 2)))
+    (check-no-message tcp #:timeout 2))
 
+  ;; HttpServerConnection tests
+
+  (define desugared-connection-program (desugar connection-program))
+
+  (test-case "ServerConection registers with TCP connection when application layer registers with ServerConnection"
+    (define app-listener (make-async-channel))
+    (define tcp-connection (make-async-channel))
+    (csa-run desugared-connection-program app-listener tcp-connection)
+    (define connection (check-unicast-match app-listener
+                                            (csa-variant HttpConnected connection)
+                                            #:result connection))
+    (async-channel-put connection (HttpRegister (make-async-channel)))
+    (check-unicast-match tcp-connection (csa-variant Register _)))
+
+  (test-case "If app layer does not register, ServerConnection tells TCP to close"
+    (define tcp-connection (make-async-channel))
+    (csa-run desugared-connection-program (make-async-channel) tcp-connection)
+    (sleep (/ REGISTER-WAIT-TIME-IN-MS 1000))
+    (check-unicast-match tcp-connection (csa-variant Close _)))
+
+  (define (run-connection-to-registered app-listener tcp-connection handler)
+    (csa-run desugared-connection-program app-listener tcp-connection)
+    (define connection (check-unicast-match app-listener
+                                            (csa-variant HttpConnected connection)
+                                            #:result connection))
+    (async-channel-put connection (HttpRegister handler))
+    (async-channel-get tcp-connection)
+    connection)
+
+  (test-case "ServerConnection creates request handler once all bytes for a packet are received"
+    (define app-listener (make-async-channel))
+    (define tcp-connection (make-async-channel))
+    (define handler (make-async-channel))
+    (define connection (run-connection-to-registered app-listener tcp-connection handler))
+    (async-channel-put connection (ReceivedData (vector 1 2)))
+    (async-channel-put connection (ReceivedData (vector 3 0)))
+    (check-unicast-match handler (csa-record [request (vector 1 2 3)] [response-dest _])))
+
+  ;; TODO:
+  ;; * can create multiple request handlers
+  ;; * on receiving a close from TCP connection, stop (now I won't respond to more requests)
+  )
