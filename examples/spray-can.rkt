@@ -259,7 +259,8 @@
     (FinishedRequest)
     (HttpRegister handler)
     (Register handler)
-    (ReceivedData data))
+    (ReceivedData data)
+    (Closed))
 
   (define desugared-request-handler-only-program (desugar request-handler-only-program))
 
@@ -319,7 +320,37 @@
     (async-channel-put connection (ReceivedData (vector 3 0)))
     (check-unicast-match handler (csa-record [request (vector 1 2 3)] [response-dest _])))
 
-  ;; TODO:
-  ;; * can create multiple request handlers
-  ;; * on receiving a close from TCP connection, stop (now I won't respond to more requests)
-  )
+  (test-case "ServerConnection can create multiple request handlers"
+    (define app-listener (make-async-channel))
+    (define tcp-connection (make-async-channel))
+    (define handler (make-async-channel))
+    (define connection (run-connection-to-registered app-listener tcp-connection handler))
+    (async-channel-put connection (ReceivedData (vector 1 0)))
+    (sleep 0.5) ; make sure the first requet is handled first
+    (async-channel-put connection (ReceivedData (vector 2 0)))
+    (check-unicast-match handler (csa-record [request (vector 1)] [response-dest _]))
+    (check-unicast-match handler (csa-record [request (vector 2)] [response-dest _])))
+
+  (test-case "ServerConnection does not react to requests after TCP session closes"
+    (define app-listener (make-async-channel))
+    (define tcp-connection (make-async-channel))
+    (define handler (make-async-channel))
+    (define connection (run-connection-to-registered app-listener tcp-connection handler))
+    (async-channel-put connection (ReceivedData (vector 1 0)))
+    (check-unicast-match handler (csa-record [request (vector 1)] [response-dest _]))
+    (async-channel-put connection (Closed))
+    (async-channel-put connection (ReceivedData (vector 2 0)))
+    (check-no-message handler))
+
+  (test-case "ServerConnection might close before registration"
+    (define app-listener (make-async-channel))
+    (define tcp-connection (make-async-channel))
+    (define handler (make-async-channel))
+    (csa-run desugared-connection-program app-listener tcp-connection)
+    (define connection (check-unicast-match app-listener
+                                            (csa-variant HttpConnected connection)
+                                            #:result connection))
+    (async-channel-put connection (Closed))
+    (sleep 0.5)
+    (async-channel-put connection (HttpRegister handler))
+    (check-no-message handler)))
