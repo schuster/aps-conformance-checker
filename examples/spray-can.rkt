@@ -45,12 +45,6 @@
   [response-dest (Addr HttpResponse)])
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Internal Communications
-
-(define-variant FinishNotification
-  (FinishedRequest))
-
-;; ---------------------------------------------------------------------------------------------------
 ;; Sink
 
 ;; just a simple actor to swallow TCP events
@@ -68,7 +62,6 @@
 (define-actor HttpResponse
   (RequestHandler [request HttpRequest]
                   [app-layer (Addr IncomingRequest)]
-                  [http-connection (Addr FinishNotification)]
                   [tcp-connection (Addr TcpWriteOnlyCommand)])
   ()
   (let ()
@@ -76,11 +69,9 @@
     (goto AwaitingAppResponse))
   (define-state/timeout (AwaitingAppResponse) (m)
     (send tcp-connection (Write m (spawn write-response Sink)))
-    (send http-connection (FinishedRequest))
     (goto Done)
     (timeout ,RESPONSE-WAIT-TIME-IN-MS
       ;; don't notify the application layer here: just assume they'll watch for the stop notification
-      (send http-connection (FinishedRequest))
       (goto Done)))
   (define-state (Done) (m) (goto Done))))))
 
@@ -89,22 +80,19 @@
 
 (define request-handler-only-program
   `(program (receptionists)
-            (externals [app-layer (Addr IncomingRequest)]
-                       [http-connection (Addr FinishNotification)]
-                       [tcp (Addr TcpWriteOnlyCommanpd)])
+            (externals [app-layer (Addr IncomingRequest)] [tcp (Addr TcpWriteOnlyCommanpd)])
      ,@spray-can-definitions
      (define-actor Nat
        (Launcher [app-layer (Addr IncomingRequest)]
-                 [http-connection (Addr FinishNotification)]
                  [tcp (Addr TcpWriteOnlyCommanpd)])
        ()
        (goto Init)
        (define-state/timeout (Init) (m) (goto Init)
          (timeout 0
-           (spawn request-handler RequestHandler (vector 1 2 3) app-layer http-connection tcp)
+           (spawn request-handler RequestHandler (vector 1 2 3) app-layer tcp)
            (goto Done)))
        (define-state (Done) (m) (goto Done)))
-     (actors [launcher (spawn 1 Launcher app-layer http-connection tcp)])))
+     (actors [launcher (spawn 1 Launcher app-layer tcp)])))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Tests
@@ -125,24 +113,19 @@
 
   (test-case "Write response to TCP when application layer responds to request from RequestHandler"
     (define app-layer (make-async-channel))
-    (define http-connection (make-async-channel))
     (define tcp (make-async-channel))
-    (csa-run desugared-request-handler-only-program app-layer http-connection tcp)
+    (csa-run desugared-request-handler-only-program app-layer tcp)
     (define handler
       (check-unicast-match app-layer (csa-record [request (vector 1 2 3)]
                                                  [response-dest handler])
                            #:result handler))
     (async-channel-put handler (vector 4 5 6))
-    (check-unicast-match tcp (csa-variant Write (vector 4 5 6) _))
-    (check-unicast http-connection (FinishedRequest)))
+    (check-unicast-match tcp (csa-variant Write (vector 4 5 6) _)))
 
   (test-case "RequestHandler times out if no response from application layer"
     (define app-layer (make-async-channel))
-    (define http-connection (make-async-channel))
     (define tcp (make-async-channel))
-    (csa-run desugared-request-handler-only-program app-layer http-connection tcp)
-    (define handler
-      (check-unicast-match app-layer (csa-record [request (vector 1 2 3)]
-                                                 [response-dest handler])
-                           #:result handler))
-    (check-no-message http-connection #:timeout 2)))
+    (csa-run desugared-request-handler-only-program app-layer tcp)
+    (check-unicast-match app-layer (csa-record [request (vector 1 2 3)] [response-dest _]))
+    (check-no-message tcp #:timeout 2)))
+
