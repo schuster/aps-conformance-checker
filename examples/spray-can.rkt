@@ -25,6 +25,12 @@
 
 (define-type Byte Nat) ; fake bytes with natural numbers
 
+(define-type IpAddress Nat) ; fake IP addresses with Nats
+  (define-record InetSocketAddress [ip IpAddress] [port Nat])
+  (define-record SessionId
+    [remote-address InetSocketAddress]
+    [local-port Nat])
+
 (define-type WriteResponse
   (Union
    (CommandFailed)
@@ -95,7 +101,7 @@
    [HttpRegister (Addr IncomingRequest)]))
 
 (define-variant HttpListenerEvent
-  (HttpConnected [connection (Addr HttpConnectionCommand)]))
+  (HttpConnected [session-id SessionId] [connection (Addr HttpConnectionCommand)]))
 
 (define-type HttpManagerCommands
   (Union
@@ -143,7 +149,8 @@
 ;; HttpServerConnection
 
 (define-actor HttpServerConnectionInput
-  (HttpServerConnection [app-listener (Addr HttpListenerEvent)]
+  (HttpServerConnection [session-id SessionId]
+                        [app-listener (Addr HttpListenerEvent)]
                         [tcp-session (Addr TcpSessionCommand)])
   (
    ;; Finds the first prefix of the given data that ends in 0, if such a prefix exists.
@@ -167,7 +174,7 @@
          [(FoundTail prefix rest) (variant FoundTail prefix rest)]))))
 
   (let ()
-    (send app-listener (HttpConnected self))
+    (send app-listener (HttpConnected session-id self))
     (goto AwaitingRegistration))
 
   (define-state/timeout (AwaitingRegistration) (m)
@@ -238,8 +245,9 @@
        (goto Init)
        (define-state/timeout (Init) (m) (goto Init)
          (timeout 0
-           (spawn connection HttpServerConnection app-listener tcp-session)
-           (goto Done)))
+           (let ([session-id (SessionId (InetSocketAddress 1234 500) 80)])
+             (spawn connection HttpServerConnection session-id app-listener tcp-session)
+             (goto Done))))
        (define-state (Done) (m) (goto Done)))
      (actors [launcher (spawn 1 Launcher app-listener tcp-session)])))
 
@@ -291,7 +299,7 @@
     (define tcp-connection (make-async-channel))
     (csa-run desugared-connection-program app-listener tcp-connection)
     (define connection (check-unicast-match app-listener
-                                            (csa-variant HttpConnected connection)
+                                            (csa-variant HttpConnected _ connection)
                                             #:result connection))
     (async-channel-put connection (HttpRegister (make-async-channel)))
     (check-unicast-match tcp-connection (csa-variant Register _)))
@@ -305,7 +313,7 @@
   (define (run-connection-to-registered app-listener tcp-connection handler)
     (csa-run desugared-connection-program app-listener tcp-connection)
     (define connection (check-unicast-match app-listener
-                                            (csa-variant HttpConnected connection)
+                                            (csa-variant HttpConnected _ connection)
                                             #:result connection))
     (async-channel-put connection (HttpRegister handler))
     (async-channel-get tcp-connection)
@@ -348,7 +356,7 @@
     (define handler (make-async-channel))
     (csa-run desugared-connection-program app-listener tcp-connection)
     (define connection (check-unicast-match app-listener
-                                            (csa-variant HttpConnected connection)
+                                            (csa-variant HttpConnected _ connection)
                                             #:result connection))
     (async-channel-put connection (Closed))
     (sleep 0.5)
