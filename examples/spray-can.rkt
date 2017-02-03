@@ -800,6 +800,35 @@
     (async-channel-put listener (Bound (make-async-channel)))
     (check-unicast-match bind-commander (csa-variant HttpBound _)))
 
-  ;; TODO: HttpManager
-  ;; * full end-to-end test: bind and respond to request
-  )
+  (test-case "End-to-end HTTP test case"
+    (define tcp (make-async-channel))
+    (define manager (csa-run desugared-manager-program tcp))
+    (define bind-commander (make-async-channel))
+    (define app-listener (make-async-channel))
+    ;; Bind to the port
+    (async-channel-put manager (HttpBind 80 bind-commander app-listener))
+    (define http-listener
+      (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
+    (async-channel-put http-listener (Bound (make-async-channel)))
+    (check-unicast-match bind-commander (csa-variant HttpBound (== http-listener)))
+    ;; Start a new TCP session
+    (define tcp-session (make-async-channel))
+    (async-channel-put http-listener (Connected test-session-id tcp-session))
+    (define http-connection
+      (check-unicast-match app-listener
+                           (csa-variant HttpConnected (== test-session-id) connection)
+                           #:result connection))
+    ;; App layer registers with the session
+    (define app-handler (make-async-channel))
+    (async-channel-put http-connection (HttpRegister app-handler))
+    (check-unicast-match tcp-session (csa-variant Register _))
+    ;; Send in a new request from the wire
+    (async-channel-put http-connection (ReceivedData (vector 1 2)))
+    (async-channel-put http-connection (ReceivedData (vector 3 0)))
+    (define http-handler
+      (check-unicast-match app-handler
+                           (csa-record [request (vector 1 2 3)] [response-dest handler])
+                           #:result handler))
+    (async-channel-put http-handler (vector 4 5 6))
+    ;; HTTP server sends our response to TCP, hurray!
+    (check-unicast-match tcp-session (csa-variant Write (vector 4 5 6) _))))
