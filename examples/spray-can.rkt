@@ -137,10 +137,8 @@
 (define-variant HttpListenerEvent
   (HttpConnected [session-id SessionId] [connection (Addr HttpConnectionCommand)]))
 
-(define-type HttpManagerCommands
-  (Union
-   [HttpBind (Addr HttpBindResponse) ; commander, listener
-             (Addr HttpListenerEvent)]))
+(define-variant HttpManagerCommand
+  (HttpBind [port Nat] [commander (Addr HttpBindResponse)] [app-listener (Addr HttpListenerEvent)]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Sink
@@ -439,7 +437,20 @@
       ;; From Application Layer
       [(HttpUnbind unbind-commander)
        (send unbind-commander (HttpCommandFailed))
-       (goto Closed)]))))))
+       (goto Closed)])))
+
+;; ---------------------------------------------------------------------------------------------------
+;; HttpManager
+
+(define-actor HttpManagerCommand
+  (HttpManager [tcp (Addr TcpCommand)])
+  ()
+  (goto Managing)
+  (define-state (Managing) (m)
+    (case m
+      [(HttpBind port commander listener)
+       (spawn listener HttpListener port commander listener tcp)
+       (goto Managing)]))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Programs
@@ -495,6 +506,12 @@
        (define-state (Done) (m) (goto Done)))
      (actors [launcher (spawn 1 Launcher bind-commander app-listener tcp)])))
 
+(define manager-program
+  `(program (receptionists [manager HttpManagerCommand])
+            (externals [tcp TcpCommand])
+     ,@spray-can-definitions
+     (actors [manager (spawn manager HttpManager tcp)])))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Tests
 
@@ -521,7 +538,8 @@
     (Unbind commander)
     (HttpUnbind commander)
     (Unbound)
-    (HttpUnbound))
+    (HttpUnbound)
+    (HttpBind port commander listener))
 
   (define test-session-id (record [remote-address (record [ip 1234] [port 500])] [local-port 80]))
 
@@ -758,4 +776,30 @@
     (async-channel-put listener (CommandFailed)) ; listener should be closed now
     (define unbind-commander (make-async-channel))
     (async-channel-put listener (HttpUnbind unbind-commander))
-    (check-unicast unbind-commander (HttpCommandFailed))))
+    (check-unicast unbind-commander (HttpCommandFailed)))
+
+  ;; HttpManager Tests
+
+  (define desugared-manager-program (desugar manager-program))
+
+  (test-case "HttpManager bind can fail; report failure to commander"
+    (define tcp (make-async-channel))
+    (define manager (csa-run desugared-manager-program tcp))
+    (define bind-commander (make-async-channel))
+    (async-channel-put manager (HttpBind 80 bind-commander (make-async-channel)))
+    (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
+    (async-channel-put listener (CommandFailed))
+    (check-unicast bind-commander (HttpCommandFailed)))
+
+  (test-case "HttpManager responds with success when binding succeeds"
+    (define tcp (make-async-channel))
+    (define manager (csa-run desugared-manager-program tcp))
+    (define bind-commander (make-async-channel))
+    (async-channel-put manager (HttpBind 80 bind-commander (make-async-channel)))
+    (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
+    (async-channel-put listener (Bound (make-async-channel)))
+    (check-unicast-match bind-commander (csa-variant HttpBound _)))
+
+  ;; TODO: HttpManager
+  ;; * full end-to-end test: bind and respond to request
+  )
