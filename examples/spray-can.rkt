@@ -16,6 +16,7 @@
 (define RESPONSE-WAIT-TIME-IN-MS 2000)
 (define REGISTER-WAIT-TIME-IN-MS 2000)
 (define BIND-WAIT-TIME-IN-MS 2000)
+(define UNBIND-WAIT-TIME-IN-MS 2000)
 
 (define spray-can-definitions
   (quasiquote
@@ -57,9 +58,17 @@
   (ConfirmedClose [close-handler (Addr (Union [CommandFailed] [ConfirmedClosed]))])
   (Abort [close-handler (Addr (Union [CommandFailed] [Aborted]))]))
 
+(define-type UnbindResponse
+  (Union
+   [Unbound]
+   [CommandFailed]))
+
+(define-variant TcpListenerCommand
+  (Unbind [unbind-commander (Addr UnbindResponse)]))
+
 (define-type BindStatus
-  (Union [Bound] [CommandFailed]))
-(define-function (Bound) (variant Bound))
+  (Union [Bound (Addr TcpListenerCommand)]))
+(define-function (Bound [listener (Addr TcpListenerCommand)]) (variant Bound listener))
 
 (define-type ConnectionStatus
   (Union
@@ -93,14 +102,19 @@
   [ErrorClosed]
   [HttpRegister [handler (Addr IncomingRequest)]])
 
-(define-variant HttpListenerInput
-  (Bound)
-  (CommandFailed)
-  (Unbind [commander (Addr (Union [Unbound] [CommandFailed]))])
-  (BindTimeout)
-  (Connected [session-id SessionId] [session (Addr TcpSessionCommand)]))
+(define-type HttpUnbindResponse
+  (Union
+   [HttpUnbound]
+   [HttpCommandFailed]))
+(define-function (HttpUnbound) (variant HttpUnbound))
 
-(define-function (Unbound) (variant Unbound))
+(define-variant HttpListenerInput
+  (Bound [listener (Addr TcpListenerCommand)])
+  (CommandFailed)
+  (HttpUnbind [commander (Addr HttpUnbindResponse)])
+  (BindTimeout)
+  (UnbindTimeout)
+  (Connected [session-id SessionId] [session (Addr TcpSessionCommand)]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Application Layer Protocol
@@ -109,17 +123,10 @@
   [request HttpRequest]
   [response-dest (Addr HttpResponse)])
 
-(define-type HttpUnbindResponse
-  (Union
-   [HttpUnbound]
-   ;; CommandFailed happens when we timeout waiting for TCP to unbind, but if TCP returns
-   ;; CommandFailed, we still return HttpUnbound
-   [CommandFailed]))
-
 (define-variant HttpListenerCommand
   (HttpUnbind [commander (Addr HttpUnbindResponse)]))
 
-(define-variant BindResponse
+(define-variant HttpBindResponse
   (HttpBound [listener (Addr HttpListenerCommand)])
   (HttpCommandFailed))
 
@@ -132,7 +139,7 @@
 
 (define-type HttpManagerCommands
   (Union
-   [HttpBind (Addr BindResponse) ; commander, listener
+   [HttpBind (Addr HttpBindResponse) ; commander, listener
              (Addr HttpListenerEvent)]))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -160,7 +167,8 @@
 
   (define-type ExpirationMessage
     (Union
-     [BindTimeout]))
+     [BindTimeout]
+     [UnbindTimeout]))
 
   (define-actor TimerCommand
     (Timer [expiration-message ExpirationMessage]
@@ -279,19 +287,159 @@
                 [bind-commander (Addr BindStatus)]
                 [app-listener (Addr HttpListenerEvent)]
                 [tcp (Addr TcpCommand)])
-  ()
+  ((define-function (unbind [tcp-listener (Addr TcpListenerCommand)]
+                            [unbind-commanders (Listof (Addr HttpUnbindResponse))])
+     (send tcp (Unbind self))
+     (let ([unbind-timer (spawn unbind-timer Timer (UnbindTimeout) self)])
+       (send unbind-timer (Start ,UNBIND-WAIT-TIME-IN-MS))
+       (goto Unbinding unbind-timer unbind-commanders))))
+
+  ;; initialization
   (let ([bind-timer (spawn bind-timer Timer (BindTimeout) self)])
     (send tcp (Bind port self self))
     (send bind-timer (Start ,BIND-WAIT-TIME-IN-MS))
     (goto Binding bind-timer))
+
   (define-state (Binding [bind-timer (Addr TimerCommand)]) (m)
     (case m
+      ;; From TCP
+      [(CommandFailed)
+       (send bind-commander (HttpCommandFailed))
+       (send bind-timer (Stop))
+       (goto Closed)]
+      [(Bound tcp-listener)
+       (send bind-commander (HttpBound self))
+       (send bind-timer (Stop))
+       (goto Connected tcp-listener)]
+      [(Unbound)
+       ;; shouldn't happen; ignore
+       (goto Binding bind-timer)]
+      [(Connected session-id session)
+       ;; shouldn't happen here; ignore it
+       (goto Binding bind-timer)]
+      ;; From Timer
       [(BindTimeout)
-       (send bind-commander (CommandFailed))
-       (goto Closed)]))
-  (define-state (Closed) (m) (goto Closed)))
+       (send bind-commander (HttpCommandFailed))
+       (goto Closed)]
+      [(UnbindTimeout)
+       ;; shouldn't happen
+       (goto Binding bind-timer)]
+      ;; From Application Layer
+      [(HttpUnbind commander)
+       ;; shouldn't happen here because client doesn't have our address yet, but for now I'm writing
+       ;; it anyway
+       (send bind-commander (HttpCommandFailed))
+       (goto BindingAborted bind-timer (list commander))]))
 
-)))
+  (define-state (BindingAborted [bind-timer (Addr TimerCommand)]
+                                [commanders (Listof (Addr HttpUnbindResponse))]) (m)
+    (case m
+      ;; From TCP
+      [(CommandFailed)
+       (send bind-timer (Stop))
+       (for/fold ([result 0])
+                 ([commander commanders])
+         (send commander (HttpUnbound))
+         0)
+       (goto Closed)]
+      [(Bound tcp-listener)
+       (send tcp-listener (Unbind self))
+       (send bind-timer (Stop))
+       (unbind tcp-listener commanders)]
+      [(Unbound)
+       ;; shouldn't happen; ignore
+       (goto BindingAborted bind-timer commanders)]
+      [(Connected session-id session)
+       ;; shouldn't happen here; ignore it
+       (goto BindingAborted bind-timer commanders)]
+      ;; From Timer
+      [(BindTimeout)
+       (for/fold ([result 0])
+                 ([commander commanders])
+         (send commander (HttpUnbound))
+         0)
+       (goto Closed)]
+      [(UnbindTimeout)
+       ;; shouldn't happen here
+       (goto BindingAborted bind-timer commanders)]
+      ;; From Application Layer
+      [(HttpUnbind commander)
+       (goto BindingAborted bind-timer (cons commander commanders))]))
+
+  (define-state (Unbinding [unbind-timer (Addr TimerCommand)]
+                           [commanders (Listof (Addr HttpUnbindResponse))]) (m)
+    (case m
+      ;; From TCP
+      [(CommandFailed)
+       (send unbind-timer (Stop))
+       (for/fold ([result 0])
+                 ([commander commanders])
+         (send commander (HttpUnbound))
+         0)
+       (goto Closed)]
+      [(Bound tcp-listener)
+       ;; shouldn't happen; ignore
+       (goto Unbinding unbind-timer commanders)]
+      [(Unbound)
+       (send unbind-timer (Stop))
+       (for/fold ([result 0])
+                 ([commander commanders])
+         (send commander (HttpUnbound))
+         0)
+       (goto Closed)]
+      [(Connected session-id session)
+       (goto Unbinding unbind-timer commanders)]
+      ;; From Timer
+      [(BindTimeout)
+       (goto Unbinding unbind-timer commanders)]
+      [(UnbindTimeout)
+       (for/fold ([result 0])
+                 ([commander commanders])
+         (send commander (HttpCommandFailed))
+         0)
+       (goto Closed)]
+      ;; From Application Layer
+      [(HttpUnbind commander)
+       (goto Unbinding unbind-timer (cons commander commanders))]))
+  (define-state (Connected [tcp-listener (Addr TcpListenerCommand)]) (m)
+    (case m
+      ;; From TCP
+      [(CommandFailed)
+       ;; shouldn't happen; ignore
+       (goto Connected tcp-listener)]
+      [(Bound tcp-listener)
+       ;; shouldn't happen; ignore
+       (goto Connected tcp-listener)]
+      [(Unbound)
+       ;; shouldn't happen; ignore
+       (goto Connected tcp-listener)]
+      [(Connected session-id session)
+       (spawn server-connection HttpServerConnection session-id app-listener session)
+       (goto Connected tcp-listener)]
+      ;; From Timer
+      [(BindTimeout)
+       ;; ignore
+       (goto Connected tcp-listener)]
+      [(UnbindTimeout)
+       ;; ignore
+       (goto Connected tcp-listener)]
+      ;; From Application Layer
+      [(HttpUnbind unbind-commander)
+       (unbind tcp-listener (list unbind-commander))]))
+  (define-state (Closed) (m)
+    (case m
+      ;; From TCP
+      [(CommandFailed) (goto Closed)]
+      [(Bound tcp-listener) (goto Closed)]
+      [(Unbound) (goto Closed)]
+      [(Connected session-id session) (goto Closed)]
+      ;; From Timer
+      [(BindTimeout) (goto Closed)]
+      [(UnbindTimeout) (goto Closed)]
+      ;; From Application Layer
+      [(HttpUnbind unbind-commander)
+       (send unbind-commander (HttpCommandFailed))
+       (goto Closed)]))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Programs
@@ -365,7 +513,17 @@
     (Register handler)
     (ReceivedData data)
     (Closed)
-    (CommandFailed))
+    (CommandFailed)
+    (HttpCommandFailed)
+    (Connected session-id session)
+    (HttpConnected seesion-id connection)
+    (Bound listener)
+    (Unbind commander)
+    (HttpUnbind commander)
+    (Unbound)
+    (HttpUnbound))
+
+  (define test-session-id (record [remote-address (record [ip 1234] [port 500])] [local-port 80]))
 
   (define desugared-request-handler-only-program (desugar request-handler-only-program))
 
@@ -470,15 +628,134 @@
     (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
     (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
     (sleep (/ BIND-WAIT-TIME-IN-MS 1000))
-    (check-unicast bind-commander (CommandFailed)))
+    (check-unicast bind-commander (HttpCommandFailed)))
 
-;; Tests:
-;; * if get timeout while trying to bind, respond with CommandFailed
-;; * if bound by TCP, send the app layer a Bound response with our address
-;; * if new TCP connection, send it to the registered app layer (listener from Bind message)
-;; * if get Unbind during Running, try to unbind: send back either succeed or fail
-;; * if get Unbind while waiting to bind, abort the binding (send TCP.Unbind as soon as we get a Bound)
-;; * if multiple actors try to unbind, send them each the response
-;; * unbind while closed: ???
+  (test-case "HttpListener responds with CommandFailed if TCP says the bind failed"
+    (define bind-commander (make-async-channel))
+    (define tcp (make-async-channel))
+    (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
+    (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
+    (async-channel-put listener (CommandFailed))
+    (check-unicast bind-commander (HttpCommandFailed)))
 
-  )
+  (test-case "HttpListener sends a bound response to listener after TCP gives Bound confirmation"
+    (define bind-commander (make-async-channel))
+    (define tcp (make-async-channel))
+    (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
+    (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
+    (async-channel-put listener (Bound (make-async-channel)))
+    (check-unicast-match bind-commander (csa-variant HttpBound _)))
+
+  (define (start-and-bind-http-listener app-listener tcp)
+    (define bind-commander (make-async-channel))
+    (csa-run desugared-listener-program bind-commander app-listener tcp)
+    (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
+    (async-channel-put listener (Bound (make-async-channel)))
+    (async-channel-get bind-commander) ; eat the Bound
+    listener)
+
+  (test-case "HttpListener sends new TCP connection to app layer"
+    (define app-listener (make-async-channel))
+    (define tcp (make-async-channel))
+    (define listener (start-and-bind-http-listener app-listener tcp))
+    (async-channel-put listener (Connected test-session-id (make-async-channel)))
+    (check-unicast-match app-listener (csa-variant HttpConnected _ _)))
+
+  (test-case "HttpListener tries to unbind during Connected, succeeds"
+    (define app-listener (make-async-channel))
+    (define tcp (make-async-channel))
+    (define listener (start-and-bind-http-listener app-listener tcp))
+    (define unbind-commander (make-async-channel))
+    (async-channel-put listener (HttpUnbind unbind-commander))
+    (check-unicast-match tcp (csa-variant Unbind _))
+    (async-channel-put listener (Unbound))
+    (check-unicast unbind-commander (HttpUnbound)))
+
+  (test-case "HttpListener tries to unbind during Connected, times out"
+    (define app-listener (make-async-channel))
+    (define tcp (make-async-channel))
+    (define listener (start-and-bind-http-listener app-listener tcp))
+    (define unbind-commander (make-async-channel))
+    (async-channel-put listener (HttpUnbind unbind-commander))
+    (check-unicast-match tcp (csa-variant Unbind _))
+    (sleep (/ UNBIND-WAIT-TIME-IN-MS 1000))
+    (check-unicast unbind-commander (HttpCommandFailed)))
+
+  (test-case "HttpListener tries to unbind during Connected, fails"
+    (define app-listener (make-async-channel))
+    (define tcp (make-async-channel))
+    (define listener (start-and-bind-http-listener app-listener tcp))
+    (define unbind-commander (make-async-channel))
+    (async-channel-put listener (HttpUnbind unbind-commander))
+    (check-unicast-match tcp (csa-variant Unbind _))
+    (async-channel-put listener (CommandFailed))
+    (check-unicast unbind-commander (HttpUnbound)))
+
+  (test-case "HttpListener aborts binding, succeeds"
+    (define bind-commander (make-async-channel))
+    (define app-listener (make-async-channel))
+    (define tcp (make-async-channel))
+    (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
+    (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
+    (define unbind-commander (make-async-channel))
+    (async-channel-put listener (HttpUnbind unbind-commander))
+    (check-unicast bind-commander (HttpCommandFailed))
+    (define tcp-listener (make-async-channel))
+    (async-channel-put listener (Bound tcp-listener))
+    (check-unicast-match tcp-listener (csa-variant Unbind _))
+    (async-channel-put listener (Unbound))
+    (check-unicast unbind-commander (HttpUnbound)))
+
+  (test-case "HttpListener aborts binding, unbind fails"
+    (define bind-commander (make-async-channel))
+    (define app-listener (make-async-channel))
+    (define tcp (make-async-channel))
+    (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
+    (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
+    (define unbind-commander (make-async-channel))
+    (async-channel-put listener (HttpUnbind unbind-commander))
+    (check-unicast bind-commander (HttpCommandFailed))
+    (define tcp-listener (make-async-channel))
+    (async-channel-put listener (Bound tcp-listener))
+    (check-unicast-match tcp-listener (csa-variant Unbind _))
+    (async-channel-put listener (CommandFailed))
+    (check-unicast unbind-commander (HttpUnbound)))
+
+  (test-case "HttpListener aborts binding, but original bind fails"
+    (define bind-commander (make-async-channel))
+    (define app-listener (make-async-channel))
+    (define tcp (make-async-channel))
+    (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
+    (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
+    (define unbind-commander (make-async-channel))
+    (async-channel-put listener (HttpUnbind unbind-commander))
+    (check-unicast bind-commander (HttpCommandFailed))
+    (async-channel-put listener (CommandFailed))
+    (check-unicast unbind-commander (HttpUnbound)))
+
+  (test-case "HttpListener sends HttpUnbound to every Unbind commander"
+    (define app-listener (make-async-channel))
+    (define tcp (make-async-channel))
+    (define listener (start-and-bind-http-listener app-listener tcp))
+    (define unbind-commander1 (make-async-channel))
+    (define unbind-commander2 (make-async-channel))
+    (define unbind-commander3 (make-async-channel))
+    (async-channel-put listener (HttpUnbind unbind-commander1))
+    (async-channel-put listener (HttpUnbind unbind-commander2))
+    (async-channel-put listener (HttpUnbind unbind-commander3))
+    (check-unicast-match tcp (csa-variant Unbind _))
+    (async-channel-put listener (Unbound))
+    (check-unicast unbind-commander1 (HttpUnbound))
+    (check-unicast unbind-commander2 (HttpUnbound))
+    (check-unicast unbind-commander3 (HttpUnbound)))
+
+  (test-case "HttpListener responds to Unbind after it's closed"
+    (define bind-commander (make-async-channel))
+    (define app-listener (make-async-channel))
+    (define tcp (make-async-channel))
+    (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
+    (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
+    (async-channel-put listener (CommandFailed)) ; listener should be closed now
+    (define unbind-commander (make-async-channel))
+    (async-channel-put listener (HttpUnbind unbind-commander))
+    (check-unicast unbind-commander (HttpCommandFailed))))
