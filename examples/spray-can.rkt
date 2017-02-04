@@ -862,6 +862,23 @@
       (Close (Addr (Union [CommandFailed] [Closed])))
       (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
       (Abort (Addr (Union [CommandFailed] [Aborted])))))
+  (define desugared-tcp-connection-status
+    `(Union
+      [CommandFailed]
+      [Connected ,desugared-session-id
+                 (Addr ,desugared-tcp-session-command)]))
+  (define desugared-tcp-unbind-response
+    `(Union
+      [Unbound]
+      [CommandFailed]))
+  (define desugared-tcp-listener-command
+    `(Union [Unbind (Addr ,desugared-tcp-unbind-response)]))
+  (define desugared-tcp-user-command
+    `(Union
+      ;; [Connect ,desugared-socket-address (Addr ,desugared-connection-status)]
+      [Bind Nat
+            (Addr (Union [Bound (Addr ,desugared-tcp-listener-command)] [CommandFailed]))
+            (Addr ,desugared-tcp-connection-status)]))
 
   ;; HTTP types
   (define desugared-http-incoming-request
@@ -871,9 +888,23 @@
       [HttpRegister (Addr ,desugared-http-incoming-request)]))
   (define desugared-http-listener-event
     `(Union (HttpConnected ,desugared-session-id (Addr ,desugared-http-connection-command))))
+  (define desugared-http-unbind-response
+    `(Union
+      [HttpUnbound]
+      [HttpCommandFailed]))
+  (define desugared-http-listener-command
+    `(Union
+      [HttpUnbind (Addr ,desugared-http-unbind-response)]))
+  (define desugared-http-bind-response
+    `(Union
+      [HttpBound (Addr ,desugared-http-listener-command)]
+      [HttpCommandFailed]))
 
   (test-true "User command type" (csa-valid-type? desugared-http-listener-event))
-  (test-true "TCP Session command type" (csa-valid-type? desugared-session-command)))
+  (test-true "TCP Session command type" (csa-valid-type? desugared-tcp-session-command))
+  (test-true "Bind status type" (csa-valid-type? desugared-http-bind-response))
+  (test-true "TcpCommand type" (csa-valid-type? desugared-tcp-user-command)))
+
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Specification check
@@ -907,4 +938,50 @@
        (define-state (Done))))
 
   (test-true "ServerConnection conforms to its specification"
-    (check-conformance desugared-connection-program connection-spec)))
+    (check-conformance desugared-connection-program connection-spec))
+
+  (define unbind-result-behavior
+    `((goto SendUnbindResultAnytime unbind-commander)
+      (define-state (SendUnbindResultAnytime unbind-commander)
+        [unobs ->
+          ([obligation unbind-commander (or (variant HttpUnbound)
+                                            (variant HttpCommandFailed))])
+          (goto SendUnbindResultAnytime unbind-commander)])))
+
+  (define listener-spec-behavior
+    `((goto Connected app-listener)
+      (define-state (Connected app-listener)
+        [unobs ->
+          ([obligation app-listener (variant HttpConnected (fork ,@connection-spec-behavior))])
+          (goto Connected app-listener)]
+        ;; Checker isn't precise enough to know that an unbind result will only be sent once, so we
+        ;; have to write a spec that allows for many sends instead
+        [(variant HttpUnbind unbind-commander) ->
+         ([fork ,@unbind-result-behavior])
+         (goto Closed)])
+      (define-state (Closed)
+        [(variant HttpUnbind unbind-commander) ->
+         ([fork ,@unbind-result-behavior])
+         (goto Closed)])
+      ))
+
+  ;; HttpListener check
+  (define listener-spec
+    `(specification (receptionists)
+                    (externals [bind-commander ,desugared-http-bind-response]
+                               [app-listener ,desugared-http-listener-event]
+                               [tcp ,desugared-tcp-user-command])
+       UNKNOWN
+       ()
+       (goto Init bind-commander app-listener)
+       (define-state (Init bind-commander app-listener)
+         [unobs ->
+           ([obligation bind-commander (variant HttpBound (fork ,@listener-spec-behavior))])
+           (goto Done)]
+         [unobs ->
+           ([obligation bind-commander (variant HttpCommandFailed)])
+           (goto Done)])
+       (define-state (Done))))
+
+  (test-true "HttpListener conforms to its specification"
+    (check-conformance desugared-listener-program listener-spec)))
