@@ -513,6 +513,15 @@
      (actors [manager (spawn manager HttpManager tcp)])))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Common test definitions
+
+(module+ test
+  (define desugared-request-handler-only-program (desugar request-handler-only-program))
+  (define desugared-connection-program (desugar connection-program))
+  (define desugared-listener-program (desugar listener-program))
+  (define desugared-manager-program (desugar manager-program)))
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Tests
 
 (module+ test
@@ -543,8 +552,6 @@
 
   (define test-session-id (record [remote-address (record [ip 1234] [port 500])] [local-port 80]))
 
-  (define desugared-request-handler-only-program (desugar request-handler-only-program))
-
   (test-case "Write response to TCP when application layer responds to request from RequestHandler"
     (define app-layer (make-async-channel))
     (define tcp (make-async-channel))
@@ -564,8 +571,6 @@
     (check-no-message tcp #:timeout 2))
 
   ;; HttpServerConnection tests
-
-  (define desugared-connection-program (desugar connection-program))
 
   (test-case "ServerConection registers with TCP connection when application layer registers with ServerConnection"
     (define app-listener (make-async-channel))
@@ -637,8 +642,6 @@
     (check-no-message handler))
 
   ;; HttpListener Tests
-
-  (define desugared-listener-program (desugar listener-program))
 
   (test-case "HttpListener responds with CommandFailed if it times out while binding"
     (define bind-commander (make-async-channel))
@@ -779,8 +782,6 @@
     (check-unicast unbind-commander (HttpCommandFailed)))
 
   ;; HttpManager Tests
-
-  (define desugared-manager-program (desugar manager-program))
 
   (test-case "HttpManager bind can fail; report failure to commander"
     (define tcp (make-async-channel))
