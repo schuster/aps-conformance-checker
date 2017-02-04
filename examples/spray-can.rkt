@@ -271,7 +271,7 @@
       [(Aborted) (goto Closed)]
       [(PeerClosed) (goto Closed)]
       [(ErrorClosed) (goto Closed)]
-      [(HttpRegister handler)
+      [(HttpRegister new-handler)
        ;; just ignore extra registration messages
        (goto Running held-data handler)]))
 
