@@ -5,4 +5,5 @@ sandbox.rkt
 tuple_log.dat
 flink_debug
 raft_debug
+spray-can_debug
 tcp_debug
