@@ -899,12 +899,15 @@
     `(Union
       [HttpBound (Addr ,desugared-http-listener-command)]
       [HttpCommandFailed]))
+  (define desugared-http-manager-command
+    `(Union
+      (HttpBind Nat (Addr ,desugared-http-bind-response) (Addr ,desugared-http-listener-event))))
 
   (test-true "User command type" (csa-valid-type? desugared-http-listener-event))
   (test-true "TCP Session command type" (csa-valid-type? desugared-tcp-session-command))
   (test-true "Bind status type" (csa-valid-type? desugared-http-bind-response))
-  (test-true "TcpCommand type" (csa-valid-type? desugared-tcp-user-command)))
-
+  (test-true "TcpCommand type" (csa-valid-type? desugared-tcp-user-command))
+  (test-true "HTTP Manager Command type" (csa-valid-type? desugared-http-manager-command)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Specification check
@@ -985,3 +988,20 @@
 
   (test-true "HttpListener conforms to its specification"
     (check-conformance desugared-listener-program listener-spec)))
+
+  (define http-manager-spec
+    `(specification (receptionists [manager ,desugared-http-manager-command])
+                    (externals [tcp ,desugared-tcp-user-command])
+       [manager ,desugared-http-manager-command]
+       ()
+       (goto Running)
+       (define-state (Running)
+         [(variant HttpBind * commander app-listener) ->
+          ([obligation commander (or (variant HttpCommandFailed)
+                                     (variant HttpBound (fork ,@listener-spec-behavior)))])
+          (goto Running)])
+       ))
+
+
+  (test-true "HttpManager conforms to its specification"
+    (check-conformance desugared-manager-program http-manager-spec)))
