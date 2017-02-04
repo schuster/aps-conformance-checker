@@ -13,9 +13,9 @@
 (define register-timeout 5000) ; in milliseconds (5 seconds is the Akka default)
 (define timeout-fudge-factor 500) ; in milliseconds
 
-(define tcp-program
+(define tcp-definitions
   (quasiquote
-(program (receptionists [tcp TcpInput]) (externals [packets-out TcpOutput])
+(
 
 ;;---------------------------------------------------------------------------------------------------
 ;; Math
@@ -1262,13 +1262,16 @@
              (send bind-status-addr (Bound))
              (goto Ready session-table (hash-set binding-table port bind-handler))])]
         [(SessionCloseNotification session-id)
-         (goto Ready (hash-remove session-table session-id) binding-table)])))
+         (goto Ready (hash-remove session-table session-id) binding-table)]))))))
 
-  (actors [tcp (spawn 1 Tcp packets-out
-                            ,wait-time-in-milliseconds
-                            ,max-retries
-                            ,max-segment-lifetime
-                            ,user-response-wait-time)]))))
+(define tcp-program
+  `(program (receptionists [tcp TcpInput]) (externals [packets-out TcpOutput])
+            ,@tcp-definitions
+            (actors [tcp (spawn 1 Tcp packets-out
+                                ,wait-time-in-milliseconds
+                                ,max-retries
+                                ,max-segment-lifetime
+                                ,user-response-wait-time)])))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing
@@ -2028,5 +2031,72 @@
        (define-state (DoNothing) [* -> () (goto DoNothing)])))
 
   (test-true "User command type" (csa-valid-type? desugared-user-command))
+  (test-true (check-conformance desugared-program trivial-spec))
 
-  (check-conformance desugared-program trivial-spec))
+  (define tcp-session-program
+    `(program (receptionists)
+              (externals [session-dest (Addr TcpSessionCommand)]
+                         [session-packet-dest (Addr (Union (InTcpPacket TcpPacket)))]
+                         [packets-out (Union [OutPacket IpAddress TcpPacket])]
+                         [status-updates ConnectionStatus]
+                         [close-notifications (Union [SessionCloseNotification SessionId])])
+              ,@tcp-definitions
+              (define-actor Nat
+                (Launcher [session-dest (Addr (Addr TcpSessionCommand))]
+                          [session-packet-dest (Addr (Addr (Union (InTcpPacket TcpPacket))))]
+                          [packets-out (Addr (Union [OutPacket IpAddress TcpPacket]))]
+                          [status-updates (Addr ConnectionStatus)]
+                          [close-notifications (Addr (Union [SessionCloseNotification SessionId]))])
+                ()
+                (goto Init session-dest
+                      session-packet-dest
+                      packets-out
+                      status-updates
+                      close-notifications)
+                (define-state/timeout
+                  (Init [session-dest (Addr (Addr TcpSessionCommand))]
+                        [session-packet-dest (Addr (Addr (Union (InTcpPacket TcpPacket))))]
+                        [packets-out (Addr (Union [OutPacket IpAddress TcpPacket]))]
+                        [status-updates (Addr ConnectionStatus)]
+                        [close-notifications (Addr (Union [SessionCloseNotification SessionId]))]) (m)
+                  (goto Init session-dest session-packet-dest)
+                  (timeout 0
+                    (let ([session (spawn session
+                                          TcpSession
+                                          (SessionId (InetSocketAddress 1234 50) 80)
+                                          (ActiveOpen)
+                                          packets-out
+                                          status-updates
+                                          close-notifications
+                                          30000
+                                          3
+                                          30000
+                                          10000)])
+                      (send session-dest session)
+                      (send session-packet-dest session)
+                      (goto Done))))
+                (define-state (Done) (m) (goto Done))
+                )
+              (actors [launcher (spawn launcher
+                                       Launcher
+                                       session-dest
+                                       session-packet-dest
+                                       packets-out
+                                       status-updates
+                                       close-notifications)])))
+
+  (define trivial-session-spec
+    `(specification
+      (receptionists)
+      (externals [session-dest (Addr ,desugared-session-command)]
+                 [session-packet-dest (Addr (Union [InTcpPacket ,desugared-tcp-packet-type]))]
+                 [packets-out ,desugared-tcp-output]
+                 [status-updates ,desugared-connection-status]
+                 [close-notifications (Union [SessionCloseNotification ,desugared-session-id])])
+       UNKNOWN
+       ()
+       (goto DoNothing)
+       (define-state (DoNothing) [* -> () (goto DoNothing)])))
+
+  (test-true "Conformance for session"
+    (check-conformance (desugar tcp-session-program) trivial-session-spec)))
