@@ -86,8 +86,8 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; HTTP types
 
-(define-type HttpRequest (Vectorof Bytes))
-(define-type HttpResponse (Vectorof Bytes))
+(define-type HttpRequest (Vectorof Byte))
+(define-type HttpResponse (Vectorof Byte))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Internal Types
@@ -273,7 +273,7 @@
       [(ErrorClosed) (goto Closed)]
       [(HttpRegister handler)
        ;; just ignore extra registration messages
-       (goto Running handler)]))
+       (goto Running held-data handler)]))
 
   (define-state (Closed) (m) (goto Closed)))
 
