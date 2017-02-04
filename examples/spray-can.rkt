@@ -33,14 +33,14 @@
     [remote-address InetSocketAddress]
     [local-port Nat])
 
-(define-type WriteResponse
+(define-type TcpWriteResponse
   (Union
    (CommandFailed)
    (WriteAck)))
 
 (define-type TcpWriteOnlyCommand
   (Union
-   (Write (Vectorof Byte) (Addr WriteResponse))))
+   (Write (Vectorof Byte) (Addr TcpWriteResponse))))
 
 (define-type TcpSessionEvent
   (Union
@@ -53,18 +53,18 @@
 
 (define-variant TcpSessionCommand
   (Register [handler (Addr TcpSessionEvent)])
-  (Write [data (Vectorof Byte)] [handler (Addr WriteResponse)])
+  (Write [data (Vectorof Byte)] [handler (Addr TcpWriteResponse)])
   (Close [close-handler (Addr (Union [CommandFailed] [Closed]))])
   (ConfirmedClose [close-handler (Addr (Union [CommandFailed] [ConfirmedClosed]))])
   (Abort [close-handler (Addr (Union [CommandFailed] [Aborted]))]))
 
-(define-type UnbindResponse
+(define-type TcpUnbindResponse
   (Union
    [Unbound]
    [CommandFailed]))
 
 (define-variant TcpListenerCommand
-  (Unbind [unbind-commander (Addr UnbindResponse)]))
+  (Unbind [unbind-commander (Addr TcpUnbindResponse)]))
 
 (define-type BindStatus
   (Union [Bound (Addr TcpListenerCommand)]
@@ -851,24 +851,24 @@
       [Aborted]
       [PeerClosed]
       [ErrorClosed]))
-  (define desugared-write-response
+  (define desugared-tcp-write-response
     `(Union
       [CommandFailed]
       [WriteAck]))
-  (define desugared-session-command
+  (define desugared-tcp-session-command
     `(Union
       (Register (Addr ,desugared-tcp-session-event))
-      (Write (Vectorof Nat) (Addr ,desugared-write-response))
+      (Write (Vectorof Nat) (Addr ,desugared-tcp-write-response))
       (Close (Addr (Union [CommandFailed] [Closed])))
       (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
       (Abort (Addr (Union [CommandFailed] [Aborted])))))
 
   ;; HTTP types
-  (define desugared-incoming-request
+  (define desugared-http-incoming-request
     `(Record [request (Vectorof Nat)] [response-dest (Addr (Vectorof Nat))]))
   (define desugared-http-connection-command
     `(Union
-      [HttpRegister (Addr ,desugared-incoming-request)]))
+      [HttpRegister (Addr ,desugared-http-incoming-request)]))
   (define desugared-http-listener-event
     `(Union (HttpConnected ,desugared-session-id (Addr ,desugared-http-connection-command))))
 
@@ -895,7 +895,7 @@
   (define connection-spec
     `(specification (receptionists)
                     (externals [app-listener ,desugared-http-listener-event]
-                               [tcp-session ,desugared-session-command])
+                               [tcp-session ,desugared-tcp-session-command])
        UNKNOWN
        ()
        (goto Init app-listener)
