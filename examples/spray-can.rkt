@@ -833,3 +833,78 @@
     (async-channel-put http-handler (vector 4 5 6))
     ;; HTTP server sends our response to TCP, hurray!
     (check-unicast-match tcp-session (csa-variant Write (vector 4 5 6) _))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Desugared types
+
+(module+ test
+  ;; TCP types
+  (define desugared-socket-address
+    `(Record [ip Nat] [port Nat]))
+  (define desugared-session-id
+    `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
+  (define desugared-tcp-session-event
+    `(Union
+      [ReceivedData (Vectorof Nat)]
+      [Closed]
+      [ConfirmedClosed]
+      [Aborted]
+      [PeerClosed]
+      [ErrorClosed]))
+  (define desugared-write-response
+    `(Union
+      [CommandFailed]
+      [WriteAck]))
+  (define desugared-session-command
+    `(Union
+      (Register (Addr ,desugared-tcp-session-event))
+      (Write (Vectorof Nat) (Addr ,desugared-write-response))
+      (Close (Addr (Union [CommandFailed] [Closed])))
+      (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+      (Abort (Addr (Union [CommandFailed] [Aborted])))))
+
+  ;; HTTP types
+  (define desugared-incoming-request
+    `(Record [request (Vectorof Nat)] [response-dest (Addr (Vectorof Nat))]))
+  (define desugared-http-connection-command
+    `(Union
+      [HttpRegister (Addr ,desugared-incoming-request)]))
+  (define desugared-http-listener-event
+    `(Union (HttpConnected ,desugared-session-id (Addr ,desugared-http-connection-command))))
+
+  (test-true "User command type" (csa-valid-type? desugared-http-listener-event))
+  (test-true "TCP Session command type" (csa-valid-type? desugared-session-command)))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Specification check
+
+(module+ test
+  (define connection-spec-behavior
+    `((goto AwaitingRegistration)
+      (define-state (AwaitingRegistration)
+        [unobs -> () (goto Closed)]
+        [(variant HttpRegister handler) -> () (goto Running handler)])
+      (define-state (Running handler)
+        [unobs ->
+          ([obligation handler (record [request *] [response-dest *])])
+          (goto Running handler)]
+        [(variant HttpRegister new-handler) -> () (goto Running handler)]
+        [unobs -> () (goto Closed)])
+      (define-state (Closed))))
+
+  (define connection-spec
+    `(specification (receptionists)
+                    (externals [app-listener ,desugared-http-listener-event]
+                               [tcp-session ,desugared-session-command])
+       UNKNOWN
+       ()
+       (goto Init app-listener)
+       (define-state (Init app-listener)
+         [unobs ->
+                ([obligation app-listener
+                             (variant HttpConnected * (fork ,@connection-spec-behavior))])
+           (goto Done)])
+       (define-state (Done))))
+
+  (test-true "ServerConnection conforms to its specification"
+    (check-conformance desugared-connection-program connection-spec)))
