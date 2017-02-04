@@ -1505,9 +1505,9 @@
 ;; environment interface with the wrong spawn flag
 (define (aps#-blur-config config internals-to-blur)
   (redex-let aps# ([[any_addr any_receptionists any_exp any_state-defs any_out-coms] config])
+    (define blurred-unobs-env (csa#-blur-addresses (term any_receptionists) internals-to-blur null))
     (term [any_addr
-           ,(remove-duplicates
-             (csa#-blur-addresses (term any_receptionists) internals-to-blur null))
+           ,(merge-receptionists null blurred-unobs-env)
            any_exp
            any_state-defs
            any_out-coms])))
@@ -1529,7 +1529,21 @@
        (Nat (blurred-spawn-addr 1))
        (Nat (spawn-addr 2 NEW))
        (Nat (spawn-addr 2 OLD)))
-    `())))
+     `()))
+
+  (test-equal? "aps#-blur-config merges addresses after blur"
+    (aps#-blur-config `(UNKNOWN
+                        ([(Union [A]) (blurred-spawn-addr 1)]
+                         [(Union [B]) (spawn-addr 1 OLD)])
+                        (goto S)
+                        ()
+                        ())
+                      (list `(spawn-addr 1 OLD)))
+     `(UNKNOWN
+       ([(Union [A] [B]) (blurred-spawn-addr 1)])
+       (goto S)
+       ()
+       ())))
 
 ;; (define-metafunction aps#
 ;;   blur-receptionists : (a#int ...) spawn-flag -> (a#int ...)
