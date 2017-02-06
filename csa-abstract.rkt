@@ -212,13 +212,13 @@
       (set! next-generated-address (add1 next-generated-address))
       (term ((τ (obs-ext ,next-generated-address)))))]
   [(messages-of-type/mf (Listof τ) natural_max-depth)
-   ((normalize-collection (list-val v# ...)))
+   (,(normalize-collection (term (list-val v# ...))))
    (where (v# ...) (messages-of-type/mf τ natural_max-depth))]
   [(messages-of-type/mf (Vectorof τ) natural_max-depth)
-   ((normalize-collection (vector-val v# ...)))
+   (,(normalize-collection (term (vector-val v# ...))))
    (where (v# ...) (messages-of-type/mf τ natural_max-depth))]
   [(messages-of-type/mf (Hash τ_1 τ_2) natural_max-depth)
-   ((normalize-collection (hash-val (v#_keys ...) (v#_vals ...))))
+   (,(normalize-collection (term (hash-val (v#_keys ...) (v#_vals ...)))))
    (where (v#_keys ...) (messages-of-type/mf τ_1 natural_max-depth))
    (where (v#_vals ...) (messages-of-type/mf τ_2 natural_max-depth))])
 
@@ -783,13 +783,13 @@
      (eval-and-then* args effects
        (lambda (vs effects)
          (match (cons op vs)
-           [`(list ,vs ...) (value-result (term (normalize-collection (list-val ,@vs))) effects)]
+           [`(list ,vs ...) (value-result (normalize-collection `(list-val ,@vs)) effects)]
            [`(cons ,v ,rest)
             (define existing-list-vals
              (match rest
                [`(* (Listof ,type)) (list `(* ,type))]
                [`(list-val ,vs ...) vs]))
-            (value-result (term (normalize-collection (list-val ,@existing-list-vals ,v))) effects)]
+            (value-result (normalize-collection `(list-val ,@existing-list-vals ,v)) effects)]
            [`(list-as-variant ,l)
             (match l
               [`(* (Listof ,type)) (value-result `(variant Empty)
@@ -811,7 +811,7 @@
               [_ (error 'eval-machine/internal "Bad list for list-ref: ~s\n" l)])]
            [`(remove ,_ ,l) (value-result l effects)]
            [`(length ,_) (value-result `(* Nat) effects)]
-           [`(vector ,vs ...) (value-result (term (normalize-collection (vector-val ,@vs))) effects)]
+           [`(vector ,vs ...) (value-result (normalize-collection `(vector-val ,@vs)) effects)]
            [`(vector-ref ,v ,_)
             (match v
               [`(* (Vectorof ,type)) (value-result `(* ,type) effects)]
@@ -827,7 +827,7 @@
            ;; (so that we don't lose a precise address)
            [`(vector-append ,v1 ,v2)
             (value-result
-             (term (normalize-collection (vector-val ,@(vector-values v1) ,@(vector-values v2))))
+             (normalize-collection `(vector-val ,@(vector-values v1) ,@(vector-values v2)))
              effects)]
            [`(hash-ref ,h ,k)
             (match h
@@ -850,11 +850,11 @@
             (match h
               [`(* (Hash ,key-type ,value-type))
                (value-result
-                (term (normalize-collection (hash-val ((* ,key-type) ,key) ((* ,value-type) ,val))))
+                (normalize-collection `(hash-val ((* ,key-type) ,key) ((* ,value-type) ,val)))
                 effects)]
               [`(hash-val ,keys ,vals)
                (value-result
-                (term (normalize-collection (hash-val ,(cons key keys) ,(cons val vals))))
+                (normalize-collection `(hash-val ,(cons key keys) ,(cons val vals)))
                 effects)])]
            [`(hash-remove ,h ,k) (value-result h effects)]
            [`(hash-has-key? ,h ,k)
@@ -874,7 +874,7 @@
              (match results
                [(list) (list keys vals)]
                [(list key val rest ...) (loop rest (cons key keys) (cons val vals))])))
-         (value-result (term (normalize-collection (hash-val ,keys ,vals))) effects))
+         (value-result (normalize-collection `(hash-val ,keys ,vals)) effects))
        (lambda (stucks) (error 'eval-machine/internal "Stuck evaluating hash: ~s" `(hash ,@stucks))))]
     ;; Loops
     [`(for/fold ([,result-var ,result-exp])
@@ -1517,15 +1517,15 @@
 
 ;; Puts the given abstract collection value (a list, vector, or hash) and puts it into a canonical
 ;; form
-(define-metafunction csa#
-  normalize-collection : v# -> v#
-  [(normalize-collection (list-val v# ...))
-   (list-val ,@(sort (remove-duplicates (term (v# ...))) sexp<?))]
-  [(normalize-collection (vector-val v# ...))
-   (vector-val ,@(sort (remove-duplicates (term (v# ...))) sexp<?))]
-  [(normalize-collection (hash-val (v#_keys ...) (v#_vals ...)))
-   (hash-val ,(sort (remove-duplicates (term (v#_keys ...))) sexp<?)
-             ,(sort (remove-duplicates (term (v#_vals ...))) sexp<?))])
+(define (normalize-collection v)
+  (match v
+    [`(list-val ,vs ...)
+     `(list-val ,@(sort (remove-duplicates vs) sexp<?))]
+    [`(vector-val ,vs ...)
+     `(vector-val ,@(sort (remove-duplicates vs) sexp<?))]
+    [`(hash-val ,keys ,vals)
+     `(hash-val ,(sort (remove-duplicates keys) sexp<?)
+                ,(sort (remove-duplicates vals) sexp<?))]))
 
 (define (add-output existing-packets new-packet)
   (match-define `[,new-addr ,new-val ,new-mult] new-packet)
@@ -2022,16 +2022,16 @@
   [(abstract-e (unfold τ e) (a ...) natural_depth)
    (unfold τ (abstract-e e (a ...) natural_depth))]
   [(abstract-e (list v ...) (a ...) natural_depth)
-   (normalize-collection (list-val (abstract-e v (a ...) natural_depth) ...))]
+   ,(normalize-collection (term (list-val (abstract-e v (a ...) natural_depth) ...)))]
   [(abstract-e (list e ...) (a ...) natural_depth)
    (list (abstract-e e (a ...) natural_depth) ...)]
   [(abstract-e (vector v ...) (a ...) natural_depth)
-   (normalize-collection (vector-val (abstract-e v (a ...) natural_depth) ...))]
+   ,(normalize-collection (term (vector-val (abstract-e v (a ...) natural_depth) ...)))]
   [(abstract-e (vector e ...) (a ...) natural_depth)
    (vector (abstract-e e (a ...) natural_depth) ...)]
   [(abstract-e (hash [v_key v_val] ...) (a ...) natural_depth)
-   (normalize-collection (hash-val ((abstract-e v_key (a ...) natural_depth) ...)
-                                   ((abstract-e v_val (a ...) natural_depth) ...)))]
+   ,(normalize-collection (term (hash-val ((abstract-e v_key (a ...) natural_depth) ...)
+                                          ((abstract-e v_val (a ...) natural_depth) ...))))]
   [(abstract-e (hash [e_key e_val] ...) (a ...) natural_depth)
    (hash [(abstract-e e_key (a ...) natural_depth) (abstract-e e_val (a ...) natural_depth)] ...)]
   [(abstract-e (for/fold ([x_1 e_1]) ([x_2 e_2]) e) (a ...) natural)
@@ -2286,11 +2286,11 @@
          (term (* (Addr ,type))))]
     [(list (and keyword (or `vector-val 'list-val 'hash-val)) terms ...)
      (define blurred-args (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) terms))
-     (term (normalize-collection (,keyword ,@blurred-args)))]
+     (normalize-collection `(,keyword ,@blurred-args))]
     [`(hash-val ,keys ,vals)
      (define blurred-keys (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) keys))
      (define blurred-vals (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) vals))
-     (term (normalize-collection (hash-val ,blurred-keys ,blurred-vals)))]
+     (normalize-collection `(hash-val ,blurred-keys ,blurred-vals))]
     [(list terms ...)
      (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) terms)]
     [_ some-term]))
@@ -2886,11 +2886,12 @@
    (folded (minfixpt X τ) (coerce v# (type-subst τ X (minfixpt X τ))))]
   ;; lists, vectors, and hashes
   [(coerce (list-val v# ...) (Listof τ))
-   (normalize-collection (list-val (coerce v# τ) ...))]
+   ,(normalize-collection (term (list-val (coerce v# τ) ...)))]
   [(coerce (vector-val v# ...) (Vectorof τ))
-   (normalize-collection (vector-val (coerce v# τ) ...))]
+   ,(normalize-collection (term (vector-val (coerce v# τ) ...)))]
   [(coerce (hash-val (v#_keys ...) (v#_vals ...)) (Hash τ_key τ_val))
-   (normalize-collection (hash-val ((coerce v#_keys τ_key) ...) ((coerce v#_vals τ_val) ...)))])
+   ,(normalize-collection
+     (term (hash-val ((coerce v#_keys τ_key) ...) ((coerce v#_vals τ_val) ...))))])
 
 (module+ test
   (test-equal? "coerce wildcard 1" (term (coerce (* Nat) Nat)) (term (* Nat)))
