@@ -818,7 +818,7 @@
                       receive-buffer
                       (Close close-handler)
                       (SentFin)
-                      (spawn close-await Sink)
+                      (spawn close-await-sink Sink)
                       rxmt-timer)]
         [(ConfirmedClose close-handler)
          (start-close send-buffer
@@ -826,7 +826,7 @@
                       receive-buffer
                       (ConfirmedClose close-handler)
                       (SentFin)
-                      (spawn confirmed-close-await Sink)
+                      (spawn confirmed-close-await-sink Sink)
                       rxmt-timer)]
         [(Abort close-handler)
          (abort-connection (: send-buffer send-next))
