@@ -442,14 +442,6 @@
                                   [(init-addr 2) (* Nat) many]
                                   [(init-addr 1) (* String) single]))))
 
-(define-metafunction csa#
-  config-remove-packet/mf : i# (a# v#) -> i#
-  [(config-remove-packet/mf (any_precise any_blurred (any_pkt1 ... (a# v# single) any_pkt2 ...))
-                            (a# v#))
-   (any_precise any_blurred (any_pkt1 ... any_pkt2 ...))]
-
-  [(config-remove-packet/mf any_config _) any_config])
-
 ;; Returns the behavior's current timeout handler expression with all state arguments substituted in
 ;; if the current state has a timeout clause, else #f
 (define-metafunction csa#
