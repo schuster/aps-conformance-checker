@@ -48,7 +48,7 @@
   (-> csa-valid-program? aps-valid-spec? boolean?)
 
   (match-define (list impl-config spec-config) (instantiate-configs program specification))
-    (check-conformance/config impl-config spec-config))
+  (check-conformance/config impl-config spec-config))
 
 ;; Given a concrete implementation configuration, a concrete specification configuration, returns #t
 ;; if the conformance-check algorithm can prove that the implementation conforms to the specification,
