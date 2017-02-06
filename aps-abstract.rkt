@@ -1062,31 +1062,29 @@
 ;; Merges the list of new receptionists into the old one, taking the join of types for duplicate
 ;; entries and adding new entries otherwise
 (define (merge-receptionists old-recs new-recs)
-  (term (merge-receptionists/mf ,old-recs ,new-recs)))
-
-(define-metafunction aps#
-  merge-receptionists/mf : ((τ a#int) ...) ((τ a#int) ...) -> ((τ a#int) ...)
-  [(merge-receptionists/mf any_1 ()) any_1]
-  [(merge-receptionists/mf (any_1 ... (τ_1 a#int) any_2 ...)
-                           ((τ_2 a#int) any_rest ...))
-   (merge-receptionists/mf (any_1 ...
-                           ((type-join τ_1 τ_2) a#int)
-                           any_2 ...)
-                           (any_rest ...))]
-  [(merge-receptionists/mf (any_1 ...) (any_curr any_rest ...))
-   (merge-receptionists/mf (any_1 ... any_curr) (any_rest ...))])
+  (for/fold ([old-recs old-recs])
+            ([new-rec new-recs])
+    (define raw-new-address (csa#-address-strip-type new-rec))
+    (define (matches-new-rec? old-rec)
+      (equal? raw-new-address
+              (csa#-address-strip-type old-rec)))
+    (match (find-with-rest matches-new-rec? old-recs)
+      [#f (append old-recs (list new-rec))]
+      [`[,before ,old-rec ,after]
+       (define joined-type
+         (term (type-join ,(csa#-address-type old-rec) ,(csa#-address-type new-rec))))
+       (append before (list `[,joined-type ,raw-new-address]) after)])))
 
 (module+ test
   (test-equal? "merge receptionists"
-    (term
-     (merge-receptionists/mf
-      ((Nat (init-addr 1))
+    (merge-receptionists
+     `((Nat (init-addr 1))
        ((Union [B]) (spawn-addr 2 NEW))
        ((Union [C]) (init-addr 2)))
-      (((Union [A]) (spawn-addr 2 NEW))
+     `(((Union [A]) (spawn-addr 2 NEW))
        (Nat (init-addr 1))
        ((Union [D]) (init-addr 2))
-       (Nat (spawn-addr 3 OLD)))))
+       (Nat (spawn-addr 3 OLD))))
     (term
      ((Nat (init-addr 1))
       ((Union [A] [B]) (spawn-addr 2 NEW))
