@@ -3017,23 +3017,22 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Address containment
 
-;; Returns the list of all external addresses in the given term
+;; Returns the list of all (precise) external addresses in the given term
 (define (externals-in the-term)
-  (remove-duplicates (term (externals-in/mf ,the-term))))
+  (remove-duplicates (externals-in/internal the-term)))
 
-(define-metafunction csa#
-  externals-in/mf : any -> (a#ext ...)
-  [(externals-in/mf a#ext) (a#ext)]
-  [(externals-in/mf (any ...))
-   (any_addr ... ...)
-   (where ((any_addr ...) ...) ((externals-in/mf any) ...))]
-  [(externals-in/mf _) ()])
+(define (externals-in/internal the-term)
+  (match the-term
+    [`(obs-ext ,_) (list the-term)]
+    [(list terms ...) (append* (map externals-in/internal the-term))]
+    [_ null]))
 
 (module+ test
   (check-same-items?
    (externals-in (term ((Nat (obs-ext 1))
                         (Nat (obs-ext 2))
                         (Nat (obs-ext 2))
+                        (* (Addr Nat))
                       (foo bar (baz (Nat (init-addr 2)) (Nat (obs-ext 3)))))))
    (term ((obs-ext 1) (obs-ext 2) (obs-ext 3)))))
 
