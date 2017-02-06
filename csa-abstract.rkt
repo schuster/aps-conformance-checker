@@ -2563,9 +2563,19 @@
          ;; message stays same if nothing was duplicated, else have to change multiplicity
          (if (equal? remaining-without-duplicates remaining-messages)
              message
-             (redex-let csa# ([(any_addr any_value _) message]) (term (any_addr any_value many)))))
+             (match-let ([`[,addr ,value ,_] message]) `(,addr ,value many))))
        (loop (append processed-messages (list new-message))
              remaining-without-duplicates)])))
+
+(module+ test
+  (test-equal? "Deduplicate-packets test"
+    (deduplicate-packets (list `[(init-addr 1) (* Nat) single]
+                               `[(init-addr 2) (* Nat) single]
+                               `[(init-addr 1) (* Nat) single]
+                               `[(init-addr 2) (* String) many]))
+    (list `[(init-addr 1) (* Nat) many]
+          `[(init-addr 2) (* Nat) single]
+          `[(init-addr 2) (* String) many])))
 
 ;; For two "messages" (the things inside the message queue in a config), returns true if they have the
 ;; same address and value
