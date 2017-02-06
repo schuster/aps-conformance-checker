@@ -959,8 +959,8 @@
          (define quantity (if (in-loop-context?) 'many 'single))
          (match-define `(,sends ,spawns) effects)
          (value-result v-message
-                       (term ((add-output ,sends [,addr (coerce ,v-message ,addr-type) ,quantity])
-                              ,spawns))))
+                       `(,(add-output sends (term [,addr (coerce ,v-message ,addr-type) ,quantity]))
+                         ,spawns)))
        (lambda (stucks) `(send ,@stucks)))]
     ;; Spawns
     [`(spawn ,loc ,type ,init-exp ,raw-state-defs ...)
@@ -977,7 +977,7 @@
          (match-define (list sends spawns) effects)
          (value-result address-value
                        (list sends
-                             (term (add-spawn ,spawns [,address (,state-defs ,goto-val)])))))
+                             (add-spawn spawns `[,address (,state-defs ,goto-val)]))))
        (lambda (stuck) `(spawn ,loc ,type ,stuck ,@raw-state-defs)))]
     ;; Goto
     [`(goto ,state-name ,args ...)
@@ -1527,24 +1527,46 @@
    (hash-val ,(sort (remove-duplicates (term (v#_keys ...))) sexp<?)
              ,(sort (remove-duplicates (term (v#_vals ...))) sexp<?))])
 
-(define-metafunction csa#
-  add-output : ([a# v# m] ...) [a# v# m] -> ([a# v# m] ...)
-  [(add-output (any_1 ... [a# v# _] any_2 ...) [a# v# _])
-   (any_1 ... [a# v# many] any_2 ...)]
-  [(add-output (any ...) [a# v# m])
-   ,(sort (term (any ... [a# v# m])) sexp<?)])
+(define (add-output existing-packets new-packet)
+  (match-define `[,new-addr ,new-val ,new-mult] new-packet)
+  (let loop ([reversed-checked-packets null]
+             [packets-to-check existing-packets])
+    (match packets-to-check
+      [(list) (reverse (cons new-packet reversed-checked-packets))]
+      [(list old-packet packets-to-check ...)
+       (if (and (equal? (csa#-message-packet-address old-packet) new-addr)
+                (equal? (csa#-message-packet-value old-packet) new-val))
+           (append (reverse reversed-checked-packets)
+                   (list `[,new-addr ,new-val many])
+                   packets-to-check)
+           (loop (cons old-packet reversed-checked-packets) packets-to-check))])))
 
 (module+ test
+  (test-equal? "Basic add-output test 1: already exists"
+    (add-output (list `[(init-addr 1) (* Nat) single]
+                      `[(init-addr 2) (* Nat) single]
+                      `[(init-addr 3) (* Nat) single])
+                `[(init-addr 2) (* Nat) single])
+    (list `[(init-addr 1) (* Nat) single]
+          `[(init-addr 2) (* Nat) many]
+          `[(init-addr 3) (* Nat) single]))
+  (test-equal? "Basic add-output test 2: does not exist"
+    (add-output (list `[(init-addr 1) (* Nat) single]
+                      `[(init-addr 2) (* Nat) single]
+                      `[(init-addr 3) (* Nat) single])
+                `[(init-addr 4) (* Nat) single])
+    (list `[(init-addr 1) (* Nat) single]
+          `[(init-addr 2) (* Nat) single]
+          `[(init-addr 3) (* Nat) single]
+          `[(init-addr 4) (* Nat) single]))
   (test-equal? "Must include wildcard outputs for the purpose of escaped addresses"
-    (term (add-output () [(* (Addr (Addr Nat))) ((Addr Nat) (init-addr 2)) single]))
+    (add-output `() `[(* (Addr (Addr Nat))) ((Addr Nat) (init-addr 2)) single])
     `([(* (Addr (Addr Nat))) ((Addr Nat) (init-addr 2)) single])))
 
-(define-metafunction csa#
-  add-spawn : ([a# b#] ...) [a# b#] -> ([a# b#] ...)
-  [(add-spawn (any_1 ... [a# b#] any_2 ...) [a# b#])
-   (any_1 ... [a# b#] any_2 ...)]
-  [(add-spawn (any ...) [a# b#])
-   ,(sort (term (any ... [a# b#])) sexp<?)])
+(define (add-spawn existing-spawns new-spawn)
+  (if (member new-spawn existing-spawns)
+      existing-spawns
+      (sort (cons new-spawn existing-spawns) sexp<?)))
 
 ;; i# csa#-transition-effect -> csa#-transition
 (define (csa#-apply-transition config transition-effect)
