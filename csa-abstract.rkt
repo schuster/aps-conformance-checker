@@ -3516,19 +3516,23 @@
 
 
 ;; b# b# -> ('eq or 'gt or 'lt or 'not-gteq)
+;;
+;; To be comparable, behaviors b1 and b2 must have the same current state name and state
+;; definitions. The comparison is doing point-wise on the state argument values.
 (define (compare-behavior behavior1 behavior2)
   (match-define `(,state-defs1 (goto ,state1 ,state-args1 ...)) behavior1)
   (match-define `(,state-defs2 (goto ,state2 ,state-args2 ...)) behavior2)
 
-  (cond
-    ;; state names and state definitions must be equal
-    [(and (equal? state1 state2)
-          (equal? state-defs1 state-defs2))
-     (for/fold ([comp-result 'eq])
+  (comp-result-and
+   ;; state names
+   (if (equal? state1 state2) 'eq 'not-gteq)
+   ;; state arguments
+   (for/fold ([comp-result 'eq])
                ([arg1 state-args1]
                 [arg2 state-args2])
-       (comp-result-and comp-result (compare-value arg1 arg2)))]
-    [else 'not-gteq]))
+     (comp-result-and comp-result (compare-value arg1 arg2)))
+   ;; state definitions
+   (if (equal? state-defs1 state-defs2) 'eq 'not-gteq)))
 
 (module+ test
   (check-equal? (compare-behavior (term (() (goto A))) (term (() (goto B))))
