@@ -2236,19 +2236,18 @@
     ;; the opposite flag exists
     (define addr (csa#-actor-address actor))
     (and (has-spawn-flag? addr flag)
-         (csa#-config-actor-by-address config (term (switch-spawn-flag/mf ,addr)))))
-  (redex-let csa# ([(α# any_blurred μ#) config])
-    (define-values (removed-actors remaining-actors)
-      (partition should-be-removed? (csa#-config-actors config)))
-    (list (term (,remaining-actors
-                 ,(csa#-config-blurred-actors config)
-                 ,(csa#-config-message-packets config)))
-          removed-actors)))
-
 (define-metafunction csa#
   switch-spawn-flag/mf : a#int -> a#int
   [(switch-spawn-flag/mf (spawn-addr any_loc NEW)) (spawn-addr any_loc OLD)]
   [(switch-spawn-flag/mf (spawn-addr any_loc OLD)) (spawn-addr any_loc NEW)])
+         (csa#-config-actor-by-address config (switch-spawn-flag addr))))
+  (define-values (removed-actors remaining-actors)
+    (partition should-be-removed? (csa#-config-actors config)))
+  (list (term (,remaining-actors
+               ,(csa#-config-blurred-actors config)
+               ,(csa#-config-message-packets config)))
+        removed-actors))
+
 
 (module+ test
   (test-equal? "remove-actors test"
