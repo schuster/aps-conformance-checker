@@ -2208,7 +2208,7 @@
          (goto Closed app-handler)]
         ;; We might get some data while the other side is closing. Could probably split this into a
         ;; separate spec state, but I'm leaving it here for now
-        [unobs -> ([obligation app-handler (variant ReceivedData *)]) (goto Connecting app-handler)]
+        [unobs -> ([obligation app-handler (variant ReceivedData *)]) (goto Closed app-handler)]
         [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])))
 
   (define session-spec
