@@ -2035,51 +2035,45 @@
 
   (define tcp-session-program
     `(program (receptionists)
-              (externals [session-dest (Addr TcpSessionCommand)]
-                         [session-packet-dest (Addr (Union (InTcpPacket TcpPacket)))]
+              (externals [session-packet-dest (Addr (Union (InTcpPacket TcpPacket)))]
                          [packets-out (Union [OutPacket IpAddress TcpPacket])]
                          [status-updates ConnectionStatus]
                          [close-notifications (Union [SessionCloseNotification SessionId])])
               ,@tcp-definitions
               (define-actor Nat
-                (Launcher [session-dest (Addr (Addr TcpSessionCommand))]
-                          [session-packet-dest (Addr (Addr (Union (InTcpPacket TcpPacket))))]
+                (Launcher [session-packet-dest (Addr (Addr (Union (InTcpPacket TcpPacket))))]
                           [packets-out (Addr (Union [OutPacket IpAddress TcpPacket]))]
                           [status-updates (Addr ConnectionStatus)]
                           [close-notifications (Addr (Union [SessionCloseNotification SessionId]))])
                 ()
-                (goto Init session-dest
+                (goto Init
                       session-packet-dest
                       packets-out
                       status-updates
                       close-notifications)
                 (define-state/timeout
-                  (Init [session-dest (Addr (Addr TcpSessionCommand))]
-                        [session-packet-dest (Addr (Addr (Union (InTcpPacket TcpPacket))))]
+                  (Init [session-packet-dest (Addr (Addr (Union (InTcpPacket TcpPacket))))]
                         [packets-out (Addr (Union [OutPacket IpAddress TcpPacket]))]
                         [status-updates (Addr ConnectionStatus)]
                         [close-notifications (Addr (Union [SessionCloseNotification SessionId]))]) (m)
-                  (goto Init session-dest session-packet-dest)
-                  (timeout 0
-                    (let ([session (spawn session
-                                          TcpSession
-                                          (SessionId (InetSocketAddress 1234 50) 80)
-                                          (ActiveOpen)
-                                          packets-out
-                                          status-updates
-                                          close-notifications
-                                          30000
-                                          3
-                                          30000
-                                          10000)])
-                      (send session-dest session)
-                      (send session-packet-dest session)
-                      (goto Done))))
-                (define-state (Done) (m) (goto Done))
-                )
+                        (goto Init session-packet-dest packets-out status-updates close-notifications)
+                        (timeout 0
+                                 (let ([session (spawn session
+                                                       TcpSession
+                                                       (SessionId (InetSocketAddress 1234 50) 80)
+                                                       (ActiveOpen)
+                                                       packets-out
+                                                       status-updates
+                                                       close-notifications
+                                                       30000
+                                                       3
+                                                       30000
+                                                       10000)])
+                                   (send session-packet-dest session)
+                                   (goto Done))))
+                (define-state (Done) (m) (goto Done)))
               (actors [launcher (spawn launcher
                                        Launcher
-                                       session-dest
                                        session-packet-dest
                                        packets-out
                                        status-updates
@@ -2093,10 +2087,146 @@
                  [packets-out ,desugared-tcp-output]
                  [status-updates ,desugared-connection-status]
                  [close-notifications (Union [SessionCloseNotification ,desugared-session-id])])
-       UNKNOWN
-       ()
-       (goto DoNothing)
-       (define-state (DoNothing) [* -> () (goto DoNothing)])))
+      UNKNOWN
+      ()
+      (goto DoNothing)
+      (define-state (DoNothing) [* -> () (goto DoNothing)])))
+
+  (define session-spec-behavior
+    `((goto Connecting status-updates)
+
+      (define-state (Connecting status-updates)
+        [unobs -> ([obligation status-updates (variant CommandFailed)]) (goto ClosedNoHandler)]
+        [unobs ->
+         ([obligation status-updates (variant Connected * self)])
+         (goto AwaitingRegistration)]
+        ;; NOTE: I could probably leave the commands out here (because they shouldn't be receivable),
+        ;; but for now I'm leaving them in
+        [(variant Register app-handler) -> () (goto Connecting status-updates)]
+        [(variant Write * write-handler) -> () (goto Connecting status-updates)]
+        [(variant Close close-handler) -> () (goto Connecting status-updates)]
+        [(variant ConfirmedClose close-handler) -> () (goto Connecting status-updates)]
+        [(variant Abort abort-handler) -> () (goto Connecting status-updates)])
+
+      (define-state (AwaitingRegistration)
+        [(variant Register app-handler) -> () (goto Connected app-handler)]
+        [(variant Write * write-handler) ->
+         ([obligation write-handler (variant CommandFailed)])
+         (goto AwaitingRegistration)]
+        [(variant Close close-handler) ->
+         ([obligation close-handler (variant Closed)])
+         (goto ClosedNoHandler)]
+        ;; NOTE: this is a tricky spec. I want to say that eventually the session is guaranteed to
+        ;; close, but the possibility of Abort means this close-handler might not get a response. Also
+        ;; the blurring would make that hard to check even without the abort issue.
+        [(variant ConfirmedClose close-handler) -> () (goto Closing close-handler)]
+        [(variant Abort abort-handler) ->
+         ([obligation abort-handler (variant Aborted)])
+         (goto ClosedNoHandler)])
+
+      (define-state (Connected app-handler)
+        [(variant Register other-app-handler) -> () (goto Connected app-handler)]
+        [(variant Write * write-handler) ->
+         ;; NOTE: this would probably be WriteAck OR CommandFailed in a real implementation that has a
+         ;; limit on its queue size
+         ([obligation write-handler (variant WriteAck)])
+         (goto Connected app-handler)]
+        [(variant Close close-handler) ->
+         ([obligation close-handler (variant Closed)])
+         (goto Closed app-handler)]
+        [(variant ConfirmedClose close-handler) -> () (goto Closing app-handler close-handler)]
+        [(variant Abort abort-handler) ->
+         ([obligation abort-handler (variant Aborted)])
+         (goto Closed app-handler)]
+        ;; Possible unobserved events:
+        [unobs -> ([obligation app-handler (variant ReceivedData *)]) (goto Connected app-handler)]
+        [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)]
+        [unobs -> ([obligation app-handler (variant PeerClosed)]) (goto Closed app-handler)])
+
+      (define-state (Closing app-handler close-handler)
+        [unobs ->
+         ([obligation close-handler (variant ConfirmedClosed)]
+          [obligation app-handler (variant ConfirmedClosed)])
+         (goto Closed app-handler)]
+        [(variant Register app-handler) -> () (goto Closing app-handler close-handler)]
+        [(variant Write * write-handler) ->
+         ([obligation write-handler (variant CommandFailed)])
+         (goto Closing app-handler close-handler)]
+        [(variant Close other-close-handler) ->
+         ([obligation other-close-handler (variant CommandFailed)])
+         (goto Closing app-handler close-handler)]
+        [(variant ConfirmedClose other-close-handler) ->
+         ([obligation other-close-handler (variant CommandFailed)])
+         (goto Closing app-handler close-handler)]
+        [(variant Abort abort-handler) ->
+         ;; NOTE: no response at all on the ConfirmedClose handler: this is intentional (although
+         ;; possibly not a good idea)
+         ([obligation abort-handler (variant Aborted)]
+          [obligation app-handler (variant Aborted)])
+         (goto Closed app-handler)]
+        [unobs ->
+         ([obligation app-handler (variant ReceivedData *)])
+         (goto Closing app-handler close-handler)]
+        ;; NOTE: again, no response on close-handler. Again, intentional
+        [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])
+
+      (define-state (ClosedNoHandler)
+        [(variant Register app-handler) -> () (goto ClosedNoHandler)]
+        [(variant Write * write-handler) ->
+         ([obligation write-handler (variant CommandFailed)])
+         (goto ClosedNoHandler)]
+        [(variant Close other-close-handler) ->
+         ([obligation other-close-handler (variant CommandFailed)])
+         (goto ClosedNoHandler)]
+        [(variant ConfirmedClose other-close-handler) ->
+         ([obligation other-close-handler (variant CommandFailed)])
+         (goto ClosedNoHandler)]
+        [(variant Abort abort-handler) ->
+         ;; An abort during the close process could still succeed
+         ([obligation abort-handler (or (variant Aborted) (variant CommandFailed))])
+         (goto ClosedNoHandler)])
+
+      (define-state (Closed app-handler)
+        [(variant Register app-handler) -> () (goto Closed app-handler)]
+        [(variant Write * write-handler) ->
+         ([obligation write-handler (variant CommandFailed)])
+         (goto Closed app-handler)]
+        [(variant Close other-close-handler) ->
+         ([obligation other-close-handler (variant CommandFailed)])
+         (goto Closed app-handler)]
+        [(variant ConfirmedClose other-close-handler) ->
+         ([obligation other-close-handler (variant CommandFailed)])
+         (goto Closed app-handler)]
+        [(variant Abort abort-handler) ->
+         ;; An abort during the close process could still succeed
+         ([obligation abort-handler (variant Aborted)]
+          [obligation app-handler (variant Aborted)])
+         (goto Closed app-handler)]
+        [(variant Abort abort-handler) ->
+         ;; An abort during the close process could still succeed
+         ([obligation abort-handler (variant CommandFailed)])
+         (goto Closed app-handler)]
+        ;; We might get some data while the other side is closing. Could probably split this into a
+        ;; separate spec state, but I'm leaving it here for now
+        [unobs -> ([obligation app-handler (variant ReceivedData *)]) (goto Connecting app-handler)]
+        [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])))
+
+  (define session-spec
+    `(specification
+      (receptionists)
+      (externals [session-packet-dest (Addr (Union [InTcpPacket ,desugared-tcp-packet-type]))]
+                 [packets-out ,desugared-tcp-output]
+                 [status-updates ,desugared-connection-status]
+                 [close-notifications (Union [SessionCloseNotification ,desugared-session-id])])
+      UNKNOWN
+      ()
+      (goto Init status-updates)
+      (define-state (Init status-updates)
+        [unobs -> ([obligation status-updates (variant CommandFailed)]) (goto Done)]
+        [unobs ->
+         ([obligation status-updates (variant Connected * (fork ,@session-spec-behavior))])
+         (goto Done)])
+      (define-state (Done))))
 
   (test-true "Conformance for session"
-    (check-conformance (desugar tcp-session-program) trivial-session-spec)))
+    (check-conformance (desugar tcp-session-program) session-spec)))
