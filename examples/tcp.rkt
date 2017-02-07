@@ -2046,29 +2046,20 @@
                           [status-updates (Addr ConnectionStatus)]
                           [close-notifications (Addr (Union [SessionCloseNotification SessionId]))])
                 ()
-                (goto Init
-                      session-packet-dest
-                      packets-out
-                      status-updates
-                      close-notifications)
-                (define-state/timeout
-                  (Init [session-packet-dest (Addr (Addr (Union (InTcpPacket TcpPacket))))]
-                        [packets-out (Addr (Union [OutPacket IpAddress TcpPacket]))]
-                        [status-updates (Addr ConnectionStatus)]
-                        [close-notifications (Addr (Union [SessionCloseNotification SessionId]))]) (m)
-                        (goto Init session-packet-dest packets-out status-updates close-notifications)
-                        (timeout 0
-                                 (let ([session (spawn session
-                                                       TcpSession
-                                                       (SessionId (InetSocketAddress 1234 50) 80)
-                                                       (ActiveOpen)
-                                                       packets-out
-                                                       status-updates
-                                                       close-notifications
-                                                       30000
-                                                       3
-                                                       30000
-                                                       10000)])
+                (goto Init)
+                (define-state/timeout (Init) (m) (goto Init)
+                  (timeout 0
+                    (let ([session (spawn session
+                                          TcpSession
+                                          (SessionId (InetSocketAddress 1234 50) 80)
+                                          (ActiveOpen)
+                                          packets-out
+                                          status-updates
+                                          close-notifications
+                                          30000
+                                          3
+                                          30000
+                                          10000)])
                                    (send session-packet-dest session)
                                    (goto Done))))
                 (define-state (Done) (m) (goto Done)))
@@ -2093,20 +2084,7 @@
       (define-state (DoNothing) [* -> () (goto DoNothing)])))
 
   (define session-spec-behavior
-    `((goto Connecting status-updates)
-
-      (define-state (Connecting status-updates)
-        [unobs -> ([obligation status-updates (variant CommandFailed)]) (goto ClosedNoHandler)]
-        [unobs ->
-         ([obligation status-updates (variant Connected * self)])
-         (goto AwaitingRegistration)]
-        ;; NOTE: I could probably leave the commands out here (because they shouldn't be receivable),
-        ;; but for now I'm leaving them in
-        [(variant Register app-handler) -> () (goto Connecting status-updates)]
-        [(variant Write * write-handler) -> () (goto Connecting status-updates)]
-        [(variant Close close-handler) -> () (goto Connecting status-updates)]
-        [(variant ConfirmedClose close-handler) -> () (goto Connecting status-updates)]
-        [(variant Abort abort-handler) -> () (goto Connecting status-updates)])
+    `((goto AwaitingRegistration)
 
       (define-state (AwaitingRegistration)
         [(variant Register app-handler) -> () (goto Connected app-handler)]
@@ -2119,7 +2097,7 @@
         ;; NOTE: this is a tricky spec. I want to say that eventually the session is guaranteed to
         ;; close, but the possibility of Abort means this close-handler might not get a response. Also
         ;; the blurring would make that hard to check even without the abort issue.
-        [(variant ConfirmedClose close-handler) -> () (goto Closing close-handler)]
+        [(variant ConfirmedClose close-handler) -> () (goto ClosingNoHandler close-handler)]
         [(variant Abort abort-handler) ->
          ([obligation abort-handler (variant Aborted)])
          (goto ClosedNoHandler)])
@@ -2169,6 +2147,21 @@
          (goto Closing app-handler close-handler)]
         ;; NOTE: again, no response on close-handler. Again, intentional
         [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])
+
+      (define-state (ClosingNoHandler close-handler)
+        [unobs -> ([obligation close-handler (variant ConfirmedClosed)]) (goto ClosedNoHandler)]
+        [(variant Register app-handler) -> () (goto ClosingNoHandler close-handler)]
+        [(variant Write * write-handler) ->
+         ([obligation write-handler (variant CommandFailed)])
+         (goto ClosingNoHandler close-handler)]
+        [(variant Close other-close-handler) ->
+         ([obligation other-close-handler (variant CommandFailed)])
+         (goto ClosingNoHandler close-handler)]
+        [(variant ConfirmedClose other-close-handler) ->
+         ([obligation other-close-handler (variant CommandFailed)])
+         (goto ClosingNoHandler close-handler)]
+        [(variant Abort abort-handler) ->
+         ([obligation abort-handler (variant Aborted)]) (goto ClosedNoHandler)])
 
       (define-state (ClosedNoHandler)
         [(variant Register app-handler) -> () (goto ClosedNoHandler)]
