@@ -2110,11 +2110,13 @@
          ([obligation write-handler (variant WriteAck)])
          (goto Connected app-handler)]
         [(variant Close close-handler) ->
-         ([obligation close-handler (variant Closed)])
+         ([obligation app-handler (variant Closed)]
+          [obligation close-handler (variant Closed)])
          (goto Closed app-handler)]
         [(variant ConfirmedClose close-handler) -> () (goto Closing app-handler close-handler)]
         [(variant Abort abort-handler) ->
-         ([obligation abort-handler (variant Aborted)])
+         ([obligation abort-handler (variant Aborted)]
+          [obligation app-handler (variant Aborted)])
          (goto Closed app-handler)]
         ;; Possible unobserved events:
         [unobs -> ([obligation app-handler (variant ReceivedData *)]) (goto Connected app-handler)]
@@ -2195,8 +2197,13 @@
          ([obligation abort-handler (variant Aborted)]
           [obligation app-handler (variant Aborted)])
          (goto Closed app-handler)]
+        ;; An abort during the close process could still succeed. Abort may or may not send on
+        ;; app-handler, depending on which state it's in internally
         [(variant Abort abort-handler) ->
-         ;; An abort during the close process could still succeed
+         ([obligation app-handler (variant CommandFailed)]
+          [obligation abort-handler (variant CommandFailed)])
+         (goto Closed app-handler)]
+        [(variant Abort abort-handler) ->
          ([obligation abort-handler (variant CommandFailed)])
          (goto Closed app-handler)]
         ;; We might get some data while the other side is closing. Could probably split this into a
