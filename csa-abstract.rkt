@@ -335,7 +335,7 @@
     (for/fold ([timeout-triggers null])
               ([actor (csa#-config-actors config)])
       (define address (csa#-actor-address actor))
-      (if (term (get-timeout-handler-exp/mf ,(actor-behavior actor)))
+      (if (get-timeout-handler-exp (actor-behavior actor))
           (cons
            (if (any-messages-for? config address)
                (term (timeout/non-empty-queue ,address))
@@ -346,7 +346,7 @@
     (for/fold ([timeout-triggers null])
               ([blurred-actor (csa#-config-blurred-actors config)])
       (define address (csa#-blurred-actor-address blurred-actor))
-      (if (ormap (lambda (behavior) (term (get-timeout-handler-exp/mf ,behavior)))
+      (if (ormap (lambda (behavior) (get-timeout-handler-exp behavior))
                  (csa#-blurred-actor-behaviors blurred-actor))
           (cons
            (if (any-messages-for? config address)
@@ -378,7 +378,7 @@
 (define (eval-timeout config addr trigger abort)
   (append*
    (for/list ([behavior (current-behaviors-for-address config addr)])
-     (match (term (get-timeout-handler-exp/mf ,behavior))
+     (match (get-timeout-handler-exp behavior)
        [#f null]
        [handler-exp (eval-handler (inject/H# handler-exp)
                                   trigger
@@ -396,7 +396,7 @@
 (define (handler-machine-for-message behavior message)
   (match-define `(,state-defs (goto ,state-name ,state-args ...)) behavior)
   (match-define `(define-state (,_ [,state-arg-formals ,_] ...) (,message-formal) ,body ,_ ...)
-    (findf (lambda (state-def) (equal? state-name (first (second state-def)))) state-defs))
+    (state-def-by-name state-defs state-name))
   (define bindings (cons `[,message-formal ,message] (map list state-arg-formals state-args)))
   (inject/H# (csa#-subst-n body bindings)))
 
@@ -443,14 +443,16 @@
                                   [(init-addr 2) (* Nat) many]
                                   [(init-addr 1) (* String) single]))))
 
+;; b# -> e# or #f
+;;
 ;; Returns the behavior's current timeout handler expression with all state arguments substituted in
 ;; if the current state has a timeout clause, else #f
-(define-metafunction csa#
-  get-timeout-handler-exp/mf : b# -> e# or #f
-  [(get-timeout-handler-exp/mf ((_ ... (define-state (q [x_q τ_q] ..._n) _ _ [(timeout _) e#]) _ ...)
-                                (goto q v# ..._n)))
-   ,(csa#-subst-n (term e#) (term ([x_q v#] ...)))]
-  [(get-timeout-handler-exp/mf _) #f])
+(define (get-timeout-handler-exp behavior)
+  (define current-state-name (goto-state-name (behavior-exp behavior)))
+  (match (state-def-by-name (behavior-state-defs behavior) current-state-name)
+    [`(define-state (,_ [,formals ,_] ...) ,_ ,_ [(timeout ,_) ,timeout-body])
+     (csa#-subst-n timeout-body (map list formals (goto-state-args (behavior-exp behavior))))]
+    [_ #f]))
 
 ;; Returns #t if the configuration has any in-transit messages for the given internal address; #f
 ;; otherwise.
@@ -2755,8 +2757,14 @@
 (define (behavior-exp behavior)
   (second behavior))
 
+(define (goto-state-name goto-exp) (second goto-exp))
+(define (goto-state-args goto-exp) (cddr goto-exp))
+
 (define (case-clause-pattern clause) (first clause))
 (define (case-clause-body clause) (second clause))
+
+(define (state-def-by-name state-defs state-name)
+  (findf (lambda (state-def) (equal? state-name (first (second state-def)))) state-defs))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Boolean Logic
@@ -3138,7 +3146,7 @@
 (define (atomic-state-name-by-address config address)
   (match (csa#-config-actor-by-address config address)
     [#f #f]
-    [actor (second (behavior-exp (actor-behavior actor)))]))
+    [actor (goto-state-name (behavior-exp (actor-behavior actor)))]))
 
 (module+ test
   (check-equal?
