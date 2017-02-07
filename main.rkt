@@ -709,6 +709,8 @@
   (widen-printf "Starting widen with ~s transitions\n" (queue-length possible-transitions))
   (define processed-transitions (mutable-set))
   (define loop-count 0)
+  (define maybe-good-count 0)
+  (define attempt-count 0)
   (define widen-use-count 0)
   (let worklist-loop ([widened-pair the-pair])
     (match (dequeue-if-non-empty! possible-transitions)
@@ -727,72 +729,84 @@
 
           (worklist-loop widened-pair)]
          [else
-          (widen-printf
-           "Trying transition for pair ~s, i-step ~s of ~s. Loop count = ~s, use count = ~s, ~s remaining transitions\n"
-           pair-number i-step-number i-step-total loop-count widen-use-count (queue-length possible-transitions))
+          (set! maybe-good-count (add1 maybe-good-count))
+          (widen-printf "Trying transition for pair ~s, i-step ~s of ~s\n" pair-number i-step-number i-step-total)
+          (widen-printf "Loop count = ~s, maybe count = ~s, attempt count = ~s, use count = ~s, ~s remaining transitions\n"
+                        loop-count
+                        maybe-good-count
+                        attempt-count
+                        widen-use-count
+                        (queue-length possible-transitions))
           (widen-printf "Trigger: ~s\n" (csa#-transition-effect-trigger (first transition-result-with-obs)))
           (widen-printf "Outputs: ~s\n" (csa#-transition-effect-sends (first transition-result-with-obs)))
 
           (set-add! processed-transitions transition-result-with-obs)
           (define transition-result (first transition-result-with-obs))
-          (define trigger (csa#-transition-effect-trigger transition-result))
-          ;; (printf "trigger for widen: ~s\n" trigger)
           (define i (config-pair-impl-config widened-pair))
-          (define observed? (second transition-result-with-obs))
-          (define new-i-step (apply-transition i transition-result observed?))
-          (match (first-spec-step-to-same-state (config-pair-spec-config widened-pair) new-i-step)
-            [#f
-             (widen-printf "Transition has no spec transition to same state\n")
-             (worklist-loop widened-pair)]
-            [new-s
-             ;; TODO: what should I do with the rename map? I don't remember what that was used for. I
-             ;; think maybe to correlate output commitments across multiple steps? So yeah, I probably
-             ;; need to adjust that here... (although if the spec didn't change, then aren't I okay to
-             ;; leave it as is?)
+          (cond
+            ;; To avoid running the apply-and-sbc process too many times (a major bottleneck of the
+            ;; checker), we first do some basic checks on the transition to see if it's even worth
+            ;; exploring
+            [(csa#-transition-maybe-good-for-widen? i transition-result)
+             (set! attempt-count (add1 attempt-count))
+             (define trigger (csa#-transition-effect-trigger transition-result))
+             (define observed? (second transition-result-with-obs))
+             (define new-i-step (apply-transition i transition-result observed?))
+             (match (first-spec-step-to-same-state (config-pair-spec-config widened-pair) new-i-step)
+               [#f
+                (widen-printf "Transition has no spec transition to same state\n")
+                (worklist-loop widened-pair)]
+               [new-s
+                ;; TODO: what should I do with the rename map? I don't remember what that was used
+                ;; for. I think maybe to correlate output commitments across multiple steps? So yeah,
+                ;; I probably need to adjust that here... (although if the spec didn't change, then
+                ;; aren't I okay to leave it as is?)
 
-             ;; If there's a possible way for a spec to match this step, then apply the transition
-             ;; once more to get "many-of" instances of new spawns and messages, so we have the best
-             ;; chance of this configuration being greater than its predecessor
-             (define once-applied-pair
-               (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
-             (cond
-               [(csa#-action-enabled? (config-pair-impl-config once-applied-pair) trigger)
-                (define repeated-i-step
-                  (apply-transition (config-pair-impl-config once-applied-pair)
-                                    transition-result
-                                    observed?))
-                (define repeated-s
-                  (first-spec-step-to-same-state (config-pair-spec-config once-applied-pair)
-                                                 repeated-i-step))
-                (define twice-applied-pair
-                  (first
-                   (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
+                ;; If there's a possible way for a spec to match this step, then apply the transition
+                ;; once more to get "many-of" instances of new spawns and messages, so we have the best
+                ;; chance of this configuration being greater than its predecessor
+                (define once-applied-pair
+                  (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
                 (cond
-                  ;; OPTIMIZE: check first if the transitioned actor is even in the same state
-                  [(csa#-config<? i (config-pair-impl-config twice-applied-pair))
-                   (set! widen-use-count (add1 widen-use-count))
-                   (widen-printf "Widen: applied a transition for pair ~s, i-step ~s of ~s. Loop count = ~s, use count = ~s\n"
-                                 pair-number i-step-number i-step-total loop-count widen-use-count
-                                 ;; (debug-transition-result transition-result)
-                                 ;; (impl-config-without-state-defs (config-pair-impl-config new-widened-pair))
-                                 )
-                   (widen-printf "Newly widened impl config: ~s\n" (impl-config-without-state-defs (config-pair-impl-config twice-applied-pair)))
-                   (widen-printf "Newly widened spec config: ~s\n" (spec-config-without-state-defs (config-pair-spec-config twice-applied-pair)))
-                   (widen-printf "Remaining transitions: ~s\n" (queue-length possible-transitions))
-                   ;; We just throw away any remaining transitions, because the transitions from this
-                   ;; configuration supercede those from a different one
-                   (set! possible-transitions
-                         (apply queue (impl-transition-effects-from twice-applied-pair)))
-                   (widen-printf "Added transitions, total is now ~s\n" (queue-length possible-transitions))
-                   (worklist-loop twice-applied-pair)]
+                  [(csa#-action-enabled? (config-pair-impl-config once-applied-pair) trigger)
+                   (define repeated-i-step
+                     (apply-transition (config-pair-impl-config once-applied-pair)
+                                       transition-result
+                                       observed?))
+                   (define repeated-s
+                     (first-spec-step-to-same-state (config-pair-spec-config once-applied-pair)
+                                                    repeated-i-step))
+                   (define twice-applied-pair
+                     (first
+                      (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
+                   (widen-printf "After first apply, no sbc: ~s\n" (impl-config-without-state-defs (impl-step-destination new-i-step)))
+                   (widen-printf "Twice-applied, sbc'ed:     ~s\n" (impl-config-without-state-defs (config-pair-impl-config twice-applied-pair)))
+                   (cond
+                     ;; OPTIMIZE: check first if the transitioned actor is even in the same state
+                     [(csa#-config<? i (config-pair-impl-config twice-applied-pair))
+                      (set! widen-use-count (add1 widen-use-count))
+                      (widen-printf "Widen: applied a transition for pair ~s, i-step ~s of ~s. Loop count = ~s, use count = ~s\n"
+                                    pair-number i-step-number i-step-total loop-count widen-use-count
+                                    ;; (debug-transition-result transition-result)
+                                    ;; (impl-config-without-state-defs (config-pair-impl-config new-widened-pair))
+                                    )
+                      (widen-printf "Newly widened impl config: ~s\n" (impl-config-without-state-defs (config-pair-impl-config twice-applied-pair)))
+                      (widen-printf "Newly widened spec config: ~s\n" (spec-config-without-state-defs (config-pair-spec-config twice-applied-pair)))
+                      (widen-printf "Remaining transitions: ~s\n" (queue-length possible-transitions))
+                      ;; We just throw away any remaining transitions, because the transitions from
+                      ;; this configuration supercede those from a different one
+                      (set! possible-transitions (apply queue (impl-transition-effects-from twice-applied-pair)))
+                      (widen-printf "New queue has ~s transitions\n" (queue-length possible-transitions))
+                      (worklist-loop twice-applied-pair)]
+                     [else
+                      (widen-printf "Transition is not valid for widen\n")
+                      (worklist-loop widened-pair)])]
                   [else
-                   (widen-printf "Transition is not valid for widen\n")
-                   (worklist-loop widened-pair)])
-                ]
-               [else
-                (widen-printf "Transition is not repeatable\n")
-                (worklist-loop widened-pair)])
-])])])))
+                   (widen-printf "Transition is not repeatable\n")
+                   (worklist-loop widened-pair)])])]
+            [else
+             (widen-printf "Transition failed maybe-good-for-widen\n")
+             (worklist-loop widened-pair)])])])))
 
 (module+ test
   (define init-widen-impl-config

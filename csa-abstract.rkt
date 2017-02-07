@@ -15,6 +15,7 @@
  csa#-address-type
  csa#-address-strip-type
  ;; required for widening
+ csa#-transition-maybe-good-for-widen?
  (struct-out csa#-transition-effect)
  csa#-config<?
  csa#-eval-trigger
@@ -2273,6 +2274,8 @@
 ;;
 ;; Renames internal addresses in internals-to-blur and external addresses *not* in
 ;; relevant-externals to their respective imprecise forms
+;;
+;; NOTE: any updates to this function may also need to be added to pseudo-blur
 (define (csa#-blur-addresses some-term internals-to-blur relevant-externals)
   (match some-term
     [(and addr `(spawn-addr ,loc ,_))
@@ -2433,7 +2436,7 @@
            (match behaviors-to-check
              [(list) (append checked-behaviors (list new-behavior))]
              [(list current-behavior behaviors-to-check ...)
-              (match (compare-behavior new-behavior current-behavior)
+              (match (compare-behavior new-behavior current-behavior #t)
                 [(or 'eq 'lt) (append checked-behaviors (list current-behavior) behaviors-to-check)]
                 ['gt (loop behaviors-to-check checked-behaviors)]
                 ['not-gteq
@@ -2707,11 +2710,16 @@
 (define (actor-behavior actor)
   (second actor))
 
-;; Returns the behaviors of the actor for the indicated collective OR atomic address
+;; Returns the behaviors of the actor for the indicated collective OR atomic address (or #f if the
+;; actor does not exist)
 (define (csa#-behaviors-of config addr)
   (if (precise-internal-address? addr)
-      (list (actor-behavior (csa#-config-actor-by-address config addr)))
-      (csa#-blurred-actor-behaviors (csa#-config-collective-actor-by-address config addr))))
+      (match (csa#-config-actor-by-address config addr)
+        [#f #f]
+        [actor (list (actor-behavior actor))])
+      (match (csa#-config-collective-actor-by-address config addr)
+        [#f #f]
+        [actor (csa#-blurred-actor-behaviors actor)])))
 
 (module+ test
   (define behavior-test-config
@@ -2743,6 +2751,9 @@
 ;; Returns the state definitions of the given behavior
 (define (behavior-state-defs behavior)
   (first behavior))
+
+(define (behavior-exp behavior)
+  (second behavior))
 
 (define (case-clause-pattern clause) (first clause))
 (define (case-clause-body clause) (second clause))
@@ -3082,6 +3093,225 @@
    (term ((Nat (init-addr 1)) (Nat (spawn-addr 3 NEW)) (Nat (init-addr 2))))))
 
 ;; ---------------------------------------------------------------------------------------------------
+;; Pre-sbc maybe-widen check
+
+;; i# transition-effect -> #t or #f
+;;
+;; Returns #t if the transition satisfies some basic, quick-to-check tests that indicate it's a
+;; possible candidate to use for widening of original-i; #f otherwise
+(define (csa#-transition-maybe-good-for-widen? original-i transition-result)
+  (define this-actor-address (trigger-address (csa#-transition-effect-trigger transition-result)))
+  (define new-behavior (csa#-transition-effect-behavior transition-result))
+  (define comp-result
+    (comp-result-and
+     ;; 1. Are there any spawns?
+     (if (not (empty? (csa#-transition-effect-spawns transition-result))) 'gt 'eq)
+     ;; 2. Do all atomic spawns have have a corresponding existing actor with that spawn location, and
+     ;; have the same state name?
+     ;;
+     ;; REFACTOR: should probably just compare behaviors without state defs for spawns instead of
+     ;; looking at the state name
+     (for/and ([spawn (csa#-transition-effect-spawns transition-result)])
+       (match-define `[,addr ,behavior] spawn)
+       (cond
+         [(precise-internal-address? addr)
+          (match-define `(spawn-addr ,loc ,_) addr)
+          (if (atomic-state-name-by-address original-i `(spawn-addr ,loc OLD)) 'eq 'not-gteq)]
+         [else 'eq]))
+     (let ([after-pseudo-blur (pseudo-blur-transition-result transition-result)])
+       (comp-result-and
+        ;; 3. Is the current behavior a valid behavior to add/keep for this configuration pair? Is it
+        ;; new?
+        (compare-pseudo-behavior original-i
+                                 this-actor-address
+                                 (csa#-transition-effect-behavior after-pseudo-blur))
+        ;; 4. Are there any new messages/a message that only exists as a one-of?
+        (if (for/or ([send (filter internal-output?
+                                   (csa#-transition-effect-sends after-pseudo-blur))])
+              (new-pseudo-send? original-i send))
+            'gt
+            'eq)))))
+  (eq? comp-result 'gt))
+
+;; Returns the name of the current state for the actor with the given address in config if it exists,
+;; #f if the actor does not exist
+(define (atomic-state-name-by-address config address)
+  (match (csa#-config-actor-by-address config address)
+    [#f #f]
+    [actor (second (behavior-exp (actor-behavior actor)))]))
+
+(module+ test
+  (check-equal?
+   (atomic-state-name-by-address
+    `[([(init-addr 1) (() (goto A))]
+       [(init-addr 2) (() (goto B (* Nat)))])
+      ()
+      ()]
+    `(init-addr 2))
+   'B))
+
+;; Rename addresses in everything but the state definitions of the transition so that any
+;; obs-ext > 100 is blurred, and any NEW spawn address is converted to a blurred-spawn-addr.
+(define (pseudo-blur-transition-result transition-result)
+  (match-define (csa#-transition-effect trigger `(,state-defs ,goto-exp) sends spawns)
+    transition-result)
+  (define new-sends
+    (for/list ([send sends])
+      (match-define `[,target ,message ,mult] send)
+      `[,(pseudo-blur target) ,(pseudo-blur message) ,mult]))
+  (define new-spawns
+    (for/list ([spawn spawns])
+      (match-define `[,addr [,spawn-state-defs ,spawn-goto]] spawn)
+      `[,(pseudo-blur addr) [,(pseudo-blur spawn-state-defs) ,(pseudo-blur spawn-goto)]]))
+  (csa#-transition-effect trigger `(,state-defs ,(pseudo-blur goto-exp)) new-sends new-spawns))
+
+(define (pseudo-blur some-term)
+  (match some-term
+    [`(spawn-addr ,loc NEW)
+     `(blurred-spawn-addr ,loc)]
+    [`(,type ,(and addr `(obs-ext ,num)))
+     (if (< num FIRST-GENERATED-ADDRESS)
+         some-term
+         (term (* (Addr ,type))))]
+    [(list (and keyword (or `vector-val 'list-val 'hash-val)) terms ...)
+     (define blurred-args (map pseudo-blur terms))
+     (normalize-collection `(,keyword ,@blurred-args))]
+    [`(hash-val ,keys ,vals)
+     (define blurred-keys (map pseudo-blur keys))
+     (define blurred-vals (map pseudo-blur vals))
+     `(normalize-collection `(hash-val ,blurred-keys ,blurred-vals))]
+    [(list terms ...) (map pseudo-blur terms)]
+    [_ some-term]))
+
+(module+ test
+  (check-equal? (pseudo-blur `(Nat (obs-ext 2))) `(Nat (obs-ext 2)))
+  (check-equal? (pseudo-blur `(Nat (obs-ext 102))) `(* (Addr Nat)))
+  (check-equal? (pseudo-blur `(spawn-addr 1 OLD)) `(spawn-addr 1 OLD))
+  (check-equal? (pseudo-blur `(spawn-addr 1 NEW)) `(blurred-spawn-addr 1))
+  (check-equal? (pseudo-blur `(Nat (init-addr 1))) `(Nat (init-addr 1))))
+
+(define (new-pseudo-send? config send)
+  (match-define `[,addr ,message ,_] send)
+  (not (member `[,addr ,message many] (csa#-config-message-packets config))))
+
+(module+ test
+  (check-not-false
+   (new-pseudo-send? `[() () ([(init-addr 1) (* Nat) single])]
+                     `[(init-addr 1) (* Nat) single]))
+  (check-false
+   (new-pseudo-send? `[() () ([(init-addr 1) (* Nat) many])]
+                     `[(init-addr 1) (* Nat) single]))
+  (check-not-false
+   (new-pseudo-send? `[() () ([(init-addr 1) (* Nat) many])]
+                     `[(init-addr 1) (* String) single]))
+  (check-not-false
+   (new-pseudo-send? `[() () ([(init-addr 1) (* Nat) many])]
+                     `[(init-addr 2) (* Nat) single])))
+
+;; Is the behavior better than all existing ones for this address if we ignore state definitions?
+(define (compare-pseudo-behavior config addr behavior)
+  (match (csa#-behaviors-of config addr)
+    [#f 'gt]
+    [old-behaviors
+     (if (precise-internal-address? addr)
+         (compare-behavior behavior (first old-behaviors) #f)
+         (let loop ([behaviors-to-check old-behaviors])
+           (match behaviors-to-check
+             [(list old-behavior behaviors-to-check ...)
+              (match (compare-behavior behavior old-behavior #f)
+                ['not-gteq (loop behaviors-to-check)]
+                ['eq
+                 (if (equal? (behavior-state-defs behavior)
+                             (behavior-state-defs old-behavior))
+                     'eq
+                     (loop behaviors-to-check))]
+                [result result])]
+             [(list) 'gt])))]))
+
+(module+ test
+  (check-equal?
+   (compare-pseudo-behavior `[([(init-addr 1) (() (goto A))])
+                              ()
+                              ()]
+                            `(init-addr 1)
+                            `(() (goto B)))
+   'not-gteq)
+  (check-equal?
+   (compare-pseudo-behavior `[([(init-addr 1) (() (goto A))])
+                              ()
+                              ()]
+                            `(init-addr 1)
+                            `(() (goto A)))
+   'eq)
+  (check-equal?
+   (compare-pseudo-behavior `[([(init-addr 1) (() (goto A (list-val)))])
+                              ()
+                              ()]
+                            `(init-addr 1)
+                            `(() (goto A (list-val (* Nat)))))
+   'gt)
+  (check-equal?
+   (compare-pseudo-behavior `[([(init-addr 1) (() (goto A))])
+                              ()
+                              ()]
+                            `(init-addr 2)
+                            `(() (goto A)))
+   'gt)
+  (check-equal?
+   (compare-pseudo-behavior `[()
+                              ([(blurred-spawn-addr 1)
+                                ([() (goto A)]
+                                 [() (goto B)])])
+                              ()]
+                            `(blurred-spawn-addr 2)
+                            `(() (goto A)))
+   'gt)
+  (check-equal?
+   (compare-pseudo-behavior `[()
+                              ([(blurred-spawn-addr 1)
+                                ([() (goto A)]
+                                 [() (goto B)])])
+                              ()]
+                            `(blurred-spawn-addr 1)
+                            `(() (goto A)))
+   'eq)
+  (check-equal?
+   (compare-pseudo-behavior `[()
+                              ([(blurred-spawn-addr 1)
+                                ([() (goto A)]
+                                 [() (goto B)])])
+                              ()]
+                            `(blurred-spawn-addr 1)
+                            `(() (goto C)))
+   'gt)
+  (check-equal?
+   (compare-pseudo-behavior `[()
+                              ([(blurred-spawn-addr 1)
+                                ([() (goto A (list-val))]
+                                 [() (goto B)])])
+                              ()]
+                            `(blurred-spawn-addr 1)
+                            `(() (goto A (list-val (* Nat)))))
+   'gt)
+  (check-equal?
+   (compare-pseudo-behavior `[()
+                              ([(blurred-spawn-addr 1)
+                                ([() (goto A (list-val (* Nat)))]
+                                 [() (goto B)])])
+                              ()]
+                            `(blurred-spawn-addr 1)
+                            `(() (goto A (list-val))))
+   'lt)
+  (test-equal? "Blurred actor with different state defs (faking different constructor args)"
+   (compare-pseudo-behavior `[()
+                              ([(blurred-spawn-addr 1)
+                                ([((define-state (A))) (goto A)])])
+                              ()]
+                            `(blurred-spawn-addr 1)
+                            `(() (goto A)))
+   'gt))
+
+;; ---------------------------------------------------------------------------------------------------
 ;; Tests for use during widening
 
 ;; NOTE: for various comparisons here, I need to record if a transition takes the config to a new
@@ -3127,7 +3357,7 @@
           (define i2-behavior (actor-behavior i2-actor))
           (cond
             [(equal? (behavior-state-defs i1-behavior) (behavior-state-defs i2-behavior))
-             (match (compare-behavior i1-behavior i2-behavior)
+             (match (compare-behavior i1-behavior i2-behavior #t)
                ['not-gteq 'not-gteq]
                [this-result (loop (comp-result-and comp-result this-result) i1-actors)])]
             [else 'not-gteq])])])))
@@ -3519,7 +3749,7 @@
 ;;
 ;; To be comparable, behaviors b1 and b2 must have the same current state name and state
 ;; definitions. The comparison is doing point-wise on the state argument values.
-(define (compare-behavior behavior1 behavior2)
+(define (compare-behavior behavior1 behavior2 check-state-defs?)
   (match-define `(,state-defs1 (goto ,state1 ,state-args1 ...)) behavior1)
   (match-define `(,state-defs2 (goto ,state2 ,state-args2 ...)) behavior2)
 
@@ -3528,20 +3758,33 @@
    (if (equal? state1 state2) 'eq 'not-gteq)
    ;; state arguments
    (for/fold ([comp-result 'eq])
-               ([arg1 state-args1]
-                [arg2 state-args2])
+             ([arg1 state-args1]
+              [arg2 state-args2])
      (comp-result-and comp-result (compare-value arg1 arg2)))
    ;; state definitions
-   (if (equal? state-defs1 state-defs2) 'eq 'not-gteq)))
+   (if (or (not check-state-defs?) (equal? state-defs1 state-defs2)) 'eq 'not-gteq)))
 
 (module+ test
-  (check-equal? (compare-behavior (term (() (goto A))) (term (() (goto B))))
+  (check-equal? (compare-behavior (term (() (goto A))) (term (() (goto B))) #t)
                 'not-gteq)
-  (check-equal? (compare-behavior (term (() (goto A (variant B)))) (term (() (goto A (variant B)))))
+  (check-equal? (compare-behavior (term (() (goto A (variant B)))) (term (() (goto A (variant B)))) #t)
                 'eq)
   (check-equal? (compare-behavior (term (() (goto A (vector-val (variant A) (variant B)))))
-                                  (term (() (goto A (vector-val (variant B))))))
-                'gt))
+                                  (term (() (goto A (vector-val (variant B)))))
+                                  #t)
+                'gt)
+  (check-equal?
+   (compare-behavior
+    (term (((define-state (A) (m) (goto A)))         (goto A (vector-val (variant B)))))
+    (term (((define-state (A) (m) (goto A (* Nat)))) (goto A (vector-val (variant B)))))
+    #t)
+   'not-gteq)
+  (check-equal?
+   (compare-behavior
+    (term (((define-state (A) (m) (goto A)))         (goto A (vector-val (variant B)))))
+    (term (((define-state (A) (m) (goto A (* Nat)))) (goto A (vector-val (variant B)))))
+    #f)
+   'eq))
 
 (define (compare-value v1 v2)
   (match (list v1 v2)
