@@ -1207,22 +1207,26 @@
               [(packet-syn? packet)
                (case (hash-ref binding-table (: packet destination-port))
                  [(Just bind-handler)
-                  (let* ([session-id
-                          (SessionId (InetSocketAddress source-ip (: packet source-port))
-                                     (: packet destination-port))]
-                         [session (spawn tcp-session
-                                         TcpSession
-                                         session-id
-                                         (PassiveOpen (: packet seq))
-                                         packets-out
-                                         bind-handler
-                                         self
-                                         ;; REFACTOR: consider making these top-level constants
-                                         wait-time-in-milliseconds
-                                         max-retries
-                                         max-segment-lifetime-in-ms
-                                         user-response-wait-time)])
-                     (goto Ready (hash-set session-table session-id session) binding-table))]
+                  (goto Ready session-table binding-table)
+                  ;; TODO: put binding back in
+
+                  ;; (let* ([session-id
+                  ;;         (SessionId (InetSocketAddress source-ip (: packet source-port))
+                  ;;                    (: packet destination-port))]
+                  ;;        [session (spawn tcp-session
+                  ;;                        TcpSession
+                  ;;                        session-id
+                  ;;                        (PassiveOpen (: packet seq))
+                  ;;                        packets-out
+                  ;;                        bind-handler
+                  ;;                        self
+                  ;;                        ;; REFACTOR: consider making these top-level constants
+                  ;;                        wait-time-in-milliseconds
+                  ;;                        max-retries
+                  ;;                        max-segment-lifetime-in-ms
+                  ;;                        user-response-wait-time)])
+                  ;;    (goto Ready (hash-set session-table session-id session) binding-table))
+                  ]
                  [(Nothing)
                    ;; RFC 793 on resets:
                    ;;
@@ -2015,17 +2019,6 @@
       (UserCommand ,desugared-user-command)
       (SessionCloseNotification ,desugared-session-id)))
 
-  (define trivial-spec
-    `(specification (receptionists [tcp ,desugared-tcp-input])
-                    (externals [packets-out ,desugared-tcp-output])
-       [tcp  (Union [UserCommand ,desugared-user-command])] ; obs interface
-       ([tcp (Union [InPacket Nat ,desugared-tcp-packet-type])])  ; unobs interface
-       (goto DoNothing)
-       (define-state (DoNothing) [* -> () (goto DoNothing)])))
-
-  (test-true "User command type" (csa-valid-type? desugared-user-command))
-  (test-true (check-conformance desugared-program trivial-spec))
-
   (define tcp-session-program
     `(program (receptionists)
               (externals [session-packet-dest (Addr (Union (InTcpPacket TcpPacket)))]
@@ -2062,19 +2055,6 @@
                                        packets-out
                                        status-updates
                                        close-notifications)])))
-
-  (define trivial-session-spec
-    `(specification
-      (receptionists)
-      (externals [session-dest (Addr ,desugared-session-command)]
-                 [session-packet-dest (Addr (Union [InTcpPacket ,desugared-tcp-packet-type]))]
-                 [packets-out ,desugared-tcp-output]
-                 [status-updates ,desugared-connection-status]
-                 [close-notifications (Union [SessionCloseNotification ,desugared-session-id])])
-      UNKNOWN
-      ()
-      (goto DoNothing)
-      (define-state (DoNothing) [* -> () (goto DoNothing)])))
 
   (define session-spec-behavior
     `((goto AwaitingRegistration)
@@ -2225,5 +2205,23 @@
          (goto Done)])
       (define-state (Done))))
 
-  (test-true "Conformance for session"
-    (check-conformance (desugar tcp-session-program) session-spec)))
+  ;; (test-true "Conformance for session"
+  ;;   (check-conformance (desugar tcp-session-program) session-spec))
+
+  (define manager-spec
+    `(specification (receptionists [tcp ,desugared-tcp-input])
+                    (externals [packets-out ,desugared-tcp-output])
+       [tcp  (Union [UserCommand ,desugared-user-command])] ; obs interface
+       ([tcp (Union [InPacket Nat ,desugared-tcp-packet-type])])  ; unobs interface
+       (goto Managing)
+       (define-state (Managing)
+         [(variant UserCommand (variant Connect * status-updates)) ->
+          ([obligation status-updates (or (variant CommandFailed)
+                                          (variant Connected * (fork ,@session-spec-behavior)))])
+          (goto Managing)]
+         ;; TODO: add the real spec for Bind
+         [(variant UserCommand (variant Bind * * *)) -> () (goto Managing)])))
+
+  (test-true "User command type" (csa-valid-type? desugared-user-command))
+  (test-true "Conformance for manager"
+    (check-conformance desugared-program manager-spec)))
