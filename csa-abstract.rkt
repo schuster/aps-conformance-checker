@@ -98,6 +98,7 @@
       (hash [e# e#] ...)
       (for/fold ([x e#]) ([x e#]) e#)
       (loop-context e#)
+      (coerce e# τ)
       x
       v#)
   (a# a#int a#ext) ; internal and external addresses
@@ -140,7 +141,8 @@
       (hash [v# v#] ... [v# E#] [e# e#] ...)
       (for/fold ([x E#]) ([x e#]) e#)
       (for/fold ([x v#]) ([x E#]) e#)
-      (loop-context E#))
+      (loop-context E#)
+      (coerce E# τ))
   (trigger# (timeout/empty-queue a#int)
             (timeout/non-empty-queue a#int)
             (internal-receive a#int v#)
@@ -954,6 +956,12 @@
                      ([,item-var ,stuck-items])
              ,body))))
      `(,(remove-duplicates final-value-states) ,final-stuck-states)]
+    ;; Coercion
+    [`(coerce ,e ,type)
+     (eval-and-then e effects
+       (lambda (v effects)
+         (value-result (term (coerce/mf ,v ,type)) effects))
+       (lambda (stuck) `(coerce ,stuck ,type)))]
     ;; Communication
     [`(send ,e-addr ,e-message)
      (eval-and-then* (list e-addr e-message) effects
@@ -964,7 +972,7 @@
          (define quantity (if (in-loop-context?) 'many 'single))
          (match-define `(,sends ,spawns) effects)
          (value-result v-message
-                       `(,(add-output sends (term [,addr (coerce ,v-message ,addr-type) ,quantity]))
+                       `(,(add-output sends (term [,addr (coerce/mf ,v-message ,addr-type) ,quantity]))
                          ,spawns)))
        (lambda (stucks) `(send ,@stucks)))]
     ;; Spawns
@@ -1211,6 +1219,8 @@
                        `(variant False))
   (check-exp-steps-to? `(not (* (Union [True] [False])))
                        `(* (Union [True] [False])))
+  (check-exp-steps-to? `(coerce ((Union [A] [B] [C]) (init-addr 1)) (Addr (Union [B])))
+                       `((Union [B]) (init-addr 1)))
   ;; Equality checks
   (check-exp-steps-to-all? (term (= (* String) (* String)))
                           (list (term (variant True)) (term (variant False))))
@@ -1783,7 +1793,8 @@
     [`(for/fold ([,x1 ,e1]) ([,x2 ,e2]) ,body)
      `(for/fold ([,x1 ,(do-subst e1)])
                 ([,x2 ,(do-subst e2)])
-        ,(csa#-subst-n body (shadow (list x1 x2))))]))
+        ,(csa#-subst-n body (shadow (list x1 x2))))]
+    [`(coerce ,e ,type) `(coerce ,(do-subst e) ,type)]))
 
 ;; OPTIMIZE: perhaps this should use non-Redex match instead?
 (define (typed-address? exp)
@@ -1847,6 +1858,9 @@
                 (term (variant Foo (* Nat))))
   (check-equal? (csa#-subst-n `((Union [A] [B]) (init-addr 1)) (list `[x (* Nat)]))
                 `((Union [A] [B]) (init-addr 1)))
+  (check-equal? (csa#-subst-n `(coerce x (Addr (Union [B])))
+                              (list `[x ((Union [A] [B]) (init-addr 1))]))
+                `(coerce ((Union [A] [B]) (init-addr 1)) (Addr (Union [B]))))
   (test-equal? "spawn subst 1"
     (csa#-subst-n `(spawn loc
                           Nat
@@ -2042,7 +2056,8 @@
   [(abstract-e (for/fold ([x_1 e_1]) ([x_2 e_2]) e) (a ...) natural)
    (for/fold ([x_1 (abstract-e e_1 (a ...) natural)])
              ([x_2 (abstract-e e_2 (a ...) natural)])
-     (abstract-e e (a ...) natural))])
+     (abstract-e e (a ...) natural))]
+  [(abstract-e (coerce e τ) (a ...) natural) (coerce (abstract-e e (a ...) natural) τ)])
 
 ;; Abstracts the address a, where internal-addresses is the list of all addresses belonging to actors
 ;; in a's implementation configuration.
@@ -2081,6 +2096,10 @@
                 (term (hash-val () ())))
   (check-equal? (term (abstract-e (hash [1 (let ([x 1]) x)] [3 4]) () 10))
                 (term (hash [(* Nat) (let ([x (* Nat)]) x)] [(* Nat) (* Nat)])))
+  (check-equal? (term (abstract-e (coerce ((Union [A] [B]) (addr 1)) (Addr (Union [B])))
+                                  ((addr 1))
+                                  10))
+                (term (coerce ((Union [A] [B]) (init-addr 1)) (Addr (Union [B])))))
   (test-equal? "Abstraction on non-matching addresses"
                (term (abstract-e ((Union [A]) (addr 1)) ((addr 1)) 0))
                (term ((Union [A]) (init-addr 1))))
@@ -2894,60 +2913,60 @@
 ;; Coerces the abstract value v# according to the type τ (just change the types of addresses in
 ;; v). The type system should always make this sound
 (define-metafunction csa#
-  coerce : v# τ -> v#
+  coerce/mf : v# τ -> v#
   ;; wildcard
-  [(coerce (* _) τ) (* τ)]
+  [(coerce/mf (* _) τ) (* τ)]
   ;; addresses
-  [(coerce (_ (init-addr natural)) (Addr τ))
+  [(coerce/mf (_ (init-addr natural)) (Addr τ))
    (τ (init-addr natural))]
-  [(coerce (_ (spawn-addr any_loc spawn-flag)) (Addr τ))
+  [(coerce/mf (_ (spawn-addr any_loc spawn-flag)) (Addr τ))
    (τ (spawn-addr any_loc spawn-flag))]
-  [(coerce (_ (blurred-spawn-addr any_loc)) (Addr τ))
+  [(coerce/mf (_ (blurred-spawn-addr any_loc)) (Addr τ))
    (τ (blurred-spawn-addr any_loc))]
-  [(coerce (_ (obs-ext natural)) (Addr τ))
+  [(coerce/mf (_ (obs-ext natural)) (Addr τ))
    (τ (obs-ext natural))]
   ;; variants and records
-  [(coerce (variant t v# ..._n) (Union _ ... [t τ ..._n] _ ...))
-   (variant t (coerce v# τ) ...)]
-  [(coerce (record [l v#] ..._n) (Record [l τ] ..._n))
-   (record [l (coerce v# τ)] ...)]
+  [(coerce/mf (variant t v# ..._n) (Union _ ... [t τ ..._n] _ ...))
+   (variant t (coerce/mf v# τ) ...)]
+  [(coerce/mf (record [l v#] ..._n) (Record [l τ] ..._n))
+   (record [l (coerce/mf v# τ)] ...)]
   ;; fold
-  [(coerce (folded _ v#) (minfixpt X τ))
-   (folded (minfixpt X τ) (coerce v# (type-subst τ X (minfixpt X τ))))]
+  [(coerce/mf (folded _ v#) (minfixpt X τ))
+   (folded (minfixpt X τ) (coerce/mf v# (type-subst τ X (minfixpt X τ))))]
   ;; lists, vectors, and hashes
-  [(coerce (list-val v# ...) (Listof τ))
-   ,(normalize-collection (term (list-val (coerce v# τ) ...)))]
-  [(coerce (vector-val v# ...) (Vectorof τ))
-   ,(normalize-collection (term (vector-val (coerce v# τ) ...)))]
-  [(coerce (hash-val (v#_keys ...) (v#_vals ...)) (Hash τ_key τ_val))
+  [(coerce/mf (list-val v# ...) (Listof τ))
+   ,(normalize-collection (term (list-val (coerce/mf v# τ) ...)))]
+  [(coerce/mf (vector-val v# ...) (Vectorof τ))
+   ,(normalize-collection (term (vector-val (coerce/mf v# τ) ...)))]
+  [(coerce/mf (hash-val (v#_keys ...) (v#_vals ...)) (Hash τ_key τ_val))
    ,(normalize-collection
-     (term (hash-val ((coerce v#_keys τ_key) ...) ((coerce v#_vals τ_val) ...))))])
+     (term (hash-val ((coerce/mf v#_keys τ_key) ...) ((coerce/mf v#_vals τ_val) ...))))])
 
 (module+ test
-  (test-equal? "coerce wildcard 1" (term (coerce (* Nat) Nat)) (term (* Nat)))
-  (test-equal? "coerce wildcard 2"
-    (term (coerce (* (Addr (Union [A] [B]))) (Addr (Union [A]))))
+  (test-equal? "coerce/mf wildcard 1" (term (coerce/mf (* Nat) Nat)) (term (* Nat)))
+  (test-equal? "coerce/mf wildcard 2"
+    (term (coerce/mf (* (Addr (Union [A] [B]))) (Addr (Union [A]))))
     (term (* (Addr (Union [A])))))
-  (test-equal? "coerce init-addr"
-    (term (coerce ((Union [A] [B]) (init-addr 1)) (Addr (Union [A]))))
+  (test-equal? "coerce/mf init-addr"
+    (term (coerce/mf ((Union [A] [B]) (init-addr 1)) (Addr (Union [A]))))
     (term ((Union [A]) (init-addr 1))))
-  (test-equal? "coerce spawn-addr"
-    (term (coerce ((Union [A] [B]) (spawn-addr 1 OLD)) (Addr (Union [A]))))
+  (test-equal? "coerce/mf spawn-addr"
+    (term (coerce/mf ((Union [A] [B]) (spawn-addr 1 OLD)) (Addr (Union [A]))))
     (term ((Union [A]) (spawn-addr 1 OLD))))
-  (test-equal? "coerce blurred-spawn-addr"
-    (term (coerce ((Union [A] [B]) (blurred-spawn-addr 1)) (Addr (Union [A]))))
+  (test-equal? "coerce/mf blurred-spawn-addr"
+    (term (coerce/mf ((Union [A] [B]) (blurred-spawn-addr 1)) (Addr (Union [A]))))
     (term ((Union [A]) (blurred-spawn-addr 1))))
-  (test-equal? "coerce obs-ext"
-    (term (coerce ((Union [A] [B]) (obs-ext 1)) (Addr (Union [A]))))
+  (test-equal? "coerce/mf obs-ext"
+    (term (coerce/mf ((Union [A] [B]) (obs-ext 1)) (Addr (Union [A]))))
     (term ((Union [A]) (obs-ext 1))))
-  (test-equal? "coerce variant"
-    (term (coerce (variant Z (* (Addr (Union [A] [B])))) (Union [Z (Addr (Union [A]))])))
+  (test-equal? "coerce/mf variant"
+    (term (coerce/mf (variant Z (* (Addr (Union [A] [B])))) (Union [Z (Addr (Union [A]))])))
     (term (variant Z (* (Addr (Union [A]))))))
-  (test-equal? "coerce record"
-    (term (coerce (record [foo (* (Addr (Union [A] [B])))]) (Record [foo (Addr (Union [A]))])))
+  (test-equal? "coerce/mf record"
+    (term (coerce/mf (record [foo (* (Addr (Union [A] [B])))]) (Record [foo (Addr (Union [A]))])))
     (term (record [foo (* (Addr (Union [A])))])))
-  (test-equal? "coerce fold"
-    (term (coerce (folded (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A] [B])) AddrList]))
+  (test-equal? "coerce/mf fold"
+    (term (coerce/mf (folded (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A] [B])) AddrList]))
                           (* (Union [Empty]
                                     [Cons (Addr (Union [A] [B]))
                                           (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A] [B])) AddrList]))])))
@@ -2956,16 +2975,16 @@
                   (* (Union [Empty]
                             [Cons (Addr (Union [A]))
                                   (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A])) AddrList]))])))))
-  (test-equal? "coerce list"
-    (term (coerce (list-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
+  (test-equal? "coerce/mf list"
+    (term (coerce/mf (list-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
                   (Listof (Addr (Union [A])))))
     (term (list-val (* (Addr (Union [A]))))))
-  (test-equal? "coerce vector"
-    (term (coerce (vector-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
+  (test-equal? "coerce/mf vector"
+    (term (coerce/mf (vector-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
                   (Vectorof (Addr (Union [A])))))
     (term (vector-val (* (Addr (Union [A]))))))
-  (test-equal? "coerce hash"
-    (term (coerce (hash-val ((* Nat)) ((* (Addr (Union [A] [B]))) (* (Addr (Union [A])))))
+  (test-equal? "coerce/mf hash"
+    (term (coerce/mf (hash-val ((* Nat)) ((* (Addr (Union [A] [B]))) (* (Addr (Union [A])))))
                   (Hash Nat (Addr (Union [A])))))
     (term (hash-val ((* Nat)) ((* (Addr (Union [A]))))))))
 

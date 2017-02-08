@@ -810,9 +810,10 @@
             (- ad))
   (Exp (e)
        (- (spawn l a e ...))
-       (+ (spawn l τ e S ...))))
+       (+ (spawn l τ e S ...)
+          (coerce e τ))))
 
-(struct actor-record (type formals body state-defs))
+(struct actor-record (type formals formal-types body state-defs))
 
 (define-pass inline-actors : csa/inlined-actor-definitions (P) -> csa/inlined-actors ()
   ;; TODO: I think the return "type" is not checked, because I've seen things get through when I had ActorDef instead of Prog
@@ -826,7 +827,7 @@
                    ,PI* ...
                    (,actors-kw [,x3 ,e3] ...)))
                ;; TODO: figure out if hash-set overwrites existing entries or not
-               (hash-set defs-so-far a (actor-record τ0 x e S)))]
+               (hash-set defs-so-far a (actor-record τ0 x τ e S)))]
         [(,program-kw (,receptionists-kw [,x1 ,[τ1]] ...) (,externals-kw [,x2 ,[τ2]] ...)
           (,actors-kw [,x3 ,[Exp : e0 defs-so-far -> e]] ...))
          `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
@@ -845,10 +846,10 @@
        [(spawn ,l ,a ,[Exp : e0 defs-so-far -> e] ...)
         (match (hash-ref defs-so-far a #f)
           [#f (error 'inline-actors "Could not find match for actor ~s\n" a)]
-          [(actor-record type formals body state-defs)
+          [(actor-record type formals formal-types body state-defs)
            ;; TODO: do I need to rename variables here at all?
            ;; `(spawn (goto S-Bad1))
-           `(let ([,formals ,e] ...) (spawn ,l ,type ,body ,state-defs ...))
+           `(let ([,formals (coerce ,e ,formal-types)] ...) (spawn ,l ,type ,body ,state-defs ...))
            ])
 
         ;; ,spawn-exp
@@ -915,7 +916,7 @@
                    (goto S1)))
          (actors [a (spawn 1 A 5)])))))
    `(program (receptionists) (externals)
-     (actors [a (let ([x 5])
+     (actors [a (let ([x (coerce 5 Nat)])
                      (spawn
                       1
                       Nat
@@ -939,14 +940,14 @@
                (goto S2))))
          (actors [a (spawn 2 B 5)])))))
    `(program (receptionists) (externals)
-     (actors [a (let ([y 5])
+     (actors [a (let ([y (coerce 5 Nat)])
                      (spawn
                       2
                       Nat
                       (goto S2)
                       (define-state (S2) (m)
                         (begin
-                          (let ([x 3])
+                          (let ([x (coerce 3 Nat)])
                             (spawn
                              1
                              Nat

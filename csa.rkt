@@ -59,7 +59,8 @@
      (list e ...)
      (vector e ...)
      (hash [e e] ...)
-     (for/fold ([x e]) ([x e]) e))
+     (for/fold ([x e]) ([x e]) e)
+     (coerce e τ)) ; only used internally; needed for eviction when actor closes over other addresses
   (Q (define-state (q [x τ] ...) (x) e)
      (define-state (q [x τ] ...) (x) e [(timeout e) e]))
   (primop
@@ -327,7 +328,8 @@
   [(subst (for/fold ([x_1 e_1]) ([x_2 e_2]) e_3) x_2 v)
    (for/fold ([x_1 (subst e_1 x_2 v)]) ([x_2 (subst e_2 x_2 v)]) e_3)]
   [(subst (for/fold ([x_1 e_1]) ([x_2 e_2]) e_3) x v)
-   (for/fold ([x_1 (subst e_1 x v)]) ([x_2 (subst e_2 x v)]) (subst e_3 x v))])
+   (for/fold ([x_1 (subst e_1 x v)]) ([x_2 (subst e_2 x v)]) (subst e_3 x v))]
+  [(subst (coerce e τ) x v) (coerce (subst e x v) τ)])
 
 (define-metafunction csa-eval
   subst/case-clause : [(t x ...) e] x v -> [(t x ...) e]
