@@ -441,7 +441,7 @@
 
      (define-function (finish-connecting [snd-nxt Nat] [rcv-nxt Nat] [window Nat])
        (send status-updates (Connected id self))
-       (let ([reg-timer (spawn reg-timer Timer (RegisterTimeout) self)])
+       (let ([reg-timer (spawn reg-timer-EVICT Timer (RegisterTimeout) self)])
          (send reg-timer (Start ,register-timeout))
          (goto AwaitingRegistration
                (SendBuffer 0 snd-nxt window snd-nxt (NoFinSeq) (vector))
@@ -449,14 +449,14 @@
                rcv-nxt
                (create-empty-rbuffer)
                reg-timer
-               (spawn rxmt-timer Timer (RetransmitTimeout) self))))
+               (spawn rxmt-timer-EVICT Timer (RetransmitTimeout) self))))
 
      ;; Transitions to time-wait, starting a timer on the way in
      (define-function (goto-TimeWait [snd-nxt Nat]
                                      [rcv-nxt Nat]
                                      [receive-buffer ReceiveBuffer]
                                      [octet-stream (Addr TcpSessionEvent)])
-       (let ([timer (spawn time-wait-timer Timer (TimeWaitTimeout) self)])
+       (let ([timer (spawn time-wait-timer-EVICT Timer (TimeWaitTimeout) self)])
          (send timer (Start (mult 2 max-segment-lifetime-in-ms)))
          (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream timer)))
 
@@ -818,7 +818,7 @@
                       receive-buffer
                       (Close close-handler)
                       (SentFin)
-                      (spawn close-await-sink Sink)
+                      (spawn close-await-sink-EVICT Sink)
                       rxmt-timer)]
         [(ConfirmedClose close-handler)
          (start-close send-buffer
@@ -826,7 +826,7 @@
                       receive-buffer
                       (ConfirmedClose close-handler)
                       (SentFin)
-                      (spawn confirmed-close-await-sink Sink)
+                      (spawn confirmed-close-await-sink-EVICT Sink)
                       rxmt-timer)]
         [(Abort close-handler)
          (abort-connection (: send-buffer send-next))
