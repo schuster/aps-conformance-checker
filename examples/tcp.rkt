@@ -1043,13 +1043,6 @@
                 [(SentThenReceivedFin)
                  (cond
                    [all-data-is-acked?
-                    (case close-type
-                      [(ConfirmedClose close-handler)
-                       (send octet-stream (ConfirmedClosed))
-                       (send close-handler (ConfirmedClosed))
-                       0]
-                      [(Close h) 0]
-                      [(PeerClose) 0])
                     (goto-TimeWait (: send-buffer send-next)
                                    rcv-nxt
                                    receive-buffer
