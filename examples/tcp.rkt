@@ -2158,7 +2158,9 @@
          ([obligation other-close-handler (variant CommandFailed)])
          (goto ClosingNoHandler close-handler)]
         [(variant Abort abort-handler) ->
-         ([obligation abort-handler (variant Aborted)]) (goto ClosedNoHandler)])
+         ([obligation abort-handler (variant Aborted)]) (goto ClosedNoHandler)]
+        ;; NOTE: again, no response on close-handler. Again, intentional
+        [unobs -> () (goto ClosedNoHandler)])
 
       (define-state (ClosedNoHandler)
         [(variant Register app-handler) -> () (goto ClosedNoHandler)]
