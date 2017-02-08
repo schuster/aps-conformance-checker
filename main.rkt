@@ -294,7 +294,8 @@
                     ;; (for ([successor-pair successor-pairs])
                     ;;   (printf "pre-sbc: ~s\n" successor-pair)
                     ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
-                    (for ([sbc-result (sbc* successor-pairs)])
+                    (for ([sbc-result
+                           (sbc* (map evict-all-evictables successor-pairs))])
                       ;; TODO: add the address binding here, too, and adjust other uses of incoming
                       ;; (e.g. in prune-unsupported) to take that structure into account
                       (match-define (list unwidened-sbc-pair rename-map) sbc-result)
@@ -476,6 +477,13 @@
      (define e (set-first s))
      (set-remove! s e)
      e]))
+
+;; returns (tuple i# s#)
+(define (evict-all-evictables the-pair)
+  (define i (config-pair-impl-config the-pair))
+  (define s (config-pair-spec-config the-pair))
+  (match-define `[,new-i ,new-s] (foldl evict (list i s) (csa#-evictable-addresses i)))
+  (config-pair new-i new-s))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Split/Blur/Canonicalize (SBC)

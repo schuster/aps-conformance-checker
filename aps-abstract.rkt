@@ -22,6 +22,7 @@
  aps#-completed-no-transition-config?
  ;; needed for widening
  aps#-config<=
+ evict
 
  ;; Required only for testing
  aps#
@@ -1768,6 +1769,105 @@
   (test-equal? "try-rename-address success"
     (reverse-rename-address (term ([1 3] [2 4])) (term (obs-ext 4)))
     (term (obs-ext 2))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Eviction
+
+;; Eviction is motivated by the phenomenon of actors causing lots of state explosion even though their
+;; precise state and communication does not affect conformance for the overall program. The idea of
+;; eviction is to remove specially marked "evictable" actors from the configuration as soon as they
+;; are spawned (as long as they don't contain external addresses relevant to the spec or have their
+;; own address used as the observable interface of the spec) and instead add their contained internal
+;; addresses to the unobserved environment. This allows potentially more messages to come from those
+;; actors than would be generated otherwise, but it avoids the state explosion from precisely modeling
+;; the states of these actors.
+
+(define (evict pair address)
+  (match-define `[,i ,s] pair)
+
+  (when (and (not (aps#-unknown-address? (aps#-config-obs-interface s)))
+             (equal? (csa#-address-strip-type (aps#-config-obs-interface s)) address))
+    (error 'evict "Cannot evict actor ~s in spec config ~s" address s))
+
+  (match-define `[,i-evicted ,contained-internals] (csa#-evict-actor i address))
+  (match-define (list obs-interface unobs-interface other-spec-components ...) s)
+  (define new-unobs
+    (merge-receptionists
+     (filter (lambda (typed-addr)
+               (not (equal? (csa#-address-strip-type typed-addr) address)))
+             unobs-interface)
+     contained-internals))
+
+  (list i-evicted
+        `[,obs-interface
+          ,new-unobs
+          ,@other-spec-components]))
+
+(module+ test
+  (test-equal? "Basic eviction test"
+    (evict (list
+            `[([(init-addr 1) (() (goto S (Nat (spawn-addr 1-EVICT NEW))))]
+               [(spawn-addr 1-EVICT NEW) (() (goto A ((Union [B]) (init-addr 1))))])
+              ()
+              ([(spawn-addr 1-EVICT NEW)
+                (record [a ((Union [C]) (init-addr 1))]
+                        [b (Nat (spawn-addr 1-EVICT-NEW))])
+                single]
+               [(init-addr 1) (Nat (spawn-addr 1-EVICT NEW)) single])]
+            `[UNKNOWN
+              ([(Union [A]) (init-addr 1)])
+              (goto A)
+              ()
+              ()])
+           `(spawn-addr 1-EVICT NEW))
+    (list
+     `[([(init-addr 1) (() (goto S (* (Addr Nat))))])
+       ()
+       ([(init-addr 1) (* (Addr Nat)) single])]
+     `[UNKNOWN
+       ([(Union [A] [B] [C]) (init-addr 1)])
+       (goto A)
+       ()
+       ()]))
+
+  (test-exn "Can't evict actor that has a relevant external address"
+    (lambda (exn) #t)
+    (lambda ()
+      (evict (list
+              `[([(spawn-addr 1-EVICT NEW) (() (goto A (Nat (obs-ext 1))))])
+                ()
+                ()]
+              `[UNKNOWN
+                ()
+                (goto A)
+                ()
+                ([(obs-ext 1)])]))))
+
+  (test-exn "Can't evict actor with an incoming message containing a relevant external address"
+    (lambda (exn) #t)
+    (lambda ()
+      (evict (list
+              `[([(spawn-addr 1-EVICT NEW) (() (goto A))])
+                ([(spawn-addr 1-EVICT NEW) (Nat (obs-ext 1)) single])
+                ()]
+              `[UNKNOWN
+                ()
+                (goto A)
+                ()
+                ([(obs-ext 1)])]))))
+
+  (test-exn "Can't evict actor used as observable interface"
+    (lambda (exn) #t)
+    (lambda ()
+      (evict (list
+              `[([(spawn-addr 1-EVICT NEW) (() (goto A))])
+                ()
+                ()]
+              `[(Nat (spawn-addr 1-EVICT NEW))
+                ()
+                (goto A)
+                ()
+                ()])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Widening helpers

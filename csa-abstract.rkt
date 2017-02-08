@@ -20,6 +20,7 @@
  csa#-config<?
  csa#-eval-trigger
  csa#-apply-transition
+ csa#-evictable-addresses
 
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
  csa#-spawn-address?
@@ -34,6 +35,7 @@
  internals-in
  externals-in
  csa#-sort-config-components
+ csa#-evict-actor
 
  ;; Required by APS#; should go into a "common" language instead
  csa#
@@ -3099,6 +3101,72 @@
                         (Nat (spawn-addr 3 NEW))
                       (foo bar (baz (Nat (init-addr 2)) (Nat (obs-ext 3)))))))
    (term ((Nat (init-addr 1)) (Nat (spawn-addr 3 NEW)) (Nat (init-addr 2))))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Eviction (see the Eviction section of aps-abstract.rkt for more info)
+
+;; Returns (list a#)
+(define (csa#-evictable-addresses i)
+  (filter evictable? (csa#-config-actors i)))
+
+(define (evictable? atomic-actor)
+  (match (csa#-actor-address atomic-actor)
+    [`(spawn-addr ,loc ,_)
+     (regexp-match? #rx"EVICT$" (location->string loc))]
+    [_ #f]))
+
+(define (location->string loc)
+  (match loc
+    [(? number?) (number->string loc)]
+    [(? symbol?) (symbol->string loc)]
+    [_ (error 'location->string "Don't know how to convert ~s into a string" loc)]))
+
+(module+ test
+  (check-false (evictable? `[(init-addr 1) (() (goto A))]))
+  (check-true (evictable? `[(spawn-addr L-EVICT NEW) (() (goto A))]))
+  (check-false (evictable? `[(spawn-addr L NEW) (() (goto A))])))
+
+;; Returns (tuple i# (list τa#)), where the list of typed addresses is those internal addresses
+;; contained by the evicted actor or its incoming messages
+(define (csa#-evict-actor i address)
+  (define-values (packets-to-evict remaining-packets)
+    (partition
+     (lambda (packet) (equal? address (csa#-message-packet-address packet)))
+     (csa#-config-message-packets i)))
+  (match-define-values ((list actor) remaining-actors)
+   (partition (lambda (a) (equal? (csa#-actor-address a) address))
+              (csa#-config-actors i)))
+
+  ;; conservative approximation of relevant addresses so that we don't have to do the
+  ;; relevancy computation
+  (when (not (null? (externals-in (list actor packets-to-evict))))
+    (error 'evict "Cannot evict actor ~s with incoming packets ~s" actor packets-to-evict))
+
+  (list
+   (evict-rename
+    `[,remaining-actors
+      ,(csa#-config-blurred-actors i)
+      ,remaining-packets]
+    address)
+   (internals-in (list actor packets-to-evict))))
+
+;; REFACTOR: consider merging my various address-rename functions together and just using a hash table
+;; of old address->new address mappings
+(define (evict-rename some-term addr)
+  (match-define `(spawn-addr ,loc ,_) addr)
+  (match some-term
+    [`[,type (spawn-addr ,(== loc) ,_)]
+     `(* (Addr ,type))]
+    [(list terms ...)
+     (map (curryr evict-rename addr) terms)]
+    [_ some-term]))
+
+(module+ test
+  (check-equal? (evict-rename `((Nat (spawn-addr 1 NEW))
+                                (String (spawn-addr 2-EVICT OLD)))
+                              `(spawn-addr 2-EVICT OLD))
+                 `((Nat (spawn-addr 1 NEW))
+                   (* (Addr String)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pre-sbc maybe-widen check
