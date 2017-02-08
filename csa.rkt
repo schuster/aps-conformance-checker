@@ -165,7 +165,7 @@
   [(instantiate-prog+bindings/mf
     (program (receptionists [x_receptionist _] ...)
              (externals     [x_external     τ_external] ...)
-             (actors        [x_internal (let ([x_let e_let] ...) e)] ...)))
+             (actors        [x_internal (let ([x_let (coerce e_let τ)] ...) e)] ...)))
    (i
     ([x_internal τa_internal] ... [x_external τa_external] ...))
 
@@ -174,6 +174,7 @@
    (where (τa_external ...) (generate-fresh-addresses/mf (τ_external ...) (τa_internal ...)))
 
    ;; 2. Do substitutions into spawn to get a behavior
+   ;; NOTE: assuming for now we can ignore the type coercion automatically put in place
    (where ((v_let ...) ...) (((subst-n e_let
                                        [x_external τa_external] ...
                                        [x_internal τa_internal] ...) ...) ...))
