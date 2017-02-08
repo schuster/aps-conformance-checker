@@ -1366,9 +1366,10 @@
 ;; Splits the given specifcation configuration into multiple configs, to ensure the space of explored
 ;; spec configs is finite. For each external address in the commitment map that is not a state
 ;; argument (and therefore will never have more commitments addeded), it creates a new config
-;; consisting only of the commitments on that address and a dummy FSM with no transitions. After
-;; removing those commitment map entries, the remaining config is also returned. The unobserved
-;; environment's interface does not change in any of the new configs.
+;; consisting only of the commitments on that address (along with commitments for any addresses
+;; mentioned in fork patterns for that address) and a dummy FSM with no transitions. After removing
+;; those commitment map entries, the remaining config is also returned. The unobserved environment's
+;; interface does not change in any of the new configs.
 (define (split-spec config)
   ;; Don't bother splitting if this is already a commitment-only config
   (cond
@@ -1376,19 +1377,37 @@
      (list config)]
     [else
      (define receptionists (aps#-config-receptionists config))
-     ;; A commitment map entry is "relevant" if it's address is used as a state argument or any of its
-     ;; patterns contain the "self" pattern
-     (define-values (relevant-entries irrelevant-entries)
+     ;; A commitment map entry is "relevant" if its address is used as a state argument, any of its
+     ;; patterns contain the "self" pattern, or it's used in a fork pattern for another relevant
+     ;; entry.
+     (define-values (maybe-relevant-entries irrelevant-entries)
        (partition (lambda (entry)
                     (or (member (aps#-commitment-entry-address entry)
                                 (aps#-config-current-state-args config))
-                        (member 'self (flatten (aps#-commitment-entry-patterns entry)))))
+                        (member 'self (flatten (aps#-commitment-entry-patterns entry)))
+                        (address-containing-this-addr-in-fork-pattern config entry)))
                   (aps#-config-commitment-map config)))
+     (define-values (relevant-entries in-irrelevant-fork-entries)
+       ;; NOTE: there are no cycles or nesting depths to relevancy: if an address is contained by a
+       ;; fork pattern, the linearity rules of APS imply that the containing address is either
+       ;; relevant or is already in irrelevant-entries
+       (partition
+        (lambda (entry)
+          (match (address-containing-this-addr-in-fork-pattern config entry)
+            [#f #t]
+            [addr (not (member addr (map aps#-commitment-entry-address irrelevant-entries)))]))
+        maybe-relevant-entries))
      (define commitment-only-configs
-       (map (curryr aps#-config-from-commitment-entry
-                    (aps#-config-obs-interface config)
-                    receptionists)
-            irrelevant-entries))
+       (for/list ([entry irrelevant-entries])
+         (define contained-fork-entries
+           (filter (lambda (fork-entry)
+                     (equal? (aps#-commitment-entry-address entry)
+                             (address-containing-this-addr-in-fork-pattern config fork-entry)))
+                   in-irrelevant-fork-entries))
+         (aps#-config-from-commitment-entries
+          (cons entry contained-fork-entries)
+          (aps#-config-obs-interface config)
+          receptionists)))
      (cons (term (,(aps#-config-obs-interface config)
                   ,receptionists
                   ,(aps#-config-current-state config)
@@ -1432,7 +1451,48 @@
                  ()
                  (goto A)
                  ()
-                 (((obs-ext 1) (single self))))))))
+                 (((obs-ext 1) (single self)))))))
+
+  (test-equal? "split spec with an address in a fork pattern"
+    (split-spec (term (UNKNOWN
+                       ()
+                       (goto A (obs-ext 3))
+                       ()
+                       (((obs-ext 1))
+                        ((obs-ext 2) [single (fork (goto B (obs-ext 1)))])
+                        ((obs-ext 3))))))
+    (list
+     (term (UNKNOWN
+            ()
+            (goto A (obs-ext 3))
+            ()
+            (((obs-ext 3)))))
+     (aps#-make-no-transition-config
+      null
+      (list `((obs-ext 2) [single (fork (goto B (obs-ext 1)))])
+            `((obs-ext 1))))))
+
+  (test-equal? "split spec with an address in a fork pattern, all relevant"
+    (split-spec (term (UNKNOWN
+                       ()
+                       (goto A (obs-ext 2))
+                       ()
+                       (((obs-ext 1))
+                        ((obs-ext 2) [single (fork (goto B (obs-ext 1)))])))))
+    (list
+     (term (UNKNOWN
+            ()
+            (goto A (obs-ext 2))
+            ()
+            (((obs-ext 1))
+             ((obs-ext 2) [single (fork (goto B (obs-ext 1)))])))))))
+
+(define (address-containing-this-addr-in-fork-pattern config entry)
+  (define address (aps#-commitment-entry-address entry))
+  (for/or ([other-entry (aps#-config-commitment-map config)])
+    (if (member address (externals-in (aps#-commitment-entry-patterns other-entry)))
+        (aps#-commitment-entry-address other-entry)
+        #f)))
 
 ;; Makes a specification config with an UNKNOWN address and an FSM with no transitions. Used for
 ;; specifications where only the commitments are important.
@@ -1446,25 +1506,29 @@
 ;; Creates a spec config with a transition-less FSM and a commitment map with just the given
 ;; entry. The receptionists for the unobserved environment will be the given list plus the given FSM
 ;; address if it is not UNKONWN.
-(define (aps#-config-from-commitment-entry entry obs-interface unobs-interface)
+(define (aps#-config-from-commitment-entries entries obs-interface unobs-interface)
   (aps#-make-no-transition-config (term (interface-add-address/mf ,unobs-interface ,obs-interface))
-                                  (list entry)))
+                                  entries))
 
 (module+ test
   (check-equal?
-   (aps#-config-from-commitment-entry (term ((obs-ext 0) (single *) (single (record [a *] [b *])))) 'UNKNOWN null)
+   (aps#-config-from-commitment-entries
+    (term (((obs-ext 0) (single *) (single (record [a *] [b *])))))
+    'UNKNOWN
+    null)
    (aps#-make-no-transition-config '() '(((obs-ext 0) (single *) (single (record [a *] [b *]))))))
 
   (test-equal? "Commitment entry spec should also include old FSM address as unobs receptionist"
-    (aps#-config-from-commitment-entry (term ((obs-ext 0) (single *) (single (record [a *] [b *]))))
-                                     '(Nat (init-addr 0))
-                                     null)
+    (aps#-config-from-commitment-entries
+     (list (term ((obs-ext 0) (single *) (single (record [a *] [b *])))))
+     '(Nat (init-addr 0))
+     null)
     (aps#-make-no-transition-config
      '((Nat (init-addr 0)))
      '(((obs-ext 0) (single *) (single (record [a *] [b *]))))))
 
   (test-equal? "Merge obs address into unobs addrs"
-    (aps#-config-from-commitment-entry (term ((obs-ext 0 Nat)))
+    (aps#-config-from-commitment-entries (list (term ((obs-ext 0 Nat))))
                                      `((Union [A]) (init-addr 0))
                                      `(((Union [B]) (init-addr 0))))
     (aps#-make-no-transition-config
