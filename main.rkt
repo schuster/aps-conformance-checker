@@ -485,6 +485,31 @@
   (match-define `[,new-i ,new-s] (foldl evict (list i s) (csa#-evictable-addresses i)))
   (config-pair new-i new-s))
 
+(module+ test
+  (test-equal? "Basic evict-all-evictables"
+    (evict-all-evictables
+     (config-pair `[([(init-addr 1) (() (goto A))]
+                     [(spawn-addr EVICT NEW) (() (goto B))]
+                     [(spawn-addr 2-EVICT NEW) (() (goto C))]
+                     [(spawn-addr 3 NEW) (() (goto D))])
+                    ()
+                    ()]
+                  `[UNKNOWN () (goto A) () ()]))
+    (config-pair `[([(init-addr 1) (() (goto A))]
+                    [(spawn-addr 3 NEW) (() (goto D))])
+                   ()
+                   ()]
+                 `[UNKNOWN () (goto A) () ()]))
+
+  (test-case "Evict nothing"
+    (let ([evict-nothing-pair
+           (config-pair `[([(init-addr 1) (() (goto A))]
+                           [(spawn-addr 3 NEW) (() (goto D))])
+                          ()
+                          ()]
+                        `[UNKNOWN () (goto A) () ()])])
+      (check-equal? (evict-all-evictables evict-nothing-pair) evict-nothing-pair))))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Split/Blur/Canonicalize (SBC)
 

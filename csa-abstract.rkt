@@ -3107,10 +3107,20 @@
 
 ;; Returns (list a#)
 (define (csa#-evictable-addresses i)
-  (filter evictable? (csa#-config-actors i)))
+  (filter evictable? (map csa#-actor-address (csa#-config-actors i))))
 
-(define (evictable? atomic-actor)
-  (match (csa#-actor-address atomic-actor)
+(module+ test
+  (check-equal?
+   (csa#-evictable-addresses  `[([(init-addr 1) (() (goto A))]
+                                 [(spawn-addr EVICT NEW) (() (goto B))]
+                                 [(spawn-addr 2-EVICT NEW) (() (goto C))]
+                                 [(spawn-addr 3 NEW) (() (goto D))])
+                                ()
+                                ()])
+   (list `(spawn-addr EVICT NEW) `(spawn-addr 2-EVICT NEW))))
+
+(define (evictable? address)
+  (match address
     [`(spawn-addr ,loc ,_)
      (regexp-match? #rx"EVICT$" (location->string loc))]
     [_ #f]))
@@ -3122,9 +3132,9 @@
     [_ (error 'location->string "Don't know how to convert ~s into a string" loc)]))
 
 (module+ test
-  (check-false (evictable? `[(init-addr 1) (() (goto A))]))
-  (check-true (evictable? `[(spawn-addr L-EVICT NEW) (() (goto A))]))
-  (check-false (evictable? `[(spawn-addr L NEW) (() (goto A))])))
+  (check-false (evictable? `(init-addr 1)))
+  (check-true (evictable? `(spawn-addr L-EVICT NEW)))
+  (check-false (evictable? `(spawn-addr L NEW))))
 
 ;; Returns (tuple i# (list τa#)), where the list of typed addresses is those internal addresses
 ;; contained by the evicted actor or its incoming messages

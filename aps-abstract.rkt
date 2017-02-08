@@ -1782,7 +1782,7 @@
 ;; actors than would be generated otherwise, but it avoids the state explosion from precisely modeling
 ;; the states of these actors.
 
-(define (evict pair address)
+(define (evict address pair)
   (match-define `[,i ,s] pair)
 
   (when (and (not (aps#-unknown-address? (aps#-config-obs-interface s)))
@@ -1805,10 +1805,11 @@
 
 (module+ test
   (test-equal? "Basic eviction test"
-    (evict (list
+    (evict `(spawn-addr 1-EVICT NEW)
+           (list
             `[([(init-addr 1) (() (goto S (Nat (spawn-addr 1-EVICT NEW))))]
                [(spawn-addr 1-EVICT NEW) (() (goto A ((Union [B]) (init-addr 1))))])
-              ()
+              ([(blurred-spawn-addr 2) ()])
               ([(spawn-addr 1-EVICT NEW)
                 (record [a ((Union [C]) (init-addr 1))]
                         [b (Nat (spawn-addr 1-EVICT-NEW))])
@@ -1818,11 +1819,10 @@
               ([(Union [A]) (init-addr 1)])
               (goto A)
               ()
-              ()])
-           `(spawn-addr 1-EVICT NEW))
+              ()]))
     (list
      `[([(init-addr 1) (() (goto S (* (Addr Nat))))])
-       ()
+       ([(blurred-spawn-addr 2) ()])
        ([(init-addr 1) (* (Addr Nat)) single])]
      `[UNKNOWN
        ([(Union [A] [B] [C]) (init-addr 1)])
@@ -1833,7 +1833,8 @@
   (test-exn "Can't evict actor that has a relevant external address"
     (lambda (exn) #t)
     (lambda ()
-      (evict (list
+      (evict `(spawn-addr 1-EVICT NEW)
+             (list
               `[([(spawn-addr 1-EVICT NEW) (() (goto A (Nat (obs-ext 1))))])
                 ()
                 ()]
@@ -1846,10 +1847,11 @@
   (test-exn "Can't evict actor with an incoming message containing a relevant external address"
     (lambda (exn) #t)
     (lambda ()
-      (evict (list
+      (evict `(spawn-addr 1-EVICT NEW)
+             (list
               `[([(spawn-addr 1-EVICT NEW) (() (goto A))])
-                ([(spawn-addr 1-EVICT NEW) (Nat (obs-ext 1)) single])
-                ()]
+                ()
+                ([(spawn-addr 1-EVICT NEW) (Nat (obs-ext 1)) single])]
               `[UNKNOWN
                 ()
                 (goto A)
@@ -1859,7 +1861,8 @@
   (test-exn "Can't evict actor used as observable interface"
     (lambda (exn) #t)
     (lambda ()
-      (evict (list
+      (evict `(spawn-addr 1-EVICT NEW)
+             (list
               `[([(spawn-addr 1-EVICT NEW) (() (goto A))])
                 ()
                 ()]
