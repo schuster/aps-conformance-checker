@@ -2093,7 +2093,9 @@
         [(variant ConfirmedClose close-handler) -> () (goto ClosingNoHandler close-handler)]
         [(variant Abort abort-handler) ->
          ([obligation abort-handler (variant Aborted)])
-         (goto ClosedNoHandler)])
+         (goto ClosedNoHandler)]
+        ;; e.g. might close because of a registration timeout
+        [unobs -> () (goto ClosedNoHandler)])
 
       (define-state (Connected app-handler)
         [(variant Register other-app-handler) -> () (goto Connected app-handler)]
