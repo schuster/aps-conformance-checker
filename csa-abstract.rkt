@@ -3126,7 +3126,9 @@
 
 ;; Returns (list a#)
 (define (csa#-evictable-addresses i)
-  (filter evictable? (map csa#-actor-address (csa#-config-actors i))))
+  (append
+   (filter evictable? (map csa#-actor-address (csa#-config-actors i)))
+   (filter evictable? (map csa#-blurred-actor-address (csa#-config-blurred-actors i)))))
 
 (module+ test
   (check-equal?
@@ -3140,9 +3142,12 @@
 
 (define (evictable? address)
   (match address
-    [`(spawn-addr ,loc ,_)
-     (regexp-match? #rx"EVICT$" (location->string loc))]
+    [`(spawn-addr ,loc ,_) (evictable-location? loc)]
+    [`(blurred-spawn-addr ,loc) (evictable-location? loc)]
     [_ #f]))
+
+(define (evictable-location? loc)
+  (regexp-match? #rx"EVICT$" (location->string loc)))
 
 (define (location->string loc)
   (match loc
@@ -3153,7 +3158,10 @@
 (module+ test
   (check-false (evictable? `(init-addr 1)))
   (check-true (evictable? `(spawn-addr L-EVICT NEW)))
-  (check-false (evictable? `(spawn-addr L NEW))))
+  (check-false (evictable? `(spawn-addr L NEW)))
+  (check-false (evictable? `(blurred-spawn-addr L)))
+  (check-true (evictable? `(blurred-spawn-addr L-EVICT)))
+  (check-false (evictable? `(blurred-spawn-addr EVICT-NOT))))
 
 ;; Returns (tuple i# (list τa#)), where the list of typed addresses is those internal addresses
 ;; contained by the evicted actor or its incoming messages
@@ -3162,32 +3170,48 @@
     (partition
      (lambda (packet) (equal? address (csa#-message-packet-address packet)))
      (csa#-config-message-packets i)))
-  (match-define-values ((list actor) remaining-actors)
+  (match-define-values (removed-atomics remaining-atomics)
    (partition (lambda (a) (equal? (csa#-actor-address a) address))
               (csa#-config-actors i)))
+  (match-define-values (removed-collectives remaining-collectives)
+   (partition (lambda (a) (equal? (csa#-blurred-actor-address a) address))
+              (csa#-config-blurred-actors i)))
 
   ;; conservative approximation of relevant addresses so that we don't have to do the
   ;; relevancy computation
-  (when (not (null? (externals-in (list actor packets-to-evict))))
-    (error 'evict "Cannot evict actor ~s with incoming packets ~s" actor packets-to-evict))
+  (when (not (null? (externals-in (list removed-atomics removed-collectives packets-to-evict))))
+    (error 'evict "Cannot evict actor ~s with incoming packets ~s"
+           (list removed-atomics removed-collectives) packets-to-evict))
 
   (list
    (evict-rename
-    `[,remaining-actors
-      ,(csa#-config-blurred-actors i)
+    `[,remaining-atomics
+      ,remaining-collectives
       ,remaining-packets]
     address)
-   (internals-in (list actor packets-to-evict))))
+   (internals-in (list  removed-atomics removed-collectives packets-to-evict))))
 
 ;; REFACTOR: consider merging my various address-rename functions together and just using a hash table
 ;; of old address->new address mappings
 (define (evict-rename some-term addr)
-  (match-define `(spawn-addr ,loc ,_) addr)
+  (match addr
+    [`(spawn-addr ,loc ,_) (evict-rename/atomic some-term loc)]
+    [`(blurred-spawn-addr ,loc) (evict-rename/collective some-term loc)]))
+
+(define (evict-rename/atomic some-term loc)
   (match some-term
     [`[,type (spawn-addr ,(== loc) ,_)]
      `(* (Addr ,type))]
     [(list terms ...)
-     (map (curryr evict-rename addr) terms)]
+     (map (curryr evict-rename/atomic loc) terms)]
+    [_ some-term]))
+
+(define (evict-rename/collective some-term loc)
+  (match some-term
+    [`[,type (blurred-spawn-addr ,(== loc))]
+     `(* (Addr ,type))]
+    [(list terms ...)
+     (map (curryr evict-rename/collective loc) terms)]
     [_ some-term]))
 
 (module+ test
@@ -3195,7 +3219,13 @@
                                 (String (spawn-addr 2-EVICT OLD)))
                               `(spawn-addr 2-EVICT OLD))
                  `((Nat (spawn-addr 1 NEW))
-                   (* (Addr String)))))
+                   (* (Addr String))))
+
+  (check-equal? (evict-rename `((Nat (spawn-addr 1 NEW))
+                                (String (blurred-spawn-addr 2-EVICT)))
+                              `(blurred-spawn-addr 2-EVICT))
+                `((Nat (spawn-addr 1 NEW))
+                  (* (Addr String)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pre-sbc maybe-widen check

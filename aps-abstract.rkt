@@ -1791,12 +1791,13 @@
 
   (match-define `[,i-evicted ,contained-internals] (csa#-evict-actor i address))
   (match-define (list obs-interface unobs-interface other-spec-components ...) s)
+
+  (define (not-this-address? typed-addr)
+    (not (equal? (csa#-address-strip-type typed-addr) address)))
   (define new-unobs
     (merge-receptionists
-     (filter (lambda (typed-addr)
-               (not (equal? (csa#-address-strip-type typed-addr) address)))
-             unobs-interface)
-     contained-internals))
+     (filter not-this-address? unobs-interface)
+     (filter not-this-address? contained-internals)))
 
   (list i-evicted
         `[,obs-interface
@@ -1805,27 +1806,58 @@
 
 (module+ test
   (test-equal? "Basic eviction test"
-    (evict `(spawn-addr 1-EVICT NEW)
-           (list
-            `[([(init-addr 1) (() (goto S (Nat (spawn-addr 1-EVICT NEW))))]
-               [(spawn-addr 1-EVICT NEW) (() (goto A ((Union [B]) (init-addr 1))))])
-              ([(blurred-spawn-addr 2) ()])
-              ([(spawn-addr 1-EVICT NEW)
-                (record [a ((Union [C]) (init-addr 1))]
-                        [b (Nat (spawn-addr 1-EVICT-NEW))])
-                single]
-               [(init-addr 1) (Nat (spawn-addr 1-EVICT NEW)) single])]
-            `[UNKNOWN
-              ([(Union [A]) (init-addr 1)])
-              (goto A)
-              ()
-              ()]))
+    (evict `(blurred-spawn-addr 2-EVICT)
+           (evict `(spawn-addr 1-EVICT NEW)
+                  (list
+                   `[([(init-addr 1) (() (goto S (Nat (spawn-addr 1-EVICT NEW))))]
+                      [(spawn-addr 1-EVICT NEW) (() (goto A ((Union [B]) (init-addr 1))))])
+                     ([(blurred-spawn-addr 2) ()]
+                      [(blurred-spawn-addr 2-EVICT) ([() (goto S ((Union [D]) (init-addr 1)))])])
+                     ([(spawn-addr 1-EVICT NEW)
+                       (record [a ((Union [C]) (init-addr 1))]
+                               [b (Nat (spawn-addr 1-EVICT NEW))]
+                               [c (Nat (blurred-spawn-addr 2-EVICT))])
+                       single]
+                      [(blurred-spawn-addr 2-EVICT)
+                       (record [a ((Union [E]) (init-addr 1))]
+                               [b (Nat (spawn-addr 1-EVICT NEW))]
+                               [c (Nat (blurred-spawn-addr 2-EVICT))])
+                       single]
+                      [(init-addr 1) (Nat (spawn-addr 1-EVICT NEW)) single])]
+                   `[UNKNOWN
+                     ([(Union [A]) (init-addr 1)])
+                     (goto A)
+                     ()
+                     ()])))
     (list
      `[([(init-addr 1) (() (goto S (* (Addr Nat))))])
        ([(blurred-spawn-addr 2) ()])
        ([(init-addr 1) (* (Addr Nat)) single])]
      `[UNKNOWN
-       ([(Union [A] [B] [C]) (init-addr 1)])
+       ([(Union [A] [B] [C] [D] [E]) (init-addr 1)])
+       (goto A)
+       ()
+       ()]))
+
+  (test-equal? "Evict actor from unobs environment"
+    (evict `(spawn-addr 1-EVICT NEW)
+           (list
+            `[([(spawn-addr 1-EVICT NEW) (() (goto A))]
+               [(spawn-addr 2 NEW) (() (goto A))])
+              ()
+              ()]
+            `[UNKNOWN
+              ([Nat (spawn-addr 1-EVICT NEW)]
+               [Nat (spawn-addr 2 NEW)])
+              (goto A)
+              ()
+              ()]))
+    (list
+     `[([(spawn-addr 2 NEW) (() (goto A))])
+       ()
+       ()]
+     `[UNKNOWN
+       ([Nat (spawn-addr 2 NEW)])
        (goto A)
        ()
        ()]))
