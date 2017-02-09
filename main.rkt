@@ -799,7 +799,8 @@
                 ;; once more to get "many-of" instances of new spawns and messages, so we have the best
                 ;; chance of this configuration being greater than its predecessor
                 (define once-applied-pair
-                  (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
+                  (evict-all-evictables
+                   (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s))))))
                 (cond
                   [(csa#-action-enabled? (config-pair-impl-config once-applied-pair) trigger)
                    (define repeated-i-step
@@ -810,8 +811,9 @@
                      (first-spec-step-to-same-state (config-pair-spec-config once-applied-pair)
                                                     repeated-i-step))
                    (define twice-applied-pair
-                     (first
-                      (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
+                     (evict-all-evictables
+                      (first
+                       (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s))))))
                    (widen-printf "After first apply, no sbc: ~s\n" (impl-config-without-state-defs (impl-step-destination new-i-step)))
                    (widen-printf "Twice-applied, sbc'ed:     ~s\n" (impl-config-without-state-defs (config-pair-impl-config twice-applied-pair)))
                    (cond
