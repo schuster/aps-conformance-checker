@@ -20,7 +20,6 @@
  csa#-config<?
  csa#-eval-trigger
  csa#-apply-transition
- csa#-evictable-addresses
 
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
  csa#-spawn-address?
@@ -35,7 +34,6 @@
  internals-in
  externals-in
  csa#-sort-config-components
- csa#-evict-actor
 
  ;; Required by APS#; should go into a "common" language instead
  csa#
@@ -977,20 +975,37 @@
        (lambda (stucks) `(send ,@stucks)))]
     ;; Spawns
     [`(spawn ,loc ,type ,init-exp ,raw-state-defs ...)
-     (define address
-       (if (or (in-collective-handler?) (in-loop-context?))
-           `(blurred-spawn-addr ,loc)
-           `(spawn-addr ,loc NEW)))
-     (define address-value `(,type ,address))
+     (define-values (address address-value)
+       (if (evictable-location? loc)
+           (values `(* (Addr ,type)) `(* (Addr ,type)))
+           (let ([address (if (or (in-collective-handler?) (in-loop-context?))
+                              `(blurred-spawn-addr ,loc)
+                              `(spawn-addr ,loc NEW))])
+             (values address `(,type ,address)))))
      (define state-defs
        (for/list ([def raw-state-defs])
          (csa#-subst-n/Q# def (list `[self ,address-value]))))
      (eval-and-then (csa#-subst-n init-exp (list `[self ,address-value])) effects
        (lambda (goto-val effects)
          (match-define (list sends spawns) effects)
-         (value-result address-value
-                       (list sends
-                             (add-spawn spawns `[,address (,state-defs ,goto-val)]))))
+         (cond
+           [(evictable-location? loc)
+            (when (not (null? (externals-in (list goto-val state-defs))))
+              (error 'evict "Cannot evict actor ~s with behavior ~s" loc (list state-defs goto-val)))
+            (define contained-internals (internals-in (list state-defs goto-val)))
+            (define packet-with-contained-internals
+              `[(* (Addr Nat)) (list-val ,@contained-internals) single])
+            (value-result address-value
+                          ;; Note that the coercion on contained addresses was already applied before
+                          ;; we got to this spawn expression (because it's part of the surrounding
+                          ;; let-expression when we desugar), so we don't need to worry about further
+                          ;; coercion
+                          `[,(add-output sends packet-with-contained-internals)
+                            ,spawns])]
+           [else
+            (value-result address-value
+                          (list sends
+                                (add-spawn spawns `[,address (,state-defs ,goto-val)])))]))
        (lambda (stuck) `(spawn ,loc ,type ,stuck ,@raw-state-defs)))]
     ;; Goto
     [`(goto ,state-name ,args ...)
@@ -1409,6 +1424,32 @@
                               `(() ([(spawn-addr loc NEW)
                                      (((define-state (Foo) (m) (goto Foo)))
                                       (goto Foo (Nat (spawn-addr loc NEW))))]))))
+
+  (test-equal? "Spawn an evictable actor"
+    (eval-machine
+     `(spawn EVICT Nat
+             (begin
+               (send self (* Nat))
+               (send ((Addr Nat) (init-addr 1)) self)
+               (goto Foo self))
+             (define-state (Foo) (m) (goto Foo ((Addr Nat) (init-addr 2)))))
+     empty-effects
+     #f)
+    (value-result `(* (Addr Nat))
+                  `(([(* (Addr Nat)) (* Nat) single]
+                     [(init-addr 1) (* (Addr Nat)) single]
+                     [(* (Addr Nat)) (list-val ((Addr Nat) (init-addr 2))) single])
+                    ())))
+
+  (test-exn "Can't evict an actor that contains obs-ext addrs"
+    (lambda (x) #t)
+    (lambda ()
+      (eval-machine
+       `(spawn EVICT Nat
+               (goto Foo (Nat (obs-ext 1)))
+               (define-state (Foo) (m) (goto Foo)))
+     empty-effects
+     #f)))
 
   (test-case "Spawn in loop is a collective actor"
     (check-same-items?
@@ -3138,22 +3179,19 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Eviction (see the Eviction section of aps-abstract.rkt for more info)
 
-;; Returns (list a#)
-(define (csa#-evictable-addresses i)
-  (append
-   (filter evictable? (map csa#-actor-address (csa#-config-actors i)))
-   (filter evictable? (map csa#-blurred-actor-address (csa#-config-blurred-actors i)))))
-
-(module+ test
-  (check-equal?
-   (csa#-evictable-addresses  `[([(init-addr 1) (() (goto A))]
-                                 [(spawn-addr EVICT NEW) (() (goto B))]
-                                 [(spawn-addr 2-EVICT NEW) (() (goto C))]
-                                 [(spawn-addr 3 NEW) (() (goto D))])
-                                ([(blurred-spawn-addr 4) ((() (goto D)))]
-                                 [(blurred-spawn-addr 5-EVICT) ((() (goto E)))])
-                                ()])
-   (list `(spawn-addr EVICT NEW) `(spawn-addr 2-EVICT NEW) `(blurred-spawn-addr 5-EVICT))))
+;; Eviction is motivated by the phenomenon of actors causing lots of state explosion even though their
+;; precise state and communication does not affect conformance for the overall program. The idea of
+;; eviction is that when we're about to spawn a specially marked "evictable" actor, we instead create
+;; an external address with that type and send a message to the environment that contains all internal
+;; addresses that would be contained in the spawned actor's behavior (as long as the behavior does not
+;; itself contain precise external addresses). This allows potentially more messages to come from
+;; those actors than would be generated otherwise, but it avoids the state explosion from precisely
+;; modeling
+;;
+;; Note: originally this was called eviction because the child actor would be spawned but then removed
+;; (evicted) at the end of the handler. Later this was changed to just never generate the child at all
+;; and instead create an external address, forcing the contained internal addresses in the child into
+;; a message to the outside world to add to the unobserved interface in the spec.
 
 (define (evictable? address)
   (match address
@@ -3177,94 +3215,6 @@
   (check-false (evictable? `(blurred-spawn-addr L)))
   (check-true (evictable? `(blurred-spawn-addr L-EVICT)))
   (check-false (evictable? `(blurred-spawn-addr EVICT-NOT))))
-
-;; Returns (tuple i# (list τa#)), where the list of typed addresses is those internal addresses
-;; contained by the evicted actor or its incoming messages
-(define (csa#-evict-actor i address)
-  (define-values (packets-to-evict remaining-packets)
-    (partition
-     (lambda (packet) (equal? address (csa#-message-packet-address packet)))
-     (csa#-config-message-packets i)))
-  (match-define-values (removed-atomics remaining-atomics)
-   (partition (lambda (a) (equal? (csa#-actor-address a) address))
-              (csa#-config-actors i)))
-  (match-define-values (removed-collectives remaining-collectives)
-   (partition (lambda (a) (equal? (csa#-blurred-actor-address a) address))
-              (csa#-config-blurred-actors i)))
-
-  ;; conservative approximation of relevant addresses so that we don't have to do the
-  ;; relevancy computation
-  (when (not (null? (externals-in (list removed-atomics removed-collectives packets-to-evict))))
-    (error 'evict "Cannot evict actor ~s with incoming packets ~s"
-           (list removed-atomics removed-collectives) packets-to-evict))
-
-  (list
-   (config-deduplicate-collectives
-    (config-deduplicate-packets
-     (evict-rename
-      `[,remaining-atomics
-        ,remaining-collectives
-        ,remaining-packets]
-      address)))
-   (internals-in (list removed-atomics removed-collectives packets-to-evict))))
-
-(module+ test
-  (test-equal? "After eviction, messages and collective actors are merged back together"
-    (csa#-evict-actor
-     `[([(spawn-addr EVICT NEW) (() (goto S))])
-       ([(blurred-spawn-addr 1) ([((define-state (A) (m) (goto B (* (Addr Nat)))))
-                                  (goto B (* (Addr Nat)))]
-                                 [((define-state (A) (m) (goto B (Nat (spawn-addr EVICT NEW)))))
-                                  (goto B (Nat (spawn-addr EVICT NEW)))])])
-       ([(blurred-spawn-addr 1) (Nat (spawn-addr EVICT NEW)) single]
-        [(blurred-spawn-addr 1) (* (Addr Nat)) single]
-        [(blurred-spawn-addr 2) (Nat (spawn-addr EVICT NEW)) single]
-        [(blurred-spawn-addr 2) (* (Addr Nat)) many])]
-     `(spawn-addr EVICT NEW))
-
-    (list
-     `[()
-       ([(blurred-spawn-addr 1) ([((define-state (A) (m) (goto B (* (Addr Nat)))))
-                                  (goto B (* (Addr Nat)))])])
-       ([(blurred-spawn-addr 1) (* (Addr Nat)) many]
-        [(blurred-spawn-addr 2) (* (Addr Nat)) many])]
-     null)))
-
-;; REFACTOR: consider merging my various address-rename functions together and just using a hash table
-;; of old address->new address mappings
-(define (evict-rename some-term addr)
-  (match addr
-    [`(spawn-addr ,loc ,_) (evict-rename/atomic some-term loc)]
-    [`(blurred-spawn-addr ,loc) (evict-rename/collective some-term loc)]))
-
-(define (evict-rename/atomic some-term loc)
-  (match some-term
-    [`[,type (spawn-addr ,(== loc) ,_)]
-     `(* (Addr ,type))]
-    [(list terms ...)
-     (map (curryr evict-rename/atomic loc) terms)]
-    [_ some-term]))
-
-(define (evict-rename/collective some-term loc)
-  (match some-term
-    [`[,type (blurred-spawn-addr ,(== loc))]
-     `(* (Addr ,type))]
-    [(list terms ...)
-     (map (curryr evict-rename/collective loc) terms)]
-    [_ some-term]))
-
-(module+ test
-  (check-equal? (evict-rename `((Nat (spawn-addr 1 NEW))
-                                (String (spawn-addr 2-EVICT OLD)))
-                              `(spawn-addr 2-EVICT OLD))
-                 `((Nat (spawn-addr 1 NEW))
-                   (* (Addr String))))
-
-  (check-equal? (evict-rename `((Nat (spawn-addr 1 NEW))
-                                (String (blurred-spawn-addr 2-EVICT)))
-                              `(blurred-spawn-addr 2-EVICT))
-                `((Nat (spawn-addr 1 NEW))
-                  (* (Addr String)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pre-sbc maybe-widen check

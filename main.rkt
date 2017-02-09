@@ -295,7 +295,7 @@
                     ;;   (printf "pre-sbc: ~s\n" successor-pair)
                     ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
                     (for ([sbc-result
-                           (sbc* (map evict-all-evictables successor-pairs))])
+                           (sbc* successor-pairs)])
                       ;; TODO: add the address binding here, too, and adjust other uses of incoming
                       ;; (e.g. in prune-unsupported) to take that structure into account
                       (match-define (list unwidened-sbc-pair rename-map) sbc-result)
@@ -477,38 +477,6 @@
      (define e (set-first s))
      (set-remove! s e)
      e]))
-
-;; returns (tuple i# s#)
-(define (evict-all-evictables the-pair)
-  (define i (config-pair-impl-config the-pair))
-  (define s (config-pair-spec-config the-pair))
-  (match-define `[,new-i ,new-s] (foldl evict (list i s) (csa#-evictable-addresses i)))
-  (config-pair new-i new-s))
-
-(module+ test
-  (test-equal? "Basic evict-all-evictables"
-    (evict-all-evictables
-     (config-pair `[([(init-addr 1) (() (goto A))]
-                     [(spawn-addr EVICT NEW) (() (goto B))]
-                     [(spawn-addr 2-EVICT NEW) (() (goto C))]
-                     [(spawn-addr 3 NEW) (() (goto D))])
-                    ()
-                    ()]
-                  `[UNKNOWN () (goto A) () ()]))
-    (config-pair `[([(init-addr 1) (() (goto A))]
-                    [(spawn-addr 3 NEW) (() (goto D))])
-                   ()
-                   ()]
-                 `[UNKNOWN () (goto A) () ()]))
-
-  (test-case "Evict nothing"
-    (let ([evict-nothing-pair
-           (config-pair `[([(init-addr 1) (() (goto A))]
-                           [(spawn-addr 3 NEW) (() (goto D))])
-                          ()
-                          ()]
-                        `[UNKNOWN () (goto A) () ()])])
-      (check-equal? (evict-all-evictables evict-nothing-pair) evict-nothing-pair))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Split/Blur/Canonicalize (SBC)
@@ -799,8 +767,7 @@
                 ;; once more to get "many-of" instances of new spawns and messages, so we have the best
                 ;; chance of this configuration being greater than its predecessor
                 (define once-applied-pair
-                  (evict-all-evictables
-                   (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s))))))
+                  (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
                 (cond
                   [(csa#-action-enabled? (config-pair-impl-config once-applied-pair) trigger)
                    (define repeated-i-step
@@ -811,9 +778,8 @@
                      (first-spec-step-to-same-state (config-pair-spec-config once-applied-pair)
                                                     repeated-i-step))
                    (define twice-applied-pair
-                     (evict-all-evictables
-                      (first
-                       (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s))))))
+                     (first
+                      (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
                    (widen-printf "After first apply, no sbc: ~s\n" (impl-config-without-state-defs (impl-step-destination new-i-step)))
                    (widen-printf "Twice-applied, sbc'ed:     ~s\n" (impl-config-without-state-defs (config-pair-impl-config twice-applied-pair)))
                    (cond
