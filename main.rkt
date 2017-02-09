@@ -294,27 +294,34 @@
                     ;; (for ([successor-pair successor-pairs])
                     ;;   (printf "pre-sbc: ~s\n" successor-pair)
                     ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
-                    (for ([sbc-result
-                           (sbc* successor-pairs)])
+                    (for ([sbc-result (sbc* successor-pairs)])
                       ;; TODO: add the address binding here, too, and adjust other uses of incoming
                       ;; (e.g. in prune-unsupported) to take that structure into account
                       (match-define (list unwidened-sbc-pair rename-map) sbc-result)
+                      (define (seen? new-pair)
+                        (or (set-member? to-visit new-pair)
+                            (set-member? related-pairs new-pair)
+                            (set-member? unrelated-successors new-pair)
+                            (equal? new-pair pair)))
                       (define sbc-pair
-                        (if USE-WIDEN?
+                        (if (and USE-WIDEN?
+                                 ;; if we've already seen this pair, then we can assume it's already
+                                 ;; been widened (this often happens when a blurred actor from a fully
+                                 ;; widened config pair takes a transition step)
+                                 (not (seen? unwidened-sbc-pair)))
                             (widen-pair unwidened-sbc-pair
                                         visited-pairs-count
                                         i-step-num
                                         (length i-steps))
-                            unwidened-sbc-pair))
+                            (begin
+                              (widen-printf "Not widening an already-seen config pair\n")
+                              unwidened-sbc-pair)))
                       (log-incoming log-file sbc-pair (list pair i-step s-step rename-map))
                       (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step rename-map))
                       ;; unless it's already in the queue, or we have already explored it (and
                       ;; therefore it's in either the related or unrelated set), add the new pair to
                       ;; the worklist
-                      (unless (or (set-member? to-visit sbc-pair)
-                                  (set-member? related-pairs sbc-pair)
-                                  (set-member? unrelated-successors sbc-pair)
-                                  (equal? sbc-pair pair))
+                      (unless (seen? sbc-pair)
                         (set-add! to-visit sbc-pair)))))
                 (log-related log-file pair)
                 (loop (set-add related-pairs pair) unrelated-successors)])])])])))
