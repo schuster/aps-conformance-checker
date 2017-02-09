@@ -2190,13 +2190,9 @@
   ;; might have caused messages with differing content or address to now be the same)
   (define deduped-packets (deduplicate-packets (csa#-config-message-packets renamed-config)))
   ;; 4. Merge blurred behaviors in and subsume others as necessary
-  (define existing-addr-behavior-pairs
-    (append*
-     (for/list ([collective (csa#-config-blurred-actors renamed-config)])
-       (map (curry list (csa#-blurred-actor-address collective))
-            (csa#-blurred-actor-behaviors collective)))))
   (define updated-blurred-actors
-    (add-blurred-behaviors null (append existing-addr-behavior-pairs renamed-removed-actors)))
+    (add-blurred-behaviors (deduplicate-collectives (csa#-config-blurred-actors renamed-config))
+                           renamed-removed-actors))
   (list
    (term (,(csa#-config-actors renamed-config)
           ,updated-blurred-actors
@@ -2515,6 +2511,20 @@
                            (list (term ((blurred-spawn-addr 1) ,behavior1))))
     (term (((blurred-spawn-addr 1) (,behavior1))))))
 
+(define (config-deduplicate-collectives config)
+  (match-define `[,atomics ,collectives ,packets] config)
+  `[,atomics ,(deduplicate-collectives collectives) ,packets])
+
+(define (deduplicate-collectives collectives)
+  ;; deduplication just takes the behaviors out and adds them back in, one by one, which does the
+  ;; merging as part of the addition process
+  (add-blurred-behaviors
+   null
+   (append*
+    (for/list ([collective collectives])
+      (map (curry list (csa#-blurred-actor-address collective))
+           (csa#-blurred-actor-behaviors collective))))))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Canonicalization (the sorting of config components)
 
@@ -2601,6 +2611,10 @@
     (list `[(init-addr 1) (* Nat) many]
           `[(init-addr 2) (* Nat) single]
           `[(init-addr 2) (* String) many])))
+
+(define (config-deduplicate-packets config)
+  (match-define `[,atomics ,collectives ,packets] config)
+  `[,atomics ,collectives ,(deduplicate-packets packets)])
 
 ;; For two "messages" (the things inside the message queue in a config), returns true if they have the
 ;; same address and value
@@ -3136,9 +3150,10 @@
                                  [(spawn-addr EVICT NEW) (() (goto B))]
                                  [(spawn-addr 2-EVICT NEW) (() (goto C))]
                                  [(spawn-addr 3 NEW) (() (goto D))])
-                                ()
+                                ([(blurred-spawn-addr 4) ((() (goto D)))]
+                                 [(blurred-spawn-addr 5-EVICT) ((() (goto E)))])
                                 ()])
-   (list `(spawn-addr EVICT NEW) `(spawn-addr 2-EVICT NEW))))
+   (list `(spawn-addr EVICT NEW) `(spawn-addr 2-EVICT NEW) `(blurred-spawn-addr 5-EVICT))))
 
 (define (evictable? address)
   (match address
@@ -3184,12 +3199,36 @@
            (list removed-atomics removed-collectives) packets-to-evict))
 
   (list
-   (evict-rename
-    `[,remaining-atomics
-      ,remaining-collectives
-      ,remaining-packets]
-    address)
-   (internals-in (list  removed-atomics removed-collectives packets-to-evict))))
+   (config-deduplicate-collectives
+    (config-deduplicate-packets
+     (evict-rename
+      `[,remaining-atomics
+        ,remaining-collectives
+        ,remaining-packets]
+      address)))
+   (internals-in (list removed-atomics removed-collectives packets-to-evict))))
+
+(module+ test
+  (test-equal? "After eviction, messages and collective actors are merged back together"
+    (csa#-evict-actor
+     `[([(spawn-addr EVICT NEW) (() (goto S))])
+       ([(blurred-spawn-addr 1) ([((define-state (A) (m) (goto B (* (Addr Nat)))))
+                                  (goto B (* (Addr Nat)))]
+                                 [((define-state (A) (m) (goto B (Nat (spawn-addr EVICT NEW)))))
+                                  (goto B (Nat (spawn-addr EVICT NEW)))])])
+       ([(blurred-spawn-addr 1) (Nat (spawn-addr EVICT NEW)) single]
+        [(blurred-spawn-addr 1) (* (Addr Nat)) single]
+        [(blurred-spawn-addr 2) (Nat (spawn-addr EVICT NEW)) single]
+        [(blurred-spawn-addr 2) (* (Addr Nat)) many])]
+     `(spawn-addr EVICT NEW))
+
+    (list
+     `[()
+       ([(blurred-spawn-addr 1) ([((define-state (A) (m) (goto B (* (Addr Nat)))))
+                                  (goto B (* (Addr Nat)))])])
+       ([(blurred-spawn-addr 1) (* (Addr Nat)) many]
+        [(blurred-spawn-addr 2) (* (Addr Nat)) many])]
+     null)))
 
 ;; REFACTOR: consider merging my various address-rename functions together and just using a hash table
 ;; of old address->new address mappings
