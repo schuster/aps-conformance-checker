@@ -1537,8 +1537,10 @@
 
 (define (aps#-completed-no-transition-config? s)
   ;; A configuration is a completed, no-transition configuration if its only current transition is the
-  ;; implicit do-nothing transition and it has no remaining obligations
-  (and (= 1 (length (config-current-transitions s)))
+  ;; implicit do-nothing transition, it has no remaining obligations, and its observable interface is
+  ;; the UNKNOWN address
+  (and (aps#-unknown-address? (aps#-config-obs-interface s))
+       (= 1 (length (config-current-transitions s)))
        (match (aps#-config-commitment-map s)
          [(list `(,_) ...) #t]
          [_ #f])))
@@ -1557,6 +1559,14 @@
                         ()
                         (goto A)
                         ((define-state (A) [unobs -> () (goto A)]))
+                        ())])
+      (check-false (aps#-completed-no-transition-config? (term s#)))))
+  (test-case "completed-no-transition-config?: observed interface"
+    (redex-let aps# ([s#
+                      `((Nat (init-addr 1))
+                        ()
+                        (goto A)
+                        ((define-state (A)))
                         ())])
       (check-false (aps#-completed-no-transition-config? (term s#))))))
 
