@@ -294,7 +294,7 @@
        (goto Unbinding unbind-timer unbind-commanders))))
 
   ;; initialization
-  (let ([bind-timer (spawn bind-timer-EVICT Timer (BindTimeout) self)])
+  (let ([bind-timer (spawn bind-timer Timer (BindTimeout) self)])
     (send tcp (Bind port self self))
     (send bind-timer (Start ,BIND-WAIT-TIME-IN-MS))
     (goto Binding bind-timer))
