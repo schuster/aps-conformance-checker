@@ -224,15 +224,21 @@
 ;; Returns all spec configs that can possibly be reached in one step by transitioning from the given
 ;; trigger, also returning spec configs spawned during that transition
 (define (aps#-matching-steps spec-config from-observer? trigger)
-  (remove-duplicates
-   (filter
-    values
-    (map (lambda (t) (attempt-transition spec-config t from-observer? trigger))
-         ;; Remove the free-output transitions: these would cause the checker to make many "bad
-         ;; guesses" about what conforms to what, and the outputs they use can always be used for
-         ;; other transitions.
-         (filter (negate (curryr transition-free-output-info (aps#-config-current-state spec-config)))
-                 (config-current-transitions spec-config))))))
+  (define results
+   (remove-duplicates
+    (filter
+     values
+     (map (lambda (t) (attempt-transition spec-config t from-observer? trigger))
+          ;; Remove the free-output transitions: these would cause the checker to make many "bad
+          ;; guesses" about what conforms to what, and the outputs they use can always be used for
+          ;; other transitions.
+          (filter (negate (curryr transition-free-output-info (aps#-config-current-state spec-config)))
+                  (config-current-transitions spec-config))))))
+  (when (null? results)
+    (error 'aps#-matching-steps
+           "The trigger ~s (from-observer: ~s) has no way to transition in spec config ~s"
+           trigger from-observer? (spec-config-without-state-defs spec-config)))
+  results)
 
 (module+ test
   (test-equal? "Null step is possible"
@@ -264,7 +270,18 @@
                           (term (goto A (obs-ext 0)))
                           null
                           (term (((obs-ext 0) (many *)))))
-                 null))))
+                 null)))
+
+  (test-exn "No match for a trigger leads to exception"
+    (lambda (exn) #t)
+    (lambda ()
+      (aps#-matching-steps
+       (make-s# (term ((define-state (A r))))
+                (term (goto A (obs-ext 0)))
+                null
+                (term (((obs-ext 0)))))
+       #t
+       (term (external-receive (init-addr 0) (* Nat)))))))
 
 ;; Returns the config updated by running the given transition, if it can be taken from the given
 ;; trigger, along with all configs spawned in the transition, or #f if the transition is not possible
