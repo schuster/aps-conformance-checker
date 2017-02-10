@@ -715,7 +715,7 @@
         (send status-updates (CommandFailed))
         (halt-with-notification)])
 
-    (define-state (SynReceived [snd-nxt Nat] [rcv-nxt Nat] [receive-buffer ReceiveBuffer]) (m)
+    (define-state/timeout (SynReceived [snd-nxt Nat] [rcv-nxt Nat] [receive-buffer ReceiveBuffer]) (m)
       (case m
         [(InTcpPacket packet)
          ;; RFC Errata 3305 notes that this acceptability test doesn't support all of the simultaneous
@@ -772,7 +772,11 @@
         [(Abort h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
         [(RegisterTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
         [(RetransmitTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(TimeWaitTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]))
+        [(TimeWaitTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)])
+
+      [timeout wait-time-in-milliseconds
+        (send status-updates (CommandFailed))
+        (halt-with-notification)])
 
     ;; We're waiting for the user to register an actor to send received octets to
     (define-state (AwaitingRegistration [send-buffer SendBuffer]
@@ -1635,6 +1639,27 @@
       (OutPacket (== remote-ip)
                  (tcp-ack local-port remote-port (+ local-iss 1) (+ remote-iss 1))))
     (check-unicast-match status-updates (csa-variant Connected _ _)))
+
+  (test-case "Eventually give up if get timeout after a simultaneous SYN"
+    ;; Overall sequence is:
+    ;; 1. SYN ->
+    ;; 2. SYN <-
+    ;; 3. SYN/ACK ->
+    ;; 4. (timeout)
+    (define-values (packets-out tcp) (start-prog))
+    (define status-updates (make-async-channel))
+    (define remote-port client-port)
+    (send-command tcp (Connect (InetSocketAddress remote-ip remote-port) status-updates))
+    (match-define (list local-iss local-port)
+      (check-unicast-match packets-out
+                           (OutPacket (== remote-ip)
+                                      (csa-record* [seq local-iss] [source-port remote-port]))
+                           #:result (list local-iss remote-port)))
+    (send-packet tcp remote-ip (make-syn remote-port local-port remote-iss))
+    (check-unicast-match packets-out
+      (OutPacket (== remote-ip) (tcp-syn-ack local-port remote-port local-iss (add1 remote-iss))))
+    (sleep (/ wait-time-in-milliseconds 1000))
+    (check-unicast status-updates (variant CommandFailed)))
 
   (test-case "Registered address receives the received octets"
     (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
