@@ -202,7 +202,7 @@
     (send app-layer (IncomingRequest request self))
     (goto AwaitingAppResponse))
   (define-state/timeout (AwaitingAppResponse) (m)
-    (send tcp-connection (Write m (spawn write-response Sink)))
+    (send tcp-connection (Write m (spawn write-response-EVICT Sink)))
     (goto Done)
     (timeout ,RESPONSE-WAIT-TIME-IN-MS
       ;; don't notify the application layer here: just assume they'll watch for the stop notification
@@ -255,7 +255,7 @@
        (send tcp-session (Register self))
        (goto Running (vector) handler)])
     (timeout ,REGISTER-WAIT-TIME-IN-MS
-      (send tcp-session (Close (spawn close-session Sink)))
+      (send tcp-session (Close (spawn close-session-EVICT Sink)))
       (goto Closed)))
 
   (define-state (Running [held-data (Vectorof Byte)] [handler (Addr IncomingRequest)]) (m)
@@ -289,12 +289,12 @@
   ((define-function (unbind [tcp-listener (Addr TcpListenerCommand)]
                             [unbind-commanders (Listof (Addr HttpUnbindResponse))])
      (send tcp-listener (Unbind self))
-     (let ([unbind-timer (spawn unbind-timer Timer (UnbindTimeout) self)])
+     (let ([unbind-timer (spawn unbind-timer-EVICT Timer (UnbindTimeout) self)])
        (send unbind-timer (Start ,UNBIND-WAIT-TIME-IN-MS))
        (goto Unbinding unbind-timer unbind-commanders))))
 
   ;; initialization
-  (let ([bind-timer (spawn bind-timer Timer (BindTimeout) self)])
+  (let ([bind-timer (spawn bind-timer-EVICT Timer (BindTimeout) self)])
     (send tcp (Bind port self self))
     (send bind-timer (Start ,BIND-WAIT-TIME-IN-MS))
     (goto Binding bind-timer))
@@ -494,7 +494,7 @@
                        [tcp TcpCommand])
      ,@spray-can-definitions
      (define-actor Nat
-       (Launcher [bind-commander (Addr HttpBindResponse) ]
+       (Launcher [bind-commander (Addr HttpBindResponse)]
                  [app-listener (Addr HttpListenerEvent)]
                  [tcp (Addr TcpCommand)])
        ()
