@@ -101,23 +101,28 @@
                              rank1-unrelated-successors))
         ;; (printf "Finished simulation prune at: ~a\n"
         ;;         (date->string (seconds->date (current-seconds)) #t))
-        (match-define (list commitment-satisfying-pairs unsatisfying-pairs)
-          (partition-by-satisfaction simulation-pairs incoming-steps simulation-related-spec-steps))
-        ;; (printf "Finished obligation fulfillment check at: ~a\n"
-        ;;         (date->string (seconds->date (current-seconds)) #t))
-        ;; (printf "Unsatisfying pairs: ~s\n"
-        ;;         (for/list ([p unsatisfying-pairs])
-        ;;           (cons
-        ;;            (impl-config-without-state-defs (config-pair-impl-config p))
-        ;;            (spec-config-without-state-defs (config-pair-spec-config p)))))
-        (match-define (list conforming-pairs _)
-          (prune-unsupported commitment-satisfying-pairs
-                             incoming-steps
-                             simulation-related-spec-steps
-                             unsatisfying-pairs))
-        ;; (printf "Finished obligation fulfillment prune at: ~a\n"
-        ;;         (date->string (seconds->date (current-seconds)) #t))
-        (andmap (curry set-member? conforming-pairs) initial-pairs)])]))
+        (cond
+          [(andmap (curry set-member? simulation-pairs) initial-pairs)
+           (match-define (list commitment-satisfying-pairs unsatisfying-pairs)
+             (partition-by-satisfaction simulation-pairs incoming-steps simulation-related-spec-steps))
+           ;; (printf "Finished obligation fulfillment check at: ~a\n"
+           ;;         (date->string (seconds->date (current-seconds)) #t))
+           ;; (printf "Unsatisfying pairs: ~s\n"
+           ;;         (for/list ([p unsatisfying-pairs])
+           ;;           (cons
+           ;;            (impl-config-without-state-defs (config-pair-impl-config p))
+           ;;            (spec-config-without-state-defs (config-pair-spec-config p)))))
+           (match-define (list conforming-pairs _)
+             (prune-unsupported commitment-satisfying-pairs
+                                incoming-steps
+                                simulation-related-spec-steps
+                                unsatisfying-pairs))
+           ;; (printf "Finished obligation fulfillment prune at: ~a\n"
+           ;;         (date->string (seconds->date (current-seconds)) #t))
+           (andmap (curry set-member? conforming-pairs) initial-pairs)]
+          [else
+           ;; (printf "At least one initial configuration pair was not in the simulation\n")
+           #f])])]))
 
 ;; Returns #t if all addresses mentioned in observable or unobservable interfaces in the spec are
 ;; receptionists; #f otherwise.
