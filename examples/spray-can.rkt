@@ -924,7 +924,8 @@
           (goto Running handler)]
         [(variant HttpRegister new-handler) -> () (goto Running handler)]
         [unobs -> () (goto Closed)])
-      (define-state (Closed))))
+      (define-state (Closed)
+        [(variant HttpRegister new-handler) -> () (goto Closed)])))
 
   (define connection-spec
     `(specification (receptionists)
