@@ -980,15 +980,13 @@
        (goto Init bind-commander app-listener)
        (define-state (Init bind-commander app-listener)
          [unobs ->
-           ([obligation bind-commander (variant HttpBound (fork ,@listener-spec-behavior))])
-           (goto Done)]
-         [unobs ->
-           ([obligation bind-commander (variant HttpCommandFailed)])
+                ([obligation bind-commander (or (variant HttpCommandFailed)
+                                                (variant HttpBound (fork ,@listener-spec-behavior)))])
            (goto Done)])
        (define-state (Done))))
 
   (test-true "HttpListener conforms to its specification"
-    (check-conformance desugared-listener-program listener-spec)))
+    (check-conformance desugared-listener-program listener-spec))
 
   (define http-manager-spec
     `(specification (receptionists [manager ,desugared-http-manager-command])
@@ -1000,9 +998,7 @@
          [(variant HttpBind * commander app-listener) ->
           ([obligation commander (or (variant HttpCommandFailed)
                                      (variant HttpBound (fork ,@listener-spec-behavior)))])
-          (goto Running)])
-       ))
-
+          (goto Running)])))
 
   (test-true "HttpManager conforms to its specification"
     (check-conformance desugared-manager-program http-manager-spec)))
