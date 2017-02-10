@@ -2020,40 +2020,37 @@
       (SessionCloseNotification ,desugared-session-id)))
 
   (define tcp-session-program
-    `(program (receptionists)
+    `(program (receptionists [launcher (Addr ConnectionStatus)])
               (externals [session-packet-dest (Addr (Union (InTcpPacket TcpPacket)))]
                          [packets-out (Union [OutPacket IpAddress TcpPacket])]
-                         [status-updates ConnectionStatus]
                          [close-notifications (Union [SessionCloseNotification SessionId])])
               ,@tcp-definitions
               (define-actor Nat
                 (Launcher [session-packet-dest (Addr (Addr (Union (InTcpPacket TcpPacket))))]
                           [packets-out (Addr (Union [OutPacket IpAddress TcpPacket]))]
-                          [status-updates (Addr ConnectionStatus)]
                           [close-notifications (Addr (Union [SessionCloseNotification SessionId]))])
                 ()
                 (goto Init)
-                (define-state/timeout (Init) (m) (goto Init)
-                  (timeout 0
-                    (let ([session (spawn session
-                                          TcpSession
-                                          (SessionId (InetSocketAddress 1234 50) 80)
-                                          (ActiveOpen)
-                                          packets-out
-                                          status-updates
-                                          close-notifications
-                                          30000
-                                          3
-                                          30000
-                                          10000)])
-                                   (send session-packet-dest session)
-                                   (goto Done))))
+                (define-state (Init) (status-updates)
+                  (let ([session (spawn session
+                                        TcpSession
+                                        (SessionId (InetSocketAddress 1234 50) 80)
+                                        (ActiveOpen)
+                                        packets-out
+                                        status-updates
+                                        close-notifications
+                                        30000
+                                        3
+                                        30000
+                                        10000)])
+                    ;; this makes the packet side of the session observable
+                    (send session-packet-dest session)
+                    (goto Done)))
                 (define-state (Done) (m) (goto Done)))
               (actors [launcher (spawn launcher
                                        Launcher
                                        session-packet-dest
                                        packets-out
-                                       status-updates
                                        close-notifications)])))
 
   (define session-spec-behavior
@@ -2190,20 +2187,20 @@
 
   (define session-spec
     `(specification
-      (receptionists)
+      (receptionists [launcher (Addr ,desugared-connection-status)])
       (externals [session-packet-dest (Addr (Union [InTcpPacket ,desugared-tcp-packet-type]))]
                  [packets-out ,desugared-tcp-output]
-                 [status-updates ,desugared-connection-status]
                  [close-notifications (Union [SessionCloseNotification ,desugared-session-id])])
-      UNKNOWN
+      [launcher (Addr ,desugared-connection-status)]
       ()
-      (goto Init status-updates)
-      (define-state (Init status-updates)
-        [unobs -> ([obligation status-updates (variant CommandFailed)]) (goto Done)]
-        [unobs ->
-         ([obligation status-updates (variant Connected * (fork ,@session-spec-behavior))])
+      (goto Init)
+      (define-state (Init)
+        [status-updates ->
+         ([obligation status-updates (or (variant CommandFailed)
+                                         (variant Connected * (fork ,@session-spec-behavior)))])
          (goto Done)])
-      (define-state (Done))))
+      (define-state (Done)
+        [* -> () (goto Done)])))
 
   ;; (test-true "Conformance for session"
   ;;   (check-conformance (desugar tcp-session-program) session-spec))
