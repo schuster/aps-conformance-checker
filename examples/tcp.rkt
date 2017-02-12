@@ -439,7 +439,10 @@
              (+ (: packet fin)
                 (vector-length (: packet payload))))))
 
-     (define-function (finish-connecting [snd-nxt Nat] [rcv-nxt Nat] [window Nat])
+     (define-function (finish-connecting [snd-nxt Nat]
+                                         [rcv-nxt Nat]
+                                         [window Nat]
+                                         [rxmt-timer (Addr TimerCommand)])
        (send status-updates (Connected id self))
        (let ([reg-timer (spawn reg-timer-EVICT Timer (RegisterTimeout) self)])
          (send reg-timer (Start ,register-timeout))
@@ -449,7 +452,7 @@
                rcv-nxt
                (create-empty-rbuffer)
                reg-timer
-               (spawn rxmt-timer-EVICT Timer (RetransmitTimeout) self))))
+               rxmt-timer)))
 
      ;; Transitions to time-wait, starting a timer on the way in
      (define-function (goto-TimeWait [snd-nxt Nat]
@@ -651,17 +654,19 @@
              rxmt-timer)))
 
     ;; initialization
-    (let ([iss (get-iss)])
+    (let ([iss (get-iss)]
+          [rxmt-timer (spawn rxmt-timer-EVICT Timer (RetransmitTimeout) self)])
+      (send rxmt-timer (Start wait-time-in-milliseconds))
       (case open
         [(ActiveOpen)
          (send-to-ip (make-syn iss))
-         (goto SynSent (+ iss 1))]
+         (goto SynSent (+ iss 1) rxmt-timer)]
         [(PassiveOpen remote-iss)
           (let ([rcv-nxt (+ 1 remote-iss)])
             (send-to-ip (make-syn-ack iss rcv-nxt))
-            (goto SynReceived (+ 1 iss) rcv-nxt (create-empty-rbuffer)))]))
+            (goto SynReceived (+ 1 iss) rcv-nxt (create-empty-rbuffer) rxmt-timer))]))
 
-    (define-state/timeout (SynSent [snd-nxt Nat]) (m)
+    (define-state (SynSent [snd-nxt Nat] [rxmt-timer (Addr TimerCommand)]) (m)
       (case m
         [(InTcpPacket packet)
          (cond
@@ -676,11 +681,11 @@
                   ;; this is the typical SYN/ACK case (step 2 of the 3-way handshake)
                   (let ([rcv-nxt (compute-receive-next packet)])
                     (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
-                    (finish-connecting snd-nxt rcv-nxt (: packet window)))]
+                    (finish-connecting snd-nxt rcv-nxt (: packet window) rxmt-timer))]
                  [else
                   ;; ACK acceptable but no other interesting fields set. Probably won't happen in
                   ;; reality.
-                  (goto SynSent snd-nxt)])]
+                  (goto SynSent snd-nxt rxmt-timer)])]
               [else ;; ACK present but not acceptable
                (send-to-ip (make-rst (: packet ack)))
                (send status-updates (CommandFailed))
@@ -690,32 +695,33 @@
               [(packet-rst? packet)
                ;; drop the packet, because the RST probably comes from a previous instance of the
                ;; session
-               (goto SynSent snd-nxt)]
+               (goto SynSent snd-nxt rxmt-timer)]
               [(packet-syn? packet)
                ;; we got a SYN but no ACK: this is the simultaneous open case
                (let ([iss (- snd-nxt 1)]
                      [rcv-nxt (+ (: packet seq) 1)])
                  (send-to-ip (make-syn-ack iss rcv-nxt))
-                 (goto SynReceived (+ iss 1) rcv-nxt (create-empty-rbuffer)))]
+                 (goto SynReceived (+ iss 1) rcv-nxt (create-empty-rbuffer) rxmt-timer))]
               [else
                ;; not an important segment, so just drop it. Probably won't happen in reality
-               (goto SynSent snd-nxt)])])]
+               (goto SynSent snd-nxt rxmt-timer)])])]
+        [(RetransmitTimeout)
+         (send status-updates (CommandFailed))
+         (halt-with-notification)]
         ;; None of these should happen at this point; ignore them
-        [(OrderedTcpPacket packet) (goto SynSent snd-nxt)]
-        [(Register h) (goto SynSent snd-nxt)]
-        [(Write d h) (goto SynSent snd-nxt)]
-        [(Close h) (goto SynSent snd-nxt)]
-        [(ConfirmedClose h) (goto SynSent snd-nxt)]
-        [(Abort h) (goto SynSent snd-nxt)]
-        [(RegisterTimeout) (goto SynSent snd-nxt)]
-        [(RetransmitTimeout) (goto SynSent snd-nxt)]
-        [(TimeWaitTimeout) (goto SynSent snd-nxt)])
+        [(OrderedTcpPacket packet) (goto SynSent snd-nxt rxmt-timer)]
+        [(Register h) (goto SynSent snd-nxt rxmt-timer)]
+        [(Write d h) (goto SynSent snd-nxt rxmt-timer)]
+        [(Close h) (goto SynSent snd-nxt rxmt-timer)]
+        [(ConfirmedClose h) (goto SynSent snd-nxt rxmt-timer)]
+        [(Abort h) (goto SynSent snd-nxt rxmt-timer)]
+        [(RegisterTimeout) (goto SynSent snd-nxt rxmt-timer)]
+        [(TimeWaitTimeout) (goto SynSent snd-nxt rxmt-timer)]))
 
-      [timeout wait-time-in-milliseconds
-        (send status-updates (CommandFailed))
-        (halt-with-notification)])
-
-    (define-state/timeout (SynReceived [snd-nxt Nat] [rcv-nxt Nat] [receive-buffer ReceiveBuffer]) (m)
+    (define-state (SynReceived [snd-nxt Nat]
+                               [rcv-nxt Nat]
+                               [receive-buffer ReceiveBuffer]
+                               [rxmt-timer (Addr TimerCommand)]) (m)
       (case m
         [(InTcpPacket packet)
          ;; RFC Errata 3305 notes that this acceptability test doesn't support all of the simultaneous
@@ -724,12 +730,13 @@
            [(and (packet-syn? packet)
                  (= (: packet seq) (- rcv-nxt 1)))
             (send self (OrderedTcpPacket packet))
-            (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
+            (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)]
            [else
             (goto SynReceived
                   snd-nxt
                   rcv-nxt
-                  (process-incoming packet rcv-nxt receive-buffer snd-nxt))])]
+                  (process-incoming packet rcv-nxt receive-buffer snd-nxt)
+                  rxmt-timer)])]
         [(OrderedTcpPacket packet)
          (cond
            [(packet-rst? packet)
@@ -758,25 +765,23 @@
                  [(packet-syn? packet)
                   (let ([rcv-nxt (compute-receive-next packet)])
                     (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
-                    (finish-connecting snd-nxt rcv-nxt (: packet window)))]
-                 [else (finish-connecting snd-nxt rcv-nxt (: packet window))])]
+                    (finish-connecting snd-nxt rcv-nxt (: packet window) rxmt-timer))]
+                 [else (finish-connecting snd-nxt rcv-nxt (: packet window) rxmt-timer)])]
               [else
                (send-to-ip (make-rst (: packet ack)))
-               (goto SynReceived snd-nxt rcv-nxt receive-buffer)])]
-           [else (goto SynReceived snd-nxt rcv-nxt receive-buffer)])]
+               (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)])]
+           [else (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)])]
+        [(RetransmitTimeout)
+         (send status-updates (CommandFailed))
+         (halt-with-notification)]
         ;; None of these should happen at this point; ignore them
-        [(Register h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(Write d h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(Close h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(ConfirmedClose h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(Abort h) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(RegisterTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(RetransmitTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)]
-        [(TimeWaitTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer)])
-
-      [timeout wait-time-in-milliseconds
-        (send status-updates (CommandFailed))
-        (halt-with-notification)])
+        [(Register h) (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)]
+        [(Write d h) (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)]
+        [(Close h) (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)]
+        [(ConfirmedClose h) (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)]
+        [(Abort h) (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)]
+        [(RegisterTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)]
+        [(TimeWaitTimeout) (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)]))
 
     ;; We're waiting for the user to register an actor to send received octets to
     (define-state (AwaitingRegistration [send-buffer SendBuffer]
