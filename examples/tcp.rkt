@@ -2243,8 +2243,14 @@
        (goto Managing)
        (define-state (Managing)
          [(variant UserCommand (variant Connect * status-updates)) ->
-          ([obligation status-updates (or (variant CommandFailed)
-                                          (variant Connected * (fork ,@session-spec-behavior)))])
+          ([fork (goto MaybeSend status-updates)
+                 (define-state (MaybeSend status-updates)
+                   [unobs ->
+                    ([obligation status-updates
+                                 (or (variant CommandFailed)
+                                     (variant Connected * (fork ,@session-spec-behavior)))])
+                    (goto Done)])
+                 (define-state (Done))])
           (goto Managing)]
          ;; TODO: add the real spec for Bind
          [(variant UserCommand (variant Bind * * *)) -> () (goto Managing)])))
