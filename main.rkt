@@ -726,13 +726,24 @@
   (define original-i (config-pair-impl-config the-pair))
   (define original-s (config-pair-spec-config the-pair))
   ;; We only want to try widening from the triggers that might actually lead to a bigger state;
-  ;; otherwise we're wasting our time
+  ;; otherwise we're wasting our time.
+  ;;
+  ;; NOTE: this needs to be a list, not a set, so that we can ensure the step taken before widen can
+  ;; be repeated *first*. This is important because if that step spawned something, we want to spawn
+  ;; it again immediately to blur it; otherwise, we might change its state with one transition and
+  ;; *then* try to blur it, which might be invalid (e.g. if the original spawn had some messages sent
+  ;; to it but the original one did not)
   (define triggers-to-try
-    (list->mutable-set
-     (filter
-      (lambda (trigger)
-        (if previous-step (trigger-updated-by-step? (first trigger) previous-step #f) #t))
-      (impl-triggers-from original-i original-s))))
+    (let ([updated-triggers
+           (filter
+            (lambda (trigger)
+              (if previous-step (trigger-updated-by-step? (first trigger) previous-step #f) #t))
+            (impl-triggers-from original-i original-s))])
+      ;; previous trigger may not be valid in this state because of a new spec
+      (if (and previous-step (member previous-step updated-triggers))
+          (cons `[,(impl-step-trigger previous-step) ,(impl-step-from-observer? previous-step)]
+                updated-triggers)
+          updated-triggers)))
   (define possible-transitions (apply queue (impl-transition-effects-from the-pair triggers-to-try)))
   (widen-printf "Starting widen with ~s transitions\n" (queue-length possible-transitions))
   (define processed-transitions (mutable-set))
@@ -826,9 +837,9 @@
                       ;; We just throw away any remaining transitions, because the transitions from
                       ;; this configuration supercede those from a different one
                       (for ([trigger (impl-triggers-from twice-i twice-s)])
-                        (when (and (not (set-member? triggers-to-try trigger))
+                        (when (and (not (member trigger triggers-to-try))
                                    (trigger-updated-by-step? (first trigger) new-i-step i))
-                          (set-add! triggers-to-try trigger)))
+                          (set! triggers-to-try (cons trigger triggers-to-try))))
                       (set! possible-transitions
                             (apply queue (impl-transition-effects-from twice-applied-pair triggers-to-try)))
                       (widen-printf "New queue has ~s transitions\n" (queue-length possible-transitions))
@@ -911,20 +922,19 @@
                                  prev-i
                                  (impl-step-spawn-locs i-step)))
 
-;; config-pair (Mutable-set-of trigger) -> (Listof (List csa#-transition-effect Boolean))
+;; config-pair (List-of trigger) -> (Listof (List csa#-transition-effect Boolean))
 (define (impl-transition-effects-from the-pair triggers)
   (match-define (config-pair i s) the-pair)
   (let/cc return-continuation
     (define (abort) (return-continuation null))
-    (define num-triggers (set-count triggers))
-    (widen-printf "Widen: getting effects from ~s triggers\n" num-triggers)
+    (widen-printf "Widen: getting effects from ~s triggers\n" (length triggers))
     (define trigger-count 0)
     (define final-results
      (append*
       (for/list ([trigger-with-obs triggers])
         (set! trigger-count (add1 trigger-count))
         (define observed? (second trigger-with-obs))
-        (widen-printf "Eval trigger (~s of ~s): ~s\n" trigger-count num-triggers trigger-with-obs)
+        (widen-printf "Eval trigger (~s of ~s): ~s\n" trigger-count (length triggers) trigger-with-obs)
         (define results (map (curryr list observed?) (csa#-eval-trigger i (first trigger-with-obs) abort)))
         (widen-printf "Finished trigger, ~s transitions\n" (length results))
         results)))
