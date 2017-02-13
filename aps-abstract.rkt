@@ -774,96 +774,100 @@
 ;; commitments as necessary) and a list of the satisfied commitments. The list represents all possible
 ;; ways to match the outputs.
 (define (aps#-resolve-outputs spec-configs outputs)
-  ;; REFACTOR: rewrite this function for readability (probably need to split some tasks into helper
-  ;; functions)
-  (let loop ([spec-configs spec-configs]
-             [satisfied-commitments null]
-             [remaining-outputs outputs])
-    (match remaining-outputs
-      [(list) (list `(,spec-configs ,satisfied-commitments))]
-      [(list output remaining-outputs ...)
-       (define address (csa#-output-address output))
-       (define message (csa#-output-message output))
-       (match (find-with-rest (curryr config-observes-address? address) spec-configs)
-         [#f
-          ;; we can ignore outputs on unobserved addresses, but need to add any escaped internal
-          ;; addresses as part of the unobserved interface on all configs
-          (loop (map (curryr config-merge-unobs-addresses (internals-in message)) spec-configs)
-                satisfied-commitments
-                remaining-outputs)]
-         [(list earlier-configs config later-configs)
-          (define old-obs-interface (aps#-config-obs-interface config))
+  (cond
+    [(not (null? (externals-in (map csa#-output-message outputs))))
+     null]
+    [else
+     ;; REFACTOR: rewrite this function for readability (probably need to split some tasks into helper
+     ;; functions)
+     (let loop ([spec-configs spec-configs]
+                [satisfied-commitments null]
+                [remaining-outputs outputs])
+       (match remaining-outputs
+         [(list) (list `(,spec-configs ,satisfied-commitments))]
+         [(list output remaining-outputs ...)
+          (define address (csa#-output-address output))
+          (define message (csa#-output-message output))
+          (match (find-with-rest (curryr config-observes-address? address) spec-configs)
+            [#f
+             ;; we can ignore outputs on unobserved addresses, but need to add any escaped internal
+             ;; addresses as part of the unobserved interface on all configs
+             (loop (map (curryr config-merge-unobs-addresses (internals-in message)) spec-configs)
+                   satisfied-commitments
+                   remaining-outputs)]
+            [(list earlier-configs config later-configs)
+             (define old-obs-interface (aps#-config-obs-interface config))
 
-          ;; Defines how to continue once a match has been found
-          (define (handle-match-success match-results)
-            (append*
-             ;; for each possible way to match, loop again to resolve the remaining outputs
-             (for/list ([match-result match-results])
-               (match-define `(,config (,pat ,new-obs-interface ,new-spawn-infos ,new-receptionists))
-                 match-result)
-               (define obs-interface-changed? (not (equal? new-obs-interface old-obs-interface)))
-               ;; update this config (obs and unobs interfaces, commitments)
-               (define updated-config
-                 `(,new-obs-interface
-                   ,(merge-receptionists (aps#-config-receptionists config) new-receptionists)
-                   ,(aps#-config-current-state config)
-                   ,(aps#-config-state-defs config)
-                   ,(aps#-remove-commitment-pattern (aps#-config-commitment-map config) address pat)))
-               ;; add unobs (and new self address, if updated) to all other configs
-               (define new-unobs-for-others
-                 (append new-receptionists (if obs-interface-changed? (list new-obs-interface) null)))
-               (define updated-earlier-configs
-                 (map (curryr config-merge-unobs-addresses new-unobs-for-others) earlier-configs))
-               (define updated-later-configs
-                 (map (curryr config-merge-unobs-addresses new-unobs-for-others) later-configs))
-               ;; add spawns
-               (match-define (list final-updated-config (list spawned-configs ...))
-                 (fork-configs updated-config new-spawn-infos))
-               (loop (append updated-earlier-configs
-                             (list final-updated-config)
-                             updated-later-configs
-                             spawned-configs)
-                     (append satisfied-commitments (list `[,address ,pat]))
-                     remaining-outputs))))
+             ;; Defines how to continue once a match has been found
+             (define (handle-match-success match-results)
+               (append*
+                ;; for each possible way to match, loop again to resolve the remaining outputs
+                (for/list ([match-result match-results])
+                  (match-define `(,config (,pat ,new-obs-interface ,new-spawn-infos ,new-receptionists))
+                    match-result)
+                  (define obs-interface-changed? (not (equal? new-obs-interface old-obs-interface)))
+                  ;; update this config (obs and unobs interfaces, commitments)
+                  (define updated-config
+                    `(,new-obs-interface
+                      ,(merge-receptionists (aps#-config-receptionists config) new-receptionists)
+                      ,(aps#-config-current-state config)
+                      ,(aps#-config-state-defs config)
+                      ,(aps#-remove-commitment-pattern (aps#-config-commitment-map config) address pat)))
+                  ;; add unobs (and new self address, if updated) to all other configs
+                  (define new-unobs-for-others
+                    (append new-receptionists (if obs-interface-changed? (list new-obs-interface) null)))
+                  (define updated-earlier-configs
+                    (map (curryr config-merge-unobs-addresses new-unobs-for-others) earlier-configs))
+                  (define updated-later-configs
+                    (map (curryr config-merge-unobs-addresses new-unobs-for-others) later-configs))
+                  ;; add spawns
+                  (match-define (list final-updated-config (list spawned-configs ...))
+                    (fork-configs updated-config new-spawn-infos))
+                  (loop (append updated-earlier-configs
+                                (list final-updated-config)
+                                updated-later-configs
+                                spawned-configs)
+                        (append satisfied-commitments (list `[,address ,pat]))
+                        remaining-outputs))))
 
-          (match (csa#-output-multiplicity output)
-            ['single
-             (define commitment-patterns
-               (map commitment-pattern
-                    (commitments-for-address (aps#-config-commitment-map config) address)))
-             (match (find-matching-patterns commitment-patterns message old-obs-interface)
-               [(list)
-                ;; if we can't find a match with existing patterns, try the free-output patterns
-                (define free-patterns (hash-ref (build-free-output-map config) address null))
-                (match (find-matching-patterns free-patterns message old-obs-interface)
+             (match (csa#-output-multiplicity output)
+               ['single
+                (define commitment-patterns
+                  (map commitment-pattern
+                       (commitments-for-address (aps#-config-commitment-map config) address)))
+                (match (find-matching-patterns commitment-patterns message old-obs-interface)
                   [(list)
-                   ;; if free-output patterns also don't match, try the other unobs-transition
-                   ;; patterns as a last resort
-                   (define transition-patterns (get-unobs-transition-patterns config address))
-                   (define match-results
-                     (find-matching-patterns (hash-keys transition-patterns)
-                                             message
-                                             old-obs-interface))
-                   (define match-results-with-config
-                     (for/list ([match-result match-results])
-                       (define matched-pattern (first match-result))
-                       (define transitioned-config
-                         `(,(aps#-config-obs-interface config)
-                           ,(aps#-config-receptionists config)
-                           ,(hash-ref transition-patterns matched-pattern)
-                           ,(aps#-config-state-defs config)
-                           ,(aps#-config-commitment-map config)))
-                       (list transitioned-config match-result)))
-                   (handle-match-success match-results-with-config)]
+                   ;; if we can't find a match with existing patterns, try the free-output patterns
+                   (define free-patterns (hash-ref (build-free-output-map config) address null))
+                   (match (find-matching-patterns free-patterns message old-obs-interface)
+                     [(list)
+                      ;; if free-output patterns also don't match, try the other unobs-transition
+                      ;; patterns as a last resort
+                      (define transition-patterns (get-unobs-transition-patterns config address))
+                      (define match-results
+                        (find-matching-patterns (hash-keys transition-patterns)
+                                                message
+                                                old-obs-interface))
+                      (define match-results-with-config
+                        (for/list ([match-result match-results])
+                          (define matched-pattern (first match-result))
+                          (define transitioned-config
+                            `(,(aps#-config-obs-interface config)
+                              ,(aps#-config-receptionists config)
+                              ,(hash-ref transition-patterns matched-pattern)
+                              ,(aps#-config-state-defs config)
+                              ,(aps#-config-commitment-map config)))
+                          (list transitioned-config match-result)))
+                      (handle-match-success match-results-with-config)]
+                     [results (handle-match-success (map (curry list config) results))])]
                   [results (handle-match-success (map (curry list config) results))])]
-               [results (handle-match-success (map (curry list config) results))])]
-            ['many
-             ;; have to use free-output patterns if output may have been sent more than once (e.g. in
-             ;; a loop)
-             (define free-patterns (hash-ref (build-free-output-map config) address null))
-             (handle-match-success
-              (map (curry list config)
-                   (find-matching-patterns free-patterns message old-obs-interface)))])])])))
+               ['many
+                ;; have to use free-output patterns if output may have been sent more than once (e.g. in
+                ;; a loop)
+                (define free-patterns (hash-ref (build-free-output-map config) address null))
+                (handle-match-success
+                 (map (curry list config)
+                      (find-matching-patterns free-patterns message old-obs-interface)))])])]))]))
 
 (define (config-observes-address? config addr)
   (match (commitments-for-address (aps#-config-commitment-map config) addr)
