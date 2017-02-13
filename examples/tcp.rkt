@@ -655,7 +655,7 @@
 
     ;; initialization
     (let ([iss (get-iss)]
-          [rxmt-timer (spawn rxmt-timer-EVICT Timer (RetransmitTimeout) self)])
+          [rxmt-timer (spawn rxmt-timer Timer (RetransmitTimeout) self)])
       (send rxmt-timer (Start wait-time-in-milliseconds))
       (case open
         [(ActiveOpen)
