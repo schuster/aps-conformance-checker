@@ -5,6 +5,7 @@
 (provide
  ;; Required by conformance checker
  (struct-out csa#-transition)
+ csa#-transition-spawn-locs
  csa#-messages-of-type
  csa#-enabled-internal-actions
  csa#-action-enabled?
@@ -18,6 +19,7 @@
  csa#-transition-maybe-good-for-widen?
  (struct-out csa#-transition-effect)
  csa#-config<?
+ csa#-trigger-updated-by-step?
  csa#-eval-trigger
  csa#-apply-transition
 
@@ -313,6 +315,9 @@
 ;; sends is a list of abstract-addr/abstract-value/multiplicity 3-tuples. spawns is a list
 ;; of address/behavior 2-tuples (the address is a collective address for actors spawned inside loops)
 (struct csa#-transition-effect (trigger behavior sends spawns) #:transparent)
+
+(define (csa#-transition-spawn-locs transition)
+  (map spawn-address-location (map first (csa#-transition-effect-spawns transition))))
 
 ;; Represents a single handler-level transition of an actor. Trigger is the event that caused the
 ;; handler to run, outputs is the list of outputs to the external world that happened during execution
@@ -2842,6 +2847,12 @@
 (define (state-def-by-name state-defs state-name)
   (findf (lambda (state-def) (equal? state-name (first (second state-def)))) state-defs))
 
+(define (spawn-address-location addr)
+  (match addr
+    [`(spawn-addr ,loc ,_) loc]
+    [`(blurred-spawn-addr ,loc) loc]
+    [_ #f]))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Boolean Logic
 
@@ -3194,10 +3205,9 @@
 ;; a message to the outside world to add to the unobserved interface in the spec.
 
 (define (evictable? address)
-  (match address
-    [`(spawn-addr ,loc ,_) (evictable-location? loc)]
-    [`(blurred-spawn-addr ,loc) (evictable-location? loc)]
-    [_ #f]))
+  (match (spawn-address-location address)
+    [#f #f]
+    [loc (evictable-location? loc)]))
 
 (define (evictable-location? loc)
   (regexp-match? #rx"EVICT$" (location->string loc)))
@@ -3434,6 +3444,53 @@
                             `(blurred-spawn-addr 1)
                             `(() (goto A)))
    'gt))
+;; ---------------------------------------------------------------------------------------------------
+;; Trigger update test
+
+(define (csa#-trigger-updated-by-step? trigger prev-trigger prev-config spawn-locs)
+  ;; A step updates a trigger (i.e. makes it so that running the handler for the trigger *might*
+  ;; result in a transition that wouldn't have been possible before this step) if one of the following
+  ;; holds:
+  ;; 1. The trigger is for the updated actor from the i-step
+  ;; 2. The trigger is for an actor that shares a spawn location with a spawn from the i-step
+  ;; 3. The trigger is an internal message that did not exist in the previous config
+  (define trigger-addr (trigger-address trigger))
+  (or (equal? trigger-addr (trigger-address prev-trigger))
+      (match (spawn-address-location trigger-addr)
+        [#f #f]
+        [loc (member loc spawn-locs)])
+      (match trigger
+        [`(internal-receive ,target-addr ,message)
+         (not
+          (findf (lambda (send) (and (equal? (first send) target-addr)
+                                     (equal? (second send) message)))
+                 (if prev-config (csa#-config-message-packets prev-config) null)))]
+        [_ #f])))
+
+;; TODO: what about renaming in between???
+
+(module+ test
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (init-addr 1) (* Nat))
+                                                  `(internal-receive (init-addr 1) (* String))
+                                                  #f
+                                                  null))
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (spawn-addr 1 OLD) (* Nat))
+                                                  `(internal-receive (init-addr 1) (* String))
+                                                  #f
+                                                  (list 1)))
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (blurred-spawn-addr 1) (* Nat))
+                                                  `(internal-receive (init-addr 1) (* String))
+                                                  #f
+                                                  (list 1)))
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (init-addr 1) (* Nat))
+                                                  `(internal-receive (init-addr 2) (* String))
+                                                  `(() () ([(init-addr 1) (* String) many]))
+                                                  null))
+  (check-false (csa#-trigger-updated-by-step? `(internal-receive (spawn-addr 1 OLD) (* Nat))
+                                              `(internal-receive (init-addr 2) (* String))
+                                              `(() () ([(spawn-addr 1 OLD) (* Nat) many]
+                                                       [(blurred-spawn-addr 1) (* Nat) many]))
+                                              (list `[(spawn-addr 2 NEW) (() (goto S))]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Tests for use during widening

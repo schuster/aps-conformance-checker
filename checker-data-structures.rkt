@@ -39,8 +39,11 @@
 ;; outputs: A list of abstract address/abstract value/multiplicity tuples indicating the messages sent
 ;; to the environment during the computation.
 ;;
+;; spawn-locs: A list of the locations for actors spawned as part of this step (used only for the
+;; widening optimization)
+;;
 ;; destination: The implementation configuration reached at the end of this transition step
-(struct impl-step (trigger from-observer? outputs destination) #:prefab)
+(struct impl-step (trigger from-observer? outputs spawn-locs destination) #:prefab)
 
 ;; A possible (weak handler-level) transition step of a specification configuration, representing the
 ;; actions taken to match some (handler-level) implementation transition step. Weak transitions
