@@ -180,7 +180,8 @@
   ;; reset the generated address, so that we don't keep finding different numbers for different types
   ;; (or even the same type, if metafunction caching ever goes away here)
   (set! next-generated-address FIRST-GENERATED-ADDRESS)
-  (term (messages-of-type/mf ,type ,MAX-RECURSION-DEPTH)))
+  (parameterize ([caching-enabled? #f])
+    (term (messages-of-type/mf ,type ,MAX-RECURSION-DEPTH))))
 
 ;; Returns an exhaustive list of abstract messages for the given type with the natural argument
 ;; indicating the maximum number of times to unfold recursive types.
@@ -264,6 +265,9 @@
   (test-same-items?
    (term (messages-of-type/mf (Record [a Nat] [b Nat]) 0))
    (list '(record [a (* Nat)] [b (* Nat)])))
+  (test-same-items?
+   (csa#-messages-of-type `(Record [a (Addr Nat)] [b (Addr Nat)]))
+   (list '(record [a (Nat (obs-ext 102))] [b (Nat (obs-ext 101))])))
   (test-same-items?
    (term (messages-of-type/mf (Record [x (Union [A] [B])] [y (Union [C] [D])]) 0))
    (list '(record [x (variant A)] [y (variant C)])
