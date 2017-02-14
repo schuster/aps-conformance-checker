@@ -655,7 +655,7 @@
 
     ;; initialization
     (let ([iss (get-iss)]
-          [rxmt-timer (spawn rxmt-timer Timer (RetransmitTimeout) self)])
+          [rxmt-timer (spawn rxmt-timer-EVICT Timer (RetransmitTimeout) self)])
       (send rxmt-timer (Start wait-time-in-milliseconds))
       (case open
         [(ActiveOpen)
@@ -2243,8 +2243,14 @@
        (goto Managing)
        (define-state (Managing)
          [(variant UserCommand (variant Connect * status-updates)) ->
-          ([obligation status-updates (or (variant CommandFailed)
-                                          (variant Connected * (fork ,@session-spec-behavior)))])
+          ([fork (goto MaybeSend status-updates)
+                 (define-state (MaybeSend status-updates)
+                   [unobs ->
+                    ([obligation status-updates
+                                 (or (variant CommandFailed)
+                                     (variant Connected * (fork ,@session-spec-behavior)))])
+                    (goto Done)])
+                 (define-state (Done))])
           (goto Managing)]
          ;; TODO: add the real spec for Bind
          [(variant UserCommand (variant Bind * * *)) -> () (goto Managing)])))
