@@ -772,7 +772,9 @@
                (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)])]
            [else (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)])]
         [(RetransmitTimeout)
-         (send status-updates (CommandFailed))
+         (case open
+           [(ActiveOpen) (send status-updates (CommandFailed)) 0]
+           [(PassiveOpen r) 0])
          (halt-with-notification)]
         ;; None of these should happen at this point; ignore them
         [(Register h) (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)]
