@@ -1045,113 +1045,66 @@
     (send-packet session (make-fin remote-port local-port (add1 remote-iss) (+ 1 fin-seq)))
     (check-closed? session))
 
-  ;; (test-case "ConfirmedClose, through the ACK-then-FIN route"
-  ;;   (define handler (make-async-channel))
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (establish handler))
-  ;;   (define close-handler (make-async-channel))
-  ;;   (send-session-command session (ConfirmedClose close-handler))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-fin local-port remote-port (add1 local-iss) (add1 remote-iss))))
+  (test-case "ConfirmedClose, through the ACK-then-FIN route"
+    (define handler (make-async-channel))
+    (match-define (list sb session) (establish handler))
+    (define close-handler (make-async-channel))
+    (send-session-command session (ConfirmedClose close-handler))
+    (check-unicast sb (SendFin))
+    (async-channel-put session (TheFinSeq fin-seq))
+    ;; received packets *should* come through to the user (we're only half-closed)
+    (send-packet session (make-normal-packet remote-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
+    (check-unicast handler (ReceivedData (vector 1 2 3)))
+    ;; now the peer sends its ACK and FIN and closes
+    (send-packet session (make-normal-packet remote-port local-port (+ 4 remote-iss) (+ 1 fin-seq) (vector)))
+    (send-packet session (make-fin remote-port           local-port (+ 4 remote-iss) (+ 1 fin-seq)))
+    (check-unicast handler (ConfirmedClosed))
+    (check-unicast close-handler (ConfirmedClosed))
+    (check-closed? session))
 
-  ;;   ;; received packets *should* come through to the user (we're only half-closed)
-  ;;   (send-packet session (make-normal-packet remote-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
-  ;;   (check-unicast handler (ReceivedData (vector 1 2 3)))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-normal local-port
-  ;;                                               remote-port
-  ;;                                               (+ 2 local-iss)
-  ;;                                               (+ 4 remote-iss)
-  ;;                                               (vector))))
-  ;;   ;; now the peer sends its ACK and FIN and closes
-  ;;   (send-packet session (make-normal-packet remote-port local-port (+ 4 remote-iss) (+ 2 local-iss) (vector)))
-  ;;   (send-packet session (make-fin remote-port           local-port (+ 4 remote-iss) (+ 2 local-iss)))
-  ;;   (check-unicast handler (ConfirmedClosed))
-  ;;   (check-unicast close-handler (ConfirmedClosed))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-normal local-port
-  ;;                                               remote-port
-  ;;                                               (+ 2 local-iss)
-  ;;                                               (+ 5 remote-iss)
-  ;;                                               (vector))))
-  ;;   (check-closed? session))
+  (test-case "ConfirmedClose, through the FIN-with-ACK route"
+    (define handler (make-async-channel))
+    (match-define (list sb session) (establish handler))
+    (define close-handler (make-async-channel))
+    (send-session-command session (ConfirmedClose close-handler))
+    (check-unicast sb (SendFin))
+    (async-channel-put session (TheFinSeq fin-seq))
+    (send-packet session (make-fin remote-port           local-port (add1 remote-iss) (+ 1 fin-seq)))
+    (send-packet session (make-normal-packet remote-port local-port (+ 2 remote-iss) (+ 1 fin-seq) (vector)))
+    (check-unicast handler (ConfirmedClosed))
+    (check-unicast close-handler (ConfirmedClosed))
+    (check-closed? session))
 
-  ;; (test-case "ConfirmedClose, through the FIN-with-ACK route"
-  ;;   (define handler (make-async-channel))
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (establish handler))
-  ;;   (define close-handler (make-async-channel))
-  ;;   (send-session-command session (ConfirmedClose close-handler))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-fin local-port remote-port (add1 local-iss) (add1 remote-iss))))
-  ;;   (send-packet session (make-fin remote-port           local-port (add1 remote-iss) (+ 1 local-iss)))
-  ;;   (send-packet session (make-normal-packet remote-port local-port (+ 2 remote-iss) (+ 2 local-iss) (vector)))
-  ;;   (check-unicast handler (ConfirmedClosed))
-  ;;   (check-unicast close-handler (ConfirmedClosed))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-normal local-port
-  ;;                                               remote-port
-  ;;                                               (+ 2 local-iss)
-  ;;                                               (+ 2 remote-iss)
-  ;;                                               (vector))))
-  ;;   (check-closed? session))
+  (test-case "ConfirmedClose, through the FIN then ACK route"
+    (define handler (make-async-channel))
+    (match-define (list sb session) (establish handler))
+    (define close-handler (make-async-channel))
+    (send-session-command session (ConfirmedClose close-handler))
+    (check-unicast sb (SendFin))
+    (async-channel-put session (TheFinSeq fin-seq))
+    (send-packet session (make-fin remote-port local-port (add1 remote-iss) (+ 1 fin-seq)))
+    (check-unicast handler (ConfirmedClosed))
+    (check-unicast close-handler (ConfirmedClosed))
+    (check-closed? session))
 
-  ;; (test-case "ConfirmedClose, through the FIN then ACK route"
-  ;;   (define handler (make-async-channel))
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (establish handler))
-  ;;   (define close-handler (make-async-channel))
-  ;;   (send-session-command session (ConfirmedClose close-handler))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-fin local-port remote-port (add1 local-iss) (add1 remote-iss))))
-  ;;   (send-packet session (make-fin remote-port           local-port (add1 remote-iss) (+ 2 local-iss)))
-  ;;   (check-unicast handler (ConfirmedClosed))
-  ;;   (check-unicast close-handler (ConfirmedClosed))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-normal local-port
-  ;;                                               remote-port
-  ;;                                               (+ 2 local-iss)
-  ;;                                               (+ 2 remote-iss)
-  ;;                                               (vector))))
-  ;;   (check-closed? session))
+  (test-case "Close, through the ACK then FIN route"
+    (define handler (make-async-channel))
+    (match-define (list sb session) (establish handler))
+    (define close-handler (make-async-channel))
+    (send-session-command session (Close close-handler))
+    (check-unicast handler (Closed))
+    (check-unicast close-handler (Closed))
+        (check-unicast sb (SendFin))
+    (async-channel-put session (TheFinSeq fin-seq))
+    ;; received packets should not come through to the user
+    (send-packet session (make-normal-packet remote-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
+    (check-no-message handler #:timeout 0.5)
 
-  ;; (test-case "Close, through the ACK then FIN route"
-  ;;   (define handler (make-async-channel))
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (establish handler))
-  ;;   (define close-handler (make-async-channel))
-  ;;   (send-session-command session (Close close-handler))
-  ;;   (check-unicast handler (Closed))
-  ;;   (check-unicast close-handler (Closed))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-fin local-port remote-port (add1 local-iss) (add1 remote-iss))))
-  ;;   ;; received packets should not come through to the user
-  ;;   (send-packet session (make-normal-packet remote-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
-  ;;   (check-no-message handler #:timeout 0.5)
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-normal local-port
-  ;;                                               remote-port
-  ;;                                               (+ 2 local-iss)
-  ;;                                               (+ 4 remote-iss)
-  ;;                                               (vector))))
-
-  ;;   ;; peer ACKs the FIN
-  ;;   (send-packet session (make-normal-packet remote-port local-port (+ 4 remote-iss) (+ 2 local-iss) (vector)))
-  ;;   ;; peer sends its FIN
-  ;;   (send-packet session (make-fin remote-port local-port (+ 4 remote-iss) (+ 2 local-iss)))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-normal local-port
-  ;;                                               remote-port
-  ;;                                               (+ 2 local-iss)
-  ;;                                               (+ 5 remote-iss)
-  ;;                                               (vector))))
-  ;;   (check-closed? session))
+    ;; peer ACKs the FIN
+    (send-packet session (make-normal-packet remote-port local-port (+ 4 remote-iss) (add1 fin-seq) (vector)))
+    ;; peer sends its FIN
+    (send-packet session (make-fin remote-port local-port (+ 4 remote-iss) (add1 fin-seq)))
+    (check-closed? session))
 
   ;; (test-case "Abort from ESTABLISHED"
   ;;   (define handler (make-async-channel))
@@ -1236,7 +1189,7 @@
   ;;   (check-closed? session))
   )
 
-;; Later: will probably need to add widening of state parameters to the widening code
+
 
 ;; Maybe things to test:
 ;; * receive RST in SynSent
