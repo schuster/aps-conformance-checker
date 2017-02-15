@@ -47,6 +47,7 @@
 (define local-port 55555)
 (define local-iss 100)
 (define remote-iss 1024)
+(define fin-seq 200)
 
 (define tcp-definitions
   (quasiquote
@@ -911,6 +912,7 @@
     (SendRst)
     (SendText data)
     (SendFin)
+    (TheFinSeq seq)
     (Resume)
     (CommandFailed)
     (Register handler)
@@ -923,32 +925,26 @@
     (ConfirmedClosed)
     (Abort handler)
     (Aborted)
+    (InternalAbort)
     (PeerClosed)
     (ErrorClosed))
 
   ;; Helpers to get to various states
-  ;; (define (connect connection-response)
-  ;;   (define-values (rb sb su cn session) (start-prog))
-  ;;   ;; TODO:
-  ;;   (send-command tcp (Connect (InetSocketAddress remote-ip remote-port) connection-response))
-  ;;   (match-define (OutPacket _ (csa-record* (source-port local-port) (seq local-iss)))
-  ;;     (async-channel-get packets-out))
-  ;;   (send-packet tcp remote-ip (make-syn-ack remote-port local-port remote-iss (add1 local-iss)))
-  ;;   ;; eat the ACK
-  ;;   (async-channel-get packets-out)
-  ;;   (match (async-channel-get connection-response)
-  ;;     [(csa-variant Connected _ session) (list packets-out tcp local-port local-iss session)]))
+  (define (connect)
+    (define-values (rb sb su cn session) (start-prog))
+    (send-packet session (make-syn-ack remote-port local-port remote-iss (add1 local-iss)))
+    (match (async-channel-get su)
+      [(csa-variant Connected _ session) (list sb session)]))
 
-  ;; (define (establish octet-handler)
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
-  ;;   (send-session-command session (Register octet-handler))
-  ;;   (list packets-out tcp local-port local-iss session))
+  (define (establish octet-handler)
+    (match-define (list sb session) (connect))
+    (send-session-command session (Register octet-handler))
+    (list sb session))
 
-  ;; (define (check-closed? session)
-  ;;   (define write-handler (make-async-channel))
-  ;;   (send-session-command session (Write (vector 1) write-handler))
-  ;;   (check-unicast write-handler (CommandFailed)))
-  )
+  (define (check-closed? session)
+    (define write-handler (make-async-channel))
+    (send-session-command session (Write (vector 1) write-handler))
+    (check-unicast write-handler (CommandFailed))))
 
 (module+ test
   ;; Dynamic tests
@@ -987,147 +983,67 @@
     (send-packet session (make-syn-ack remote-port local-port remote-iss (add1 local-iss)))
     (check-unicast-match su (csa-variant Connected _ _)))
 
-  ;; (test-case "Eventually give up if get timeout after a simultaneous SYN"
-  ;;   ;; Overall sequence is:
-  ;;   ;; 1. SYN ->
-  ;;   ;; 2. SYN <-
-  ;;   ;; 3. SYN/ACK ->
-  ;;   ;; 4. (timeout)
-  ;;   (define-values (packets-out tcp) (start-prog))
-  ;;   (define status-updates (make-async-channel))
-  ;;   (define remote-port client-port)
-  ;;   (send-command tcp (Connect (InetSocketAddress remote-ip remote-port) status-updates))
-  ;;   (match-define (list local-iss local-port)
-  ;;     (check-unicast-match packets-out
-  ;;                          (OutPacket (== remote-ip)
-  ;;                                     (csa-record* [seq local-iss] [source-port remote-port]))
-  ;;                          #:result (list local-iss remote-port)))
-  ;;   (send-packet session (make-syn remote-port local-port remote-iss))
-  ;;   (check-unicast-match packets-out
-  ;;     (OutPacket (== remote-ip) (tcp-syn-ack local-port remote-port local-iss (add1 remote-iss))))
-  ;;   (sleep (/ wait-time-in-milliseconds 1000))
-  ;;   (check-unicast status-updates (variant CommandFailed)))
+  (test-case "Eventually give up if get timeout after a simultaneous SYN"
+    ;; Overall sequence is:
+    ;; 1. SYN ->
+    ;; 2. SYN <-
+    ;; 3. SYN/ACK ->
+    ;; 4. (timeout)
+    (define-values (rb sb su cn session) (start-prog))
+    (send-packet session (make-syn remote-port local-port remote-iss))
+    (check-unicast sb (SendSyn))
+    (async-channel-put session (InternalAbort))
+    (check-unicast su (variant CommandFailed)))
 
-  ;; (test-case "Registered address receives the received octets"
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
-  ;;   (define octet-dest (make-async-channel))
-  ;;   (send-session-command session (Register octet-dest))
-  ;;   (send-packet session (make-normal-packet remote-port
-  ;;                                                  local-port
-  ;;                                                  (add1 remote-iss)
-  ;;                                                  (add1 local-iss)
-  ;;                                                  (vector 1 2 3)))
-  ;;   (check-unicast octet-dest (ReceivedData (vector 1 2 3))))
+  (test-case "Registered address receives the received octets"
+    (match-define (list sb session) (connect))
+    (define octet-dest (make-async-channel))
+    (send-session-command session (Register octet-dest))
+    (send-packet session (make-normal-packet remote-port
+                                                   local-port
+                                                   (add1 remote-iss)
+                                                   (add1 local-iss)
+                                                   (vector 1 2 3)))
+    (check-unicast octet-dest (ReceivedData (vector 1 2 3))))
 
-  ;; (test-case "Timeout before registration closes the session"
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
-  ;;   (sleep (/ (+ register-timeout timeout-fudge-factor) 1000))
-  ;;   (check-unicast-match packets-out (OutPacket (== remote-ip)
-  ;;                                               (tcp-rst local-port remote-port (add1 local-iss))))
-  ;;   (define octet-dest (make-async-channel))
-  ;;   (send-session-command session (Register octet-dest))
-  ;;   (send-packet session (make-normal-packet remote-port
-  ;;                                                  local-port
-  ;;                                                  (add1 remote-iss)
-  ;;                                                  (add1 local-iss)
-  ;;                                                  (vector 1 2 3)))
-  ;;   (check-no-message octet-dest))
+  (test-case "Timeout before registration closes the session"
+    (match-define (list sb session) (connect))
+    (async-channel-put session (InternalAbort))
+    (check-unicast sb (SendRst))
+    (define octet-dest (make-async-channel))
+    (send-session-command session (Register octet-dest))
+    (send-packet session (make-normal-packet remote-port
+                                             local-port
+                                             (add1 remote-iss)
+                                             (add1 local-iss)
+                                             (vector 1 2 3)))
+    (check-no-message octet-dest))
 
-  ;; (test-case "Octet stream receives data, and data is ACKed"
-  ;;   (define octet-handler (make-async-channel))
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (establish octet-handler))
-  ;;   (send-packet session (make-normal-packet remote-port
-  ;;                                                  local-port
-  ;;                                                  (add1 remote-iss)
-  ;;                                                  (add1 local-iss)
-  ;;                                                  (vector 1 2 3)))
-  ;;   (check-unicast octet-handler (ReceivedData (vector 1 2 3)))
-  ;;   (check-unicast-match packets-out (OutPacket (== remote-ip)
-  ;;                                               (tcp-ack local-port
-  ;;                                                        remote-port
-  ;;                                                        (add1 local-iss)
-  ;;                                                        ;; add 1 for the SYN, 3 for the payload
-  ;;                                                        (+ remote-iss 4)))))
+  (test-case "Octet stream receives data"
+    (define octet-handler (make-async-channel))
+    (match-define (list sb session) (establish octet-handler))
+    (send-packet session (make-normal-packet remote-port
+                                                   local-port
+                                                   (add1 remote-iss)
+                                                   (add1 local-iss)
+                                                   (vector 1 2 3)))
+    (check-unicast octet-handler (ReceivedData (vector 1 2 3))))
 
-  ;; (test-case "Packet received while awaiting registration is sent to user after registration"
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
-  ;;   (define octet-dest (make-async-channel))
-  ;;   (send-packet session (make-normal-packet remote-port
-  ;;                                                  local-port
-  ;;                                                  (add1 remote-iss)
-  ;;                                                  (add1 local-iss)
-  ;;                                                  (vector 1 2 3)))
-  ;;   (sleep 1)
-  ;;   (send-session-command session (Register octet-dest))
-  ;;   (check-unicast octet-dest (ReceivedData (vector 1 2 3))))
-
-  ;; (test-case "Data received out-of-order is reordered"
-  ;;   (define octet-handler (make-async-channel))
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (establish octet-handler))
-  ;;   (send-packet session (make-normal-packet remote-port
-  ;;                                                  local-port
-  ;;                                                  (+ remote-iss 4)
-  ;;                                                  (add1 local-iss)
-  ;;                                                  (vector 4 5 6)))
-  ;;   (send-packet session (make-normal-packet remote-port
-  ;;                                                  local-port
-  ;;                                                  (add1 remote-iss)
-  ;;                                                  (add1 local-iss)
-  ;;                                                  (vector 1 2 3)))
-  ;;   (check-unicast octet-handler (ReceivedData (vector 1 2 3)))
-  ;;   (check-unicast octet-handler (ReceivedData (vector 4 5 6))))
-
-  ;; (test-case "Can write data to other side; retransmit after no ACK for a while, then no retransmit after ACK"
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (establish (make-async-channel)))
-  ;;   (define write-handler (make-async-channel))
-  ;;   (send-session-command session (Write (vector 1 2 3) write-handler))
-  ;;   (check-unicast write-handler (WriteAck))
-  ;;   (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-normal local-port remote-port  (add1 local-iss) (add1 remote-iss) (vector 1 2 3))) #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
-  ;;   (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-normal local-port remote-port  (add1 local-iss) (add1 remote-iss) (vector 1 2 3))) #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
-  ;;   (send-packet session (make-normal-packet remote-port local-port (add1 remote-iss) (+ 4 local-iss) (vector)))
-  ;;   (check-no-message packets-out #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000)))
-
-  ;; (test-case "Can write multiple segments when accepted data is longer than max segment size"
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (establish (make-async-channel)))
-  ;;   (define write-handler (make-async-channel))
-  ;;   (define data-to-write
-  ;;     (vector 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127 128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143 144 145 146 147 148 149 150 151 152 153 154 155 156 157 158 159 160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175 176 177 178 179 180 181 182 183 184 185 186 187 188 189 190 191 192 193 194 195 196 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219 220 221 222 223 224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255 256 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271 272 273 274 275 276 277 278 279 280 281 282 283 284 285 286 287 288 289 290 291 292 293 294 295 296 297 298 299 300 301 302 303 304 305 306 307 308 309 310 311 312 313 314 315 316 317 318 319 320 321 322 323 324 325 326 327 328 329 330 331 332 333 334 335 336 337 338 339 340 341 342 343 344 345 346 347 348 349 350 351 352 353 354 355 356 357 358 359 360 361 362 363 364 365 366 367 368 369 370 371 372 373 374 375 376 377 378 379 380 381 382 383 384 385 386 387 388 389 390 391 392 393 394 395 396 397 398 399 400 401 402 403 404 405 406 407 408 409 410 411 412 413 414 415 416 417 418 419 420 421 422 423 424 425 426 427 428 429 430 431 432 433 434 435 436 437 438 439 440 441 442 443 444 445 446 447 448 449 450 451 452 453 454 455 456 457 458 459 460 461 462 463 464 465 466 467 468 469 470 471 472 473 474 475 476 477 478 479 480 481 482 483 484 485 486 487 488 489 490 491 492 493 494 495 496 497 498 499 500 501 502 503 504 505 506 507 508 509 510 511 512 513 514 515 516 517 518 519 520 521 522 523 524 525 526 527 528 529 530 531 532 533 534 535 536))
-  ;;   (send-session-command session (Write data-to-write write-handler))
-  ;;   (check-unicast write-handler (WriteAck))
-  ;;   (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-normal local-port remote-port  (add1 local-iss) (add1 remote-iss) _)) #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
-  ;;   (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-normal local-port remote-port  (add1 local-iss) (add1 remote-iss) (vector 536))) #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
-  ;;   (send-packet session (make-normal-packet remote-port local-port (add1 remote-iss) (+ 4 local-iss) (vector))))
-
-  ;; (test-case "Give up retransmit after 4 total attempts"
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (establish (make-async-channel)))
-  ;;   (define write-handler (make-async-channel))
-  ;;   (send-session-command session (Write (vector 1 2 3) write-handler))
-  ;;   (check-unicast write-handler (WriteAck))
-  ;;   (check-unicast-match packets-out _ #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
-  ;;   (check-unicast-match packets-out _ #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
-  ;;   (check-unicast-match packets-out _ #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
-  ;;   (check-unicast-match packets-out _ #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
-  ;;   (check-no-message packets-out #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000)))
-
-  ;; (test-case "Close on receiving a FIN"
-  ;;   ;; NOTE: we assume that the session should end after receiving a FIN (this is the default in Akka,
-  ;;   ;; although they also allow the option of maintaining a half-open connection until the user
-  ;;   ;; decides to close)
-  ;;   ;;
-  ;;   ;; NOTE: this case corresponds to line 255 of TcpConnection.scala in the Akka codebase
-  ;;   (define octet-dest (make-async-channel))
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (establish octet-dest))
-  ;;   (send-packet session (make-fin remote-port local-port (add1 remote-iss) (add1 local-iss)))
-  ;;   (check-unicast octet-dest (PeerClosed))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-normal local-port remote-port (add1 local-iss) (+ 2 remote-iss) (vector))))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-fin local-port remote-port (add1 local-iss) (+ 2 remote-iss))))
-  ;;   ;; ACK the FIN
-  ;;   (send-packet session (make-fin remote-port local-port (add1 remote-iss) (+ 2 local-iss)))
-  ;;   (check-closed? session))
+  (test-case "Close on receiving a FIN"
+    ;; NOTE: we assume that the session should end after receiving a FIN (this is the default in Akka,
+    ;; although they also allow the option of maintaining a half-open connection until the user
+    ;; decides to close)
+    ;;
+    ;; NOTE: this case corresponds to line 255 of TcpConnection.scala in the Akka codebase
+    (define octet-dest (make-async-channel))
+    (match-define (list sb session) (establish octet-dest))
+    (send-packet session (make-fin remote-port local-port (add1 remote-iss) (add1 local-iss)))
+    (check-unicast octet-dest (PeerClosed))
+    (check-unicast sb (SendFin))
+    (async-channel-put session (TheFinSeq fin-seq))
+    ;; ACK the FIN
+    (send-packet session (make-fin remote-port local-port (add1 remote-iss) (+ 1 fin-seq)))
+    (check-closed? session))
 
   ;; (test-case "ConfirmedClose, through the ACK-then-FIN route"
   ;;   (define handler (make-async-channel))
