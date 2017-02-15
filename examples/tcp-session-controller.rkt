@@ -124,7 +124,6 @@
   (define-type ExpirationMessage
     (Union
      [RegisterTimeout]
-     [RetransmitTimeout]
      [TimeWaitTimeout]))
 
   (define-actor TimerCommand
@@ -672,7 +671,7 @@
                                     (record [remote-address (record [ip ,remote-ip] [port ,remote-port])]
                                             [local-port ,local-port])
                                     ,local-iss
-                                    (ActiveOpen)
+                                    (variant ActiveOpen)
                                     receive-buffer
                                     send-buffer
                                     status-updates
@@ -1465,3 +1464,148 @@
 ;;        ;; * awaiting user registration, established, syn received, the 6 closing states, and Closed (that's a lot...)
 ;;        ))
 ;;   )
+(module+ test
+  (define desugared-tcp-packet-type
+    `(Record
+      [source-port Nat]
+      [destination-port Nat]
+      [seq Nat]
+      [ack Nat]
+      [ack-flag (Union [Ack] [NoAck])]
+      [rst (Union [Rst] [NoRst])]
+      [syn (Union [Syn] [NoSyn])]
+      [fin (Union [Fin] [NoFin])]
+      [window Nat]
+      [payload (Vectorof Nat)]))
+
+  (define desugared-tcp-output
+    `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
+
+  (define desugared-socket-address
+    `(Record [ip Nat] [port Nat]))
+
+  (define desugared-session-id
+    `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
+
+  (define desugared-tcp-session-event
+    `(Union
+      [ReceivedData (Vectorof Nat)]
+      [Closed]
+      [ConfirmedClosed]
+      [Aborted]
+      [PeerClosed]
+      [ErrorClosed]))
+
+  (define desugared-write-response
+    `(Union
+      [CommandFailed]
+      [WriteAck]))
+
+  (define desugared-session-command
+    `(Union
+      (Register (Addr ,desugared-tcp-session-event))
+      (Write (Vectorof Nat) (Addr ,desugared-write-response))
+      (Close (Addr (Union [CommandFailed] [Closed])))
+      (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+      (Abort (Addr (Union [CommandFailed] [Aborted])))))
+
+  (define desugared-session-input
+    `(Union
+      (OrderedTcpPacket ,desugared-tcp-packet-type)
+      (Register (Addr ,desugared-tcp-session-event))
+      (Write (Vectorof Nat) (Addr ,desugared-write-response))
+      (Close (Addr (Union [CommandFailed] [Closed])))
+      (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+      (Abort (Addr (Union [CommandFailed] [Aborted])))
+      (InternalAbort)
+      (TheFinSeq Nat)
+      (RegisterTimeout)
+      (TimeWaitTimeout)))
+
+  (define desugared-connection-status
+    `(Union
+      [CommandFailed]
+      [Connected ,desugared-session-id
+                 (Addr ,desugared-session-command)]))
+
+  (define desugared-receive-buffer-command
+    `(Union (Resume)))
+
+  (define desugared-send-buffer-command
+    `(Union
+      [SendSyn]
+      [SendRst]
+      [SendText (Vectorof Nat)]
+      [SendFin]))
+
+  ;; patterns to be used in the spec
+  (define-syntax (make-packet-pattern stx)
+    (syntax-parse stx
+      [(_  ack rst syn fin)
+       #`(let ([qack 'ack]
+               [qrst 'rst]
+               [qsyn 'syn]
+               [qfin 'qfin])
+           `(variant (OrderedTcpPacket
+                      (record [source-port *]
+                              [destination-port *]
+                              [seq *]
+                              [ack *]
+                              [ack-flag ,qack]
+                              [rst ,qrst]
+                              [syn ,qsyn]
+                              [fin ,qfin]
+                              [window *]
+                              [payload *]))))]))
+
+  (define session-wire-spec
+    `(specification (receptionists [session ,desugared-session-input])
+                    (externals [receive-buffer ,desugared-receive-buffer-command]
+                               [send-buffer ,desugared-send-buffer-command]
+                               [status-updates ,desugared-connection-status]
+                               [close-notifications
+                                (Union [SessionCloseNotification ,desugared-session-id])])
+       [session (Union (OrderedTcpPacket ,desugared-tcp-packet-type))]
+       ([session (Union
+                  (Register (Addr ,desugared-tcp-session-event))
+                  (Write (Vectorof Nat) (Addr ,desugared-write-response))
+                  (Close (Addr (Union [CommandFailed] [Closed])))
+                  (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+                  (Abort (Addr (Union [CommandFailed] [Aborted])))
+                  (InternalAbort)
+                  (TheFinSeq Nat))])
+       (goto DoNothing)
+       (define-state (DoNothing)
+         [* -> () (goto DoNothing)])
+       ;; (goto SynSent send-buffer)
+       ;; (define-state (SynSent send-buffer)
+       ;;   [,(make-packet-pattern (variant Ack) (variant Rst) * *) ->
+       ;;    ([obligation send-buffer (variant SendRst)])
+       ;;    (goto Closed send-buffer)]
+         
+       ;;   ;; ACK:
+       ;;   ;;   RST: fail, halt
+       ;;   ;;   SYN: finish connecting
+       ;;   ;;   else: ignore
+       ;;   ;; SYN: simultaneous open
+       ;;   ;; SYN-ACK: regular open, go to established
+       ;;   ;; RST -> RST
+       ;;   ;; else: ? (what assumptions do we make about what gets here?)
+
+       ;;   )
+
+       ;; Other states:
+       ;; * awaiting user registration, established, syn received, the 6 closing states, and Closed (that's a lot...)
+       ))
+
+;; ionists [session ,desugared-session-input])
+;;                     (externals [receive-buffer ,desugared-receive-buffer-command]
+;;                                [send-buffer ,desugared-send-buffer-command]
+;;                                [status-updates ,desugared-connection-status]
+
+  (test-true "session input type" (csa-valid-type? desugared-session-input))
+  (test-true "receive buffer command type" (csa-valid-type? desugared-receive-buffer-command))
+  (test-true "send buffer command type" (csa-valid-type? desugared-send-buffer-command))
+  (test-true "connection-status type" (csa-valid-type? desugared-connection-status))
+  (test-true "Conformance for session controller"
+    (check-conformance desugared-program session-wire-spec)))
