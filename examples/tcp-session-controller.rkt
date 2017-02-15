@@ -1106,95 +1106,62 @@
     (send-packet session (make-fin remote-port local-port (+ 4 remote-iss) (add1 fin-seq)))
     (check-closed? session))
 
-  ;; (test-case "Abort from ESTABLISHED"
-  ;;   (define handler (make-async-channel))
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (establish handler))
-  ;;   (define close-handler (make-async-channel))
-  ;;   (send-session-command session (Abort close-handler))
-  ;;   (check-unicast handler (Aborted))
-  ;;   (check-unicast close-handler (Aborted))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-rst local-port remote-port (add1 local-iss))))
-  ;;   (check-closed? session)
-  ;;   ;; received packets should not come through to the user
-  ;;   (send-packet session (make-normal-packet remote-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
-  ;;   (check-no-message handler #:timeout 0.5))
+  (test-case "Abort from ESTABLISHED"
+    (define handler (make-async-channel))
+    (match-define (list sb session) (establish handler))
+    (define close-handler (make-async-channel))
+    (send-session-command session (Abort close-handler))
+    (check-unicast handler (Aborted))
+    (check-unicast close-handler (Aborted))
+    (check-unicast sb (SendRst))
+    (check-closed? session)
+    ;; received packets should not come through to the user
+    (send-packet session (make-normal-packet remote-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
+    (check-no-message handler #:timeout 0.5))
 
-  ;; (test-case "Abort from AwaitingRegistration"
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
-  ;;   (define close-handler (make-async-channel))
-  ;;   (send-session-command session (Abort close-handler))
-  ;;   (check-unicast close-handler (Aborted))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-rst local-port remote-port (add1 local-iss))))
-  ;;   (check-closed? session))
+  (test-case "Abort from AwaitingRegistration"
+    (match-define (list sb session) (connect))
+    (define close-handler (make-async-channel))
+    (send-session-command session (Abort close-handler))
+    (check-unicast close-handler (Aborted))
+    (check-unicast sb (SendRst))
+    (check-closed? session))
 
-  ;; (test-case "ConfirmedClose from AwaitingRegistration"
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
-  ;;   (define close-handler (make-async-channel))
-  ;;   (send-session-command session (ConfirmedClose close-handler))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-fin local-port remote-port (add1 local-iss) (add1 remote-iss))))
-  ;;   (send-packet session (make-normal-packet remote-port local-port (+ 1 remote-iss) (+ 2 local-iss) (vector)))
-  ;;   (send-packet session (make-fin remote-port           local-port (+ 1 remote-iss) (+ 2 local-iss)))
-  ;;   (check-unicast close-handler (ConfirmedClosed))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-normal local-port
-  ;;                                               remote-port
-  ;;                                               (+ 2 local-iss)
-  ;;                                               (+ 2 remote-iss)
-  ;;                                               (vector))))
-  ;;   (check-closed? session))
+  (test-case "ConfirmedClose from AwaitingRegistration"
+    (match-define (list sb session) (connect))
+    (define close-handler (make-async-channel))
+    (send-session-command session (ConfirmedClose close-handler))
+    (check-unicast sb (SendFin))
+    (async-channel-put session (TheFinSeq fin-seq))
+    (send-packet session (make-normal-packet remote-port local-port (+ 1 remote-iss) (add1 fin-seq) (vector)))
+    (send-packet session (make-fin remote-port           local-port (+ 1 remote-iss) (add1 fin-seq)))
+    (check-unicast close-handler (ConfirmedClosed))
+    (check-closed? session))
 
-  ;; (test-case "Close from AwaitingRegistration"
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
-  ;;   (define close-handler (make-async-channel))
-  ;;   (send-session-command session (Close close-handler))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-fin local-port remote-port (add1 local-iss) (add1 remote-iss))))
-  ;;   (check-unicast close-handler (Closed))
-  ;;   (check-closed? session)
-  ;;   (send-packet session (make-normal-packet remote-port local-port (+ 1 remote-iss) (+ 2 local-iss) (vector)))
-  ;;   (send-packet session (make-fin remote-port           local-port (+ 1 remote-iss) (+ 2 local-iss)))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-normal local-port
-  ;;                                               remote-port
-  ;;                                               (+ 2 local-iss)
-  ;;                                               (+ 2 remote-iss)
-  ;;                                               (vector)))))
+  (test-case "Close from AwaitingRegistration"
+    (match-define (list sb session) (connect))
+    (define close-handler (make-async-channel))
+    (send-session-command session (Close close-handler))
+    (check-unicast sb (SendFin))
+    (async-channel-put session (TheFinSeq fin-seq))
+    (check-unicast close-handler (Closed))
+    (check-closed? session))
 
-  ;; (test-case "Can abort while closing"
-  ;;   (define handler (make-async-channel))
-  ;;   (match-define (list packets-out tcp local-port local-iss session) (establish handler))
-  ;;   (define close-handler (make-async-channel))
-  ;;   (send-session-command session (ConfirmedClose close-handler))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-fin local-port remote-port (add1 local-iss) (add1 remote-iss))))
-  ;;   (define abort-handler (make-async-channel))
-  ;;   (send-session-command session (Abort abort-handler))
-  ;;   (check-unicast-match packets-out
-  ;;                        (OutPacket (== remote-ip)
-  ;;                                   (tcp-rst local-port remote-port (+ 2 local-iss))))
-  ;;   (check-unicast abort-handler (Aborted))
-  ;;   (check-unicast handler (Aborted))
-  ;;   ;; the close handler gets NO message
-  ;;   (check-no-message close-handler)
-  ;;   (check-closed? session))
-  )
-
-
-
-;; Maybe things to test:
-;; * receive RST in SynSent
-;; * receive unacceptable ACK in SynSent
-;; * in SynReceived, get ACK packet whose ACK is wrong (needs RST)
+  (test-case "Can abort while closing"
+    (define handler (make-async-channel))
+    (match-define (list sb session) (establish handler))
+    (define close-handler (make-async-channel))
+    (send-session-command session (ConfirmedClose close-handler))
+    (check-unicast sb (SendFin))
+    (async-channel-put session (TheFinSeq fin-seq))
+    (define abort-handler (make-async-channel))
+    (send-session-command session (Abort abort-handler))
+    (check-unicast sb (SendRst))
+    (check-unicast abort-handler (Aborted))
+    (check-unicast handler (Aborted))
+    ;; the close handler gets NO message
+    (check-no-message close-handler)
+    (check-closed? session)))
 
 ;; Conformance Tests
 ;; (module+ test
