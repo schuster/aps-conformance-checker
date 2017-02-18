@@ -646,7 +646,12 @@
     (define-state (Closed) (m)
       (case m
         [(OrderedTcpPacket packet)
-         (abort-connection)
+         (cond
+           [(packet-rst? packet)
+            0]
+           [else
+            (abort-connection)
+            0])
          (goto Closed)]
         [(Register h) (goto Closed)]
         [(Write data handler)
