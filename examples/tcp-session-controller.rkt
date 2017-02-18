@@ -1172,307 +1172,6 @@
     (check-closed? session)))
 
 ;; Conformance Tests
-;; (module+ test
-;;   (define desugared-tcp-packet-type
-;;     `(Record
-;;       [source-port Nat]
-;;       [destination-port Nat]
-;;       [seq Nat]
-;;       [ack Nat]
-;;       [ack-flag (Union [Ack] [NoAck])]
-;;       [rst (Union [Rst] [NoRst])]
-;;       [syn (Union [Syn] [NoSyn])]
-;;       [fin (Union [Fin] [NoFin])]
-;;       [window Nat]
-;;       [payload (Vectorof Nat)]))
-
-;;   (define desugared-tcp-output
-;;     `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
-
-;;   (define desugared-socket-address
-;;     `(Record [ip Nat] [port Nat]))
-
-;;   (define desugared-session-id
-;;     `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
-
-;;   (define desugared-tcp-session-event
-;;     `(Union
-;;       [ReceivedData (Vectorof Nat)]
-;;       [Closed]
-;;       [ConfirmedClosed]
-;;       [Aborted]
-;;       [PeerClosed]
-;;       [ErrorClosed]))
-
-;;   (define desugared-write-response
-;;     `(Union
-;;       [CommandFailed]
-;;       [WriteAck]))
-
-;;   (define desugared-session-command
-;;     `(Union
-;;       (Register (Addr ,desugared-tcp-session-event))
-;;       (Write (Vectorof Nat) (Addr ,desugared-write-response))
-;;       (Close (Addr (Union [CommandFailed] [Closed])))
-;;       (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
-;;       (Abort (Addr (Union [CommandFailed] [Aborted])))))
-
-;;   (define desugared-connection-status
-;;     `(Union
-;;       [CommandFailed]
-;;       [Connected ,desugared-session-id
-;;                  (Addr ,desugared-session-command)]))
-
-;;   (define desugared-user-command
-;;     `(Union
-;;       [Connect ,desugared-socket-address (Addr ,desugared-connection-status)]
-;;       [Bind Nat
-;;             (Addr (Union [Bound] [CommandFailed]))
-;;             (Addr ,desugared-connection-status)]))
-
-;;   (define desugared-tcp-input
-;;     `(Union
-;;       (InPacket Nat ,desugared-tcp-packet-type)
-;;       (UserCommand ,desugared-user-command)
-;;       (SessionCloseNotification ,desugared-session-id)))
-
-;;   (define tcp-session-program
-;;     `(program (receptionists [launcher (Addr ConnectionStatus)])
-;;               (externals [session-packet-dest (Addr (Union (InTcpPacket TcpPacket)))]
-;;                          [packets-out (Union [OutPacket IpAddress TcpPacket])]
-;;                          [close-notifications (Union [SessionCloseNotification SessionId])])
-;;               ,@tcp-definitions
-;;               (define-actor Nat
-;;                 (Launcher [session-packet-dest (Addr (Addr (Union (InTcpPacket TcpPacket))))]
-;;                           [packets-out (Addr (Union [OutPacket IpAddress TcpPacket]))]
-;;                           [close-notifications (Addr (Union [SessionCloseNotification SessionId]))])
-;;                 ()
-;;                 (goto Init)
-;;                 (define-state (Init) (status-updates)
-;;                   (let ([session (spawn session
-;;                                         TcpSession
-;;                                         (SessionId (InetSocketAddress 1234 50) 80)
-;;                                         (ActiveOpen)
-;;                                         packets-out
-;;                                         status-updates
-;;                                         close-notifications
-;;                                         30000
-;;                                         3
-;;                                         30000
-;;                                         10000)])
-;;                     ;; this makes the packet side of the session observable
-;;                     (send session-packet-dest session)
-;;                     (goto Done)))
-;;                 (define-state (Done) (m) (goto Done)))
-;;               (actors [launcher (spawn launcher
-;;                                        Launcher
-;;                                        session-packet-dest
-;;                                        packets-out
-;;                                        close-notifications)])))
-
-;;   (define session-spec-behavior
-;;     `((goto AwaitingRegistration)
-
-;;       (define-state (AwaitingRegistration)
-;;         [(variant Register app-handler) -> () (goto Connected app-handler)]
-;;         [(variant Write * write-handler) ->
-;;          ([obligation write-handler (variant CommandFailed)])
-;;          (goto AwaitingRegistration)]
-;;         [(variant Close close-handler) ->
-;;          ([obligation close-handler (variant Closed)])
-;;          (goto ClosedNoHandler)]
-;;         ;; NOTE: this is a tricky spec. I want to say that eventually the session is guaranteed to
-;;         ;; close, but the possibility of Abort means this close-handler might not get a response. Also
-;;         ;; the blurring would make that hard to check even without the abort issue.
-;;         [(variant ConfirmedClose close-handler) -> () (goto ClosingNoHandler close-handler)]
-;;         [(variant Abort abort-handler) ->
-;;          ([obligation abort-handler (variant Aborted)])
-;;          (goto ClosedNoHandler)]
-;;         ;; e.g. might close because of a registration timeout
-;;         [unobs -> () (goto ClosedNoHandler)])
-
-;;       (define-state (Connected app-handler)
-;;         [(variant Register other-app-handler) -> () (goto Connected app-handler)]
-;;         [(variant Write * write-handler) ->
-;;          ;; NOTE: this would probably be WriteAck OR CommandFailed in a real implementation that has a
-;;          ;; limit on its queue size
-;;          ([obligation write-handler (variant WriteAck)])
-;;          (goto Connected app-handler)]
-;;         [(variant Close close-handler) ->
-;;          ([obligation app-handler (variant Closed)]
-;;           [obligation close-handler (variant Closed)])
-;;          (goto Closed app-handler)]
-;;         [(variant ConfirmedClose close-handler) -> () (goto Closing app-handler close-handler)]
-;;         [(variant Abort abort-handler) ->
-;;          ([obligation abort-handler (variant Aborted)]
-;;           [obligation app-handler (variant Aborted)])
-;;          (goto Closed app-handler)]
-;;         ;; Possible unobserved events:
-;;         [unobs -> ([obligation app-handler (variant ReceivedData *)]) (goto Connected app-handler)]
-;;         [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)]
-;;         [unobs -> ([obligation app-handler (variant PeerClosed)]) (goto Closed app-handler)])
-
-;;       (define-state (Closing app-handler close-handler)
-;;         [unobs ->
-;;          ([obligation close-handler (variant ConfirmedClosed)]
-;;           [obligation app-handler (variant ConfirmedClosed)])
-;;          (goto Closed app-handler)]
-;;         [(variant Register app-handler) -> () (goto Closing app-handler close-handler)]
-;;         [(variant Write * write-handler) ->
-;;          ([obligation write-handler (variant CommandFailed)])
-;;          (goto Closing app-handler close-handler)]
-;;         [(variant Close other-close-handler) ->
-;;          ([obligation other-close-handler (variant CommandFailed)])
-;;          (goto Closing app-handler close-handler)]
-;;         [(variant ConfirmedClose other-close-handler) ->
-;;          ([obligation other-close-handler (variant CommandFailed)])
-;;          (goto Closing app-handler close-handler)]
-;;         [(variant Abort abort-handler) ->
-;;          ;; NOTE: no response at all on the ConfirmedClose handler: this is intentional (although
-;;          ;; possibly not a good idea)
-;;          ([obligation abort-handler (variant Aborted)]
-;;           [obligation app-handler (variant Aborted)])
-;;          (goto Closed app-handler)]
-;;         [unobs ->
-;;          ([obligation app-handler (variant ReceivedData *)])
-;;          (goto Closing app-handler close-handler)]
-;;         ;; NOTE: again, no response on close-handler. Again, intentional
-;;         [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])
-
-;;       (define-state (ClosingNoHandler close-handler)
-;;         [unobs -> ([obligation close-handler (variant ConfirmedClosed)]) (goto ClosedNoHandler)]
-;;         [(variant Register app-handler) -> () (goto ClosingNoHandler close-handler)]
-;;         [(variant Write * write-handler) ->
-;;          ([obligation write-handler (variant CommandFailed)])
-;;          (goto ClosingNoHandler close-handler)]
-;;         [(variant Close other-close-handler) ->
-;;          ([obligation other-close-handler (variant CommandFailed)])
-;;          (goto ClosingNoHandler close-handler)]
-;;         [(variant ConfirmedClose other-close-handler) ->
-;;          ([obligation other-close-handler (variant CommandFailed)])
-;;          (goto ClosingNoHandler close-handler)]
-;;         [(variant Abort abort-handler) ->
-;;          ([obligation abort-handler (variant Aborted)]) (goto ClosedNoHandler)]
-;;         ;; NOTE: again, no response on close-handler. Again, intentional
-;;         [unobs -> () (goto ClosedNoHandler)])
-
-;;       (define-state (ClosedNoHandler)
-;;         [(variant Register app-handler) -> () (goto ClosedNoHandler)]
-;;         [(variant Write * write-handler) ->
-;;          ([obligation write-handler (variant CommandFailed)])
-;;          (goto ClosedNoHandler)]
-;;         [(variant Close other-close-handler) ->
-;;          ([obligation other-close-handler (variant CommandFailed)])
-;;          (goto ClosedNoHandler)]
-;;         [(variant ConfirmedClose other-close-handler) ->
-;;          ([obligation other-close-handler (variant CommandFailed)])
-;;          (goto ClosedNoHandler)]
-;;         [(variant Abort abort-handler) ->
-;;          ;; An abort during the close process could still succeed
-;;          ([obligation abort-handler (or (variant Aborted) (variant CommandFailed))])
-;;          (goto ClosedNoHandler)])
-
-;;       (define-state (Closed app-handler)
-;;         [(variant Register app-handler) -> () (goto Closed app-handler)]
-;;         [(variant Write * write-handler) ->
-;;          ([obligation write-handler (variant CommandFailed)])
-;;          (goto Closed app-handler)]
-;;         [(variant Close other-close-handler) ->
-;;          ([obligation other-close-handler (variant CommandFailed)])
-;;          (goto Closed app-handler)]
-;;         [(variant ConfirmedClose other-close-handler) ->
-;;          ([obligation other-close-handler (variant CommandFailed)])
-;;          (goto Closed app-handler)]
-;;         [(variant Abort abort-handler) ->
-;;          ;; An abort during the close process could still succeed
-;;          ([obligation abort-handler (variant Aborted)]
-;;           [obligation app-handler (variant Aborted)])
-;;          (goto Closed app-handler)]
-;;         ;; An abort during the close process could still succeed. Abort may or may not send on
-;;         ;; app-handler, depending on which state it's in internally
-;;         [(variant Abort abort-handler) ->
-;;          ([obligation app-handler (variant CommandFailed)]
-;;           [obligation abort-handler (variant CommandFailed)])
-;;          (goto Closed app-handler)]
-;;         [(variant Abort abort-handler) ->
-;;          ([obligation abort-handler (variant CommandFailed)])
-;;          (goto Closed app-handler)]
-;;         ;; We might get some data while the other side is closing. Could probably split this into a
-;;         ;; separate spec state, but I'm leaving it here for now
-;;         [unobs -> ([obligation app-handler (variant ReceivedData *)]) (goto Closed app-handler)]
-;;         [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])))
-
-;;   (define session-spec
-;;     `(specification
-;;       (receptionists [launcher (Addr ,desugared-connection-status)])
-;;       (externals [session-packet-dest (Addr (Union [InTcpPacket ,desugared-tcp-packet-type]))]
-;;                  [packets-out ,desugared-tcp-output]
-;;                  [close-notifications (Union [SessionCloseNotification ,desugared-session-id])])
-;;       [launcher (Addr ,desugared-connection-status)]
-;;       ()
-;;       (goto Init)
-;;       (define-state (Init)
-;;         [status-updates ->
-;;          ([obligation status-updates (or (variant CommandFailed)
-;;                                          (variant Connected * (fork ,@session-spec-behavior)))])
-;;          (goto Done)])
-;;       (define-state (Done)
-;;         [* -> () (goto Done)])))
-
-;;   ;; (test-true "Conformance for session"
-;;   ;;   (check-conformance (desugar tcp-session-program) session-spec))
-
-;;   (define manager-spec
-;;     `(specification (receptionists [tcp ,desugared-tcp-input])
-;;                     (externals [packets-out ,desugared-tcp-output])
-;;        [tcp  (Union [UserCommand ,desugared-user-command])] ; obs interface
-;;        ([tcp (Union [InPacket Nat ,desugared-tcp-packet-type])])  ; unobs interface
-;;        (goto Managing)
-;;        (define-state (Managing)
-;;          [(variant UserCommand (variant Connect * status-updates)) ->
-;;           ([fork (goto MaybeSend status-updates)
-;;                  (define-state (MaybeSend status-updates)
-;;                    [unobs ->
-;;                     ([obligation status-updates
-;;                                  (or (variant CommandFailed)
-;;                                      (variant Connected * (fork ,@session-spec-behavior)))])
-;;                     (goto Done)])
-;;                  (define-state (Done))])
-;;           (goto Managing)]
-;;          [(variant UserCommand (variant Bind * bind-status bind-handler)) ->
-;;           ;; on Bind, send back the response to bind-status and fork a spec that says we might get
-;;           ;; some number of connections on this address
-;;           ([obligation bind-status (or (variant CommandFailed) (variant Bound))]
-;;            [fork (goto MaybeGetConnection bind-handler)
-;;                  (define-state (MaybeGetConnection bind-handler)
-;;                    [unobs ->
-;;                     ([obligation bind-handler (variant Connected * (fork ,@session-spec-behavior))])
-;;                     (goto MaybeGetConnection bind-handler)])])
-;;           (goto Managing)])))
-
-;;   (test-true "User command type" (csa-valid-type? desugared-user-command))
-;;   (test-true "Conformance for manager"
-;;     (check-conformance desugared-program manager-spec))
-
-
-;;   (define session-wire-spec
-;;     `(specification (receptionists [session ???])
-;;                     (externals [receive-buffer ???]
-;;                                [send-buffer ???])
-;;        [session ???]
-;;        ([session ???])
-;;        (goto SynSent send-buffer)
-;;        (define-state (SynSent send-buffer)
-;;          ;; SYN: simultaneous open
-;;          ;; SYN-ACK: regular open, go to established
-;;          ;; else: ? (what assumptions do we make about what gets here?)
-;;          [(record [source-port *] [destination-port *] [seq *] [ack *] [ack-flag Ack?] [rst Rst?] [syn Syn?] [fin Fin?] [window *] [payload *])]
-;;          )
-
-;;        ;; Other states:
-;;        ;; * awaiting user registration, established, syn received, the 6 closing states, and Closed (that's a lot...)
-;;        ))
-;;   )
 (module+ test
   (define desugared-tcp-packet-type
     `(Record
@@ -1550,22 +1249,22 @@
   ;; patterns to be used in the spec
   (define-syntax (make-packet-pattern stx)
     (syntax-parse stx
-      [(_  ack rst syn fin)
-       #`(let ([qack 'ack]
-               [qrst 'rst]
-               [qsyn 'syn]
-               [qfin 'qfin])
-           `(variant (OrderedTcpPacket
-                      (record [source-port *]
-                              [destination-port *]
-                              [seq *]
-                              [ack *]
-                              [ack-flag ,qack]
-                              [rst ,qrst]
-                              [syn ,qsyn]
-                              [fin ,qfin]
-                              [window *]
-                              [payload *]))))]))
+      [(_  ackpat rstpat synpat finpat)
+       #`(let ([qack 'ackpat]
+               [qrst 'rstpat]
+               [qsyn 'synpat]
+               [qfin 'finpat])
+           `(variant OrderedTcpPacket
+                     (record [source-port *]
+                             [destination-port *]
+                             [seq *]
+                             [ack *]
+                             [ack-flag ,qack]
+                             [rst ,qrst]
+                             [syn ,qsyn]
+                             [fin ,qfin]
+                             [window *]
+                             [payload *])))]))
 
   (define session-wire-spec
     `(specification (receptionists [session ,desugared-session-input])
@@ -1583,34 +1282,123 @@
                   (Abort (Addr (Union [CommandFailed] [Aborted])))
                   (InternalAbort)
                   (TheFinSeq Nat))])
-       (goto DoNothing)
-       (define-state (DoNothing)
-         [* -> () (goto DoNothing)])
-       ;; (goto SynSent send-buffer)
-       ;; (define-state (SynSent send-buffer)
-       ;;   [,(make-packet-pattern (variant Ack) (variant Rst) * *) ->
-       ;;    ([obligation send-buffer (variant SendRst)])
-       ;;    (goto Closed send-buffer)]
-         
-       ;;   ;; ACK:
-       ;;   ;;   RST: fail, halt
-       ;;   ;;   SYN: finish connecting
-       ;;   ;;   else: ignore
-       ;;   ;; SYN: simultaneous open
-       ;;   ;; SYN-ACK: regular open, go to established
-       ;;   ;; RST -> RST
-       ;;   ;; else: ? (what assumptions do we make about what gets here?)
+       (goto SynSent send-buffer)
+       (define-state (SynSent send-buffer)
+         ;; Anything with an ACK might fail if the ACK is wrong (overlaps with below clauses)
+         [,(make-packet-pattern (variant Ack) * * *) ->
+          ([obligation send-buffer (variant SendRst)])
+          (goto Closed send-buffer)]
+         ;; RST on an ACK: fail
+         [,(make-packet-pattern (variant Ack) (variant Rst) * *) ->
+          ()
+          (goto Closed send-buffer)]
+         ;; SYN-ACK: finish connecting (or fail, above)
+         [,(make-packet-pattern (variant Ack) (variant NoRst) (variant Syn) *) ->
+          ()
+          (goto Established send-buffer)]
+         ;; ACK without other interesting flags: ignore (or fail, above)
+         [,(make-packet-pattern (variant Ack) (variant NoRst) (variant NoSyn) *) ->
+          ()
+          (goto SynSent send-buffer)]
+         ;; ignore RST without ACK
+         [,(make-packet-pattern (variant NoAck) (variant Rst) * *) ->
+          ()
+          (goto SynSent send-buffer)]
+         ;; SYN without ACK: send SYN again (this is simultaneous open)
+         [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant Syn) *) ->
+          ([obligation send-buffer (variant SendSyn)])
+          (goto SynReceived send-buffer)]
+         ;; ignore all others without ACK
+         [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant NoSyn) *) ->
+          ()
+          (goto SynSent send-buffer)]
+         ;; some internal timeout or other event might occur that causes us to abort the connection
+         [unobs ->
+          ([obligation send-buffer (variant SendRst)])
+          (goto Closed send-buffer)]
+         )
 
-       ;;   )
+       (define-state (SynReceived send-buffer)
+         ;; RST: fail
+         [,(make-packet-pattern * (variant Rst) * *) ->
+          ()
+          (goto Closed send-buffer)]
+         ;; SYN without ACK: fail
+         [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant Syn) *) ->
+          ([obligation send-buffer (variant SendRst)])
+          (goto Closed send-buffer)]
+         ;; ACK without RST: either finish the handshake or send RST and go back to this state
+         [,(make-packet-pattern (variant Ack) (variant NoRst) * *) ->
+          ()
+          (goto Established send-buffer)]
+         [,(make-packet-pattern (variant Ack) (variant NoRst) * *) ->
+          ([obligation send-buffer (variant SendRst)])
+          (goto SynReceived send-buffer)]
+         ;; No ACK, RST, or SYN: ignore
+         [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant NoSyn) *) ->
+          ()
+          (goto SynReceived send-buffer)]
+         ;; some internal timeout or other event might occur that causes us to abort the connection
+         [unobs ->
+          ([obligation send-buffer (variant SendRst)])
+          (goto Closed send-buffer)])
 
-       ;; Other states:
-       ;; * awaiting user registration, established, syn received, the 6 closing states, and Closed (that's a lot...)
-       ))
+       (define-state (Established send-buffer)
+         ;; RST or SYN causes a total reset
+         [,(make-packet-pattern * (variant Rst) * *) ->
+          ()
+          (goto Closed send-buffer)]
+         [,(make-packet-pattern * * (variant Syn) *) ->
+          ([obligation send-buffer (variant SendRst)])
+          (goto Closed send-buffer)]
+         ;; Normal packet (with or without FIN): no particular activity
+         [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) ->
+          ()
+          (goto Established send-buffer)]
+         ;; might write some bytes to the socket
+         [unobs ->
+          ([obligation send-buffer (variant SendText *)])
+          (goto Established send-buffer)]
+         ;; might decide to close
+         [unobs ->
+          ([obligation send-buffer (variant SendFin)])
+          (goto Closing send-buffer)]
+         ;; some internal timeout or other event might occur that causes us to abort the connection
+         [unobs ->
+          ([obligation send-buffer (variant SendRst)])
+          (goto Closed send-buffer)])
 
-;; ionists [session ,desugared-session-input])
-;;                     (externals [receive-buffer ,desugared-receive-buffer-command]
-;;                                [send-buffer ,desugared-send-buffer-command]
-;;                                [status-updates ,desugared-connection-status]
+       ;; Corresponds to FIN WAIT 1, FIN WAIT 2, CLOSING, TIME WAIT, and LAST ACK. In the abstract
+       ;; interpretation, we can't distinguish those states because that depends on reasoning about
+       ;; whether a given ACK or FIN was valid and/or ACKed our own FIN. This state just says that we
+       ;; have sent a FIN and may (will) eventually close, and we may send an RST without receiving a
+       ;; packet that triggered it (unlike Closed, which only sends RSTs in response to received
+       ;; packets).
+       (define-state (Closing send-buffer)
+         ;; RST or SYN causes a total reset
+         [,(make-packet-pattern * (variant Rst) * *) ->
+          ()
+          (goto Closed send-buffer)]
+         [,(make-packet-pattern * * (variant Syn) *) ->
+          ([obligation send-buffer (variant SendRst)])
+          (goto Closed send-buffer)]
+         ;; A normal packet (regardless of FIN) *may* cause us to close
+         [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) -> () (goto Closed send-buffer)]
+         [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) -> () (goto Closing send-buffer)]
+         ;; we may get a TimeWait timeout and close
+         [unobs -> () (goto Closed send-buffer)]
+         ;; some internal timeout or other event might occur that causes us to abort the connection
+         [unobs ->
+           ([obligation send-buffer (variant SendRst)])
+           (goto Closed send-buffer)])
+
+       (define-state (Closed send-buffer)
+         [,(make-packet-pattern * (variant Rst) * *) ->
+          ()
+          (goto Closed send-buffer)]
+         [,(make-packet-pattern * (variant NoRst) * *) ->
+          ([obligation send-buffer (variant SendRst)])
+          (goto Closed send-buffer)])))
 
   (test-true "session input type" (csa-valid-type? desugared-session-input))
   (test-true "receive buffer command type" (csa-valid-type? desugared-receive-buffer-command))
