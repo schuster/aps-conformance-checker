@@ -1069,6 +1069,10 @@
              (when (set-empty? spec-steps)
                ;; There are no matching spec steps for this impl step, so remove this pair from the
                ;; relation and add it to the worklist
+               ;; (printf "Pruning pair: ~s ~s\n"
+               ;;         (impl-config-without-state-defs (config-pair-impl-config predecessor))
+               ;;         (spec-config-without-state-defs (config-pair-spec-config predecessor)))
+               ;; (printf "Because of impl step: ~s\n" (debug-impl-step i-step))
                (set-remove! remaining-pairs predecessor)
                (enqueue! unrelated-successors predecessor)))))
        (loop)])))
