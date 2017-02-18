@@ -385,8 +385,17 @@
     (define-state (AwaitingRegistration [registration-timer (Addr TimerCommand)]) (m)
       (case m
         [(OrderedTcpPacket packet)
-         ;; shouldn't happen here: receive buffer is holding packets until we tell it to resume
-         (goto AwaitingRegistration registration-timer)]
+         ;; shouldn't happen here: receive buffer is holding packets until we tell it to resume. We
+         ;; add a little logic here just to make the conformance check happy, though
+         (cond
+           [(packet-rst? packet)
+            (halt-with-notification)]
+           [(packet-syn? packet)
+            (abort-connection)
+            (halt-with-notification)]
+           [else
+            ;; ignore other packets
+            (goto AwaitingRegistration registration-timer)])]
         [(Register octet-handler)
          (send registration-timer (Stop))
          (send receive-buffer (Resume))
