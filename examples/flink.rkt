@@ -130,14 +130,6 @@
    [RequestNextInputSplit JobTaskId (Addr (Union [NextInputSplit (Vectorof String)]))]))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; TaskRunner -> TaskManager Communication
-
-(define-type TaskManagerNotification
-  (Union
-   [RegisterRunner (Addr TaskRunnerInput)]
-   [UpdateTaskExecutionState JobTaskId ExecutionState]))
-
-;; ---------------------------------------------------------------------------------------------------
 ;; TaskManager -> TaskRunner Communication
 
 (define-type RunnerCommand
@@ -194,6 +186,14 @@
    (UpdateTaskExecutionState JobTaskId ExecutionState)
    (TaskManagerTerminated TaskManagerId)
    (CancelJob Nat (Addr CancellationResult))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; TaskRunner -> TaskManager Communication
+
+(define-type TaskManagerNotification
+  (Union
+   [RegisterRunner (Addr TaskRunnerInput)]
+   [UpdateTaskExecutionState JobTaskId ExecutionState]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; TaskRunner
