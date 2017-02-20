@@ -776,7 +776,7 @@
 (define (aps#-resolve-outputs spec-configs outputs)
   (cond
     [(not (null? (externals-in (map csa#-output-message outputs))))
-     null]
+     (error 'aps#-resolve-outputs "External address found in outputs: ~s" outputs)]
     [else
      ;; REFACTOR: rewrite this function for readability (probably need to split some tasks into helper
      ;; functions)
@@ -1030,7 +1030,14 @@
                      (goto S1)
                      ((define-state (S1)))
                      ()))
-            ()])))
+            ()]))
+
+  (test-exn "External addresses in messages causes resolve-outputs to blow up"
+    (lambda (exn) #t)
+    (lambda ()
+      (aps#-resolve-outputs
+       (list (make-dummy-spec (list `([(obs-ext 1)]))))
+       (list `[(* (Addr (Addr Nat))) (Nat (obs-ext 1)) single])))))
 
 (define (aps#-remove-commitment-pattern commitment-map address pat)
   (term (remove-commitment-pattern/mf ,commitment-map ,address ,pat)))
