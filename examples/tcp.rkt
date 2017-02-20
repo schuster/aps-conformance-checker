@@ -1218,22 +1218,26 @@
               [(packet-syn? packet)
                (case (hash-ref binding-table (: packet destination-port))
                  [(Just bind-handler)
-                  (let* ([session-id
-                          (SessionId (InetSocketAddress source-ip (: packet source-port))
-                                     (: packet destination-port))]
-                         [session (spawn tcp-session
-                                         TcpSession
-                                         session-id
-                                         (PassiveOpen (: packet seq))
-                                         packets-out
-                                         bind-handler
-                                         self
-                                         ;; REFACTOR: consider making these top-level constants
-                                         wait-time-in-milliseconds
-                                         max-retries
-                                         max-segment-lifetime-in-ms
-                                         user-response-wait-time)])
-                    (goto Ready (hash-set session-table session-id session) binding-table))]
+                  ;; NOTE: having both passive and active opens here allows too much of a state
+                  ;; explosion, causing the conformance check to take more than 24 hours
+                  (goto Ready session-table binding-table)
+                  ;; (let* ([session-id
+                  ;;         (SessionId (InetSocketAddress source-ip (: packet source-port))
+                  ;;                    (: packet destination-port))]
+                  ;;        [session (spawn tcp-session
+                  ;;                        TcpSession
+                  ;;                        session-id
+                  ;;                        (PassiveOpen (: packet seq))
+                  ;;                        packets-out
+                  ;;                        bind-handler
+                  ;;                        self
+                  ;;                        ;; REFACTOR: consider making these top-level constants
+                  ;;                        wait-time-in-milliseconds
+                  ;;                        max-retries
+                  ;;                        max-segment-lifetime-in-ms
+                  ;;                        user-response-wait-time)])
+                  ;;   (goto Ready (hash-set session-table session-id session) binding-table))
+                  ]
                  [(Nothing)
                    ;; RFC 793 on resets:
                    ;;
@@ -2250,16 +2254,9 @@
                     (goto Done)])
                  (define-state (Done))])
           (goto Managing)]
-         [(variant UserCommand (variant Bind * bind-status bind-handler)) ->
-          ;; on Bind, send back the response to bind-status and fork a spec that says we might get
-          ;; some number of connections on this address
-          ([obligation bind-status (or (variant CommandFailed) (variant Bound))]
-           [fork (goto MaybeGetConnection bind-handler)
-                 (define-state (MaybeGetConnection bind-handler)
-                   [unobs ->
-                    ([obligation bind-handler (variant Connected * (fork ,@session-spec-behavior))])
-                    (goto MaybeGetConnection bind-handler)])])
-          (goto Managing)])))
+         ;; NOTE: Bind disabled because the conformance checker cannot handle the state explosion that
+         ;; follows
+         [(variant UserCommand (variant Bind * * *)) -> () (goot Managing)])))
 
   (test-true "User command type" (csa-valid-type? desugared-user-command))
   (test-true "Conformance for manager"
