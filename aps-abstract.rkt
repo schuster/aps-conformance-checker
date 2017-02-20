@@ -1400,47 +1400,59 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Spec Split
 
+;; s# -> (Listof s#)
+;;
 ;; Splits the given specifcation configuration into multiple configs, to ensure the space of explored
 ;; spec configs is finite. For each external address in the commitment map that is not a state
-;; argument (and therefore will never have more commitments addeded), it creates a new config
-;; consisting only of the commitments on that address (along with commitments for any addresses
+;; argument and does not have a "self" pattern in one of its patterns (and therefore will never have
+;; more commitments addeded nor be needed to resolve the current self address), it creates a new
+;; config consisting only of the commitments on that address (along with commitments for any addresses
 ;; mentioned in fork patterns for that address) and a dummy FSM with no transitions. After removing
 ;; those commitment map entries, the remaining config is also returned. The unobserved environment's
 ;; interface does not change in any of the new configs.
 (define (split-spec config)
-  ;; Don't bother splitting if this is already a commitment-only config
+  (define entries (aps#-config-commitment-map config))
+  ;; Don't bother splitting if this is already a commitment-only config with just one commitment entry
   (cond
-    [(equal? (aps#-config-current-state config) `(goto DummySpecFsmState))
+    [(and (equal? (aps#-config-current-state config) `(goto DummySpecFsmState))
+          (= 1 (length entries)))
      (list config)]
     [else
-     (define receptionists (aps#-config-receptionists config))
      ;; A commitment map entry is "relevant" if its address is used as a state argument, any of its
-     ;; patterns contain the "self" pattern, or it's used in a fork pattern for another relevant
-     ;; entry.
-     (define-values (maybe-relevant-entries irrelevant-entries)
-       (partition (lambda (entry)
-                    (or (member (aps#-commitment-entry-address entry)
-                                (aps#-config-current-state-args config))
-                        (member 'self (flatten (aps#-commitment-entry-patterns entry)))
-                        (address-containing-this-addr-in-fork-pattern config entry)))
-                  (aps#-config-commitment-map config)))
-     (define-values (relevant-entries in-irrelevant-fork-entries)
-       ;; NOTE: there are no cycles or nesting depths to relevancy: if an address is contained by a
-       ;; fork pattern, the linearity rules of APS imply that the containing address is either
-       ;; relevant or is already in irrelevant-entries
+     ;; patterns contain the "self" pattern, or it's used as a state argument in a fork pattern for a
+     ;; different relevant entry. An entry is "independent" if its address is not contained in a fork
+     ;; pattern for some other entry. For each irrelevant, independent entry, we split off a new spec
+     ;; config.
+     (define receptionists (aps#-config-receptionists config))
+     (define containing-address-map (compute-containing-entries entries))
+     (define independents (get-independent-addresses containing-address-map))
+     (define-values (state-args-or-self-relevants maybe-irrelevants)
        (partition
         (lambda (entry)
-          (match (address-containing-this-addr-in-fork-pattern config entry)
-            [#f #t]
-            [addr (not (member addr (map aps#-commitment-entry-address irrelevant-entries)))]))
-        maybe-relevant-entries))
+          (or (member (aps#-commitment-entry-address entry) (aps#-config-current-state-args config))
+              (ormap pattern-contains-self? (aps#-commitment-entry-patterns entry))))
+        (aps#-config-commitment-map config)))
+     (define-values (contained-relevants irrelevants)
+       (let ([addresses-contained-by-relevants
+              ;; Should I need to remove duplicates here? Would affect only speed, not correctness,
+              ;; but not sure if anything would be gained
+              (append*
+               (for/list ([entry state-args-or-self-relevants])
+                 (hash-ref containing-address-map (aps#-commitment-entry-address entry))))])
+         (partition
+          (lambda (entry) (member (aps#-commitment-entry-address entry)
+                                  addresses-contained-by-relevants))
+          maybe-irrelevants)))
+     (define independent-irrelevant-entries
+       (filter (lambda (entry) (set-member? independents (aps#-commitment-entry-address entry)))
+               irrelevants))
+
+     ;; We have all the necessary info; now make the actual spec configs
      (define commitment-only-configs
-       (for/list ([entry irrelevant-entries])
+       (for/list ([entry independent-irrelevant-entries])
          (define contained-fork-entries
-           (filter (lambda (fork-entry)
-                     (equal? (aps#-commitment-entry-address entry)
-                             (address-containing-this-addr-in-fork-pattern config fork-entry)))
-                   in-irrelevant-fork-entries))
+           (map (curry commitment-entry-by-address irrelevants)
+                (hash-ref containing-address-map (aps#-commitment-entry-address entry))))
          (aps#-config-from-commitment-entries
           (cons entry contained-fork-entries)
           (aps#-config-obs-interface config)
@@ -1449,7 +1461,7 @@
                   ,receptionists
                   ,(aps#-config-current-state config)
                   ,(aps#-config-state-defs config)
-                  ,relevant-entries))
+                  ,(append state-args-or-self-relevants contained-relevants)))
            commitment-only-configs)]))
 
 (module+ test
@@ -1521,8 +1533,205 @@
             ()
             (goto A (obs-ext 2))
             ()
-            (((obs-ext 1))
-             ((obs-ext 2) [single (fork (goto B (obs-ext 1)))])))))))
+            (((obs-ext 2) [single (fork (goto B (obs-ext 1)))])
+             ((obs-ext 1)))))))
+
+  (test-equal? "split spec with irrelevant address in its own commitment"
+    (split-spec (term (UNKNOWN
+                       ()
+                       (goto A (obs-ext 2))
+                       ()
+                       (((obs-ext 1) [single (fork (goto B (obs-ext 1)))])
+                        ((obs-ext 2))))))
+    (list
+     (term (UNKNOWN
+            ()
+            (goto A (obs-ext 2))
+            ()
+            (((obs-ext 2)))))
+     (aps#-make-no-transition-config null (list '((obs-ext 1) [single (fork (goto B (obs-ext 1)))])))))
+
+  (test-equal? "split spec with fork mentioning self pattern"
+    (split-spec (term (UNKNOWN
+                       ()
+                       (goto A (obs-ext 2))
+                       ()
+                       (((obs-ext 1) [single (fork (goto B (obs-ext 1))
+                                                   (define-state (B x)
+                                                     [unobs -> ([obligation x self]) (goto B x)]))])
+                        ((obs-ext 2))))))
+    (list
+     (term (UNKNOWN
+            ()
+            (goto A (obs-ext 2))
+            ()
+            (((obs-ext 2)))))
+     (aps#-make-no-transition-config
+      null
+      (list `((obs-ext 1) [single (fork (goto B (obs-ext 1))
+                                        (define-state (B x)
+                                          [unobs -> ([obligation x self]) (goto B x)]))])))))
+
+  (test-equal? "split spec with 'nested' forks"
+    (split-spec (term (UNKNOWN
+                       ()
+                       (goto A (obs-ext 1))
+                       ()
+                       (((obs-ext 1) [single (fork (goto B (obs-ext 2)))])
+                        ((obs-ext 2) [single (fork (goto C (obs-ext 3)))])
+                        ((obs-ext 3))
+                        ((obs-ext 4) [single (fork (goto B (obs-ext 5)))])
+                        ((obs-ext 5) [single (fork (goto C (obs-ext 6)))])
+                        ((obs-ext 6))))))
+    (list
+     (term (UNKNOWN
+            ()
+            (goto A (obs-ext 1))
+            ()
+            (((obs-ext 1) [single (fork (goto B (obs-ext 2)))])
+             ((obs-ext 2) [single (fork (goto C (obs-ext 3)))])
+             ((obs-ext 3)))))
+     (aps#-make-no-transition-config null
+                                     (list `((obs-ext 4) [single (fork (goto B (obs-ext 5)))])
+                                           `((obs-ext 5) [single (fork (goto C (obs-ext 6)))])
+                                           `((obs-ext 6)))))))
+
+;; O# -> (Hash a# (Listof a#))
+;;
+;; Returns a hash indicating, for a given address for a commitment map entry, all entries that are
+;; (recursively) referred to by that entry through fork patterns.
+(define (compute-containing-entries entries)
+  (for/fold ([container-map (hash)])
+            ([entry entries])
+    (hash-set container-map
+              (aps#-commitment-entry-address entry)
+              (addresses-referred-to-by entries entry))))
+
+(module+ test
+  (define test-commitment-entries
+    `(((obs-ext 1) [single (fork (goto B (obs-ext 2)))])
+       ((obs-ext 2) [single (fork (goto C (obs-ext 3)))])
+       ((obs-ext 3))
+       ((obs-ext 4) [single (fork (goto B (obs-ext 5)))])
+       ((obs-ext 5) [single (fork (goto C (obs-ext 6)))])
+      ((obs-ext 6))))
+  (define test-commitment-containing-map
+    (hash `(obs-ext 1) (list `(obs-ext 2) `(obs-ext 3))
+          `(obs-ext 2) (list `(obs-ext 3))
+          `(obs-ext 3) (list)
+          `(obs-ext 4) (list `(obs-ext 5) `(obs-ext 6))
+          `(obs-ext 5) (list `(obs-ext 6))
+          `(obs-ext 6) (list)))
+
+  (test-equal? "compute-containing-entries"
+    (compute-containing-entries test-commitment-entries)
+    test-commitment-containing-map))
+
+(define (addresses-referred-to-by entries entry)
+  (define (addresses-referred-to-by/internal entries entry)
+    (define immediate-references
+      (remove (aps#-commitment-entry-address entry)
+       (remove-duplicates
+        (append*
+         (map state-args-in-output-pattern (aps#-commitment-entry-patterns entry))))))
+    (append immediate-references
+            (append*
+             (for/list ([addr immediate-references])
+               (addresses-referred-to-by/internal entries (commitment-entry-by-address entries addr))))))
+  (remove-duplicates (addresses-referred-to-by/internal entries entry)))
+
+(module+ test
+  (test-equal? "addresses-referred-to-by 1"
+    (addresses-referred-to-by test-commitment-entries `((obs-ext 3)))
+    null)
+  (test-equal? "addresess-referred-to-by 2"
+    (addresses-referred-to-by test-commitment-entries
+                              `((obs-ext 4) [single (fork (goto B (obs-ext 5)))]))
+    (list `(obs-ext 5) `(obs-ext 6)))
+  (test-equal? "addresess-referred-to-by 3"
+    (addresses-referred-to-by `(((obs-ext 1))
+                                ((obs-ext 2))
+                                (obs-ext 3 [single (fork (goto B (obs-ext 1)))]
+                                           [single (record [a (fork (goto C (obs-ext 2)))])]))
+                              `((obs-ext 3)
+                                [single (fork (goto B (obs-ext 1)))]
+                                [single (record [a (fork (goto C (obs-ext 2)))])]))
+    (list `(obs-ext 1) `(obs-ext 2))))
+
+(define (state-args-in-output-pattern pat)
+  (match pat
+    [(? symbol?) null]
+    [`(fork (goto ,_ ,args ...) ,_ ...) args]
+    [`(or ,pats ...) (append* (map state-args-in-output-pattern pats))]
+    [`(variant ,_ ,pats ...) (append* (map state-args-in-output-pattern pats))]
+    [`(record [,_ ,pats] ...) (append* (map state-args-in-output-pattern pats))]))
+
+(module+ test
+  (test-equal? "state-args-in-output-pattern 1"
+    (state-args-in-output-pattern `(fork (goto A (obs-ext 1) (obs-ext 2))))
+    (list `(obs-ext 1) `(obs-ext 2)))
+  (test-equal? "state-args-in-output-pattern 2"
+    (state-args-in-output-pattern `(variant A
+                                            (fork (goto A (obs-ext 1) (obs-ext 2)))
+                                            (fork (goto B (obs-ext 3)))
+                                            ))
+    (list `(obs-ext 1) `(obs-ext 2) `(obs-ext 3)))
+  (test-equal? "state-args-in-output-pattern: nested forks"
+    (state-args-in-output-pattern
+     `(fork (goto A)
+            (define-state (A) [* -> ([fork (goto B (obs-ext 1))]) (goto A)])))
+    null))
+
+;; (Hash a# (Listof a#)) -> (Setof a#)
+;;
+;; Returns the set of addresses that are not in any list in a value of the given hash
+(define (get-independent-addresses containing-map)
+  (define all-addresses (hash-keys containing-map))
+  (for/fold ([independents (list->set all-addresses)])
+            ([address all-addresses])
+    (set-subtract independents (list->set (hash-ref containing-map address)))))
+
+(module+ test
+  (test-equal? "get-independent-addresses"
+    (get-independent-addresses test-commitment-containing-map)
+    (set `(obs-ext 1) `(obs-ext 4))))
+
+(define (commitment-entry-by-address entries addr)
+  (findf (lambda (entry) (equal? (aps#-commitment-entry-address entry) addr)) entries))
+
+(module+ test
+  (test-equal? "commitment-entry-by-address"
+    (commitment-entry-by-address test-commitment-entries `(obs-ext 4))
+    `((obs-ext 4) [single (fork (goto B (obs-ext 5)))]))
+
+  (test-equal? "commitment-entry-by-address 2"
+    (commitment-entry-by-address test-commitment-entries `(obs-ext 7))
+    #f))
+
+
+(define (pattern-contains-self? pat)
+  (match pat
+    ['self #t]
+    [(? symbol?) #f]
+    [`(fork ,_ ...) #f]
+    [`(or ,pats ...) (ormap pattern-contains-self? pats)]
+    [`(variant ,_ ,pats ...) (ormap pattern-contains-self? pats)]
+    [`(record [,_ ,pats] ...) (ormap pattern-contains-self? pats)]))
+
+(module+ test
+  (test-false "pattern-contains-self?: self only in fork's state def"
+    (pattern-contains-self?
+     `(fork (goto A) (define-state (A x) [unobs -> ([obligation x self]) (goto A x)]))))
+  (test-true "pattern-contains-self?: true"
+    (pattern-contains-self? `(record [a *] [b self])))
+    (test-true "pattern-contains-self?: true 2"
+      (pattern-contains-self? `(variant A * self)))
+  (test-true "pattern-contains-self?: true 3"
+    (pattern-contains-self? `(or (variant B) (variant A * self))))
+  (test-false "pattern-contains-self?: false"
+    (pattern-contains-self? `(record [a *] [b (variant B)])))
+  (test-false "pattern-contains-self?: false 2"
+    (pattern-contains-self? `(record [a (fork (goto A))] ))))
 
 (define (address-containing-this-addr-in-fork-pattern config entry)
   (define address (aps#-commitment-entry-address entry))
