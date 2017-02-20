@@ -10,13 +10,15 @@
 ;; Notes on the protocol:
 ;; * regardless of who started the call, the side that hangs up first sends Disconnect to the LIM
 ;; * "A" side is the calling side, "B" side is the called side
+;; * we use an extra identifier for connecting through the lim, rather than the actor address, so that
+;;   we can exactly specify our use of the address
 
 ;; ---------------------------------------------------------------------------------------------------
 
 (define desugared-peer-message-type
   `(minfixpt PeerMessageType
              (Union
-              [Seize (Addr (Union [PeerMessage PeerMessageType]))]
+              [Seize (Record [id Nat] [address (Addr (Union [PeerMessage PeerMessageType]))])]
               [Seized]
               [Rejected]
               [Answered]
@@ -36,7 +38,8 @@
 
 (define desugared-analyzer-result-type
   `(Union [Invalid]
-          [Valid (Addr (Union [PeerMessage ,desugared-peer-message-type]))]
+          [Valid (Record [id Nat]
+                         [address (Addr (Union [PeerMessage ,desugared-peer-message-type]))])]
           [GetMoreDigits]))
 
 (define desugared-analyzer-message-type
@@ -52,7 +55,7 @@
     [Digit Nat]
     ;; analyzer messages
     [Invalid]
-    [Valid (Addr (Union [PeerMessage ,desugared-peer-message-type]))]
+    [Valid (Record [id Nat] [address (Addr (Union [PeerMessage ,desugared-peer-message-type]))])]
     [GetMoreDigits]
     ;; peer messages (have to add a tag around these because of the recursive type
     [PeerMessage ,desugared-peer-message-type]))
@@ -69,10 +72,8 @@
   (Busy))
 
 (define-variant LimMessage
-  ; the Connect/Disconnect messages' usage of the peer address is not specified in any source I've
-  ; found, so we leave it as an empty union address here
-  (Connect [peer (Addr (Union))])
-  (Disconnect [peer (Addr (Union))])
+  (Connect [peer-id Nat])
+  (Disconnect [peer-id Nat])
   (StartTone [tone Tone])
   (StopTone)
   (StartRing)
@@ -80,8 +81,10 @@
 
 ;; recursive variants aren't supported in the sugared language right now
 (define-type PeerMessage ,desugared-peer-message-type)
-(define-type PeerMessageAddress (Addr (Union [PeerMessage PeerMessage])))
-(define-function (Seize [peer PeerMessageAddress]) (variant Seize peer))
+(define-record Peer
+  [id Nat]
+  [address (Addr (Union [PeerMessage PeerMessage]))])
+(define-function (Seize [peer Peer]) (variant Seize peer))
 (define-function (Seized) (variant Seized))
 (define-function (Rejected) (variant Rejected))
 (define-function (Answered) (variant Answered))
@@ -89,8 +92,8 @@
 
 ;; Recursive types require a lot of extra annotations/folding, so we abstract that into one function
 ;; here
-(define-function (send-peer [peer PeerMessageAddress] [message PeerMessage])
-  (send peer (variant PeerMessage (fold PeerMessage message))))
+(define-function (send-peer [peer Peer] [message PeerMessage])
+  (send (: peer address) (variant PeerMessage (fold PeerMessage message))))
 
 (define-type ListOfDigits
   (minfixpt TheList
@@ -104,7 +107,7 @@
 
 (define-variant AnalyzerResult
   (Invalid)
-  (Valid [peer PeerMessageAddress])
+  (Valid [peer Peer])
   (GetMoreDigits))
 
 (define-variant AnalyzerMessage
@@ -118,7 +121,7 @@
    [Digit Nat]
    ;; analyzer messages
    [Invalid]
-   [Valid PeerMessageAddress]
+   [Valid Peer]
    [GetMoreDigits]
    ;; peer messages (have to add a tag around these because of the recursive type
    [PeerMessage PeerMessage]))
@@ -127,7 +130,9 @@
   (HaveTone)
   (NoTone))
 
-(define-actor ControllerMessage (PotsController [lim (Addr LimMessage)] [analyzer (Addr AnalyzerMessage)])
+(define-actor ControllerMessage (PotsController [my-id Nat]
+                                                [lim (Addr LimMessage)]
+                                                [analyzer (Addr AnalyzerMessage)])
   () ; no actor-specific functions
 
   (goto Idle)
@@ -221,7 +226,7 @@
        (send lim (StartTone (Fault)))
        (goto WaitOnHook (HaveTone))]
       [(Valid peer)
-       (send-peer peer (Seize self))
+       (send-peer peer (Seize (Peer my-id self)))
        (goto MakeCallToB peer)]
       [(GetMoreDigits) (goto GettingNumber number)]
       ;; ignore other messages
@@ -232,7 +237,7 @@
       [(Digit n) (goto WaitOnAnalysis number)]))
 
   ;; Called "calling_B" in Ulf's version
-  (define-state (MakeCallToB [peer PeerMessageAddress]) (m)
+  (define-state (MakeCallToB [peer Peer]) (m)
     (case m
       [(OnHook) (goto Idle)]
       [(PeerMessage p)
@@ -259,7 +264,7 @@
       [(GetMoreDigits) (goto MakeCallToB peer)]))
 
   ;; the other phone is ringing
-  (define-state (RingingASide [peer PeerMessageAddress]) (m)
+  (define-state (RingingASide [peer Peer]) (m)
     (case m
       [(PeerMessage p)
        (case (unfold PeerMessage p)
@@ -268,7 +273,7 @@
           (goto RingingASide peer)]
          [(Answered)
           (send lim (StopTone))
-          (send lim (Connect peer))
+          (send lim (Connect (: peer id)))
           (goto Speech peer)]
          ;; ignore other peer messages
          [(Seized) (goto RingingASide peer)]
@@ -286,7 +291,7 @@
       [(GetMoreDigits) (goto RingingASide peer)]))
 
   ;; this phone is ringing
-  (define-state (RingingBSide [peer PeerMessageAddress]) (m)
+  (define-state (RingingBSide [peer Peer]) (m)
     (case m
       [(PeerMessage p)
        (case (unfold PeerMessage p)
@@ -311,7 +316,7 @@
       [(Valid a) (goto RingingBSide peer)]
       [(GetMoreDigits) (goto RingingBSide peer)]))
 
-  (define-state (Speech [peer PeerMessageAddress]) (m)
+  (define-state (Speech [peer Peer]) (m)
     (case m
       [(PeerMessage p)
        (case (unfold PeerMessage p)
@@ -324,7 +329,7 @@
          [(Rejected) (goto Speech peer)]
          [(Answered) (goto Speech peer)])]
       [(OnHook)
-       (send lim (Disconnect peer))
+       (send lim (Disconnect (: peer id)))
        (send-peer peer (Cleared))
        (goto Idle)]
       ;; ignore other messages
@@ -359,7 +364,7 @@
       [(Valid a) (goto WaitOnHook have-tone?)]
       [(GetMoreDigits) (goto WaitOnHook have-tone?)])))
 
-(actors [controller (spawn 1 PotsController lim analyzer)])))
+(actors [controller (spawn 1 PotsController 1 lim analyzer)])))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Specifications
@@ -374,10 +379,10 @@
      (goto Idle)
 
      (define-state (Idle)
-       [(variant PeerMessage (variant Seize peer)) ->
+       [(variant PeerMessage (variant Seize (record [id *] [address peer]))) ->
         ([obligation peer (variant PeerMessage (variant Seized))])
         (goto Ringing peer)]
-       [(variant PeerMessage (variant Seize peer)) ->
+       [(variant PeerMessage (variant Seize (record [id *] [address peer]))) ->
         ([obligation peer (variant PeerMessage (variant Rejected))])
         (goto Idle)]
        [(variant PeerMessage (variant Seized)) -> () (goto Idle)]
@@ -390,7 +395,7 @@
        [unobs ->
         ([obligation peer (variant PeerMessage (variant Answered))])
         (goto InCall peer)]
-       [(variant PeerMessage (variant Seize other-peer)) ->
+       [(variant PeerMessage (variant Seize (record [id *] [address other-peer]))) ->
         ([obligation other-peer (variant PeerMessage (variant Rejected))])
         (goto Ringing peer)]
        [(variant PeerMessage (variant Cleared)) -> () (goto Idle)]
@@ -402,7 +407,7 @@
 
      (define-state (InCall peer)
        [unobs -> ([obligation peer (variant PeerMessage (variant Cleared))]) (goto Idle)]
-       [(variant PeerMessage (variant Seize other-peer)) ->
+       [(variant PeerMessage (variant Seize (record [id *] [address other-peer]))) ->
         ([obligation other-peer (variant PeerMessage (variant Rejected))])
         (goto InCall peer)]
        [(variant PeerMessage (variant Cleared)) -> () (goto Idle)]
