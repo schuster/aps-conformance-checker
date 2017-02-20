@@ -3108,15 +3108,19 @@
   (test-valid-instance? dynamic-never-respond-spec-escape)
   (test-valid-instance? obs-escape-spec1)
   (test-valid-instance? obs-escape-spec2)
-  (test-false "Sending unobs to environment is not allowed (1)"
+  (test-true "Sending unobs external addr to environment is okay"
     (check-conformance/config
      (make-single-actor-config escape-actor)
      (make-exclusive-spec dynamic-never-respond-spec-escape)))
-  (test-false "Sending unobs to environment is not allowed (2)"
-    (check-conformance/config
-     (make-single-actor-config escape-actor)
-     (make-exclusive-spec obs-escape-spec1)))
-  (test-false "Sending unobs to environment is not allowed (3)"
-    (check-conformance/config
-     (make-single-actor-config escape-actor)
-     (make-exclusive-spec obs-escape-spec2))))
+  (test-exn "Sending extrnal addr to environment is not allowed (1)"
+    (lambda (exn) #t)
+    (lambda ()
+      (check-conformance/config
+       (make-single-actor-config escape-actor)
+       (make-exclusive-spec obs-escape-spec1))))
+  (test-exn "Sending external addr to environment is not allowed (2)"
+    (lambda (exn) #t)
+    (lambda ()
+      (check-conformance/config
+       (make-single-actor-config escape-actor)
+       (make-exclusive-spec obs-escape-spec2)))))
