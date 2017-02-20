@@ -2256,7 +2256,7 @@
           (goto Managing)]
          ;; NOTE: Bind disabled because the conformance checker cannot handle the state explosion that
          ;; follows
-         [(variant UserCommand (variant Bind * * *)) -> () (goot Managing)])))
+         [(variant UserCommand (variant Bind * * *)) -> () (goto Managing)])))
 
   (test-true "User command type" (csa-valid-type? desugared-user-command))
   (test-true "Conformance for manager"
