@@ -110,7 +110,8 @@
        ;; TODO: break these out into separate states so that the append retry can only happen when in
        ;; the leader state (and otherwise the leader must fall back to being a follower)
        [(variant PeerMessage (variant AppendRejected * * member)) -> () (goto Running)]
-       ;; APS PROTOCOL BUG: I left this case out the first time around
+       ;; APS PROTOCOL BUG: to replicate, comment out this case that sends an AppendEntries back (I
+       ;; left this case out the first time around)
        [(variant PeerMessage (variant AppendRejected * * member)) ->
         ;; TODO: should I require that the self address is in this response?
         ([obligation member (variant PeerMessage (variant AppendEntries * * * * * * *))])
@@ -689,7 +690,7 @@
                                                             (replicated-log-last-index replicated-log)
                                                             self))))
        ;; APS PROTOCOL BUG: akka-raft does not respond to heartbeats in this case, but I think it
-       ;; should
+       ;; should. To replicate, comment out the above send and uncomment the following cond expression
        ;; (cond
        ;;   [(not (is-heartbeat entries))
        ;;    (send leader
@@ -710,7 +711,7 @@
                            config
                            recently-contacted-by-leader))]
       ;; APS PROTOCOL BUG: akka-raft does not do the append/commit logic for heartbeats, even though
-      ;; it should
+      ;; it should. To replicate, uncomment this cond clause
       ;; [(is-heartbeat entries)
       ;;  (accept-heartbeat m replicated-log config recently-contacted-by-leader)]
       [else
@@ -782,8 +783,6 @@
           [will-commit (commit-until-index replicated-log index-on-majority true)]
           [else replicated-log]))))
 
-  ;; TODO: define functions like this alongside handlers in a state, so we don't have to repeat state
-  ;; fields so much
   (define-function (register-append-successful [follower-term Nat]
                                                [follower-index Nat]
                                                [member (Addr SendableRaftMessage)]
@@ -792,7 +791,7 @@
                                                [match-index (Hash (Addr SendableRaftMessage) Nat)]
                                                [replicated-log ReplicatedLog]
                                                [config ClusterConfiguration])
-    ;; TODO: (maybe akka-raft bug): why don't both indices use put-if-greater?
+    ;; NOTE: (maybe akka-raft bug): why don't both indices use put-if-greater?
     (let* ([next-index (hash-set next-index member follower-index)]
            [match-index (log-index-map-put-if-greater match-index
                                                       member
@@ -987,7 +986,8 @@
                                 config
                                 recently-contacted-by-leader))]
              [else
-              ;; APS PROTOCOL BUG: original code left out this response
+              ;; APS PROTOCOL BUG: original code left out this response. To replicate, uncomment this
+              ;; send
               (send leader
                     (PeerMessage
                      (fold RaftMessage
@@ -1077,7 +1077,7 @@
                                                             (replicated-log-last-index replicated-log)
                                                             self))))
             ;; APS PROTOCOL BUG: this is where akka-raft sends entries back instead of the rejection
-            ;; response
+            ;; response. To replicate, comment out the above send and uncomment the below send-entries
             ;;
             ;; (send-entries leader
             ;;               m

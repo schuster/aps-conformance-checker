@@ -336,7 +336,7 @@
           (goto Running idle-runners busy-runners)]
          [(Cons runner other-runners)
           (send runner (RunTask task))
-          ;; NOTE: *almost* forgot the acknowledgment here, until I saw my old comment
+          ;; APS PROTOCOL BUG: to replicate, comment out this "send" line for the Acknowledge
           (send ack-dest (Acknowledge (: task id)))
           (goto Running other-runners (cons (BusyRunner (: task id) runner) busy-runners))])]
       [(CancelTask id ack-dest)
@@ -531,6 +531,7 @@
                  [partitions (Hash JobTaskId UsedPartition)]) (m)
     (case m
       [(RegisterTaskManager id slots address)
+       ;; APS PROTOCOL BUG: to replicate, comment out this "send" for AcknowledgeRegistration
        (send address (AcknowledgeRegistration))
        (let* ([task-managers (hash-set task-managers id (ManagedTaskManager address slots))]
               [submission-result (send-ready-tasks task-managers ready-tasks running-tasks)])
@@ -1128,6 +1129,8 @@
 
 (module+ test
   (define task-manager-spec-behavior
+    ;; APS PROTOCOL BUG: to replicate, set the initial state as (Registered job-manager) instead of
+    ;; Unregistered
     `((goto Unregistered job-manager)
       (define-state (Unregistered job-manager)
         [(variant JobManagerTerminated) -> () (goto Unregistered job-manager)]

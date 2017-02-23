@@ -772,6 +772,8 @@
                (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)])]
            [else (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)])]
         [(RetransmitTimeout)
+         ;; APS PROTOCOL BUG: to replicate, replace this case expression with just
+         ;; (send status-updates (CommandFailed))
          (case open
            [(ActiveOpen) (send status-updates (CommandFailed)) 0]
            [(PassiveOpen r) 0])
@@ -1054,6 +1056,16 @@
                 [(SentThenReceivedFin)
                  (cond
                    [all-data-is-acked?
+                    ;; APS PROTOCOL BUG: to replicate, uncomment the commented-out code below (this is
+                    ;; a duplicate send of ConfirmedClosed, which already happened before)
+                    ;;
+                    ;; (case close-type
+                    ;;   [(ConfirmedClose close-handler)
+                    ;;    (send octet-stream (ConfirmedClosed))
+                    ;;    (send close-handler (ConfirmedClosed))
+                    ;;    0]
+                    ;;   [(Close h) 0]
+                    ;;   [(PeerClose) 0])
                     (goto-TimeWait (: send-buffer send-next)
                                    rcv-nxt
                                    receive-buffer
@@ -2104,6 +2116,9 @@
          ([obligation abort-handler (variant Aborted)])
          (goto ClosedNoHandler)]
         ;; e.g. might close because of a registration timeout
+        ;;
+        ;; APS PROTOCOL BUG: to replicate, comment out this unobs transition (didn't realize at first
+        ;; this was a possibility)
         [unobs -> () (goto ClosedNoHandler)])
 
       (define-state (Connected app-handler)
@@ -2169,6 +2184,8 @@
         [(variant Abort abort-handler) ->
          ([obligation abort-handler (variant Aborted)]) (goto ClosedNoHandler)]
         ;; NOTE: again, no response on close-handler. Again, intentional
+        ;;
+        ;; APS PROTOCOL BUG: to replicate, comment out this unobs transition
         [unobs -> () (goto ClosedNoHandler)])
 
       (define-state (ClosedNoHandler)

@@ -273,6 +273,9 @@
       [(PeerClosed) (goto Closed)]
       [(ErrorClosed) (goto Closed)]
       [(HttpRegister new-handler)
+       ;; APS PROTOCOL BUG: to replicate, use "new-handler" in the transition below instead of
+       ;; "handler"
+
        ;; just ignore extra registration messages
        (goto Running held-data handler)]))
 
@@ -294,6 +297,9 @@
        (goto Unbinding unbind-timer unbind-commanders))))
 
   ;; initialization
+  ;;
+  ;; APS PROTOCOL BUG: to replicate, replace "bind-timer" in the spawn expression with
+  ;; "bind-timer-EVICT" (otherwise, we can't guarantee that the user's Bind command gets a response)
   (let ([bind-timer (spawn bind-timer Timer (BindTimeout) self)])
     (send tcp (Bind port self self))
     (send bind-timer (Start ,BIND-WAIT-TIME-IN-MS))
