@@ -941,8 +941,8 @@
            (goto Done)])
        (define-state (Done))))
 
-  (test-true "ServerConnection conforms to its specification"
-    (check-conformance desugared-connection-program connection-spec))
+  ;; (test-true "ServerConnection conforms to its specification"
+  ;;   (check-conformance desugared-connection-program connection-spec))
 
   (define unbind-result-behavior
     `((goto SendUnbindResultAnytime unbind-commander)
@@ -985,8 +985,8 @@
            (goto Done)])
        (define-state (Done))))
 
-  (test-true "HttpListener conforms to its specification"
-    (check-conformance desugared-listener-program listener-spec))
+  ;; (test-true "HttpListener conforms to its specification"
+  ;;   (check-conformance desugared-listener-program listener-spec))
 
   (define http-manager-spec
     `(specification (receptionists [manager ,desugared-http-manager-command])
