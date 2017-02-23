@@ -244,7 +244,12 @@
       [(NextInputSplit items) (goto AboutToRunTask task)])
     (timeout ,task-wait-time
       (case (: task work)
-        [(MapWork words) (count-new-words (: task id) (hash) words)]
+        [(MapWork words)
+         (count-new-words (: task id)
+                          ;; we add and remove an item to the empty hash so that the model checker
+                          ;; abstracts this to a non-empty hash, avoiding a state-space explosion
+                          (hash-remove (hash-set (hash) "a" 1) "a")
+                          words)]
         [(ReduceWork left right)
          (let ([final-result
                 (for/fold ([result left])
