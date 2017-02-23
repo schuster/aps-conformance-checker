@@ -1447,8 +1447,8 @@
      #f)
     (value-result `(* (Addr Nat))
                   `(([(* (Addr Nat)) (* Nat) single]
-                     [(init-addr 1) (* (Addr Nat)) single]
-                     [(* (Addr Nat)) (list-val ((Addr Nat) (init-addr 2))) single])
+                     [(* (Addr Nat)) (list-val ((Addr Nat) (init-addr 2))) single]
+                     [(init-addr 1) (* (Addr Nat)) single])
                     ())))
 
   (test-exn "Can't evict an actor that contains obs-ext addrs"
@@ -1593,19 +1593,22 @@
      `(hash-val ,(sort (remove-duplicates keys) sexp<?)
                 ,(sort (remove-duplicates vals) sexp<?))]))
 
+;; Adds a new packet to an existing list of packets, in sexp<? order, merging with existing packets
+;; and updating the multiplicity if needed
 (define (add-output existing-packets new-packet)
   (match-define `[,new-addr ,new-val ,new-mult] new-packet)
-  (let loop ([reversed-checked-packets null]
-             [packets-to-check existing-packets])
-    (match packets-to-check
-      [(list) (reverse (cons new-packet reversed-checked-packets))]
-      [(list old-packet packets-to-check ...)
-       (if (and (equal? (csa#-message-packet-address old-packet) new-addr)
-                (equal? (csa#-message-packet-value old-packet) new-val))
-           (append (reverse reversed-checked-packets)
-                   (list `[,new-addr ,new-val many])
-                   packets-to-check)
-           (loop (cons old-packet reversed-checked-packets) packets-to-check))])))
+  (match existing-packets
+    [(list) (list new-packet)]
+    [(list old-packet existing-packets ...)
+     (define new-packet-without-mult `[,new-addr ,new-val])
+     (define old-packet-without-mult
+       `[,(csa#-message-packet-address old-packet) ,(csa#-message-packet-value old-packet)])
+     (cond
+       [(equal? old-packet-without-mult new-packet-without-mult)
+        (cons `[,new-addr ,new-val many] existing-packets)]
+       [(sexp<? new-packet-without-mult old-packet-without-mult)
+        (cons new-packet (cons old-packet existing-packets))]
+       [else (cons old-packet (add-output existing-packets new-packet))])]))
 
 (module+ test
   (test-equal? "Basic add-output test 1: already exists"
