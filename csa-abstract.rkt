@@ -1027,6 +1027,7 @@
      (eval-and-then* args effects
        (lambda (vs effects)
          (apply printf template vs)
+         (flush-output)
          (value-result `(* Nat) effects))
        (lambda (stucks) `(printf ,@stucks)))]
     ;; TODO: add print-len back in for lists and vectors
