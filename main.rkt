@@ -352,6 +352,8 @@
     (widen-printf "Finding impl steps from ~s triggers\n" (length triggers))
     (append*
      (for/list ([trigger-with-obs triggers])
+       (widen-printf "Trigger: ~s\n" trigger-with-obs)
+       (flush-output)
        (define effects (csa#-eval-trigger impl-config (first trigger-with-obs) abort))
        (for/list ([effect effects])
          (apply-transition impl-config effect (second trigger-with-obs)))))))
