@@ -937,6 +937,7 @@
         (set! trigger-count (add1 trigger-count))
         (define observed? (second trigger-with-obs))
         (widen-printf "Eval trigger (~s of ~s): ~s\n" trigger-count (length triggers) trigger-with-obs)
+        (flush-output)
         (define results (map (curryr list observed?) (csa#-eval-trigger i (first trigger-with-obs) abort)))
         (widen-printf "Finished trigger, ~s transitions\n" (length results))
         results)))
