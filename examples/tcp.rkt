@@ -2273,7 +2273,23 @@
           (goto Managing)]
          ;; NOTE: Bind disabled because the conformance checker cannot handle the state explosion that
          ;; follows
-         [(variant UserCommand (variant Bind * * *)) -> () (goto Managing)])))
+         [(variant UserCommand (variant Bind * * *)) -> () (goto Managing)]
+
+         ;; Alternative: comment out the spawn for active-open sessions the Connect clause of this
+         ;; spec, and the above Bind clause, and instead uncomment the spawn for passive-open sessions
+         ;; and this more precise spec for Bind commands to test the behavior of the controller for
+         ;; Bind.
+         ;; [(variant UserCommand (variant Bind * bind-status bind-handler)) ->
+         ;;  ;; on Bind, send back the response to bind-status and fork a spec that says we might get
+         ;;  ;; some number of connections on this address
+         ;;  ([obligation bind-status (or (variant CommandFailed) (variant Bound))]
+         ;;   [fork (goto MaybeGetConnection bind-handler)
+         ;;         (define-state (MaybeGetConnection bind-handler)
+         ;;           [unobs ->
+         ;;            ([obligation bind-handler (variant Connected * (fork ,@session-spec-behavior))])
+         ;;            (goto MaybeGetConnection bind-handler)])])
+         ;;  (goto Managing)]
+         ))))))
 
   (test-true "User command type" (csa-valid-type? desugared-user-command))
   (test-true "Conformance for manager"
