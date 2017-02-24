@@ -434,6 +434,8 @@
            [(packet-rst? packet)
             (send octet-stream (ErrorClosed))
             (halt-with-notification)]
+           ;; APS PROTOCOL BUG: to replicate, remove this packet-syn? clause here, OR remove the
+           ;; similar clause in Closing or TimeWait
            [(packet-syn? packet)
             (abort-connection)
             (send octet-stream (ErrorClosed))
@@ -646,6 +648,9 @@
     (define-state (Closed) (m)
       (case m
         [(OrderedTcpPacket packet)
+         ;; APS PROTOCOL BUG (x2!):
+         ;; to replicate bug 1: replace this cond with just (abort-connection)
+         ;; to replicate bug 2: switch the tests on the cond (so abort-connection happens only for RST packets)
          (cond
            [(packet-rst? packet)
             0]
@@ -1289,6 +1294,10 @@
                   (TheFinSeq Nat))])
        (goto SynSent send-buffer)
        (define-state (SynSent send-buffer)
+         ;; APS PROTOCOL BUG: to replicate, remove from ANY of the following states the clause that
+         ;; says receiving a RST should cause us to silently close (without this, the spec says that a
+         ;; RST should lead to an infinite loop of two peers sending RSTs back and forth)
+
          ;; Anything with an ACK might fail if the ACK is wrong (overlaps with below clauses)
          [,(make-packet-pattern (variant Ack) * * *) ->
           ([obligation send-buffer (variant SendRst)])
