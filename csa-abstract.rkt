@@ -57,6 +57,7 @@
  (for-syntax syntax/parse)
  "csa.rkt"
  "list-helpers.rkt"
+ "optimization-parameters.rkt"
  "sexp-helpers.rkt")
 
 ;; Abstract-interpretation version of CSA
@@ -539,7 +540,7 @@
 (define (eval-handler handler-machine trigger state-defs abort)
   (parameterize ([abort-evaluation-param abort])
     (define final-machine-states
-      (match (hash-ref eval-cache handler-machine #f)
+      (match (and (MEMOIZE-EVAL-HANDLER?) (hash-ref eval-cache handler-machine #f))
         [#f
          ;; REFACTOR: have eval-machine just take the whole machine as input
          ;;
@@ -558,7 +559,8 @@
                   "Abstract evaluation did not complete\nInitial state: ~s\nFinal stuck states:~s"
                   handler-machine
                   stuck-states))
-         (hash-set! eval-cache handler-machine value-states)
+         (when (MEMOIZE-EVAL-HANDLER?)
+           (hash-set! eval-cache handler-machine value-states))
          value-states]
         [cached-results cached-results]))
 
@@ -985,7 +987,7 @@
     ;; Spawns
     [`(spawn ,loc ,type ,init-exp ,raw-state-defs ...)
      (define-values (address address-value)
-       (if (evictable-location? loc)
+       (if (and (USE-EVICTION?) (evictable-location? loc))
            (values `(* (Addr ,type)) `(* (Addr ,type)))
            (let ([address (if (or (in-collective-handler?) (in-loop-context?))
                               `(blurred-spawn-addr ,loc)
@@ -998,7 +1000,7 @@
        (lambda (goto-val effects)
          (match-define (list sends spawns) effects)
          (cond
-           [(evictable-location? loc)
+           [(and (USE-EVICTION?) (evictable-location? loc))
             (when (not (null? (externals-in (list goto-val state-defs))))
               (error 'evict "Cannot evict actor ~s with behavior ~s" loc (list state-defs goto-val)))
             (define contained-internals (internals-in (list state-defs goto-val)))

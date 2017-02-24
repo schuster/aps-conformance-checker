@@ -29,6 +29,7 @@
  "csa.rkt"
  "csa-abstract.rkt"
  "graph.rkt"
+ "optimization-parameters.rkt"
  "queue-helpers.rkt"
  "set-helpers.rkt")
 
@@ -44,11 +45,20 @@
 
 ;; Returns the result of running the conformance-check algorithm below on the instantiated program and
 ;; specification.
-(define/contract (check-conformance program specification)
-  (-> csa-valid-program? aps-valid-spec? boolean?)
-
-  (match-define (list impl-config spec-config) (instantiate-configs program specification))
-  (check-conformance/config impl-config spec-config))
+(define/contract (check-conformance program specification
+                                    #:use-widen? [use-widen? #t]
+                                    #:memoize-eval-handler? [memoize-eval-handler? #t]
+                                    #:use-eviction? [use-eviction? #t])
+  (->* (csa-valid-program? aps-valid-spec?)
+       (#:use-widen? boolean?
+        #:memoize-eval-handler? boolean?
+        #:use-eviction? boolean?)
+       boolean?)
+  (parameterize ([USE-WIDEN? use-widen?]
+                 [MEMOIZE-EVAL-HANDLER? memoize-eval-handler?]
+                 [USE-EVICTION? use-eviction?])
+    (match-define (list impl-config spec-config) (instantiate-configs program specification))
+    (check-conformance/config impl-config spec-config)))
 
 ;; Given a concrete implementation configuration, a concrete specification configuration, returns #t
 ;; if the conformance-check algorithm can prove that the implementation conforms to the specification,
@@ -84,7 +94,7 @@
        [#f #f]
        [unwidened-initial-pairs
         (define initial-pairs
-          (if USE-WIDEN?
+          (if (USE-WIDEN?)
               (map (curryr widen-pair #f 0 0 0) unwidened-initial-pairs)
               unwidened-initial-pairs))
         (match-define (list rank1-pairs
@@ -309,7 +319,7 @@
                             (set-member? unrelated-successors new-pair)
                             (equal? new-pair pair)))
                       (define sbc-pair
-                        (if (and USE-WIDEN?
+                        (if (and (USE-WIDEN?)
                                  ;; if we've already seen this pair, then we can assume it's already
                                  ;; been widened (this often happens when a blurred actor from a fully
                                  ;; widened config pair takes a transition step)
@@ -1172,8 +1182,6 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debugging
-
-(define USE-WIDEN? #t)
 
 (define DEBUG-WIDEN #f)
 
