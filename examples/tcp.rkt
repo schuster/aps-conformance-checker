@@ -1236,7 +1236,7 @@
                   ;; (let* ([session-id
                   ;;         (SessionId (InetSocketAddress source-ip (: packet source-port))
                   ;;                    (: packet destination-port))]
-                  ;;        [session (spawn tcp-session
+                  ;;        [session (spawn passive-tcp-session
                   ;;                        TcpSession
                   ;;                        session-id
                   ;;                        (PassiveOpen (: packet seq))
@@ -1266,7 +1266,7 @@
          (case cmd
            [(Connect dest status-updates)
             (let* ([id (SessionId dest (get-new-port))]
-                   [session-actor (spawn tcp-session
+                   [session-actor (spawn active-tcp-session
                                          TcpSession
                                          id
                                          (ActiveOpen)
@@ -2277,7 +2277,7 @@
 
          ;; Alternative: comment out the spawn for active-open sessions the Connect clause of this
          ;; spec, and the above Bind clause, and instead uncomment the spawn for passive-open sessions
-         ;; and this more precise spec for Bind commands to test the behavior of the controller for
+         ;; and this more precise spec for Bind commands as well as the less precise Connect clause below to test the behavior of the controller for
          ;; Bind.
          ;; [(variant UserCommand (variant Bind * bind-status bind-handler)) ->
          ;;  ;; on Bind, send back the response to bind-status and fork a spec that says we might get
@@ -2289,7 +2289,8 @@
          ;;            ([obligation bind-handler (variant Connected * (fork ,@session-spec-behavior))])
          ;;            (goto MaybeGetConnection bind-handler)])])
          ;;  (goto Managing)]
-         ))))))
+         ;; [(variant UserCommand (variant Connect * *)) -> () (goto Managing)])
+       )))))
 
   (test-true "User command type" (csa-valid-type? desugared-user-command))
   (test-true "Conformance for manager"
