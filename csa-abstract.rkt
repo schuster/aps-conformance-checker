@@ -58,7 +58,8 @@
  "csa.rkt"
  "list-helpers.rkt"
  "optimization-parameters.rkt"
- "sexp-helpers.rkt")
+ "sexp-helpers.rkt"
+ "statistics.rkt")
 
 ;; Abstract-interpretation version of CSA
 (define-extended-language csa# csa-eval
@@ -539,6 +540,7 @@
 ;; and spawns). Calls the abort continuation instead if a transition leads to an unverifiable state.
 (define (eval-handler handler-machine trigger state-defs abort)
   (parameterize ([abort-evaluation-param abort])
+    (stat-set! STAT-num-eval-handler-calls (add1 (stat-value STAT-num-eval-handler-calls)))
     (define final-machine-states
       (match (and (MEMOIZE-EVAL-HANDLER?) (hash-ref eval-cache handler-machine #f))
         [#f
@@ -562,7 +564,10 @@
          (when (MEMOIZE-EVAL-HANDLER?)
            (hash-set! eval-cache handler-machine value-states))
          value-states]
-        [cached-results cached-results]))
+        [cached-results
+         (stat-set! STAT-num-eval-handler-cache-hits
+                    (add1 (stat-value STAT-num-eval-handler-cache-hits)))
+         cached-results]))
 
     (for/list ([machine-state final-machine-states])
       ;; TODO: rename outputs to something like "transmissions", because some of them stay internal

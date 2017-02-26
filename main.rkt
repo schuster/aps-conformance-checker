@@ -31,7 +31,8 @@
  "graph.rkt"
  "optimization-parameters.rkt"
  "queue-helpers.rkt"
- "set-helpers.rkt")
+ "set-helpers.rkt"
+ "statistics.rkt")
 
 (module+ test
   (require
@@ -87,52 +88,64 @@
 (define/contract (check-conformance/config initial-impl-config initial-spec-config)
   (-> csa-valid-config? aps-valid-config? boolean?)
 
-  (cond
-    [(not (spec-interfaces-available? initial-impl-config initial-spec-config)) #f]
-    [else
-     (match (get-initial-abstract-pairs initial-impl-config initial-spec-config)
-       [#f #f]
-       [unwidened-initial-pairs
-        (define initial-pairs
-          (if (USE-WIDEN?)
-              (map (curryr widen-pair #f 0 0 0) unwidened-initial-pairs)
-              unwidened-initial-pairs))
-        (match-define (list rank1-pairs
-                            rank1-unrelated-successors
-                            incoming-steps
-                            rank1-related-spec-steps)
-          (find-rank1-simulation initial-pairs))
-        ;; (printf "Finished rank1 simulation at: ~a\n"
-        ;;         (date->string (seconds->date (current-seconds)) #t))
-        (match-define (list simulation-pairs simulation-related-spec-steps)
-          (prune-unsupported rank1-pairs
-                             incoming-steps
-                             rank1-related-spec-steps
-                             rank1-unrelated-successors))
-        ;; (printf "Finished simulation prune at: ~a\n"
-        ;;         (date->string (seconds->date (current-seconds)) #t))
-        (cond
-          [(andmap (curry set-member? simulation-pairs) initial-pairs)
-           (match-define (list commitment-satisfying-pairs unsatisfying-pairs)
-             (partition-by-satisfaction simulation-pairs incoming-steps simulation-related-spec-steps))
-           ;; (printf "Finished obligation fulfillment check at: ~a\n"
-           ;;         (date->string (seconds->date (current-seconds)) #t))
-           ;; (printf "Unsatisfying pairs: ~s\n"
-           ;;         (for/list ([p unsatisfying-pairs])
-           ;;           (cons
-           ;;            (impl-config-without-state-defs (config-pair-impl-config p))
-           ;;            (spec-config-without-state-defs (config-pair-spec-config p)))))
-           (match-define (list conforming-pairs _)
-             (prune-unsupported commitment-satisfying-pairs
-                                incoming-steps
-                                simulation-related-spec-steps
-                                unsatisfying-pairs))
-           ;; (printf "Finished obligation fulfillment prune at: ~a\n"
-           ;;         (date->string (seconds->date (current-seconds)) #t))
-           (andmap (curry set-member? conforming-pairs) initial-pairs)]
-          [else
-           ;; (printf "At least one initial configuration pair was not in the simulation\n")
-           #f])])]))
+  (reset-statistics)
+  (stat-set! STAT-start-time (date->string (seconds->date (current-seconds)) #t))
+  (define final-result
+    (cond
+      [(not (spec-interfaces-available? initial-impl-config initial-spec-config)) #f]
+      [else
+       (match (get-initial-abstract-pairs initial-impl-config initial-spec-config)
+         [#f #f]
+         [unwidened-initial-pairs
+          (define initial-pairs
+            (if (USE-WIDEN?)
+                (map (curryr widen-pair #f 0 0 0) unwidened-initial-pairs)
+                unwidened-initial-pairs))
+          (match-define (list rank1-pairs
+                              rank1-unrelated-successors
+                              incoming-steps
+                              rank1-related-spec-steps)
+            (find-rank1-simulation initial-pairs))
+          (stat-set! STAT-simulation-finish-time (date->string (seconds->date (current-seconds)) #t))
+          (stat-set! STAT-rank1-simulation-size (set-count rank1-pairs))
+          ;; (printf "Finished rank1 simulation at: ~a\n" (stat-value STAT-simulation-finish-time))
+          (match-define (list simulation-pairs simulation-related-spec-steps)
+            (prune-unsupported rank1-pairs
+                               incoming-steps
+                               rank1-related-spec-steps
+                               rank1-unrelated-successors))
+          (stat-set! STAT-simulation-prune-finish-time (date->string (seconds->date (current-seconds)) #t))
+          (stat-set! STAT-simulation-size (set-count simulation-pairs))
+          ;; (printf "Finished simulation prune at: ~a\n" (stat-value STAT-simulation-prune-finish-time))
+          (cond
+            [(andmap (curry set-member? simulation-pairs) initial-pairs)
+             (match-define (list commitment-satisfying-pairs unsatisfying-pairs)
+               (partition-by-satisfaction simulation-pairs incoming-steps simulation-related-spec-steps))
+             (stat-set! STAT-obligation-check-finish-time
+                        (date->string (seconds->date (current-seconds)) #t))
+             (stat-set! STAT-obl-checked-size (set-count commitment-satisfying-pairs))
+             ;; (printf "Finished obligation fulfillment check at: ~a\n" (stat-value STAT-obligation-check-finish-time))
+             ;; (printf "Unsatisfying pairs: ~s\n"
+             ;;         (for/list ([p unsatisfying-pairs])
+             ;;           (cons
+             ;;            (impl-config-without-state-defs (config-pair-impl-config p))
+             ;;            (spec-config-without-state-defs (config-pair-spec-config p)))))
+             (match-define (list conforming-pairs _)
+               (prune-unsupported commitment-satisfying-pairs
+                                  incoming-steps
+                                  simulation-related-spec-steps
+                                  unsatisfying-pairs))
+             (stat-set! STAT-obligation-prune-finish-time (date->string (seconds->date (current-seconds)) #t))
+             (stat-set! STAT-conformance-size (set-count conforming-pairs))
+             ;; (printf "Finished obligation fulfillment prune at: ~a\n"
+             ;;         (stat-value STAT-obligation-prune-finish-time))
+             (andmap (curry set-member? conforming-pairs) initial-pairs)]
+            [else
+             ;; (printf "At least one initial configuration pair was not in the simulation\n")
+             #f])])]))
+  (stat-set! STAT-finish-time (date->string (seconds->date (current-seconds)) #t))
+  (print-statistics)
+  final-result)
 
 ;; Returns #t if all addresses mentioned in observable or unobservable interfaces in the spec are
 ;; receptionists; #f otherwise.
@@ -204,10 +217,11 @@
   (define related-spec-steps (make-hash))
   (define incoming-steps (make-hash (map (lambda (t) (cons t (mutable-set))) initial-pairs)))
 
-  ;; Debugging
-  (define visited-pairs-count 0)
+  ;; Statistics
   (define visited-impl-configs (mutable-set))
   (define visited-spec-configs (mutable-set))
+
+  ;; Debugging
   (define log-file (open-log))
   (log-initial-pairs log-file initial-pairs)
 
@@ -218,15 +232,18 @@
        (close-log log-file)
        (list related-pairs unrelated-successors incoming-steps related-spec-steps)]
       [pair
-
-       ;; Debugging
-       (set! visited-pairs-count (add1 visited-pairs-count))
+       ;; Update statistics
+       (stat-set! STAT-visited-pairs-count (add1 (stat-value STAT-visited-pairs-count)))
        (set-add! visited-impl-configs (config-pair-impl-config pair))
        (set-add! visited-spec-configs (config-pair-spec-config pair))
+       (stat-set! STAT-unique-impl-configs-count (set-count visited-impl-configs))
+       (stat-set! STAT-unique-spec-configs-count (set-count visited-spec-configs))
+
+       ;; Debugging
        ;; (printf "Current time: ~a\n" (date->string (seconds->date (current-seconds)) #t))
-       ;; (printf "Pair config #: ~s\n" visited-pairs-count)
-       ;; (printf "Unique impl configs so far: ~s\n" (set-count visited-impl-configs))
-       ;; (printf "Unique spec configs so far: ~s\n" (set-count visited-spec-configs))
+       ;; (printf "Pair config #: ~s\n" (stat-value STAT-visited-pairs-count))
+       ;; (printf "Unique impl configs so far: ~s\n" (stat-value STAT-unique-impl-configs-count))
+       ;; (printf "Unique spec configs so far: ~s\n" (stat-value STAT-unique-spec-configs-count))
        ;; (printf "Worklist size: ~s\n" (set-count to-visit))
        ;; (printf "The impl config: ~s\n"
        ;;         (impl-config-without-state-defs (config-pair-impl-config pair)))
@@ -326,7 +343,7 @@
                                  (not (seen? unwidened-sbc-pair)))
                             (widen-pair unwidened-sbc-pair
                                         i-step
-                                        visited-pairs-count
+                                        (stat-value STAT-visited-pairs-count)
                                         i-step-num
                                         (length i-steps))
                             (begin
@@ -759,10 +776,6 @@
   (define possible-transitions (apply queue (impl-transition-effects-from the-pair triggers-to-try)))
   (widen-printf "Starting widen with ~s transitions\n" (queue-length possible-transitions))
   (define processed-transitions (mutable-set))
-  (define loop-count 0)
-  (define maybe-good-count 0)
-  (define attempt-count 0)
-  (define widen-use-count 0)
   (let worklist-loop ([widened-pair the-pair])
     (match (dequeue-if-non-empty! possible-transitions)
       [#f
@@ -770,7 +783,7 @@
                      (impl-config-without-state-defs (config-pair-impl-config widened-pair)))
        widened-pair]
       [transition-result-with-obs
-       (set! loop-count (add1 loop-count))
+       (stat-set! STAT-widen-loop-count (add1 (stat-value STAT-widen-loop-count)))
        (cond
          [(set-member? processed-transitions transition-result-with-obs)
           ;; Skip this transition if we already processed it
@@ -780,13 +793,13 @@
 
           (worklist-loop widened-pair)]
          [else
-          (set! maybe-good-count (add1 maybe-good-count))
+          (stat-set! STAT-widen-maybe-good-count (add1 (stat-value STAT-widen-maybe-good-count)))
           (widen-printf "Trying transition for pair ~s, i-step ~s of ~s\n" pair-number i-step-number i-step-total)
           (widen-printf "Loop count = ~s, maybe count = ~s, attempt count = ~s, use count = ~s, ~s remaining transitions\n"
-                        loop-count
-                        maybe-good-count
-                        attempt-count
-                        widen-use-count
+                        (stat-value STAT-widen-loop-count)
+                        (stat-value STAT-widen-maybe-good-count)
+                        (stat-value STAT-widen-attempt-count)
+                        (stat-value STAT-widen-use-count)
                         (queue-length possible-transitions))
           (widen-printf "Trigger: ~s\n" (csa#-transition-effect-trigger (first transition-result-with-obs)))
           (widen-printf "Outputs: ~s\n" (csa#-transition-effect-sends (first transition-result-with-obs)))
@@ -799,7 +812,7 @@
             ;; checker), we first do some basic checks on the transition to see if it's even worth
             ;; exploring
             [(csa#-transition-maybe-good-for-widen? i transition-result)
-             (set! attempt-count (add1 attempt-count))
+             (stat-set! STAT-widen-attempt-count (add1 (stat-value STAT-widen-attempt-count)))
              (define trigger (csa#-transition-effect-trigger transition-result))
              (define observed? (second transition-result-with-obs))
              (define new-i-step (apply-transition i transition-result observed?))
@@ -808,6 +821,8 @@
                 (widen-printf "Transition has no spec transition to same state\n")
                 (worklist-loop widened-pair)]
                [new-s
+                (stat-set! STAT-widen-spec-match-count (add1 (stat-value STAT-widen-spec-match-count)))
+
                 ;; TODO: what should I do with the rename map? I don't remember what that was used
                 ;; for. I think maybe to correlate output commitments across multiple steps? So yeah,
                 ;; I probably need to adjust that here... (although if the spec didn't change, then
@@ -835,9 +850,9 @@
                    (cond
                      ;; OPTIMIZE: check first if the transitioned actor is even in the same state
                      [(csa#-config<? i (config-pair-impl-config twice-applied-pair))
-                      (set! widen-use-count (add1 widen-use-count))
+                      (stat-set! STAT-widen-use-count (add1 (stat-value STAT-widen-use-count)))
                       (widen-printf "Widen: applied a transition for pair ~s, i-step ~s of ~s. Loop count = ~s, use count = ~s\n"
-                                    pair-number i-step-number i-step-total loop-count widen-use-count
+                                    pair-number i-step-number i-step-total (stat-value STAT-widen-loop-count) (stat-value STAT-widen-use-count)
                                     ;; (debug-transition-result transition-result)
                                     ;; (impl-config-without-state-defs (config-pair-impl-config new-widened-pair))
                                     )
