@@ -58,6 +58,10 @@
   (parameterize ([USE-WIDEN? use-widen?]
                  [MEMOIZE-EVAL-HANDLER? memoize-eval-handler?]
                  [USE-EVICTION? use-eviction?])
+    (printf "OPTIMIZATIONS:\n")
+    (printf "Widening: ~s\n" use-widen?)
+    (printf "Memoize eval-handler: ~s\n" memoize-eval-handler?)
+    (printf "Eviction: ~s\n\n" use-eviction?)
     (match-define (list impl-config spec-config) (instantiate-configs program specification))
     (check-conformance/config impl-config spec-config)))
 
