@@ -18,7 +18,7 @@
      24 ; 24 hours
      ))
 
-(define NUM-WORKERS 32)
+(define NUM-WORKERS 16)
 
 ;; Returns a thunk that when run will run the given script file with the given optimizations for up to
 ;; WAIT-TIME-IN-MILLISECONDS. Any output generated (from stdout or stderr) is sent to a new output
