@@ -58,10 +58,12 @@
 (parameterize ([current-subprocess-custodian-mode 'interrupt])
   (define job-queue (make-async-channel))
   (for ([script (directory-list tasks-directory)])
-    (async-channel-put job-queue (make-job script #t #t #t))
-    (async-channel-put job-queue (make-job script #f #f #f))
-    (async-channel-put job-queue (make-job script #f #t #t))
-    (async-channel-put job-queue (make-job script #t #f #t)))
+    ;; make sure the script isn't a directory (e.g. the "compiled" directory)
+    (unless (directory-exists? (build-path tasks-directory script))
+      (async-channel-put job-queue (make-job script #t #t #t))
+      (async-channel-put job-queue (make-job script #f #f #f))
+      (async-channel-put job-queue (make-job script #f #t #t))
+      (async-channel-put job-queue (make-job script #t #f #t))))
 
   ;; block until all jobs are complete
   (sync (start-workers NUM-WORKERS job-queue)))
