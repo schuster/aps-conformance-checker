@@ -2,6 +2,10 @@
 
 ;; A full test of the Raft port to CSA, verified against its spec
 
+(provide
+ raft-actor-prog
+ raft-spec)
+
 ;; TODO: refactor this program to use records like those in akka-raft
 
 (require
@@ -118,7 +122,7 @@
         (goto Running)]
        [(variant PeerMessage (variant AppendSuccessful * * *)) -> () (goto Running)]))))
 
-(define raft-actor-surface-prog (term
+(define raft-actor-prog (term
 (program
  (receptionists [raft-server ,full-raft-actor-type])
  (externals [timer-manager TimerMessage] [application String])
@@ -1131,4 +1135,4 @@
   (test-true "Full Raft actor type" (csa-valid-type? full-raft-actor-type))
 
   (test-true "Raft verification"
-    (check-conformance (desugar raft-actor-surface-prog) raft-spec)))
+    (check-conformance (desugar raft-actor-prog) raft-spec)))
