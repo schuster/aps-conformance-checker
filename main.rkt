@@ -785,6 +785,13 @@
   (define possible-transitions (apply queue (impl-transition-effects-from the-pair triggers-to-try)))
   (widen-printf "Starting widen with ~s transitions\n" (queue-length possible-transitions))
   (define processed-transitions (mutable-set))
+
+  ;; for debugging
+  (define init-loop-count (stat-value STAT-widen-loop-count))
+  (define init-maybe-good-count (stat-value STAT-widen-maybe-good-count))
+  (define init-attempt-count (stat-value STAT-widen-attempt-count))
+  (define init-use-count (stat-value STAT-widen-use-count))
+
   (let worklist-loop ([widened-pair the-pair])
     (match (dequeue-if-non-empty! possible-transitions)
       [#f
@@ -805,10 +812,10 @@
           (stat-set! STAT-widen-maybe-good-count (add1 (stat-value STAT-widen-maybe-good-count)))
           (widen-printf "Trying transition for pair ~s, i-step ~s of ~s\n" pair-number i-step-number i-step-total)
           (widen-printf "Loop count = ~s, maybe count = ~s, attempt count = ~s, use count = ~s, ~s remaining transitions\n"
-                        (stat-value STAT-widen-loop-count)
-                        (stat-value STAT-widen-maybe-good-count)
-                        (stat-value STAT-widen-attempt-count)
-                        (stat-value STAT-widen-use-count)
+                        (- (stat-value STAT-widen-loop-count) init-loop-count)
+                        (- (stat-value STAT-widen-maybe-good-count) init-maybe-good-count)
+                        (- (stat-value STAT-widen-attempt-count) init-attempt-count)
+                        (- (stat-value STAT-widen-use-count) init-use-count)
                         (queue-length possible-transitions))
           (widen-printf "Trigger: ~s\n" (csa#-transition-effect-trigger (first transition-result-with-obs)))
           (widen-printf "Outputs: ~s\n" (csa#-transition-effect-sends (first transition-result-with-obs)))
@@ -861,7 +868,7 @@
                      [(csa#-config<? i (config-pair-impl-config twice-applied-pair))
                       (stat-set! STAT-widen-use-count (add1 (stat-value STAT-widen-use-count)))
                       (widen-printf "Widen: applied a transition for pair ~s, i-step ~s of ~s. Loop count = ~s, use count = ~s\n"
-                                    pair-number i-step-number i-step-total (stat-value STAT-widen-loop-count) (stat-value STAT-widen-use-count)
+                                    pair-number i-step-number i-step-total (- (stat-value STAT-widen-loop-count) init-loop-count) (- (stat-value STAT-widen-use-count) init-use-count)
                                     ;; (debug-transition-result transition-result)
                                     ;; (impl-config-without-state-defs (config-pair-impl-config new-widened-pair))
                                     )
