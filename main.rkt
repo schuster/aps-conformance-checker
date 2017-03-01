@@ -249,11 +249,11 @@
        (stat-set! STAT-unique-spec-configs-count (set-count visited-spec-configs))
 
        ;; Debugging
-       ;; (printf "Current time: ~a\n" (date->string (seconds->date (current-seconds)) #t))
-       ;; (printf "Pair config #: ~s\n" (stat-value STAT-visited-pairs-count))
-       ;; (printf "Unique impl configs so far: ~s\n" (stat-value STAT-unique-impl-configs-count))
-       ;; (printf "Unique spec configs so far: ~s\n" (stat-value STAT-unique-spec-configs-count))
-       ;; (printf "Worklist size: ~s\n" (set-count to-visit))
+       (printf "Current time: ~a\n" (date->string (seconds->date (current-seconds)) #t))
+       (printf "Pair config #: ~s\n" (stat-value STAT-visited-pairs-count))
+       (printf "Unique impl configs so far: ~s\n" (stat-value STAT-unique-impl-configs-count))
+       (printf "Unique spec configs so far: ~s\n" (stat-value STAT-unique-spec-configs-count))
+       (printf "Worklist size: ~s\n" (set-count to-visit))
        ;; (printf "The impl config: ~s\n"
        ;;         (impl-config-without-state-defs (config-pair-impl-config pair)))
        ;; (printf "The full impl config: ~s\n" (config-pair-impl-config pair))
