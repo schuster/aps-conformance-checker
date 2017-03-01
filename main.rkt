@@ -93,63 +93,68 @@
   (-> csa-valid-config? aps-valid-config? boolean?)
 
   (reset-statistics)
-  (stat-set! STAT-start-time (date->string (seconds->date (current-seconds)) #t))
-  (define final-result
-    (cond
-      [(not (spec-interfaces-available? initial-impl-config initial-spec-config)) #f]
-      [else
-       (match (get-initial-abstract-pairs initial-impl-config initial-spec-config)
-         [#f #f]
-         [unwidened-initial-pairs
-          (define initial-pairs
-            (if (USE-WIDEN?)
-                (map (curryr widen-pair #f 0 0 0) unwidened-initial-pairs)
-                unwidened-initial-pairs))
-          (match-define (list rank1-pairs
-                              rank1-unrelated-successors
-                              incoming-steps
-                              rank1-related-spec-steps)
-            (find-rank1-simulation initial-pairs))
-          (stat-set! STAT-simulation-finish-time (date->string (seconds->date (current-seconds)) #t))
-          (stat-set! STAT-rank1-simulation-size (set-count rank1-pairs))
-          ;; (printf "Finished rank1 simulation at: ~a\n" (stat-value STAT-simulation-finish-time))
-          (match-define (list simulation-pairs simulation-related-spec-steps)
-            (prune-unsupported rank1-pairs
-                               incoming-steps
-                               rank1-related-spec-steps
-                               rank1-unrelated-successors))
-          (stat-set! STAT-simulation-prune-finish-time (date->string (seconds->date (current-seconds)) #t))
-          (stat-set! STAT-simulation-size (set-count simulation-pairs))
-          ;; (printf "Finished simulation prune at: ~a\n" (stat-value STAT-simulation-prune-finish-time))
-          (cond
-            [(andmap (curry set-member? simulation-pairs) initial-pairs)
-             (match-define (list commitment-satisfying-pairs unsatisfying-pairs)
-               (partition-by-satisfaction simulation-pairs incoming-steps simulation-related-spec-steps))
-             (stat-set! STAT-obligation-check-finish-time
-                        (date->string (seconds->date (current-seconds)) #t))
-             (stat-set! STAT-obl-checked-size (set-count commitment-satisfying-pairs))
-             ;; (printf "Finished obligation fulfillment check at: ~a\n" (stat-value STAT-obligation-check-finish-time))
-             ;; (printf "Unsatisfying pairs: ~s\n"
-             ;;         (for/list ([p unsatisfying-pairs])
-             ;;           (cons
-             ;;            (impl-config-without-state-defs (config-pair-impl-config p))
-             ;;            (spec-config-without-state-defs (config-pair-spec-config p)))))
-             (match-define (list conforming-pairs _)
-               (prune-unsupported commitment-satisfying-pairs
-                                  incoming-steps
-                                  simulation-related-spec-steps
-                                  unsatisfying-pairs))
-             (stat-set! STAT-obligation-prune-finish-time (date->string (seconds->date (current-seconds)) #t))
-             (stat-set! STAT-conformance-size (set-count conforming-pairs))
-             ;; (printf "Finished obligation fulfillment prune at: ~a\n"
-             ;;         (stat-value STAT-obligation-prune-finish-time))
-             (andmap (curry set-member? conforming-pairs) initial-pairs)]
-            [else
-             ;; (printf "At least one initial configuration pair was not in the simulation\n")
-             #f])])]))
-  (stat-set! STAT-finish-time (date->string (seconds->date (current-seconds)) #t))
-  (print-statistics)
-  final-result)
+  (with-handlers
+    ([exn:break?
+      (lambda (ex)
+        (print-statistics)
+        (raise ex))])
+    (stat-set! STAT-start-time (date->string (seconds->date (current-seconds)) #t))
+    (define final-result
+      (cond
+        [(not (spec-interfaces-available? initial-impl-config initial-spec-config)) #f]
+        [else
+         (match (get-initial-abstract-pairs initial-impl-config initial-spec-config)
+           [#f #f]
+           [unwidened-initial-pairs
+            (define initial-pairs
+              (if (USE-WIDEN?)
+                  (map (curryr widen-pair #f 0 0 0) unwidened-initial-pairs)
+                  unwidened-initial-pairs))
+            (match-define (list rank1-pairs
+                                rank1-unrelated-successors
+                                incoming-steps
+                                rank1-related-spec-steps)
+              (find-rank1-simulation initial-pairs))
+            (stat-set! STAT-simulation-finish-time (date->string (seconds->date (current-seconds)) #t))
+            (stat-set! STAT-rank1-simulation-size (set-count rank1-pairs))
+            ;; (printf "Finished rank1 simulation at: ~a\n" (stat-value STAT-simulation-finish-time))
+            (match-define (list simulation-pairs simulation-related-spec-steps)
+              (prune-unsupported rank1-pairs
+                                 incoming-steps
+                                 rank1-related-spec-steps
+                                 rank1-unrelated-successors))
+            (stat-set! STAT-simulation-prune-finish-time (date->string (seconds->date (current-seconds)) #t))
+            (stat-set! STAT-simulation-size (set-count simulation-pairs))
+            ;; (printf "Finished simulation prune at: ~a\n" (stat-value STAT-simulation-prune-finish-time))
+            (cond
+              [(andmap (curry set-member? simulation-pairs) initial-pairs)
+               (match-define (list commitment-satisfying-pairs unsatisfying-pairs)
+                 (partition-by-satisfaction simulation-pairs incoming-steps simulation-related-spec-steps))
+               (stat-set! STAT-obligation-check-finish-time
+                          (date->string (seconds->date (current-seconds)) #t))
+               (stat-set! STAT-obl-checked-size (set-count commitment-satisfying-pairs))
+               ;; (printf "Finished obligation fulfillment check at: ~a\n" (stat-value STAT-obligation-check-finish-time))
+               ;; (printf "Unsatisfying pairs: ~s\n"
+               ;;         (for/list ([p unsatisfying-pairs])
+               ;;           (cons
+               ;;            (impl-config-without-state-defs (config-pair-impl-config p))
+               ;;            (spec-config-without-state-defs (config-pair-spec-config p)))))
+               (match-define (list conforming-pairs _)
+                 (prune-unsupported commitment-satisfying-pairs
+                                    incoming-steps
+                                    simulation-related-spec-steps
+                                    unsatisfying-pairs))
+               (stat-set! STAT-obligation-prune-finish-time (date->string (seconds->date (current-seconds)) #t))
+               (stat-set! STAT-conformance-size (set-count conforming-pairs))
+               ;; (printf "Finished obligation fulfillment prune at: ~a\n"
+               ;;         (stat-value STAT-obligation-prune-finish-time))
+               (andmap (curry set-member? conforming-pairs) initial-pairs)]
+              [else
+               ;; (printf "At least one initial configuration pair was not in the simulation\n")
+               #f])])]))
+    (stat-set! STAT-finish-time (date->string (seconds->date (current-seconds)) #t))
+    (print-statistics)
+    final-result))
 
 ;; Returns #t if all addresses mentioned in observable or unobservable interfaces in the spec are
 ;; receptionists; #f otherwise.
