@@ -13,7 +13,14 @@
 ;; * we use an extra identifier for connecting through the lim, rather than the actor address, so that
 ;;   we can exactly specify our use of the address
 
+(provide
+ pots-program
+ pots-spec)
+
 ;; ---------------------------------------------------------------------------------------------------
+
+(require
+ "../desugar.rkt")
 
 (define desugared-peer-message-type
   `(minfixpt PeerMessageType
@@ -60,7 +67,7 @@
     ;; peer messages (have to add a tag around these because of the recursive type
     [PeerMessage ,desugared-peer-message-type]))
 
-(define pots-program
+(define pots-program (desugar
 `(program
  (receptionists [controller ControllerMessage])
  (externals [lim LimMessage] [analyzer AnalyzerMessage])
@@ -364,7 +371,7 @@
       [(Valid a) (goto WaitOnHook have-tone?)]
       [(GetMoreDigits) (goto WaitOnHook have-tone?)])))
 
-(actors [controller (spawn 1 PotsController 1 lim analyzer)])))
+(actors [controller (spawn 1 PotsController 1 lim analyzer)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Specifications
@@ -430,4 +437,4 @@
   (test-true "Controller message type" (csa-valid-type? desugared-controller-message-type))
 
   (test-true "POTS controller conforms to controller-POV spec"
-    (check-conformance (desugar pots-program) pots-spec)))
+    (check-conformance pots-program pots-spec)))

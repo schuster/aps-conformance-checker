@@ -9,7 +9,8 @@
 ;; TODO: refactor this program to use records like those in akka-raft
 
 (require
- redex/reduction-semantics)
+ redex/reduction-semantics
+ "../desugar.rkt")
 
 (define desugared-client-response-type
   `(minfixpt ResponseType
@@ -122,7 +123,7 @@
         (goto Running)]
        [(variant PeerMessage (variant AppendSuccessful * * *)) -> () (goto Running)]))))
 
-(define raft-actor-prog (term
+(define raft-actor-prog (desugar (term
 (program
  (receptionists [raft-server ,full-raft-actor-type])
  (externals [timer-manager TimerMessage] [application String])
@@ -1118,7 +1119,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; The main program expression
 
-(actors [raft-server (spawn 1 RaftActor timer-manager application)]))))
+(actors [raft-server (spawn 1 RaftActor timer-manager application)])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing code
@@ -1127,7 +1128,6 @@
   (require
    rackunit
    "../csa.rkt" ; for csa-valid-type?
-   "../desugar.rkt"
    "../main.rkt")
 
   (test-true "Client response type" (csa-valid-type? desugared-client-response-type))

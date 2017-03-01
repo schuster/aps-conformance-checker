@@ -6,7 +6,14 @@
 ;; normally rely on the address for user identity. We assume for the sake of this example that the
 ;; user never tries to spoof someone eles.
 
-(define chat-program (quote
+(provide
+ chat-program
+ chat-spec)
+
+(require
+ "../desugar.rkt")
+
+(define chat-program (desugar (quote
 
 (program (receptionists [auth AuthCommand]) (externals)
   (define-constant pw-table (hash ["joe" "abc"] ["sally" "xyz"] ["john" "def"]))
@@ -117,7 +124,7 @@
          (goto Always rooms)])))
 
   (actors [server (spawn server ChatServer)]
-          [auth (spawn auth Authenticator pw-table server)]))))
+          [auth (spawn auth Authenticator pw-table server)])))))
 
 (module+ test
   (require
@@ -127,16 +134,14 @@
    csa/testing
    rackunit
    asyncunit
-   "../desugar.rkt"
    "../main.rkt"
 
    ;; just to check that the desugared type is correct
    redex/reduction-semantics
    "../csa.rkt")
 
-  (define desugared-program (desugar chat-program))
   (define (start-prog)
-    (csa-run desugared-program))
+    (csa-run chat-program))
 
   (define (connect-to-server auth username password)
     (define auth-callback (make-async-channel))
@@ -260,69 +265,68 @@
     (check-no-message sally-room2-handler)
     (check-no-message john-room2-handler)))
 
+;; ---------------------------------------------------------------------------------------------------
+;; Specification
+
+(define desugared-room-command
+  `(Union
+    (Speak String String)
+    (Leave String)
+    (GetMembers (Addr (Listof String)))))
+
+(define desugared-room-event
+  `(Union
+    (JoinedRoom (Addr ,desugared-room-command))
+    (MemberLeft String)
+    (MemberJoined String)
+    (Message String String)))
+
+(define desugared-server-command
+  `(Union
+    (JoinRoom String String (Addr ,desugared-room-event))
+    (GetRoomList (Addr (Listof String)))))
+
+(define desugared-login-response
+  `(Union (AuthenticationFailed)
+          (AuthenticationSucceeded (Addr ,desugared-server-command))))
+
+(define desugared-auth-command
+  `(Union (LogIn String String (Addr ,desugared-login-response))))
+
+(define (room-spec-behavior handler)
+  `((goto Running ,handler)
+    ;; Because the observer could cause *any* member to leave, not just itself, the checker can't
+    ;; prove that no messages will be sent to the handler after the Leave message is
+    ;; sent.
+    (define-state (Running room-handler)
+      [(variant Speak * *) -> () (goto Running room-handler)]
+      [(variant Leave *) -> () (goto Running room-handler)]
+      [(variant GetMembers callback) -> ([obligation callback *]) (goto Running room-handler)]
+      [unobs -> ([obligation room-handler (variant MemberLeft *)]) (goto Running room-handler)]
+      [unobs -> ([obligation room-handler (variant MemberJoined *)]) (goto Running room-handler)]
+      [unobs -> ([obligation room-handler (variant Message * *)]) (goto Running room-handler)])))
+
+(define server-spec-behavior
+  `((goto ServerAlways)
+    (define-state (ServerAlways)
+      [(variant GetRoomList callback) -> ([obligation callback *]) (goto ServerAlways)]
+      [(variant JoinRoom * * handler) ->
+       ([obligation handler (variant JoinedRoom (fork ,@(room-spec-behavior 'handler)))])
+       (goto ServerAlways)])))
+
+(define chat-spec
+  `(specification (receptionists [auth ,desugared-auth-command]) (externals)
+     [auth ,desugared-auth-command]
+     ([auth ,desugared-auth-command])
+     (goto AuthAlways)
+     (define-state (AuthAlways)
+       [(variant LogIn * * callback) ->
+        ([obligation callback (or (variant AuthenticationFailed)
+                                  (variant AuthenticationSucceeded (fork ,@server-spec-behavior)))])
+        (goto AuthAlways)])))
+
 (module+ test
   ;; Specification conformance tests
-
-  (define desugared-room-command
-    `(Union
-      (Speak String String)
-      (Leave String)
-      (GetMembers (Addr (Listof String)))))
-
-  (define desugared-room-event
-    `(Union
-      (JoinedRoom (Addr ,desugared-room-command))
-      (MemberLeft String)
-      (MemberJoined String)
-      (Message String String)))
-
-  (define desugared-server-command
-    `(Union
-      (JoinRoom String String (Addr ,desugared-room-event))
-      (GetRoomList (Addr (Listof String)))))
-
-  (define desugared-login-response
-    `(Union (AuthenticationFailed)
-            (AuthenticationSucceeded (Addr ,desugared-server-command))))
-
-  (define desugared-auth-command
-    `(Union (LogIn String String (Addr ,desugared-login-response))))
-
-  (define (room-spec-behavior handler)
-    (term
-     ((goto Running ,handler)
-      ;; Because the observer could cause *any* member to leave, not just itself, the checker can't
-      ;; prove that no messages will be sent to the handler after the Leave message is
-      ;; sent.
-      (define-state (Running room-handler)
-        [(variant Speak * *) -> () (goto Running room-handler)]
-        [(variant Leave *) -> () (goto Running room-handler)]
-        [(variant GetMembers callback) -> ([obligation callback *]) (goto Running room-handler)]
-        [unobs -> ([obligation room-handler (variant MemberLeft *)]) (goto Running room-handler)]
-        [unobs -> ([obligation room-handler (variant MemberJoined *)]) (goto Running room-handler)]
-        [unobs -> ([obligation room-handler (variant Message * *)]) (goto Running room-handler)]))))
-
-  (define server-spec-behavior
-    (term
-     ((goto ServerAlways)
-      (define-state (ServerAlways)
-        [(variant GetRoomList callback) -> ([obligation callback *]) (goto ServerAlways)]
-        [(variant JoinRoom * * handler) ->
-         ([obligation handler (variant JoinedRoom (fork ,@(room-spec-behavior 'handler)))])
-         (goto ServerAlways)]))))
-
-  (define chat-spec
-    (term
-     (specification (receptionists [auth ,desugared-auth-command]) (externals)
-       [auth ,desugared-auth-command]
-       ([auth ,desugared-auth-command])
-       (goto AuthAlways)
-       (define-state (AuthAlways)
-         [(variant LogIn * * callback) ->
-          ([obligation callback (or (variant AuthenticationFailed)
-                                    (variant AuthenticationSucceeded (fork ,@server-spec-behavior)))])
-          (goto AuthAlways)]))))
-
   (check-true (redex-match? csa-eval τ desugared-room-command))
   (check-true (redex-match? csa-eval τ desugared-room-event))
   (check-true (redex-match? csa-eval τ desugared-server-command))
@@ -332,4 +336,4 @@
     (redex-match? csa-eval τ desugared-auth-command))
 
   (test-true "Chat server conforms to its spec"
-    (check-conformance desugared-program chat-spec)))
+    (check-conformance chat-program chat-spec)))

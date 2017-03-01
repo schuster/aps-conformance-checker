@@ -15,7 +15,15 @@
 ;; messages being routed through a static topology. This is also a good example of the kind of
 ;; benefits gained from the widening optimization.
 
+(provide
+ ensime-program
+ ensime-project-spec)
+
+(require
+ "../desugar.rkt")
+
 (define ensime-program
+  (desugar
   (quasiquote
 (program (receptionists [project ProjectActorInput]) (externals)
 
@@ -271,7 +279,7 @@
         [debugger (spawn debugger-loc DebugActor)]
         [javac (spawn javac-loc JavaAnalyzer)]
         [scalac (spawn scala-loc Analyzer)]
-        [project (spawn project-loc Project docs indexer debugger javac scalac)]))))
+        [project (spawn project-loc Project docs indexer debugger javac scalac)])))))
 
 (module+ test
   (require
@@ -281,16 +289,14 @@
    csa/testing
    rackunit
    asyncunit
-   "../desugar.rkt"
    "../main.rkt"
 
    ;; just to check that the desugared type is correct
    redex/reduction-semantics
    "../csa.rkt")
 
-  (define desugared-program (desugar ensime-program))
   (define (start-prog)
-    (csa-run desugared-program)))
+    (csa-run ensime-program)))
 
 (module+ test
   ;; Dynamic tests
@@ -429,113 +435,116 @@
     (async-channel-put project (variant RefactorReq 1 (variant InlineLocal) false refactor-dest2))
     (check-unicast refactor-dest2 (variant RefactorFailure 1 "fail" "fail"))))
 
+;; ---------------------------------------------------------------------------------------------------
+;; Specification
+
+(define desugared-connection-info `(Union (ConnectionInfo)))
+
+(define desugared-resolve-result
+  `(Union
+    (FalseResponse)
+    (StringResponse String)))
+
+(define desugared-import-suggestions
+  `(Union (ImportSuggestions (Listof String))))
+
+(define desugared-symbol-search-results
+  `(Union (SymbolSearchResults (Listof String))))
+
+(define desugared-boolean-response
+  `(Union
+    (TrueResponse)
+    (FalseResponse)))
+
+(define desugared-file-type `(Union (Java) (Scala)))
+(define desugared-file `(Record [type ,desugared-file-type] [text (Hash Nat String)]))
+
+(define desugared-maybe-doc-sig-pair
+  `(Union
+    (NoDocSigPair)
+    (DocSigPair String)))
+
+(define desugared-boolean
+  `(Union [False] [True]))
+
+(define desugared-refactor-result
+  `(Union
+    (RefactorFailure Nat String String)
+    (RefactorDiffEffect Nat (Union (InlineLocal) (Rename)) String)))
+
+(define desugared-project-input
+  `(Union
+    (ConnectionInfoReq (Addr ,desugared-connection-info))
+    (Resolve String (Addr ,desugared-resolve-result))
+    (PublicSymbolSearchReq (Listof String) Nat (Addr ,desugared-import-suggestions))
+    (TypeCompletionsReq String Nat (Addr ,desugared-symbol-search-results))
+    (DebugRunReq (Addr ,desugared-boolean-response))
+    (DebugStopReq (Addr ,desugared-boolean-response))
+    (DebugValueReq Nat (Addr (Union [DebugValue String] [FalseResponse])))
+    (DocUriAtPointReq ,desugared-file Nat (Addr ,desugared-maybe-doc-sig-pair))
+    (CompletionsReq ,desugared-file
+                    Nat
+                    Nat
+                    ,desugared-boolean
+                    ,desugared-boolean
+                    (Addr (Listof String)))
+    (TypecheckAllReq (Addr (Union (VoidResponse))))
+    (RefactorReq Nat
+                 (Union [InlineLocal] [Rename])
+                 ,desugared-boolean
+                 (Addr ,desugared-refactor-result))))
+
+(define ensime-project-spec
+  `(specification (receptionists [project ,desugared-project-input]) (externals)
+     [project ,desugared-project-input]
+     ()
+     (goto AwaitingConnectionInfoReq)
+     (define-state (AwaitingConnectionInfoReq)
+       [(variant ConnectionInfoReq s) -> ([obligation s (variant ConnectionInfo)]) (goto HandleRequests)]
+       [(variant Resolve * s) -> () (goto AwaitingConnectionInfoReq)]
+       [(variant PublicSymbolSearchReq * * s) -> () (goto AwaitingConnectionInfoReq)]
+       [(variant TypeCompletionsReq * * s) -> () (goto AwaitingConnectionInfoReq)]
+       [(variant DebugRunReq s) -> () (goto AwaitingConnectionInfoReq)]
+       [(variant DebugStopReq s) -> () (goto AwaitingConnectionInfoReq)]
+       [(variant DebugValueReq * s) -> () (goto AwaitingConnectionInfoReq)]
+       [(variant DocUriAtPointReq * * s) -> () (goto AwaitingConnectionInfoReq)]
+       [(variant CompletionsReq * * * * * s) -> () (goto AwaitingConnectionInfoReq)]
+       [(variant TypecheckAllReq s) -> () (goto AwaitingConnectionInfoReq)]
+       [(variant RefactorReq * * * s) -> () (goto AwaitingConnectionInfoReq)])
+     (define-state (HandleRequests)
+       [(variant ConnectionInfoReq s) -> ([obligation s (variant ConnectionInfo)]) (goto HandleRequests)]
+       [(variant Resolve * s) ->
+        ([obligation s (or (variant FalseResponse) (variant StringResponse *))])
+        (goto HandleRequests)]
+       [(variant PublicSymbolSearchReq * * s) ->
+        ([obligation s (variant ImportSuggestions *)])
+        (goto HandleRequests)]
+       [(variant TypeCompletionsReq * * s) ->
+        ([obligation s (variant SymbolSearchResults *)])
+        (goto HandleRequests)]
+       [(variant DebugRunReq s) ->
+        ([obligation s (or (variant FalseResponse) (variant TrueResponse))])
+        (goto HandleRequests)]
+       [(variant DebugStopReq s) ->
+        ([obligation s (or (variant FalseResponse) (variant TrueResponse))])
+        (goto HandleRequests)]
+       [(variant DebugValueReq * s) ->
+        ([obligation s (or (variant FalseResponse) (variant DebugValue *))])
+        (goto HandleRequests)]
+       [(variant DocUriAtPointReq * * s) ->
+        ([obligation s (or (variant NoDocSigPair) (variant DocSigPair *))])
+        (goto HandleRequests)]
+       [(variant CompletionsReq * * * * * s) -> ([obligation s *]) (goto HandleRequests)]
+       [(variant TypecheckAllReq s) ->
+        ([obligation s (variant VoidResponse)])
+        (goto HandleRequests)]
+       [(variant RefactorReq * * * s) ->
+        ([obligation s (or (variant RefactorFailure * * *) (variant RefactorDiffEffect * * *))])
+        (goto HandleRequests)])))
+
 (module+ test
-  (define desugared-connection-info `(Union (ConnectionInfo)))
-
-  (define desugared-resolve-result
-    `(Union
-      (FalseResponse)
-      (StringResponse String)))
-
-  (define desugared-import-suggestions
-    `(Union (ImportSuggestions (Listof String))))
-
-  (define desugared-symbol-search-results
-    `(Union (SymbolSearchResults (Listof String))))
-
-  (define desugared-boolean-response
-    `(Union
-      (TrueResponse)
-      (FalseResponse)))
-
-  (define desugared-file-type `(Union (Java) (Scala)))
-  (define desugared-file `(Record [type ,desugared-file-type] [text (Hash Nat String)]))
-
-  (define desugared-maybe-doc-sig-pair
-    `(Union
-      (NoDocSigPair)
-      (DocSigPair String)))
-
-  (define desugared-boolean
-    `(Union [False] [True]))
-
-  (define desugared-refactor-result
-    `(Union
-      (RefactorFailure Nat String String)
-      (RefactorDiffEffect Nat (Union (InlineLocal) (Rename)) String)))
-
-  (define desugared-project-input
-    `(Union
-      (ConnectionInfoReq (Addr ,desugared-connection-info))
-      (Resolve String (Addr ,desugared-resolve-result))
-      (PublicSymbolSearchReq (Listof String) Nat (Addr ,desugared-import-suggestions))
-      (TypeCompletionsReq String Nat (Addr ,desugared-symbol-search-results))
-      (DebugRunReq (Addr ,desugared-boolean-response))
-      (DebugStopReq (Addr ,desugared-boolean-response))
-      (DebugValueReq Nat (Addr (Union [DebugValue String] [FalseResponse])))
-      (DocUriAtPointReq ,desugared-file Nat (Addr ,desugared-maybe-doc-sig-pair))
-      (CompletionsReq ,desugared-file
-                      Nat
-                      Nat
-                      ,desugared-boolean
-                      ,desugared-boolean
-                      (Addr (Listof String)))
-      (TypecheckAllReq (Addr (Union (VoidResponse))))
-      (RefactorReq Nat
-                   (Union [InlineLocal] [Rename])
-                   ,desugared-boolean
-                   (Addr ,desugared-refactor-result))))
-
-  (define project-spec
-    `(specification (receptionists [project ,desugared-project-input]) (externals)
-       [project ,desugared-project-input]
-       ()
-       (goto AwaitingConnectionInfoReq)
-       (define-state (AwaitingConnectionInfoReq)
-         [(variant ConnectionInfoReq s) -> ([obligation s (variant ConnectionInfo)]) (goto HandleRequests)]
-         [(variant Resolve * s) -> () (goto AwaitingConnectionInfoReq)]
-         [(variant PublicSymbolSearchReq * * s) -> () (goto AwaitingConnectionInfoReq)]
-         [(variant TypeCompletionsReq * * s) -> () (goto AwaitingConnectionInfoReq)]
-         [(variant DebugRunReq s) -> () (goto AwaitingConnectionInfoReq)]
-         [(variant DebugStopReq s) -> () (goto AwaitingConnectionInfoReq)]
-         [(variant DebugValueReq * s) -> () (goto AwaitingConnectionInfoReq)]
-         [(variant DocUriAtPointReq * * s) -> () (goto AwaitingConnectionInfoReq)]
-         [(variant CompletionsReq * * * * * s) -> () (goto AwaitingConnectionInfoReq)]
-         [(variant TypecheckAllReq s) -> () (goto AwaitingConnectionInfoReq)]
-         [(variant RefactorReq * * * s) -> () (goto AwaitingConnectionInfoReq)])
-       (define-state (HandleRequests)
-         [(variant ConnectionInfoReq s) -> ([obligation s (variant ConnectionInfo)]) (goto HandleRequests)]
-         [(variant Resolve * s) ->
-          ([obligation s (or (variant FalseResponse) (variant StringResponse *))])
-          (goto HandleRequests)]
-         [(variant PublicSymbolSearchReq * * s) ->
-          ([obligation s (variant ImportSuggestions *)])
-          (goto HandleRequests)]
-         [(variant TypeCompletionsReq * * s) ->
-          ([obligation s (variant SymbolSearchResults *)])
-          (goto HandleRequests)]
-         [(variant DebugRunReq s) ->
-          ([obligation s (or (variant FalseResponse) (variant TrueResponse))])
-          (goto HandleRequests)]
-         [(variant DebugStopReq s) ->
-          ([obligation s (or (variant FalseResponse) (variant TrueResponse))])
-          (goto HandleRequests)]
-         [(variant DebugValueReq * s) ->
-          ([obligation s (or (variant FalseResponse) (variant DebugValue *))])
-          (goto HandleRequests)]
-         [(variant DocUriAtPointReq * * s) ->
-          ([obligation s (or (variant NoDocSigPair) (variant DocSigPair *))])
-          (goto HandleRequests)]
-         [(variant CompletionsReq * * * * * s) -> ([obligation s *]) (goto HandleRequests)]
-         [(variant TypecheckAllReq s) ->
-          ([obligation s (variant VoidResponse)])
-          (goto HandleRequests)]
-         [(variant RefactorReq * * * s) ->
-          ([obligation s (or (variant RefactorFailure * * *) (variant RefactorDiffEffect * * *))])
-          (goto HandleRequests)])))
-
   (test-true "Valid type for project input"
     (redex-match? csa-eval τ desugared-project-input))
 
   (test-true "ensime-server Project conforms to its spec"
-    (check-conformance desugared-program project-spec)))
+    (check-conformance ensime-program ensime-project-spec)))

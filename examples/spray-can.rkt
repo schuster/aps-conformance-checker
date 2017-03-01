@@ -1,5 +1,11 @@
 #lang racket
 
+(provide
+  manager-program http-manager-spec)
+
+(require
+ "../desugar.rkt")
+
 (module+ test
   (require
    (for-syntax syntax/parse)
@@ -10,7 +16,6 @@
    asyncunit
    rackunit
    "../csa.rkt" ; for csa-valid-type?
-   "../desugar.rkt"
    "../main.rkt"))
 
 (define RESPONSE-WAIT-TIME-IN-MS 2000)
@@ -462,70 +467,65 @@
 ;; Programs
 
 (define request-handler-only-program
-  `(program (receptionists)
-            (externals [app-layer IncomingRequest] [tcp TcpWriteOnlyCommanpd])
-     ,@spray-can-definitions
-     (define-actor Nat
-       (Launcher [app-layer (Addr IncomingRequest)]
-                 [tcp (Addr TcpWriteOnlyCommanpd)])
-       ()
-       (goto Init)
-       (define-state/timeout (Init) (m) (goto Init)
-         (timeout 0
-           (spawn request-handler RequestHandler (vector 1 2 3) app-layer tcp)
-           (goto Done)))
-       (define-state (Done) (m) (goto Done)))
-     (actors [launcher (spawn 1 Launcher app-layer tcp)])))
+  (desugar
+   `(program (receptionists)
+             (externals [app-layer IncomingRequest] [tcp TcpWriteOnlyCommanpd])
+      ,@spray-can-definitions
+      (define-actor Nat
+        (Launcher [app-layer (Addr IncomingRequest)]
+                  [tcp (Addr TcpWriteOnlyCommanpd)])
+        ()
+        (goto Init)
+        (define-state/timeout (Init) (m) (goto Init)
+          (timeout 0
+                   (spawn request-handler RequestHandler (vector 1 2 3) app-layer tcp)
+                   (goto Done)))
+        (define-state (Done) (m) (goto Done)))
+      (actors [launcher (spawn 1 Launcher app-layer tcp)]))))
 
 (define connection-program
-  `(program (receptionists)
-            (externals [app-listener HttpListenerEvent] [tcp-session TcpSessionCommand])
-     ,@spray-can-definitions
-     (define-actor Nat
-       (Launcher [app-listener (Addr HttpListenerEvent)] [tcp-session (Addr TcpSessionCommand)])
-       ()
-       (goto Init)
-       (define-state/timeout (Init) (m) (goto Init)
-         (timeout 0
-           (let ([session-id (SessionId (InetSocketAddress 1234 500) 80)])
-             (spawn connection HttpServerConnection session-id app-listener tcp-session)
-             (goto Done))))
-       (define-state (Done) (m) (goto Done)))
-     (actors [launcher (spawn 1 Launcher app-listener tcp-session)])))
+  (desugar
+   `(program (receptionists)
+             (externals [app-listener HttpListenerEvent] [tcp-session TcpSessionCommand])
+      ,@spray-can-definitions
+      (define-actor Nat
+        (Launcher [app-listener (Addr HttpListenerEvent)] [tcp-session (Addr TcpSessionCommand)])
+        ()
+        (goto Init)
+        (define-state/timeout (Init) (m) (goto Init)
+          (timeout 0
+                   (let ([session-id (SessionId (InetSocketAddress 1234 500) 80)])
+                     (spawn connection HttpServerConnection session-id app-listener tcp-session)
+                     (goto Done))))
+        (define-state (Done) (m) (goto Done)))
+      (actors [launcher (spawn 1 Launcher app-listener tcp-session)]))))
 
 (define listener-program
-  `(program (receptionists)
-            (externals [bind-commander HttpBindResponse]
-                       [app-listener HttpListenerEvent]
-                       [tcp TcpCommand])
-     ,@spray-can-definitions
-     (define-actor Nat
-       (Launcher [bind-commander (Addr HttpBindResponse)]
-                 [app-listener (Addr HttpListenerEvent)]
-                 [tcp (Addr TcpCommand)])
-       ()
-       (goto Init)
-       (define-state/timeout (Init) (m) (goto Init)
-         (timeout 0
-           (spawn listener HttpListener 80 bind-commander app-listener tcp)
-           (goto Done)))
-       (define-state (Done) (m) (goto Done)))
-     (actors [launcher (spawn 1 Launcher bind-commander app-listener tcp)])))
+  (desugar
+   `(program (receptionists)
+             (externals [bind-commander HttpBindResponse]
+                        [app-listener HttpListenerEvent]
+                        [tcp TcpCommand])
+      ,@spray-can-definitions
+      (define-actor Nat
+        (Launcher [bind-commander (Addr HttpBindResponse)]
+                  [app-listener (Addr HttpListenerEvent)]
+                  [tcp (Addr TcpCommand)])
+        ()
+        (goto Init)
+        (define-state/timeout (Init) (m) (goto Init)
+          (timeout 0
+                   (spawn listener HttpListener 80 bind-commander app-listener tcp)
+                   (goto Done)))
+        (define-state (Done) (m) (goto Done)))
+      (actors [launcher (spawn 1 Launcher bind-commander app-listener tcp)]))))
 
 (define manager-program
-  `(program (receptionists [manager HttpManagerCommand])
-            (externals [tcp TcpCommand])
-     ,@spray-can-definitions
-     (actors [manager (spawn manager HttpManager tcp)])))
-
-;; ---------------------------------------------------------------------------------------------------
-;; Common test definitions
-
-(module+ test
-  (define desugared-request-handler-only-program (desugar request-handler-only-program))
-  (define desugared-connection-program (desugar connection-program))
-  (define desugared-listener-program (desugar listener-program))
-  (define desugared-manager-program (desugar manager-program)))
+  (desugar
+   `(program (receptionists [manager HttpManagerCommand])
+             (externals [tcp TcpCommand])
+      ,@spray-can-definitions
+      (actors [manager (spawn manager HttpManager tcp)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Tests
@@ -561,7 +561,7 @@
   (test-case "Write response to TCP when application layer responds to request from RequestHandler"
     (define app-layer (make-async-channel))
     (define tcp (make-async-channel))
-    (csa-run desugared-request-handler-only-program app-layer tcp)
+    (csa-run request-handler-only-program app-layer tcp)
     (define handler
       (check-unicast-match app-layer (csa-record [request (vector 1 2 3)]
                                                  [response-dest handler])
@@ -572,7 +572,7 @@
   (test-case "RequestHandler times out if no response from application layer"
     (define app-layer (make-async-channel))
     (define tcp (make-async-channel))
-    (csa-run desugared-request-handler-only-program app-layer tcp)
+    (csa-run request-handler-only-program app-layer tcp)
     (check-unicast-match app-layer (csa-record [request (vector 1 2 3)] [response-dest _]))
     (check-no-message tcp #:timeout 2))
 
@@ -581,7 +581,7 @@
   (test-case "ServerConection registers with TCP connection when application layer registers with ServerConnection"
     (define app-listener (make-async-channel))
     (define tcp-connection (make-async-channel))
-    (csa-run desugared-connection-program app-listener tcp-connection)
+    (csa-run connection-program app-listener tcp-connection)
     (define connection (check-unicast-match app-listener
                                             (csa-variant HttpConnected _ connection)
                                             #:result connection))
@@ -590,12 +590,12 @@
 
   (test-case "If app layer does not register, ServerConnection tells TCP to close"
     (define tcp-connection (make-async-channel))
-    (csa-run desugared-connection-program (make-async-channel) tcp-connection)
+    (csa-run connection-program (make-async-channel) tcp-connection)
     (sleep (/ REGISTER-WAIT-TIME-IN-MS 1000))
     (check-unicast-match tcp-connection (csa-variant Close _)))
 
   (define (run-connection-to-registered app-listener tcp-connection handler)
-    (csa-run desugared-connection-program app-listener tcp-connection)
+    (csa-run connection-program app-listener tcp-connection)
     (define connection (check-unicast-match app-listener
                                             (csa-variant HttpConnected _ connection)
                                             #:result connection))
@@ -638,7 +638,7 @@
     (define app-listener (make-async-channel))
     (define tcp-connection (make-async-channel))
     (define handler (make-async-channel))
-    (csa-run desugared-connection-program app-listener tcp-connection)
+    (csa-run connection-program app-listener tcp-connection)
     (define connection (check-unicast-match app-listener
                                             (csa-variant HttpConnected _ connection)
                                             #:result connection))
@@ -652,7 +652,7 @@
   (test-case "HttpListener responds with CommandFailed if it times out while binding"
     (define bind-commander (make-async-channel))
     (define tcp (make-async-channel))
-    (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
+    (csa-run listener-program bind-commander (make-async-channel) tcp)
     (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
     (sleep (/ BIND-WAIT-TIME-IN-MS 1000))
     (check-unicast bind-commander (HttpCommandFailed)))
@@ -660,7 +660,7 @@
   (test-case "HttpListener responds with CommandFailed if TCP says the bind failed"
     (define bind-commander (make-async-channel))
     (define tcp (make-async-channel))
-    (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
+    (csa-run listener-program bind-commander (make-async-channel) tcp)
     (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
     (async-channel-put listener (CommandFailed))
     (check-unicast bind-commander (HttpCommandFailed)))
@@ -668,7 +668,7 @@
   (test-case "HttpListener sends a bound response to listener after TCP gives Bound confirmation"
     (define bind-commander (make-async-channel))
     (define tcp (make-async-channel))
-    (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
+    (csa-run listener-program bind-commander (make-async-channel) tcp)
     (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
     (async-channel-put listener (Bound (make-async-channel)))
     (check-unicast-match bind-commander (csa-variant HttpBound _)))
@@ -676,7 +676,7 @@
   (define (start-and-bind-http-listener app-listener tcp-listener)
     (define bind-commander (make-async-channel))
     (define tcp (make-async-channel))
-    (csa-run desugared-listener-program bind-commander app-listener tcp)
+    (csa-run listener-program bind-commander app-listener tcp)
     (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
     (async-channel-put listener (Bound tcp-listener))
     (async-channel-get bind-commander) ; eat the Bound
@@ -722,7 +722,7 @@
     (define bind-commander (make-async-channel))
     (define app-listener (make-async-channel))
     (define tcp (make-async-channel))
-    (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
+    (csa-run listener-program bind-commander (make-async-channel) tcp)
     (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
     (define unbind-commander (make-async-channel))
     (async-channel-put listener (HttpUnbind unbind-commander))
@@ -737,7 +737,7 @@
     (define bind-commander (make-async-channel))
     (define app-listener (make-async-channel))
     (define tcp (make-async-channel))
-    (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
+    (csa-run listener-program bind-commander (make-async-channel) tcp)
     (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
     (define unbind-commander (make-async-channel))
     (async-channel-put listener (HttpUnbind unbind-commander))
@@ -752,7 +752,7 @@
     (define bind-commander (make-async-channel))
     (define app-listener (make-async-channel))
     (define tcp (make-async-channel))
-    (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
+    (csa-run listener-program bind-commander (make-async-channel) tcp)
     (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
     (define unbind-commander (make-async-channel))
     (async-channel-put listener (HttpUnbind unbind-commander))
@@ -780,7 +780,7 @@
     (define bind-commander (make-async-channel))
     (define app-listener (make-async-channel))
     (define tcp (make-async-channel))
-    (csa-run desugared-listener-program bind-commander (make-async-channel) tcp)
+    (csa-run listener-program bind-commander (make-async-channel) tcp)
     (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
     (async-channel-put listener (CommandFailed)) ; listener should be closed now
     (define unbind-commander (make-async-channel))
@@ -791,7 +791,7 @@
 
   (test-case "HttpManager bind can fail; report failure to commander"
     (define tcp (make-async-channel))
-    (define manager (csa-run desugared-manager-program tcp))
+    (define manager (csa-run manager-program tcp))
     (define bind-commander (make-async-channel))
     (async-channel-put manager (HttpBind 80 bind-commander (make-async-channel)))
     (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
@@ -800,7 +800,7 @@
 
   (test-case "HttpManager responds with success when binding succeeds"
     (define tcp (make-async-channel))
-    (define manager (csa-run desugared-manager-program tcp))
+    (define manager (csa-run manager-program tcp))
     (define bind-commander (make-async-channel))
     (async-channel-put manager (HttpBind 80 bind-commander (make-async-channel)))
     (define listener (check-unicast-match tcp (csa-variant Bind 80 _ listener) #:result listener))
@@ -809,7 +809,7 @@
 
   (test-case "End-to-end HTTP test case"
     (define tcp (make-async-channel))
-    (define manager (csa-run desugared-manager-program tcp))
+    (define manager (csa-run manager-program tcp))
     (define bind-commander (make-async-channel))
     (define app-listener (make-async-channel))
     ;; Bind to the port
@@ -843,71 +843,72 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Desugared types
 
-(module+ test
-  ;; TCP types
-  (define desugared-socket-address
-    `(Record [ip Nat] [port Nat]))
-  (define desugared-session-id
-    `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
-  (define desugared-tcp-session-event
-    `(Union
-      [ReceivedData (Vectorof Nat)]
-      [Closed]
-      [ConfirmedClosed]
-      [Aborted]
-      [PeerClosed]
-      [ErrorClosed]))
-  (define desugared-tcp-write-response
-    `(Union
-      [CommandFailed]
-      [WriteAck]))
-  (define desugared-tcp-session-command
-    `(Union
-      (Register (Addr ,desugared-tcp-session-event))
-      (Write (Vectorof Nat) (Addr ,desugared-tcp-write-response))
-      (Close (Addr (Union [CommandFailed] [Closed])))
-      (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
-      (Abort (Addr (Union [CommandFailed] [Aborted])))))
-  (define desugared-tcp-connection-status
-    `(Union
-      [CommandFailed]
-      [Connected ,desugared-session-id
-                 (Addr ,desugared-tcp-session-command)]))
-  (define desugared-tcp-unbind-response
-    `(Union
-      [Unbound]
-      [CommandFailed]))
-  (define desugared-tcp-listener-command
-    `(Union [Unbind (Addr ,desugared-tcp-unbind-response)]))
-  (define desugared-tcp-user-command
-    `(Union
-      ;; [Connect ,desugared-socket-address (Addr ,desugared-connection-status)]
-      [Bind Nat
-            (Addr (Union [Bound (Addr ,desugared-tcp-listener-command)] [CommandFailed]))
-            (Addr ,desugared-tcp-connection-status)]))
+;; TCP types
+(define desugared-socket-address
+  `(Record [ip Nat] [port Nat]))
+(define desugared-session-id
+  `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
+(define desugared-tcp-session-event
+  `(Union
+    [ReceivedData (Vectorof Nat)]
+    [Closed]
+    [ConfirmedClosed]
+    [Aborted]
+    [PeerClosed]
+    [ErrorClosed]))
+(define desugared-tcp-write-response
+  `(Union
+    [CommandFailed]
+    [WriteAck]))
+(define desugared-tcp-session-command
+  `(Union
+    (Register (Addr ,desugared-tcp-session-event))
+    (Write (Vectorof Nat) (Addr ,desugared-tcp-write-response))
+    (Close (Addr (Union [CommandFailed] [Closed])))
+    (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+    (Abort (Addr (Union [CommandFailed] [Aborted])))))
+(define desugared-tcp-connection-status
+  `(Union
+    [CommandFailed]
+    [Connected ,desugared-session-id
+               (Addr ,desugared-tcp-session-command)]))
+(define desugared-tcp-unbind-response
+  `(Union
+    [Unbound]
+    [CommandFailed]))
+(define desugared-tcp-listener-command
+  `(Union [Unbind (Addr ,desugared-tcp-unbind-response)]))
+(define desugared-tcp-user-command
+  `(Union
+    ;; [Connect ,desugared-socket-address (Addr ,desugared-connection-status)]
+    [Bind Nat
+          (Addr (Union [Bound (Addr ,desugared-tcp-listener-command)] [CommandFailed]))
+          (Addr ,desugared-tcp-connection-status)]))
 
-  ;; HTTP types
-  (define desugared-http-incoming-request
-    `(Record [request (Vectorof Nat)] [response-dest (Addr (Vectorof Nat))]))
-  (define desugared-http-connection-command
-    `(Union
-      [HttpRegister (Addr ,desugared-http-incoming-request)]))
-  (define desugared-http-listener-event
-    `(Union (HttpConnected ,desugared-session-id (Addr ,desugared-http-connection-command))))
-  (define desugared-http-unbind-response
-    `(Union
-      [HttpUnbound]
-      [HttpCommandFailed]))
-  (define desugared-http-listener-command
-    `(Union
-      [HttpUnbind (Addr ,desugared-http-unbind-response)]))
-  (define desugared-http-bind-response
-    `(Union
-      [HttpBound (Addr ,desugared-http-listener-command)]
-      [HttpCommandFailed]))
-  (define desugared-http-manager-command
-    `(Union
-      (HttpBind Nat (Addr ,desugared-http-bind-response) (Addr ,desugared-http-listener-event))))
+;; HTTP types
+(define desugared-http-incoming-request
+  `(Record [request (Vectorof Nat)] [response-dest (Addr (Vectorof Nat))]))
+(define desugared-http-connection-command
+  `(Union
+    [HttpRegister (Addr ,desugared-http-incoming-request)]))
+(define desugared-http-listener-event
+  `(Union (HttpConnected ,desugared-session-id (Addr ,desugared-http-connection-command))))
+(define desugared-http-unbind-response
+  `(Union
+    [HttpUnbound]
+    [HttpCommandFailed]))
+(define desugared-http-listener-command
+  `(Union
+    [HttpUnbind (Addr ,desugared-http-unbind-response)]))
+(define desugared-http-bind-response
+  `(Union
+    [HttpBound (Addr ,desugared-http-listener-command)]
+    [HttpCommandFailed]))
+(define desugared-http-manager-command
+  `(Union
+    (HttpBind Nat (Addr ,desugared-http-bind-response) (Addr ,desugared-http-listener-event))))
+
+(module+ test
 
   (test-true "User command type" (csa-valid-type? desugared-http-listener-event))
   (test-true "TCP Session command type" (csa-valid-type? desugared-tcp-session-command))
@@ -918,93 +919,92 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Specification check
 
+(define connection-spec-behavior
+  `((goto AwaitingRegistration)
+    (define-state (AwaitingRegistration)
+      [unobs -> () (goto Closed)]
+      [(variant HttpRegister handler) -> () (goto Running handler)])
+    (define-state (Running handler)
+      [unobs ->
+             ([obligation handler (record [request *] [response-dest *])])
+             (goto Running handler)]
+      [(variant HttpRegister new-handler) -> () (goto Running handler)]
+      [unobs -> () (goto Closed)])
+    (define-state (Closed)
+      [(variant HttpRegister new-handler) -> () (goto Closed)])))
+
+(define connection-spec
+  `(specification (receptionists)
+                  (externals [app-listener ,desugared-http-listener-event]
+                             [tcp-session ,desugared-tcp-session-command])
+     UNKNOWN
+     ()
+     (goto Init app-listener)
+     (define-state (Init app-listener)
+       [unobs ->
+              ([obligation app-listener
+                           (variant HttpConnected * (fork ,@connection-spec-behavior))])
+              (goto Done)])
+     (define-state (Done))))
+
+(define unbind-result-behavior
+  `((goto SendUnbindResultAnytime unbind-commander)
+    (define-state (SendUnbindResultAnytime unbind-commander)
+      [unobs ->
+             ([obligation unbind-commander (or (variant HttpUnbound)
+                                               (variant HttpCommandFailed))])
+             (goto SendUnbindResultAnytime unbind-commander)])))
+
+(define listener-spec-behavior
+  `((goto Connected app-listener)
+    (define-state (Connected app-listener)
+      [unobs ->
+             ([obligation app-listener (variant HttpConnected * (fork ,@connection-spec-behavior))])
+             (goto Connected app-listener)]
+      ;; Checker isn't precise enough to know that an unbind result will only be sent once, so we
+      ;; have to write a spec that allows for many sends instead
+      [(variant HttpUnbind unbind-commander) ->
+       ([fork ,@unbind-result-behavior])
+       (goto Closed)])
+    (define-state (Closed)
+      [(variant HttpUnbind unbind-commander) ->
+       ([fork ,@unbind-result-behavior])
+       (goto Closed)])))
+
+;; HttpListener check
+(define listener-spec
+  `(specification (receptionists)
+                  (externals [bind-commander ,desugared-http-bind-response]
+                             [app-listener ,desugared-http-listener-event]
+                             [tcp ,desugared-tcp-user-command])
+     UNKNOWN
+     ()
+     (goto Init bind-commander app-listener)
+     (define-state (Init bind-commander app-listener)
+       [unobs ->
+              ([obligation bind-commander (or (variant HttpCommandFailed)
+                                              (variant HttpBound (fork ,@listener-spec-behavior)))])
+              (goto Done)])
+     (define-state (Done))))
+
+(define http-manager-spec
+  `(specification (receptionists [manager ,desugared-http-manager-command])
+                  (externals [tcp ,desugared-tcp-user-command])
+     [manager ,desugared-http-manager-command]
+     ()
+     (goto Running)
+     (define-state (Running)
+       [(variant HttpBind * commander app-listener) ->
+        ([obligation commander (or (variant HttpCommandFailed)
+                                   (variant HttpBound (fork ,@listener-spec-behavior)))])
+        (goto Running)])))
+
 (module+ test
-  (define connection-spec-behavior
-    `((goto AwaitingRegistration)
-      (define-state (AwaitingRegistration)
-        [unobs -> () (goto Closed)]
-        [(variant HttpRegister handler) -> () (goto Running handler)])
-      (define-state (Running handler)
-        [unobs ->
-          ([obligation handler (record [request *] [response-dest *])])
-          (goto Running handler)]
-        [(variant HttpRegister new-handler) -> () (goto Running handler)]
-        [unobs -> () (goto Closed)])
-      (define-state (Closed)
-        [(variant HttpRegister new-handler) -> () (goto Closed)])))
-
-  (define connection-spec
-    `(specification (receptionists)
-                    (externals [app-listener ,desugared-http-listener-event]
-                               [tcp-session ,desugared-tcp-session-command])
-       UNKNOWN
-       ()
-       (goto Init app-listener)
-       (define-state (Init app-listener)
-         [unobs ->
-                ([obligation app-listener
-                             (variant HttpConnected * (fork ,@connection-spec-behavior))])
-           (goto Done)])
-       (define-state (Done))))
-
   ;; (test-true "ServerConnection conforms to its specification"
-  ;;   (check-conformance desugared-connection-program connection-spec))
-
-  (define unbind-result-behavior
-    `((goto SendUnbindResultAnytime unbind-commander)
-      (define-state (SendUnbindResultAnytime unbind-commander)
-        [unobs ->
-          ([obligation unbind-commander (or (variant HttpUnbound)
-                                            (variant HttpCommandFailed))])
-          (goto SendUnbindResultAnytime unbind-commander)])))
-
-  (define listener-spec-behavior
-    `((goto Connected app-listener)
-      (define-state (Connected app-listener)
-        [unobs ->
-          ([obligation app-listener (variant HttpConnected * (fork ,@connection-spec-behavior))])
-          (goto Connected app-listener)]
-        ;; Checker isn't precise enough to know that an unbind result will only be sent once, so we
-        ;; have to write a spec that allows for many sends instead
-        [(variant HttpUnbind unbind-commander) ->
-         ([fork ,@unbind-result-behavior])
-         (goto Closed)])
-      (define-state (Closed)
-        [(variant HttpUnbind unbind-commander) ->
-         ([fork ,@unbind-result-behavior])
-         (goto Closed)])
-      ))
-
-  ;; HttpListener check
-  (define listener-spec
-    `(specification (receptionists)
-                    (externals [bind-commander ,desugared-http-bind-response]
-                               [app-listener ,desugared-http-listener-event]
-                               [tcp ,desugared-tcp-user-command])
-       UNKNOWN
-       ()
-       (goto Init bind-commander app-listener)
-       (define-state (Init bind-commander app-listener)
-         [unobs ->
-                ([obligation bind-commander (or (variant HttpCommandFailed)
-                                                (variant HttpBound (fork ,@listener-spec-behavior)))])
-           (goto Done)])
-       (define-state (Done))))
+  ;;   (check-conformance connection-program connection-spec))
 
   ;; (test-true "HttpListener conforms to its specification"
-  ;;   (check-conformance desugared-listener-program listener-spec))
-
-  (define http-manager-spec
-    `(specification (receptionists [manager ,desugared-http-manager-command])
-                    (externals [tcp ,desugared-tcp-user-command])
-       [manager ,desugared-http-manager-command]
-       ()
-       (goto Running)
-       (define-state (Running)
-         [(variant HttpBind * commander app-listener) ->
-          ([obligation commander (or (variant HttpCommandFailed)
-                                     (variant HttpBound (fork ,@listener-spec-behavior)))])
-          (goto Running)])))
+  ;;   (check-conformance listener-program listener-spec))
 
   (test-true "HttpManager conforms to its specification"
-    (check-conformance desugared-manager-program http-manager-spec)))
+    (check-conformance manager-program http-manager-spec)))

@@ -32,6 +32,14 @@
 ;; want to avoid any internal queueing or duplication of the receive buffer's ordering logic in the
 ;; session controller.
 
+(provide
+ tcp-program
+ session-wire-spec)
+
+(require
+ (for-syntax syntax/parse)
+ "../desugar.rkt")
+
 (define DEFAULT-WINDOW-SIZE 29200)
 (define MAXIMUM-SEGMENT-SIZE-IN-BYTES 536)
 (define wait-time-in-milliseconds 2000)
@@ -679,26 +687,27 @@
         [(TimeWaitTimeout) (goto Closed)]))))))
 
 (define tcp-program
-  `(program (receptionists [session TcpSessionInput])
-            (externals [receive-buffer ReceiveBufferCommand]
-                       [send-buffer SendBufferCommand]
-                       [status-updates ConnectionStatus]
-                       [close-notifications (Union [SessionCloseNotification SessionId])])
-            ,@tcp-definitions
-            (actors [session (spawn 1
-                                    TcpSession
-                                    (record [remote-address (record [ip ,remote-ip] [port ,remote-port])]
-                                            [local-port ,local-port])
-                                    ,local-iss
-                                    (variant ActiveOpen)
-                                    receive-buffer
-                                    send-buffer
-                                    status-updates
-                                    close-notifications
-                                    ,wait-time-in-milliseconds
-                                    ,max-retries
-                                    ,max-segment-lifetime
-                                    ,user-response-wait-time)])))
+  (desugar
+   `(program (receptionists [session TcpSessionInput])
+             (externals [receive-buffer ReceiveBufferCommand]
+                        [send-buffer SendBufferCommand]
+                        [status-updates ConnectionStatus]
+                        [close-notifications (Union [SessionCloseNotification SessionId])])
+             ,@tcp-definitions
+             (actors [session (spawn 1
+                                     TcpSession
+                                     (record [remote-address (record [ip ,remote-ip] [port ,remote-port])]
+                                             [local-port ,local-port])
+                                     ,local-iss
+                                     (variant ActiveOpen)
+                                     receive-buffer
+                                     send-buffer
+                                     status-updates
+                                     close-notifications
+                                     ,wait-time-in-milliseconds
+                                     ,max-retries
+                                     ,max-segment-lifetime
+                                     ,user-response-wait-time)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing
@@ -711,9 +720,7 @@
    csa/testing
    racket/async-channel
    rackunit
-   (for-syntax syntax/parse)
    "../csa.rkt" ; for csa-valid-type?
-   "../desugar.rkt"
    "../main.rkt")
 
   (define-match-expander tcp-syn
@@ -818,15 +825,13 @@
         [(_ ip-pattern packet-pattern)
          #`(quasiquote (variant OutPacket ,ip-pattern ,packet-pattern))])))
 
-  (define desugared-program (desugar tcp-program))
-
   (define (start-prog)
     (define receive-buffer (make-async-channel))
     (define send-buffer (make-async-channel))
     (define status-updates (make-async-channel))
     (define close-notifications (make-async-channel))
     (values receive-buffer send-buffer status-updates close-notifications
-      (csa-run desugared-program receive-buffer send-buffer status-updates close-notifications)))
+      (csa-run tcp-program receive-buffer send-buffer status-updates close-notifications)))
 
   ;; Test data
 
@@ -1181,242 +1186,245 @@
     (check-no-message close-handler)
     (check-closed? session)))
 
+;; ---------------------------------------------------------------------------------------------------
+;; Specification
+
+(define desugared-tcp-packet-type
+  `(Record
+    [source-port Nat]
+    [destination-port Nat]
+    [seq Nat]
+    [ack Nat]
+    [ack-flag (Union [Ack] [NoAck])]
+    [rst (Union [Rst] [NoRst])]
+    [syn (Union [Syn] [NoSyn])]
+    [fin (Union [Fin] [NoFin])]
+    [window Nat]
+    [payload (Vectorof Nat)]))
+
+(define desugared-tcp-output
+  `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
+
+(define desugared-socket-address
+  `(Record [ip Nat] [port Nat]))
+
+(define desugared-session-id
+  `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
+
+(define desugared-tcp-session-event
+  `(Union
+    [ReceivedData (Vectorof Nat)]
+    [Closed]
+    [ConfirmedClosed]
+    [Aborted]
+    [PeerClosed]
+    [ErrorClosed]))
+
+(define desugared-write-response
+  `(Union
+    [CommandFailed]
+    [WriteAck]))
+
+(define desugared-session-command
+  `(Union
+    (Register (Addr ,desugared-tcp-session-event))
+    (Write (Vectorof Nat) (Addr ,desugared-write-response))
+    (Close (Addr (Union [CommandFailed] [Closed])))
+    (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+    (Abort (Addr (Union [CommandFailed] [Aborted])))))
+
+(define desugared-session-input
+  `(Union
+    (OrderedTcpPacket ,desugared-tcp-packet-type)
+    (Register (Addr ,desugared-tcp-session-event))
+    (Write (Vectorof Nat) (Addr ,desugared-write-response))
+    (Close (Addr (Union [CommandFailed] [Closed])))
+    (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+    (Abort (Addr (Union [CommandFailed] [Aborted])))
+    (InternalAbort)
+    (TheFinSeq Nat)
+    (RegisterTimeout)
+    (TimeWaitTimeout)))
+
+(define desugared-connection-status
+  `(Union
+    [CommandFailed]
+    [Connected ,desugared-session-id
+               (Addr ,desugared-session-command)]))
+
+(define desugared-receive-buffer-command
+  `(Union (Resume)))
+
+(define desugared-send-buffer-command
+  `(Union
+    [SendSyn]
+    [SendRst]
+    [SendText (Vectorof Nat)]
+    [SendFin]))
+
+;; patterns to be used in the spec
+(define-syntax (make-packet-pattern stx)
+  (syntax-parse stx
+    [(_  ackpat rstpat synpat finpat)
+     #`(let ([qack 'ackpat]
+             [qrst 'rstpat]
+             [qsyn 'synpat]
+             [qfin 'finpat])
+         `(variant OrderedTcpPacket
+                   (record [source-port *]
+                           [destination-port *]
+                           [seq *]
+                           [ack *]
+                           [ack-flag ,qack]
+                           [rst ,qrst]
+                           [syn ,qsyn]
+                           [fin ,qfin]
+                           [window *]
+                           [payload *])))]))
+
+(define session-wire-spec
+  `(specification (receptionists [session ,desugared-session-input])
+                  (externals [receive-buffer ,desugared-receive-buffer-command]
+                             [send-buffer ,desugared-send-buffer-command]
+                             [status-updates ,desugared-connection-status]
+                             [close-notifications
+                              (Union [SessionCloseNotification ,desugared-session-id])])
+     [session (Union (OrderedTcpPacket ,desugared-tcp-packet-type))]
+     ([session (Union
+                (Register (Addr ,desugared-tcp-session-event))
+                (Write (Vectorof Nat) (Addr ,desugared-write-response))
+                (Close (Addr (Union [CommandFailed] [Closed])))
+                (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+                (Abort (Addr (Union [CommandFailed] [Aborted])))
+                (InternalAbort)
+                (TheFinSeq Nat))])
+     (goto SynSent send-buffer)
+     (define-state (SynSent send-buffer)
+       ;; APS PROTOCOL BUG: to replicate, remove from ANY of the following states the clause that
+       ;; says receiving a RST should cause us to silently close (without this, the spec says that a
+       ;; RST should lead to an infinite loop of two peers sending RSTs back and forth)
+
+       ;; Anything with an ACK might fail if the ACK is wrong (overlaps with below clauses)
+       [,(make-packet-pattern (variant Ack) * * *) ->
+        ([obligation send-buffer (variant SendRst)])
+        (goto Closed send-buffer)]
+       ;; RST on an ACK: fail
+       [,(make-packet-pattern (variant Ack) (variant Rst) * *) ->
+        ()
+        (goto Closed send-buffer)]
+       ;; SYN-ACK: finish connecting (or fail, above)
+       [,(make-packet-pattern (variant Ack) (variant NoRst) (variant Syn) *) ->
+        ()
+        (goto Established send-buffer)]
+       ;; ACK without other interesting flags: ignore (or fail, above)
+       [,(make-packet-pattern (variant Ack) (variant NoRst) (variant NoSyn) *) ->
+        ()
+        (goto SynSent send-buffer)]
+       ;; ignore RST without ACK
+       [,(make-packet-pattern (variant NoAck) (variant Rst) * *) ->
+        ()
+        (goto SynSent send-buffer)]
+       ;; SYN without ACK: send SYN again (this is simultaneous open)
+       [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant Syn) *) ->
+        ([obligation send-buffer (variant SendSyn)])
+        (goto SynReceived send-buffer)]
+       ;; ignore all others without ACK
+       [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant NoSyn) *) ->
+        ()
+        (goto SynSent send-buffer)]
+       ;; some internal timeout or other event might occur that causes us to abort the connection
+       [unobs ->
+        ([obligation send-buffer (variant SendRst)])
+        (goto Closed send-buffer)]
+       )
+
+     (define-state (SynReceived send-buffer)
+       ;; RST: fail
+       [,(make-packet-pattern * (variant Rst) * *) ->
+        ()
+        (goto Closed send-buffer)]
+       ;; SYN without ACK: fail
+       [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant Syn) *) ->
+        ([obligation send-buffer (variant SendRst)])
+        (goto Closed send-buffer)]
+       ;; ACK without RST: either finish the handshake or send RST and go back to this state
+       [,(make-packet-pattern (variant Ack) (variant NoRst) * *) ->
+        ()
+        (goto Established send-buffer)]
+       [,(make-packet-pattern (variant Ack) (variant NoRst) * *) ->
+        ([obligation send-buffer (variant SendRst)])
+        (goto SynReceived send-buffer)]
+       ;; No ACK, RST, or SYN: ignore
+       [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant NoSyn) *) ->
+        ()
+        (goto SynReceived send-buffer)]
+       ;; some internal timeout or other event might occur that causes us to abort the connection
+       [unobs ->
+        ([obligation send-buffer (variant SendRst)])
+        (goto Closed send-buffer)])
+
+     (define-state (Established send-buffer)
+       ;; RST or SYN causes a total reset
+       [,(make-packet-pattern * (variant Rst) * *) ->
+        ()
+        (goto Closed send-buffer)]
+       [,(make-packet-pattern * * (variant Syn) *) ->
+        ([obligation send-buffer (variant SendRst)])
+        (goto Closed send-buffer)]
+       ;; Normal packet (with or without FIN): no particular activity
+       [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) ->
+        ()
+        (goto Established send-buffer)]
+       ;; might write some bytes to the socket
+       [unobs ->
+        ([obligation send-buffer (variant SendText *)])
+        (goto Established send-buffer)]
+       ;; might decide to close
+       [unobs ->
+        ([obligation send-buffer (variant SendFin)])
+        (goto Closing send-buffer)]
+       ;; some internal timeout or other event might occur that causes us to abort the connection
+       [unobs ->
+        ([obligation send-buffer (variant SendRst)])
+        (goto Closed send-buffer)])
+
+     ;; Corresponds to FIN WAIT 1, FIN WAIT 2, CLOSING, TIME WAIT, and LAST ACK. In the abstract
+     ;; interpretation, we can't distinguish those states because that depends on reasoning about
+     ;; whether a given ACK or FIN was valid and/or ACKed our own FIN. This state just says that we
+     ;; have sent a FIN and may (will) eventually close, and we may send an RST without receiving a
+     ;; packet that triggered it (unlike Closed, which only sends RSTs in response to received
+     ;; packets).
+     (define-state (Closing send-buffer)
+       ;; RST or SYN causes a total reset
+       [,(make-packet-pattern * (variant Rst) * *) ->
+        ()
+        (goto Closed send-buffer)]
+       [,(make-packet-pattern * * (variant Syn) *) ->
+        ([obligation send-buffer (variant SendRst)])
+        (goto Closed send-buffer)]
+       ;; A normal packet (regardless of FIN) *may* cause us to close
+       [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) -> () (goto Closed send-buffer)]
+       [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) -> () (goto Closing send-buffer)]
+       ;; we may get a TimeWait timeout and close
+       [unobs -> () (goto Closed send-buffer)]
+       ;; some internal timeout or other event might occur that causes us to abort the connection
+       [unobs ->
+         ([obligation send-buffer (variant SendRst)])
+         (goto Closed send-buffer)])
+
+     (define-state (Closed send-buffer)
+       [,(make-packet-pattern * (variant Rst) * *) ->
+        ()
+        (goto Closed send-buffer)]
+       [,(make-packet-pattern * (variant NoRst) * *) ->
+        ([obligation send-buffer (variant SendRst)])
+        (goto Closed send-buffer)])))
+
 ;; Conformance Tests
 (module+ test
-  (define desugared-tcp-packet-type
-    `(Record
-      [source-port Nat]
-      [destination-port Nat]
-      [seq Nat]
-      [ack Nat]
-      [ack-flag (Union [Ack] [NoAck])]
-      [rst (Union [Rst] [NoRst])]
-      [syn (Union [Syn] [NoSyn])]
-      [fin (Union [Fin] [NoFin])]
-      [window Nat]
-      [payload (Vectorof Nat)]))
-
-  (define desugared-tcp-output
-    `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
-
-  (define desugared-socket-address
-    `(Record [ip Nat] [port Nat]))
-
-  (define desugared-session-id
-    `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
-
-  (define desugared-tcp-session-event
-    `(Union
-      [ReceivedData (Vectorof Nat)]
-      [Closed]
-      [ConfirmedClosed]
-      [Aborted]
-      [PeerClosed]
-      [ErrorClosed]))
-
-  (define desugared-write-response
-    `(Union
-      [CommandFailed]
-      [WriteAck]))
-
-  (define desugared-session-command
-    `(Union
-      (Register (Addr ,desugared-tcp-session-event))
-      (Write (Vectorof Nat) (Addr ,desugared-write-response))
-      (Close (Addr (Union [CommandFailed] [Closed])))
-      (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
-      (Abort (Addr (Union [CommandFailed] [Aborted])))))
-
-  (define desugared-session-input
-    `(Union
-      (OrderedTcpPacket ,desugared-tcp-packet-type)
-      (Register (Addr ,desugared-tcp-session-event))
-      (Write (Vectorof Nat) (Addr ,desugared-write-response))
-      (Close (Addr (Union [CommandFailed] [Closed])))
-      (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
-      (Abort (Addr (Union [CommandFailed] [Aborted])))
-      (InternalAbort)
-      (TheFinSeq Nat)
-      (RegisterTimeout)
-      (TimeWaitTimeout)))
-
-  (define desugared-connection-status
-    `(Union
-      [CommandFailed]
-      [Connected ,desugared-session-id
-                 (Addr ,desugared-session-command)]))
-
-  (define desugared-receive-buffer-command
-    `(Union (Resume)))
-
-  (define desugared-send-buffer-command
-    `(Union
-      [SendSyn]
-      [SendRst]
-      [SendText (Vectorof Nat)]
-      [SendFin]))
-
-  ;; patterns to be used in the spec
-  (define-syntax (make-packet-pattern stx)
-    (syntax-parse stx
-      [(_  ackpat rstpat synpat finpat)
-       #`(let ([qack 'ackpat]
-               [qrst 'rstpat]
-               [qsyn 'synpat]
-               [qfin 'finpat])
-           `(variant OrderedTcpPacket
-                     (record [source-port *]
-                             [destination-port *]
-                             [seq *]
-                             [ack *]
-                             [ack-flag ,qack]
-                             [rst ,qrst]
-                             [syn ,qsyn]
-                             [fin ,qfin]
-                             [window *]
-                             [payload *])))]))
-
-  (define session-wire-spec
-    `(specification (receptionists [session ,desugared-session-input])
-                    (externals [receive-buffer ,desugared-receive-buffer-command]
-                               [send-buffer ,desugared-send-buffer-command]
-                               [status-updates ,desugared-connection-status]
-                               [close-notifications
-                                (Union [SessionCloseNotification ,desugared-session-id])])
-       [session (Union (OrderedTcpPacket ,desugared-tcp-packet-type))]
-       ([session (Union
-                  (Register (Addr ,desugared-tcp-session-event))
-                  (Write (Vectorof Nat) (Addr ,desugared-write-response))
-                  (Close (Addr (Union [CommandFailed] [Closed])))
-                  (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
-                  (Abort (Addr (Union [CommandFailed] [Aborted])))
-                  (InternalAbort)
-                  (TheFinSeq Nat))])
-       (goto SynSent send-buffer)
-       (define-state (SynSent send-buffer)
-         ;; APS PROTOCOL BUG: to replicate, remove from ANY of the following states the clause that
-         ;; says receiving a RST should cause us to silently close (without this, the spec says that a
-         ;; RST should lead to an infinite loop of two peers sending RSTs back and forth)
-
-         ;; Anything with an ACK might fail if the ACK is wrong (overlaps with below clauses)
-         [,(make-packet-pattern (variant Ack) * * *) ->
-          ([obligation send-buffer (variant SendRst)])
-          (goto Closed send-buffer)]
-         ;; RST on an ACK: fail
-         [,(make-packet-pattern (variant Ack) (variant Rst) * *) ->
-          ()
-          (goto Closed send-buffer)]
-         ;; SYN-ACK: finish connecting (or fail, above)
-         [,(make-packet-pattern (variant Ack) (variant NoRst) (variant Syn) *) ->
-          ()
-          (goto Established send-buffer)]
-         ;; ACK without other interesting flags: ignore (or fail, above)
-         [,(make-packet-pattern (variant Ack) (variant NoRst) (variant NoSyn) *) ->
-          ()
-          (goto SynSent send-buffer)]
-         ;; ignore RST without ACK
-         [,(make-packet-pattern (variant NoAck) (variant Rst) * *) ->
-          ()
-          (goto SynSent send-buffer)]
-         ;; SYN without ACK: send SYN again (this is simultaneous open)
-         [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant Syn) *) ->
-          ([obligation send-buffer (variant SendSyn)])
-          (goto SynReceived send-buffer)]
-         ;; ignore all others without ACK
-         [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant NoSyn) *) ->
-          ()
-          (goto SynSent send-buffer)]
-         ;; some internal timeout or other event might occur that causes us to abort the connection
-         [unobs ->
-          ([obligation send-buffer (variant SendRst)])
-          (goto Closed send-buffer)]
-         )
-
-       (define-state (SynReceived send-buffer)
-         ;; RST: fail
-         [,(make-packet-pattern * (variant Rst) * *) ->
-          ()
-          (goto Closed send-buffer)]
-         ;; SYN without ACK: fail
-         [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant Syn) *) ->
-          ([obligation send-buffer (variant SendRst)])
-          (goto Closed send-buffer)]
-         ;; ACK without RST: either finish the handshake or send RST and go back to this state
-         [,(make-packet-pattern (variant Ack) (variant NoRst) * *) ->
-          ()
-          (goto Established send-buffer)]
-         [,(make-packet-pattern (variant Ack) (variant NoRst) * *) ->
-          ([obligation send-buffer (variant SendRst)])
-          (goto SynReceived send-buffer)]
-         ;; No ACK, RST, or SYN: ignore
-         [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant NoSyn) *) ->
-          ()
-          (goto SynReceived send-buffer)]
-         ;; some internal timeout or other event might occur that causes us to abort the connection
-         [unobs ->
-          ([obligation send-buffer (variant SendRst)])
-          (goto Closed send-buffer)])
-
-       (define-state (Established send-buffer)
-         ;; RST or SYN causes a total reset
-         [,(make-packet-pattern * (variant Rst) * *) ->
-          ()
-          (goto Closed send-buffer)]
-         [,(make-packet-pattern * * (variant Syn) *) ->
-          ([obligation send-buffer (variant SendRst)])
-          (goto Closed send-buffer)]
-         ;; Normal packet (with or without FIN): no particular activity
-         [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) ->
-          ()
-          (goto Established send-buffer)]
-         ;; might write some bytes to the socket
-         [unobs ->
-          ([obligation send-buffer (variant SendText *)])
-          (goto Established send-buffer)]
-         ;; might decide to close
-         [unobs ->
-          ([obligation send-buffer (variant SendFin)])
-          (goto Closing send-buffer)]
-         ;; some internal timeout or other event might occur that causes us to abort the connection
-         [unobs ->
-          ([obligation send-buffer (variant SendRst)])
-          (goto Closed send-buffer)])
-
-       ;; Corresponds to FIN WAIT 1, FIN WAIT 2, CLOSING, TIME WAIT, and LAST ACK. In the abstract
-       ;; interpretation, we can't distinguish those states because that depends on reasoning about
-       ;; whether a given ACK or FIN was valid and/or ACKed our own FIN. This state just says that we
-       ;; have sent a FIN and may (will) eventually close, and we may send an RST without receiving a
-       ;; packet that triggered it (unlike Closed, which only sends RSTs in response to received
-       ;; packets).
-       (define-state (Closing send-buffer)
-         ;; RST or SYN causes a total reset
-         [,(make-packet-pattern * (variant Rst) * *) ->
-          ()
-          (goto Closed send-buffer)]
-         [,(make-packet-pattern * * (variant Syn) *) ->
-          ([obligation send-buffer (variant SendRst)])
-          (goto Closed send-buffer)]
-         ;; A normal packet (regardless of FIN) *may* cause us to close
-         [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) -> () (goto Closed send-buffer)]
-         [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) -> () (goto Closing send-buffer)]
-         ;; we may get a TimeWait timeout and close
-         [unobs -> () (goto Closed send-buffer)]
-         ;; some internal timeout or other event might occur that causes us to abort the connection
-         [unobs ->
-           ([obligation send-buffer (variant SendRst)])
-           (goto Closed send-buffer)])
-
-       (define-state (Closed send-buffer)
-         [,(make-packet-pattern * (variant Rst) * *) ->
-          ()
-          (goto Closed send-buffer)]
-         [,(make-packet-pattern * (variant NoRst) * *) ->
-          ([obligation send-buffer (variant SendRst)])
-          (goto Closed send-buffer)])))
-
   (test-true "session input type" (csa-valid-type? desugared-session-input))
   (test-true "receive buffer command type" (csa-valid-type? desugared-receive-buffer-command))
   (test-true "send buffer command type" (csa-valid-type? desugared-send-buffer-command))
   (test-true "connection-status type" (csa-valid-type? desugared-connection-status))
   (test-true "Conformance for session controller"
-    (check-conformance desugared-program session-wire-spec)))
+    (check-conformance tcp-program session-wire-spec)))

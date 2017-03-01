@@ -3,6 +3,13 @@
 ;; An implementation of TCP with an Akka-style application-layer interface
 ;; (http://doc.akka.io/docs/akka/current/scala/io-tcp.html)
 
+(provide
+ tcp-program
+ manager-spec)
+
+(require
+ "../desugar.rkt")
+
 (define DEFAULT-WINDOW-SIZE 29200)
 (define MAXIMUM-SEGMENT-SIZE-IN-BYTES 536)
 (define wait-time-in-milliseconds 2000)
@@ -1285,13 +1292,14 @@
          (goto Ready (hash-remove session-table session-id) binding-table)]))))))
 
 (define tcp-program
-  `(program (receptionists [tcp TcpInput]) (externals [packets-out TcpOutput])
-            ,@tcp-definitions
-            (actors [tcp (spawn 1 Tcp packets-out
-                                ,wait-time-in-milliseconds
-                                ,max-retries
-                                ,max-segment-lifetime
-                                ,user-response-wait-time)])))
+  (desugar
+   `(program (receptionists [tcp TcpInput]) (externals [packets-out TcpOutput])
+             ,@tcp-definitions
+             (actors [tcp (spawn 1 Tcp packets-out
+                                 ,wait-time-in-milliseconds
+                                 ,max-retries
+                                 ,max-segment-lifetime
+                                 ,user-response-wait-time)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing
@@ -1306,7 +1314,6 @@
    rackunit
    (for-syntax syntax/parse)
    "../csa.rkt" ; for csa-valid-type?
-   "../desugar.rkt"
    "../main.rkt")
 
   (define-match-expander tcp-syn
@@ -1411,11 +1418,9 @@
         [(_ ip-pattern packet-pattern)
          #`(quasiquote (variant OutPacket ,ip-pattern ,packet-pattern))])))
 
-  (define desugared-program (desugar tcp-program))
-
   (define (start-prog)
     (define packets-out (make-async-channel))
-    (values packets-out (csa-run desugared-program packets-out)))
+    (values packets-out (csa-run tcp-program packets-out)))
 
   ;; Test data
   (define remote-ip 500) ; we're faking IPs with natural numbers, so the actual number doesn't matter
@@ -1998,300 +2003,303 @@
 ;; * receive unacceptable ACK in SynSent
 ;; * in SynReceived, get ACK packet whose ACK is wrong (needs RST)
 
+
+;; ---------------------------------------------------------------------------------------------------
+;; Specification
+
+(define desugared-tcp-packet-type
+  `(Record
+    [source-port Nat]
+    [destination-port Nat]
+    [seq Nat]
+    [ack Nat]
+    [ack-flag Nat]
+    [rst Nat]
+    [syn Nat]
+    [fin Nat]
+    [window Nat]
+    [payload (Vectorof Nat)]))
+
+(define desugared-tcp-output
+  `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
+
+(define desugared-socket-address
+  `(Record [ip Nat] [port Nat]))
+
+(define desugared-session-id
+  `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
+
+(define desugared-tcp-session-event
+  `(Union
+    [ReceivedData (Vectorof Nat)]
+    [Closed]
+    [ConfirmedClosed]
+    [Aborted]
+    [PeerClosed]
+    [ErrorClosed]))
+
+(define desugared-write-response
+  `(Union
+    [CommandFailed]
+    [WriteAck]))
+
+(define desugared-session-command
+  `(Union
+    (Register (Addr ,desugared-tcp-session-event))
+    (Write (Vectorof Nat) (Addr ,desugared-write-response))
+    (Close (Addr (Union [CommandFailed] [Closed])))
+    (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+    (Abort (Addr (Union [CommandFailed] [Aborted])))))
+
+(define desugared-connection-status
+  `(Union
+    [CommandFailed]
+    [Connected ,desugared-session-id
+               (Addr ,desugared-session-command)]))
+
+(define desugared-user-command
+  `(Union
+    [Connect ,desugared-socket-address (Addr ,desugared-connection-status)]
+    [Bind Nat
+          (Addr (Union [Bound] [CommandFailed]))
+          (Addr ,desugared-connection-status)]))
+
+(define desugared-tcp-input
+  `(Union
+    (InPacket Nat ,desugared-tcp-packet-type)
+    (UserCommand ,desugared-user-command)
+    (SessionCloseNotification ,desugared-session-id)))
+
+(define tcp-session-program
+  `(program (receptionists [launcher (Addr ConnectionStatus)])
+            (externals [session-packet-dest (Addr (Union (InTcpPacket TcpPacket)))]
+                       [packets-out (Union [OutPacket IpAddress TcpPacket])]
+                       [close-notifications (Union [SessionCloseNotification SessionId])])
+            ,@tcp-definitions
+            (define-actor Nat
+              (Launcher [session-packet-dest (Addr (Addr (Union (InTcpPacket TcpPacket))))]
+                        [packets-out (Addr (Union [OutPacket IpAddress TcpPacket]))]
+                        [close-notifications (Addr (Union [SessionCloseNotification SessionId]))])
+              ()
+              (goto Init)
+              (define-state (Init) (status-updates)
+                (let ([session (spawn session
+                                      TcpSession
+                                      (SessionId (InetSocketAddress 1234 50) 80)
+                                      (ActiveOpen)
+                                      packets-out
+                                      status-updates
+                                      close-notifications
+                                      30000
+                                      3
+                                      30000
+                                      10000)])
+                  ;; this makes the packet side of the session observable
+                  (send session-packet-dest session)
+                  (goto Done)))
+              (define-state (Done) (m) (goto Done)))
+            (actors [launcher (spawn launcher
+                                     Launcher
+                                     session-packet-dest
+                                     packets-out
+                                     close-notifications)])))
+
+(define session-spec-behavior
+  `((goto AwaitingRegistration)
+
+    (define-state (AwaitingRegistration)
+      [(variant Register app-handler) -> () (goto Connected app-handler)]
+      [(variant Write * write-handler) ->
+       ([obligation write-handler (variant CommandFailed)])
+       (goto AwaitingRegistration)]
+      [(variant Close close-handler) ->
+       ([obligation close-handler (variant Closed)])
+       (goto ClosedNoHandler)]
+      ;; NOTE: this is a tricky spec. I want to say that eventually the session is guaranteed to
+      ;; close, but the possibility of Abort means this close-handler might not get a response. Also
+      ;; the blurring would make that hard to check even without the abort issue.
+      [(variant ConfirmedClose close-handler) -> () (goto ClosingNoHandler close-handler)]
+      [(variant Abort abort-handler) ->
+       ([obligation abort-handler (variant Aborted)])
+       (goto ClosedNoHandler)]
+      ;; e.g. might close because of a registration timeout
+      ;;
+      ;; APS PROTOCOL BUG: to replicate, comment out this unobs transition (didn't realize at first
+      ;; this was a possibility)
+      [unobs -> () (goto ClosedNoHandler)])
+
+    (define-state (Connected app-handler)
+      [(variant Register other-app-handler) -> () (goto Connected app-handler)]
+      [(variant Write * write-handler) ->
+       ;; NOTE: this would probably be WriteAck OR CommandFailed in a real implementation that has a
+       ;; limit on its queue size
+       ([obligation write-handler (variant WriteAck)])
+       (goto Connected app-handler)]
+      [(variant Close close-handler) ->
+       ([obligation app-handler (variant Closed)]
+        [obligation close-handler (variant Closed)])
+       (goto Closed app-handler)]
+      [(variant ConfirmedClose close-handler) -> () (goto Closing app-handler close-handler)]
+      [(variant Abort abort-handler) ->
+       ([obligation abort-handler (variant Aborted)]
+        [obligation app-handler (variant Aborted)])
+       (goto Closed app-handler)]
+      ;; Possible unobserved events:
+      [unobs -> ([obligation app-handler (variant ReceivedData *)]) (goto Connected app-handler)]
+      [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)]
+      [unobs -> ([obligation app-handler (variant PeerClosed)]) (goto Closed app-handler)])
+
+    (define-state (Closing app-handler close-handler)
+      [unobs ->
+       ([obligation close-handler (variant ConfirmedClosed)]
+        [obligation app-handler (variant ConfirmedClosed)])
+       (goto Closed app-handler)]
+      [(variant Register app-handler) -> () (goto Closing app-handler close-handler)]
+      [(variant Write * write-handler) ->
+       ([obligation write-handler (variant CommandFailed)])
+       (goto Closing app-handler close-handler)]
+      [(variant Close other-close-handler) ->
+       ([obligation other-close-handler (variant CommandFailed)])
+       (goto Closing app-handler close-handler)]
+      [(variant ConfirmedClose other-close-handler) ->
+       ([obligation other-close-handler (variant CommandFailed)])
+       (goto Closing app-handler close-handler)]
+      [(variant Abort abort-handler) ->
+       ;; NOTE: no response at all on the ConfirmedClose handler: this is intentional (although
+       ;; possibly not a good idea)
+       ([obligation abort-handler (variant Aborted)]
+        [obligation app-handler (variant Aborted)])
+       (goto Closed app-handler)]
+      [unobs ->
+       ([obligation app-handler (variant ReceivedData *)])
+       (goto Closing app-handler close-handler)]
+      ;; NOTE: again, no response on close-handler. Again, intentional
+      [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])
+
+    (define-state (ClosingNoHandler close-handler)
+      [unobs -> ([obligation close-handler (variant ConfirmedClosed)]) (goto ClosedNoHandler)]
+      [(variant Register app-handler) -> () (goto ClosingNoHandler close-handler)]
+      [(variant Write * write-handler) ->
+       ([obligation write-handler (variant CommandFailed)])
+       (goto ClosingNoHandler close-handler)]
+      [(variant Close other-close-handler) ->
+       ([obligation other-close-handler (variant CommandFailed)])
+       (goto ClosingNoHandler close-handler)]
+      [(variant ConfirmedClose other-close-handler) ->
+       ([obligation other-close-handler (variant CommandFailed)])
+       (goto ClosingNoHandler close-handler)]
+      [(variant Abort abort-handler) ->
+       ([obligation abort-handler (variant Aborted)]) (goto ClosedNoHandler)]
+      ;; NOTE: again, no response on close-handler. Again, intentional
+      ;;
+      ;; APS PROTOCOL BUG: to replicate, comment out this unobs transition
+      [unobs -> () (goto ClosedNoHandler)])
+
+    (define-state (ClosedNoHandler)
+      [(variant Register app-handler) -> () (goto ClosedNoHandler)]
+      [(variant Write * write-handler) ->
+       ([obligation write-handler (variant CommandFailed)])
+       (goto ClosedNoHandler)]
+      [(variant Close other-close-handler) ->
+       ([obligation other-close-handler (variant CommandFailed)])
+       (goto ClosedNoHandler)]
+      [(variant ConfirmedClose other-close-handler) ->
+       ([obligation other-close-handler (variant CommandFailed)])
+       (goto ClosedNoHandler)]
+      [(variant Abort abort-handler) ->
+       ;; An abort during the close process could still succeed
+       ([obligation abort-handler (or (variant Aborted) (variant CommandFailed))])
+       (goto ClosedNoHandler)])
+
+    (define-state (Closed app-handler)
+      [(variant Register app-handler) -> () (goto Closed app-handler)]
+      [(variant Write * write-handler) ->
+       ([obligation write-handler (variant CommandFailed)])
+       (goto Closed app-handler)]
+      [(variant Close other-close-handler) ->
+       ([obligation other-close-handler (variant CommandFailed)])
+       (goto Closed app-handler)]
+      [(variant ConfirmedClose other-close-handler) ->
+       ([obligation other-close-handler (variant CommandFailed)])
+       (goto Closed app-handler)]
+      [(variant Abort abort-handler) ->
+       ;; An abort during the close process could still succeed
+       ([obligation abort-handler (variant Aborted)]
+        [obligation app-handler (variant Aborted)])
+       (goto Closed app-handler)]
+      ;; An abort during the close process could still succeed. Abort may or may not send on
+      ;; app-handler, depending on which state it's in internally
+      [(variant Abort abort-handler) ->
+       ([obligation app-handler (variant CommandFailed)]
+        [obligation abort-handler (variant CommandFailed)])
+       (goto Closed app-handler)]
+      [(variant Abort abort-handler) ->
+       ([obligation abort-handler (variant CommandFailed)])
+       (goto Closed app-handler)]
+      ;; We might get some data while the other side is closing. Could probably split this into a
+      ;; separate spec state, but I'm leaving it here for now
+      [unobs -> ([obligation app-handler (variant ReceivedData *)]) (goto Closed app-handler)]
+      [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])))
+
+(define session-spec
+  `(specification
+    (receptionists [launcher (Addr ,desugared-connection-status)])
+    (externals [session-packet-dest (Addr (Union [InTcpPacket ,desugared-tcp-packet-type]))]
+               [packets-out ,desugared-tcp-output]
+               [close-notifications (Union [SessionCloseNotification ,desugared-session-id])])
+    [launcher (Addr ,desugared-connection-status)]
+    ()
+    (goto Init)
+    (define-state (Init)
+      [status-updates ->
+       ([obligation status-updates (or (variant CommandFailed)
+                                       (variant Connected * (fork ,@session-spec-behavior)))])
+       (goto Done)])
+    (define-state (Done)
+      [* -> () (goto Done)])))
+
+;; (test-true "Conformance for session"
+;;   (check-conformance (desugar tcp-session-program) session-spec))
+
+(define manager-spec
+  `(specification (receptionists [tcp ,desugared-tcp-input])
+                  (externals [packets-out ,desugared-tcp-output])
+     [tcp  (Union [UserCommand ,desugared-user-command])] ; obs interface
+     ([tcp (Union [InPacket Nat ,desugared-tcp-packet-type])])  ; unobs interface
+     (goto Managing)
+     (define-state (Managing)
+       [(variant UserCommand (variant Connect * status-updates)) ->
+        ([fork (goto MaybeSend status-updates)
+               (define-state (MaybeSend status-updates)
+                 [unobs ->
+                  ([obligation status-updates
+                               (or (variant CommandFailed)
+                                   (variant Connected * (fork ,@session-spec-behavior)))])
+                  (goto Done)])
+               (define-state (Done))])
+        (goto Managing)]
+       ;; NOTE: Bind disabled because the conformance checker cannot handle the state explosion that
+       ;; follows
+       [(variant UserCommand (variant Bind * * *)) -> () (goto Managing)]
+
+       ;; Alternative: comment out the spawn for active-open sessions the Connect clause of this
+       ;; spec, and the above Bind clause, and instead uncomment the spawn for passive-open sessions
+       ;; and this more precise spec for Bind commands as well as the less precise Connect clause below to test the behavior of the controller for
+       ;; Bind.
+       ;; [(variant UserCommand (variant Bind * bind-status bind-handler)) ->
+       ;;  ;; on Bind, send back the response to bind-status and fork a spec that says we might get
+       ;;  ;; some number of connections on this address
+       ;;  ([obligation bind-status (or (variant CommandFailed) (variant Bound))]
+       ;;   [fork (goto MaybeGetConnection bind-handler)
+       ;;         (define-state (MaybeGetConnection bind-handler)
+       ;;           [unobs ->
+       ;;            ([obligation bind-handler (variant Connected * (fork ,@session-spec-behavior))])
+       ;;            (goto MaybeGetConnection bind-handler)])])
+       ;;  (goto Managing)]
+       ;; [(variant UserCommand (variant Connect * *)) -> () (goto Managing)])
+     )))
 ;; Conformance Tests
 (module+ test
-  (define desugared-tcp-packet-type
-    `(Record
-      [source-port Nat]
-      [destination-port Nat]
-      [seq Nat]
-      [ack Nat]
-      [ack-flag Nat]
-      [rst Nat]
-      [syn Nat]
-      [fin Nat]
-      [window Nat]
-      [payload (Vectorof Nat)]))
-
-  (define desugared-tcp-output
-    `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
-
-  (define desugared-socket-address
-    `(Record [ip Nat] [port Nat]))
-
-  (define desugared-session-id
-    `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
-
-  (define desugared-tcp-session-event
-    `(Union
-      [ReceivedData (Vectorof Nat)]
-      [Closed]
-      [ConfirmedClosed]
-      [Aborted]
-      [PeerClosed]
-      [ErrorClosed]))
-
-  (define desugared-write-response
-    `(Union
-      [CommandFailed]
-      [WriteAck]))
-
-  (define desugared-session-command
-    `(Union
-      (Register (Addr ,desugared-tcp-session-event))
-      (Write (Vectorof Nat) (Addr ,desugared-write-response))
-      (Close (Addr (Union [CommandFailed] [Closed])))
-      (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
-      (Abort (Addr (Union [CommandFailed] [Aborted])))))
-
-  (define desugared-connection-status
-    `(Union
-      [CommandFailed]
-      [Connected ,desugared-session-id
-                 (Addr ,desugared-session-command)]))
-
-  (define desugared-user-command
-    `(Union
-      [Connect ,desugared-socket-address (Addr ,desugared-connection-status)]
-      [Bind Nat
-            (Addr (Union [Bound] [CommandFailed]))
-            (Addr ,desugared-connection-status)]))
-
-  (define desugared-tcp-input
-    `(Union
-      (InPacket Nat ,desugared-tcp-packet-type)
-      (UserCommand ,desugared-user-command)
-      (SessionCloseNotification ,desugared-session-id)))
-
-  (define tcp-session-program
-    `(program (receptionists [launcher (Addr ConnectionStatus)])
-              (externals [session-packet-dest (Addr (Union (InTcpPacket TcpPacket)))]
-                         [packets-out (Union [OutPacket IpAddress TcpPacket])]
-                         [close-notifications (Union [SessionCloseNotification SessionId])])
-              ,@tcp-definitions
-              (define-actor Nat
-                (Launcher [session-packet-dest (Addr (Addr (Union (InTcpPacket TcpPacket))))]
-                          [packets-out (Addr (Union [OutPacket IpAddress TcpPacket]))]
-                          [close-notifications (Addr (Union [SessionCloseNotification SessionId]))])
-                ()
-                (goto Init)
-                (define-state (Init) (status-updates)
-                  (let ([session (spawn session
-                                        TcpSession
-                                        (SessionId (InetSocketAddress 1234 50) 80)
-                                        (ActiveOpen)
-                                        packets-out
-                                        status-updates
-                                        close-notifications
-                                        30000
-                                        3
-                                        30000
-                                        10000)])
-                    ;; this makes the packet side of the session observable
-                    (send session-packet-dest session)
-                    (goto Done)))
-                (define-state (Done) (m) (goto Done)))
-              (actors [launcher (spawn launcher
-                                       Launcher
-                                       session-packet-dest
-                                       packets-out
-                                       close-notifications)])))
-
-  (define session-spec-behavior
-    `((goto AwaitingRegistration)
-
-      (define-state (AwaitingRegistration)
-        [(variant Register app-handler) -> () (goto Connected app-handler)]
-        [(variant Write * write-handler) ->
-         ([obligation write-handler (variant CommandFailed)])
-         (goto AwaitingRegistration)]
-        [(variant Close close-handler) ->
-         ([obligation close-handler (variant Closed)])
-         (goto ClosedNoHandler)]
-        ;; NOTE: this is a tricky spec. I want to say that eventually the session is guaranteed to
-        ;; close, but the possibility of Abort means this close-handler might not get a response. Also
-        ;; the blurring would make that hard to check even without the abort issue.
-        [(variant ConfirmedClose close-handler) -> () (goto ClosingNoHandler close-handler)]
-        [(variant Abort abort-handler) ->
-         ([obligation abort-handler (variant Aborted)])
-         (goto ClosedNoHandler)]
-        ;; e.g. might close because of a registration timeout
-        ;;
-        ;; APS PROTOCOL BUG: to replicate, comment out this unobs transition (didn't realize at first
-        ;; this was a possibility)
-        [unobs -> () (goto ClosedNoHandler)])
-
-      (define-state (Connected app-handler)
-        [(variant Register other-app-handler) -> () (goto Connected app-handler)]
-        [(variant Write * write-handler) ->
-         ;; NOTE: this would probably be WriteAck OR CommandFailed in a real implementation that has a
-         ;; limit on its queue size
-         ([obligation write-handler (variant WriteAck)])
-         (goto Connected app-handler)]
-        [(variant Close close-handler) ->
-         ([obligation app-handler (variant Closed)]
-          [obligation close-handler (variant Closed)])
-         (goto Closed app-handler)]
-        [(variant ConfirmedClose close-handler) -> () (goto Closing app-handler close-handler)]
-        [(variant Abort abort-handler) ->
-         ([obligation abort-handler (variant Aborted)]
-          [obligation app-handler (variant Aborted)])
-         (goto Closed app-handler)]
-        ;; Possible unobserved events:
-        [unobs -> ([obligation app-handler (variant ReceivedData *)]) (goto Connected app-handler)]
-        [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)]
-        [unobs -> ([obligation app-handler (variant PeerClosed)]) (goto Closed app-handler)])
-
-      (define-state (Closing app-handler close-handler)
-        [unobs ->
-         ([obligation close-handler (variant ConfirmedClosed)]
-          [obligation app-handler (variant ConfirmedClosed)])
-         (goto Closed app-handler)]
-        [(variant Register app-handler) -> () (goto Closing app-handler close-handler)]
-        [(variant Write * write-handler) ->
-         ([obligation write-handler (variant CommandFailed)])
-         (goto Closing app-handler close-handler)]
-        [(variant Close other-close-handler) ->
-         ([obligation other-close-handler (variant CommandFailed)])
-         (goto Closing app-handler close-handler)]
-        [(variant ConfirmedClose other-close-handler) ->
-         ([obligation other-close-handler (variant CommandFailed)])
-         (goto Closing app-handler close-handler)]
-        [(variant Abort abort-handler) ->
-         ;; NOTE: no response at all on the ConfirmedClose handler: this is intentional (although
-         ;; possibly not a good idea)
-         ([obligation abort-handler (variant Aborted)]
-          [obligation app-handler (variant Aborted)])
-         (goto Closed app-handler)]
-        [unobs ->
-         ([obligation app-handler (variant ReceivedData *)])
-         (goto Closing app-handler close-handler)]
-        ;; NOTE: again, no response on close-handler. Again, intentional
-        [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])
-
-      (define-state (ClosingNoHandler close-handler)
-        [unobs -> ([obligation close-handler (variant ConfirmedClosed)]) (goto ClosedNoHandler)]
-        [(variant Register app-handler) -> () (goto ClosingNoHandler close-handler)]
-        [(variant Write * write-handler) ->
-         ([obligation write-handler (variant CommandFailed)])
-         (goto ClosingNoHandler close-handler)]
-        [(variant Close other-close-handler) ->
-         ([obligation other-close-handler (variant CommandFailed)])
-         (goto ClosingNoHandler close-handler)]
-        [(variant ConfirmedClose other-close-handler) ->
-         ([obligation other-close-handler (variant CommandFailed)])
-         (goto ClosingNoHandler close-handler)]
-        [(variant Abort abort-handler) ->
-         ([obligation abort-handler (variant Aborted)]) (goto ClosedNoHandler)]
-        ;; NOTE: again, no response on close-handler. Again, intentional
-        ;;
-        ;; APS PROTOCOL BUG: to replicate, comment out this unobs transition
-        [unobs -> () (goto ClosedNoHandler)])
-
-      (define-state (ClosedNoHandler)
-        [(variant Register app-handler) -> () (goto ClosedNoHandler)]
-        [(variant Write * write-handler) ->
-         ([obligation write-handler (variant CommandFailed)])
-         (goto ClosedNoHandler)]
-        [(variant Close other-close-handler) ->
-         ([obligation other-close-handler (variant CommandFailed)])
-         (goto ClosedNoHandler)]
-        [(variant ConfirmedClose other-close-handler) ->
-         ([obligation other-close-handler (variant CommandFailed)])
-         (goto ClosedNoHandler)]
-        [(variant Abort abort-handler) ->
-         ;; An abort during the close process could still succeed
-         ([obligation abort-handler (or (variant Aborted) (variant CommandFailed))])
-         (goto ClosedNoHandler)])
-
-      (define-state (Closed app-handler)
-        [(variant Register app-handler) -> () (goto Closed app-handler)]
-        [(variant Write * write-handler) ->
-         ([obligation write-handler (variant CommandFailed)])
-         (goto Closed app-handler)]
-        [(variant Close other-close-handler) ->
-         ([obligation other-close-handler (variant CommandFailed)])
-         (goto Closed app-handler)]
-        [(variant ConfirmedClose other-close-handler) ->
-         ([obligation other-close-handler (variant CommandFailed)])
-         (goto Closed app-handler)]
-        [(variant Abort abort-handler) ->
-         ;; An abort during the close process could still succeed
-         ([obligation abort-handler (variant Aborted)]
-          [obligation app-handler (variant Aborted)])
-         (goto Closed app-handler)]
-        ;; An abort during the close process could still succeed. Abort may or may not send on
-        ;; app-handler, depending on which state it's in internally
-        [(variant Abort abort-handler) ->
-         ([obligation app-handler (variant CommandFailed)]
-          [obligation abort-handler (variant CommandFailed)])
-         (goto Closed app-handler)]
-        [(variant Abort abort-handler) ->
-         ([obligation abort-handler (variant CommandFailed)])
-         (goto Closed app-handler)]
-        ;; We might get some data while the other side is closing. Could probably split this into a
-        ;; separate spec state, but I'm leaving it here for now
-        [unobs -> ([obligation app-handler (variant ReceivedData *)]) (goto Closed app-handler)]
-        [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])))
-
-  (define session-spec
-    `(specification
-      (receptionists [launcher (Addr ,desugared-connection-status)])
-      (externals [session-packet-dest (Addr (Union [InTcpPacket ,desugared-tcp-packet-type]))]
-                 [packets-out ,desugared-tcp-output]
-                 [close-notifications (Union [SessionCloseNotification ,desugared-session-id])])
-      [launcher (Addr ,desugared-connection-status)]
-      ()
-      (goto Init)
-      (define-state (Init)
-        [status-updates ->
-         ([obligation status-updates (or (variant CommandFailed)
-                                         (variant Connected * (fork ,@session-spec-behavior)))])
-         (goto Done)])
-      (define-state (Done)
-        [* -> () (goto Done)])))
-
-  ;; (test-true "Conformance for session"
-  ;;   (check-conformance (desugar tcp-session-program) session-spec))
-
-  (define manager-spec
-    `(specification (receptionists [tcp ,desugared-tcp-input])
-                    (externals [packets-out ,desugared-tcp-output])
-       [tcp  (Union [UserCommand ,desugared-user-command])] ; obs interface
-       ([tcp (Union [InPacket Nat ,desugared-tcp-packet-type])])  ; unobs interface
-       (goto Managing)
-       (define-state (Managing)
-         [(variant UserCommand (variant Connect * status-updates)) ->
-          ([fork (goto MaybeSend status-updates)
-                 (define-state (MaybeSend status-updates)
-                   [unobs ->
-                    ([obligation status-updates
-                                 (or (variant CommandFailed)
-                                     (variant Connected * (fork ,@session-spec-behavior)))])
-                    (goto Done)])
-                 (define-state (Done))])
-          (goto Managing)]
-         ;; NOTE: Bind disabled because the conformance checker cannot handle the state explosion that
-         ;; follows
-         [(variant UserCommand (variant Bind * * *)) -> () (goto Managing)]
-
-         ;; Alternative: comment out the spawn for active-open sessions the Connect clause of this
-         ;; spec, and the above Bind clause, and instead uncomment the spawn for passive-open sessions
-         ;; and this more precise spec for Bind commands as well as the less precise Connect clause below to test the behavior of the controller for
-         ;; Bind.
-         ;; [(variant UserCommand (variant Bind * bind-status bind-handler)) ->
-         ;;  ;; on Bind, send back the response to bind-status and fork a spec that says we might get
-         ;;  ;; some number of connections on this address
-         ;;  ([obligation bind-status (or (variant CommandFailed) (variant Bound))]
-         ;;   [fork (goto MaybeGetConnection bind-handler)
-         ;;         (define-state (MaybeGetConnection bind-handler)
-         ;;           [unobs ->
-         ;;            ([obligation bind-handler (variant Connected * (fork ,@session-spec-behavior))])
-         ;;            (goto MaybeGetConnection bind-handler)])])
-         ;;  (goto Managing)]
-         ;; [(variant UserCommand (variant Connect * *)) -> () (goto Managing)])
-       )))))
-
   (test-true "User command type" (csa-valid-type? desugared-user-command))
   (test-true "Conformance for manager"
-    (check-conformance desugared-program manager-spec)))
+    (check-conformance tcp-program manager-spec)))

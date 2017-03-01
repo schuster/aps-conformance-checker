@@ -24,7 +24,11 @@
 
 ;;---------------------------------------------------------------------------------------------------
 
+(require
+ "../desugar.rkt")
+
 (define authN-program
+  (desugar
   (quasiquote
 
 (program (receptionists [guard GetSessionType]) (externals)
@@ -197,7 +201,7 @@
           [guard (spawn 2 ServiceGuard server pw-table)]
           ;; Add this to do the worker test instead
           ;; [worker (spawn 3 HandshakeWorker 1 reply-to server pw-table)]
-          ))))
+          )))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Desugared Types
@@ -298,7 +302,6 @@
    csa/eval
    rackunit
    asyncunit
-   "../desugar.rkt"
    "../main.rkt"
 
    ;; just to check that the desugared type is correct
@@ -308,10 +311,8 @@
   (test-true "Valid type for server input"
     (redex-match? csa-eval τ desugared-server-input-type))
 
-  (define the-program (desugar authN-program))
-
   (test-true "Authenticated session verification"
-    (check-conformance the-program authN-specification)
+    (check-conformance authN-program authN-specification)
     ;; Use this to test a single worker, in a context with the server and guard
     ;; (check-conformance (desugar authN-program) worker-specification)
     ;; Use this to test just the service
@@ -319,7 +320,7 @@
     )
 
   (test-case "auth fails (username doesn't exist)"
-    (define guard (csa-run the-program))
+    (define guard (csa-run authN-program))
     (define response-dest (make-async-channel))
     (async-channel-put guard `(variant GetSession 0 ,response-dest))
     (define auth-channel
@@ -329,7 +330,7 @@
     (check-unicast auth-response-dest '(variant FailedSession)))
 
   (test-case "auth fails (bad password)"
-    (define guard (csa-run the-program))
+    (define guard (csa-run authN-program))
     (define response-dest (make-async-channel))
     (async-channel-put guard `(variant GetSession 0 ,response-dest))
     (define auth-channel
@@ -339,7 +340,7 @@
     (check-unicast auth-response-dest '(variant FailedSession)))
 
   (test-case "auth succeeds"
-    (define guard (csa-run the-program))
+    (define guard (csa-run authN-program))
     (define response-dest (make-async-channel))
     (async-channel-put guard `(variant GetSession 0 ,response-dest))
     (define auth-channel
@@ -352,7 +353,7 @@
     (check-unicast ping-response-dest '(variant Pong)))
 
   (test-case "fresh token every time"
-    (define guard (csa-run the-program))
+    (define guard (csa-run authN-program))
 
     (define (get-session)
       (define response-dest (make-async-channel))
@@ -366,7 +367,7 @@
     (check-not-equal? (get-session) (get-session)))
 
   (test-case "no worker responses after first valid authentication"
-    (define guard (csa-run the-program))
+    (define guard (csa-run authN-program))
     (define response-dest (make-async-channel))
     (async-channel-put guard `(variant GetSession 0 ,response-dest))
     (match-define (list 'variant 'NewSession auth-channel) (async-channel-get response-dest))
@@ -378,7 +379,7 @@
     (check-no-message auth-response-dest2))
 
   (test-case "no worker responses after first invalid authentication"
-    (define guard (csa-run the-program))
+    (define guard (csa-run authN-program))
     (define response-dest (make-async-channel))
     (async-channel-put guard `(variant GetSession 0 ,response-dest))
     (match-define (list 'variant 'NewSession auth-channel) (async-channel-get response-dest))
@@ -390,7 +391,7 @@
     (check-no-message auth-response-dest2))
 
   (test-case "retrieve existing session"
-    (define guard (csa-run the-program))
+    (define guard (csa-run authN-program))
 
     ;; First authentication
     (define response-dest (make-async-channel))

@@ -3,7 +3,6 @@
 (provide check-pair)
 
 (require
- "desugar.rkt"
  "main.rkt")
 
 (define (check-pair prog spec)
@@ -16,7 +15,7 @@
    ["--memoize" "Enable memoization for eval-handler" (set! memoize? #t)]
    ["--evict" "Enable eviction" (set! evict? #t)])
 
-  (check-conformance (desugar prog) spec
+  (check-conformance prog spec
                      #:use-widen? widen?
                      #:memoize-eval-handler? memoize?
                      #:use-eviction? evict?))
