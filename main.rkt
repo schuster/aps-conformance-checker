@@ -49,11 +49,13 @@
 (define/contract (check-conformance program specification
                                     #:use-widen? [use-widen? #t]
                                     #:memoize-eval-handler? [memoize-eval-handler? #t]
-                                    #:use-eviction? [use-eviction? #t])
+                                    #:use-eviction? [use-eviction? #t]
+                                    #:stats-directory [stats-directory #f])
   (->* (csa-valid-program? aps-valid-spec?)
        (#:use-widen? boolean?
         #:memoize-eval-handler? boolean?
-        #:use-eviction? boolean?)
+        #:use-eviction? boolean?
+        #:stats-directory (or/c boolean? string?))
        boolean?)
   (parameterize ([USE-WIDEN? use-widen?]
                  [MEMOIZE-EVAL-HANDLER? memoize-eval-handler?]
@@ -63,7 +65,7 @@
     (printf "Memoize eval-handler: ~s\n" memoize-eval-handler?)
     (printf "Eviction: ~s\n\n" use-eviction?)
     (match-define (list impl-config spec-config) (instantiate-configs program specification))
-    (check-conformance/config impl-config spec-config)))
+    (check-conformance/config impl-config spec-config #:stats-directory stats-directory)))
 
 ;; Given a concrete implementation configuration, a concrete specification configuration, returns #t
 ;; if the conformance-check algorithm can prove that the implementation conforms to the specification,
@@ -89,8 +91,11 @@
 ;; below). By removing these nodes and again back-propagating the effects of those removals (with
 ;; prune-unsupported again), the resulting graph represents a proof that all of its members are in the
 ;; conformance relation.
-(define/contract (check-conformance/config initial-impl-config initial-spec-config)
-  (-> csa-valid-config? aps-valid-config? boolean?)
+(define/contract (check-conformance/config initial-impl-config initial-spec-config
+                                           #:stats-directory [stats-directory #f])
+  (->* (csa-valid-config? aps-valid-config?)
+       (#:stats-directory (or/c boolean? string?))
+       boolean?)
 
   (reset-statistics)
   (with-handlers
@@ -102,14 +107,15 @@
     ;; this thread will automatically end when the job is terminated, so we don't have to wait for it
     (thread
      (lambda ()
-       (let loop ()
-         ;; write to two different files, so that we always have one good file if the job is
-         ;; terminated while we're writing to the file
-         (sleep 60)
-         (with-output-to-file "stats1.txt" print-statistics #:exists 'replace)
-         (sleep 60)
-         (with-output-to-file "stats2.txt" print-statistics #:exists 'replace)
-         (loop))))
+       (when stats-directory
+         (let loop ()
+           ;; write to two different files, so that we always have one good file if the job is
+           ;; terminated while we're writing to the file
+           (sleep 60)
+           (with-output-to-file (build-path stats-directory "stats1.txt") print-statistics #:exists 'replace)
+           (sleep 60)
+           (with-output-to-file (build-path stats-directory "stats2.txt") print-statistics #:exists 'replace)
+           (loop)))))
     (define final-result
       (cond
         [(not (spec-interfaces-available? initial-impl-config initial-spec-config)) #f]
