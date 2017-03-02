@@ -1135,4 +1135,4 @@
   (test-true "Full Raft actor type" (csa-valid-type? full-raft-actor-type))
 
   (test-true "Raft verification"
-    (check-conformance (desugar raft-actor-prog) raft-spec)))
+    (check-conformance raft-actor-prog raft-spec)))
