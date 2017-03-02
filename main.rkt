@@ -99,6 +99,17 @@
         (print-statistics)
         (raise ex))])
     (stat-set! STAT-start-time (date->string (seconds->date (current-seconds)) #t))
+    ;; this thread will automatically end when the job is terminated, so we don't have to wait for it
+    (thread
+     (lambda ()
+       (let loop ()
+         ;; write to two different files, so that we always have one good file if the job is
+         ;; terminated while we're writing to the file
+         (sleep 60)
+         (with-output-to-file "stats1.txt" print-statistics #:exists 'replace)
+         (sleep 60)
+         (with-output-to-file "stats2.txt" print-statistics #:exists 'replace)
+         (loop))))
     (define final-result
       (cond
         [(not (spec-interfaces-available? initial-impl-config initial-spec-config)) #f]
