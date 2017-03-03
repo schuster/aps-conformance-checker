@@ -423,3 +423,51 @@
 
   (test-true "POTS controller conforms to controller-POV spec"
     (check-conformance pots-program pots-spec)))
+
+(module+ test
+  ;; Dynamic tests
+  (require
+   racket/async-channel
+   asyncunit
+   (only-in csa record variant :)
+   csa/eval
+   csa/testing)
+
+  (test-case "Basic call test"
+    (define lim (make-async-channel))
+    (define analyzer (make-async-channel))
+    (define controller (csa-run pots-program lim analyzer))
+    ;; pick up the phone
+    (async-channel-put controller (variant OffHook))
+    ;; wait for dial tone
+    (check-unicast lim (variant StartTone (variant Dial)))
+    ;; dial a 1
+    (async-channel-put controller (variant Digit 1))
+    ;; dial tone should stop
+    (check-unicast lim (variant StopTone))
+    ;; wait for analyzer request
+    (check-unicast-match analyzer (csa-variant AnalysisRequest (list 1) _))
+    ;; analyzer requires more digits
+    (async-channel-put controller (variant GetMoreDigits))
+    ;; dial a 2
+    (async-channel-put controller (variant Digit 2))
+    ;; wait for analyzer request
+    (check-unicast-match analyzer (csa-variant AnalysisRequest (list 2 1) _))
+    ;; analyzer accepts the number
+    (define peer (make-async-channel))
+    (async-channel-put controller (variant Valid (record [id 500] [address peer])))
+    ;; wait for seize to peer
+    (check-unicast-match
+     peer
+     (csa-variant PeerMessage (csa-variant Seize _)))
+    ;; peer is seized, starts ringing
+    (async-channel-put controller (variant PeerMessage (variant Seized)))
+    (check-unicast lim (variant StartTone (variant Ring)))
+    ;; peer answers, controller should connect
+    (async-channel-put controller (variant PeerMessage (variant Answered)))
+    (check-unicast lim (variant StopTone))
+    (check-unicast lim (variant Connect 500))
+    ;; we hang up, wait for Disconnect/Cleared
+    (async-channel-put controller (variant OnHook))
+    (check-unicast lim (variant Disconnect 500))
+    (check-unicast peer (variant PeerMessage (variant Cleared)))))
