@@ -4,10 +4,9 @@
 
 (provide
  ;; Required by conformance checker
- ;; TODO: consider having this one return the address or #f
  aps#-config-obs-interface
- aps#-unknown-address? ; TODO: get rid of this; this file should instead just return lists of τa's for interfaces
- aps#-config-receptionists ; TODO: rename this
+ aps#-unknown-address?
+ aps#-config-receptionists ; REFACTOR: rename this
  aps#-config-singleton-commitments
  aps#-config-many-of-commitments
  aps#-matching-steps
@@ -57,6 +56,7 @@
 (define-extended-language aps#
   aps-eval-with-csa#
   (s# (σ# (τa# ...) (goto φ u ...) (Φ ...) O#))
+  ;; REFACTOR: make this interface a list of 0 or 1 typed addresses, rather than the UNKNOWN thing
   (σ# τa# UNKNOWN) ; observed environment interface
   (u .... a#ext)
   (O# ((a#ext (m po) ...) ...)))
@@ -193,7 +193,7 @@
 (define (config-current-transitions config)
   (term (config-current-transitions/mf ,config)))
 
-;; TODO: deal with the case where the pattern variables shadow the state variables
+;; FIX: deal with the case where the pattern variables shadow the state variables
 (define-metafunction aps#
   config-current-transitions/mf : s# -> ((pt -> (f ...) (goto φ u ...)) ...)
   [(config-current-transitions/mf
@@ -273,7 +273,49 @@
                 null
                 (term (((obs-ext 0)))))
        #t
-       (term (external-receive (init-addr 0) (* Nat)))))))
+       (term (external-receive (init-addr 0) (* Nat))))))
+
+  (test-equal? "Spec observes address but neither saves it nor has obligations for it"
+    (aps#-matching-steps
+     (make-s# `((define-state (A) [r -> () (goto A)]))
+              `(goto A)
+              null
+              null)
+     #t
+     `(external-receive (init-addr 0) (Nat (obs-ext 1))))
+    (list `[,(make-s# `((define-state (A) [r -> () (goto A)]))
+                      `(goto A)
+                      null
+                      `([(obs-ext 1)]))
+            ()]))
+
+  (test-equal? "Unobserved address not tracked in obligation map"
+    (aps#-matching-steps
+     (make-s# `((define-state (A) [r -> () (goto A)]))
+              `(goto A)
+              null
+              null)
+     #f
+     `(external-receive (init-addr 0) (Nat (obs-ext 1))))
+    (list `[,(make-s# `((define-state (A) [r -> () (goto A)]))
+                      `(goto A)
+                      null
+                      null)
+            ()]))
+
+  (test-equal? "Address matched by wildcard not tracked in obligation map"
+    (aps#-matching-steps
+     (make-s# `((define-state (A) [* -> () (goto A)]))
+              `(goto A)
+              null
+              null)
+     #t
+     `(external-receive (init-addr 0) (Nat (obs-ext 1))))
+    (list `[,(make-s# `((define-state (A) [* -> () (goto A)]))
+                      `(goto A)
+                      null
+                      null)
+            ()])))
 
 ;; Returns the config updated by running the given transition, if it can be taken from the given
 ;; trigger, along with all configs spawned in the transition, or #f if the transition is not possible
@@ -392,7 +434,6 @@
 
 ;; Moves the given observed interface into the unobserved interface (used for forks)
 (define-metafunction aps#
-  ;; TODO: should I do a canonicalization here?
   interface-add-address/mf : any_unobs-interface σ# -> any
   [(interface-add-address/mf any_unobs UNKNOWN) any_unobs]
   [(interface-add-address/mf (any_1 ... (τ_unobs a#) any_2 ...) (τ_obs a#))
@@ -561,12 +602,6 @@
    --------------
    (aps#-match/j (variant t v# ..._n) (variant t p ..._n) ([x a#_binding] ... ...))]
 
-  ;; TODO: this should *not* match, because we can't be sure the impl and spec both treat it as the
-  ;; same thing
-  [(aps#-match/j (* τ) p ([x a#_binding] ...)) ...
-   --------------
-   (aps#-match/j (* (Union _ ... [t τ ..._n] _ ...)) (variant t p ..._n) ([x a#_binding] ... ...))]
-
   [(aps#-match/j v# p ([x a#_binding] ...)) ...
    ---------------------------------------------
    (aps#-match/j (record [l v#] ..._n) (record [l p] ..._n) ([x a#_binding] ... ...))]
@@ -588,7 +623,7 @@
   (check-true (judgment-holds (aps#-match/j (variant A (Nat (obs-ext 1)))
                                             (variant A x)
                                             ([x (obs-ext 1)]))))
-  (check-true (judgment-holds (aps#-match/j (* (Union [A (Addr Nat)])) (variant A *) ())))
+  (check-false (judgment-holds (aps#-match/j (* (Union [A (Addr Nat)] [B])) (variant A *) ())))
   (check-true (judgment-holds (aps#-match/j (record [a (Nat (obs-ext 1))])
                                             (record [a x])
                                             ([x (obs-ext 1)]))))
@@ -636,7 +671,6 @@
                        ())]
 
   [----
-   ;; TODO: what do we do here if the address's type expands the existing one?
    (aps#-matches-po?/j τa# τa# self τa# () ())]
 
   [----
@@ -968,11 +1002,6 @@
            ([(obs-ext 1)]))))
        ,(list (term [(obs-ext 1) (or * (fork (goto B)))]))]))
 
-  ;; TODO: test aps#-resolve-outputs for (along with normal cases):
-  ;; * spec that observes an address but neither saves it nor has output commtiments for it
-  ;; * POV unobservables
-  ;; * wildcard unobservables
-
   (test-equal? "Resolve against spawned spec"
     (aps#-resolve-outputs
      (list `(UNKNOWN () (goto S1) ((define-state (S1))) ([(obs-ext 1) [single (variant A *)]]))
@@ -1218,7 +1247,7 @@
   (redex-let aps# ([(σ# _ ...) config])
     (term σ#)))
 
-;; TODO: rename this to unobs-interface
+;; REFACTOR: rename this to unobs-interface
 (define (aps#-config-receptionists config)
   (term (config-receptionists/mf ,config)))
 
@@ -1370,17 +1399,14 @@
 (define-metafunction aps#
   relevant-external-addrs/mf : s# -> (a#ext ...)
   [(relevant-external-addrs/mf s#)
-   ,(remove-duplicates (term (any_args ... any_commitment-addr ...)))
-   ;; TODO: remove the state args part of this; those should already be in the commitment map (even if
-   ;; they don't have any commitments yet)
-   (where (any_args ...) ,(aps#-config-current-state-args (term s#)))
+   (any_commitment-addr ...)
    (where ((any_commitment-addr _ ...) ...) (config-commitment-map/mf s#))])
 
 (module+ test
   (check-equal?
    (aps#-relevant-external-addrs
     (redex-let* aps#
-                ([O# (term (((obs-ext 1)) ((obs-ext 3)) ((obs-ext 4))))]
+                ([O# (term (((obs-ext 1)) ((obs-ext 2)) ((obs-ext 3)) ((obs-ext 4))))]
                  [s# (term (UNKNOWN
                             ()
                             (goto Always (obs-ext 1) (obs-ext 2) (obs-ext 3))

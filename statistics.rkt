@@ -73,7 +73,6 @@
   (stat-set! STAT-conformance-size #f))
 
 (define (print-statistics)
-  ;; TODO:
   (printf "STATISTICS:\n")
   (printf "Visited pairs: ~s\n" (stat-value STAT-visited-pairs-count))
   (printf "Unique impl configs: ~s\n" (stat-value STAT-unique-impl-configs-count))

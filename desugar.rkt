@@ -49,7 +49,7 @@
    (name (x f a s T V))
    (string (string))
    (PrimitiveType (pτ))
-   ;; TODO: figure out how to get rid of this
+   ;; REFACTOR: figure out how to get rid of this
    (ProgramKeyword (program-kw))
    (ElseKeyword (else-kw))
    (ReceptionistsKeyword (receptionists-kw))
@@ -84,7 +84,7 @@
        x
        (goto s e ...)
        (send e1 e2)
-       ;; TODO: have Nanopass compute the line number for each spawn
+       ;; REFACTOR: have Nanopass compute the line number for each spawn
        (spawn l a e ...)
        (record [x e] ...)
        (variant V e ...)
@@ -95,8 +95,8 @@
        (case e1 [(V x ...) e2 e* ...] ...)
        ;; (po e ...)
        ;;
-       ;; TODO: find a way to generalize these to primops (ideal solution requires "tagless" fix in
-       ;; Nanopass)
+       ;; REFACTOR: find a way to generalize these to primops (ideal solution requires "tagless" fix
+       ;; in Nanopass)
        (+ e1 e2)
        (- e1 e2)
        (mult e1 e2)
@@ -160,11 +160,6 @@
         T)
   (entry Prog))
 
-;; TODO: how does Nanopass resolve ambiguity?
-
-;; TODO: put all the nominal stuff (at least program-level) into just one pass: it's basically all the
-;; same, and would probably save boilerplate
-
 ;; ---------------------------------------------------------------------------------------------------
 ;; Function Call Wrapping
 
@@ -181,7 +176,6 @@
        [(,f ,[e] ...) `(app ,f ,e ...)]))
 
 (module+ test
-  ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
   (test-equal? "Wrapped calls"
     (unparse-csa/wrapped-calls
      (wrap-function-calls
@@ -263,7 +257,6 @@
        [(begin ,[e]) e]))
 
 (module+ test
-  ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
   (test-equal? "wrap-multi-exp-bodies/remove-extraneous-begins"
    (unparse-csa/single-exp-bodies
     (remove-extraneous-begins
@@ -305,7 +298,6 @@
   (require (prefix-in redex: redex/reduction-semantics))
   (redex:define-language L)
 
-  ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
   (define desugared-code (unparse-csa/desugared-for
                  (desugar-for
                   (with-output-language (csa/single-exp-bodies Prog)
@@ -335,7 +327,6 @@
                      `(cond [,e3 ,e4] ... [,else-kw ,e5]))))]))
 
 (module+ test
-  ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
   (test-equal? "desugar cond"
    (unparse-csa/desugared-cond
     (desugar-cond
@@ -366,7 +357,6 @@
            [(False) ,e3])]))
 
 (module+ test
-  ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
   (test-equal? "desugar if"
    (unparse-csa/desugared-if
     (desugar-if
@@ -393,7 +383,6 @@
        [(let* () ,[e]) e]))
 
 (module+ test
-  ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
   (test-equal? "desugar let*"
    (unparse-csa/desugared-let*
     (desugar-let*
@@ -419,7 +408,6 @@
 
 (define-parser parse-csa/desugared-variants csa/desugared-variants)
 
-;; TODO: consider leaving the multi-arity variants in
 (define-pass desugar-variants : csa/desugared-let* (P) -> csa/desugared-variants ()
   (Prog : Prog (P items-to-add) -> Prog ()
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
@@ -430,7 +418,6 @@
            (map
             (lambda (name field-list types)
               (with-output-language (csa/desugared-variants ProgItem)
-                ;; TODO: field names must be different...
                 `(define-function (,name [,field-list ,types] ...) (variant ,name ,field-list ...))))
             V x τ))
          (Prog (with-output-language (csa/desugared-let* Prog)
@@ -459,7 +446,6 @@
   (Prog P null))
 
 (module+ test
-  ;; TODO: write an alpha-equivalence predicate, or reuse one from Redex
   (test-equal? "desugar variants"
    (unparse-csa/desugared-variants
     (desugar-variants
@@ -489,26 +475,21 @@
 (define-parser parse-csa/inlined-records csa/inlined-records)
 
 (define-pass inline-records : csa/desugared-variants (P) -> csa/inlined-records ()
-  ;; TODO: I could really use something like syntax-parse's splicing forms so I could look at items
-  ;; individually and splice them back in
+  ;; REFACTOR: I could really use something like syntax-parse's splicing forms so I could look at
+  ;; items individually and splice them back in
   (Prog : Prog (P items-to-add) -> Prog ()
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
           (define-record ,T [,x ,[τ]] ...)
           ,PI ...
           (,actors-kw [,x3 ,e3] ...))
-         ;; TODO: would be nice if there were a shortcut syntax for saying "create something of the
-         ;; source language type
          (Prog (with-output-language (csa/desugared-variants Prog)
                  `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                    ,PI ...
                    (,actors-kw [,x3 ,e3] ...)))
                (append items-to-add
                        (list
-                        ;; TODO: figure out why I need with-output-language here (maybe b/c I'm not
-                        ;; parsing the entry point? or the entry point of this processor?
                         (with-output-language (csa/inlined-records ProgItem)
                           `(define-type ,T (Record [,x ,τ] ...)))
-                        ;; TODO: figure out why I need with-output-language here
                         (with-output-language (csa/inlined-records ProgItem)
                           `(define-function (,T [,x ,τ] ...) (record [,x ,x] ...))))))]
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw  [,x2 ,τ2] ...)
@@ -554,9 +535,9 @@
 (define-parser parse-csa/inlined-types csa/inlined-types)
 
 (define-pass inline-type-aliases : csa/inlined-records (P) -> csa/inlined-types ()
-  ;; TODO: figure out the best way to do this kind of fold, because the restriction that the return
-  ;; type always has to be the same languae prevents me from doing a general Subst processor like I
-  ;; want to (but perhaps that's inefficient anyway, since it requires many passes)
+  ;; REFACTOR: figure out the best way to do this kind of fold, because the restriction that the
+  ;; return type always has to be the same languae prevents me from doing a general Subst processor
+  ;; like I want to (but perhaps that's inefficient anyway, since it requires many passes)
   (definitions
     (define aliases-so-far (make-hash)))
   (Prog : Prog (P items-to-add) -> Prog ()
@@ -616,9 +597,9 @@
 (define-parser parse-csa/inlined-program-definitions csa/inlined-program-definitions)
 
 (define-pass inline-program-definitions : csa/inlined-types (P) -> csa/inlined-program-definitions ()
-  ;; TODO: figure out the best way to do this kind of fold, because the restriction that the return
-  ;; type always has to be the same languae prevents me from doing a general Subst processor like I
-  ;; want to (but perhaps that's inefficient anyway, since it requires many passes)
+  ;; REFACTOR: figure out the best way to do this kind of fold, because the restriction that the
+  ;; return type always has to be the same languae prevents me from doing a general Subst processor
+  ;; like I want to (but perhaps that's inefficient anyway, since it requires many passes)
   ;;
   ;; TODO: Figure out an easy way to preserve hygiene, since now I should do proper substitution
   (definitions
@@ -746,7 +727,6 @@
     [(define-actor ,[τ] (,a [,x ,[τ1]] ...) () ,[e] ,[S] ...)
      `(define-actor ,τ (,a [,x ,τ1] ...) ,e ,S ...)])
   (Exp : Exp (e) -> Exp ()
-       ;; TODO: see tmp/expected-meta for why this breaks
        [(app ,f ,[e*] ...)
         (match-define (func-record formals body)
           (hash-ref funcs f (lambda () (error 'inline-actor-definitions "could not find match for function in call ~s\n" e))))
@@ -816,7 +796,6 @@
 (struct actor-record (type formals formal-types body state-defs))
 
 (define-pass inline-actors : csa/inlined-actor-definitions (P) -> csa/inlined-actors ()
-  ;; TODO: I think the return "type" is not checked, because I've seen things get through when I had ActorDef instead of Prog
   (Prog : Prog (P defs-so-far) -> Prog ()
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
           (define-actor ,[τ0] (,a [,x ,[τ]] ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...)
@@ -826,7 +805,6 @@
                  `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                    ,PI* ...
                    (,actors-kw [,x3 ,e3] ...)))
-               ;; TODO: figure out if hash-set overwrites existing entries or not
                (hash-set defs-so-far a (actor-record τ0 x τ e S)))]
         [(,program-kw (,receptionists-kw [,x1 ,[τ1]] ...) (,externals-kw [,x2 ,[τ2]] ...)
           (,actors-kw [,x3 ,[Exp : e0 defs-so-far -> e]] ...))

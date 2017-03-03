@@ -232,7 +232,6 @@
   g-transpose)
 
 (module+ test
-  ;; TODO: tests
   (test-graph-equal? "graph-transpose"
     (graph-transpose
      (graph-literal

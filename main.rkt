@@ -336,8 +336,6 @@
                     ;;   (printf "pre-sbc: ~s\n" successor-pair)
                     ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
                     (for ([sbc-result (sbc* successor-pairs)])
-                      ;; TODO: add the address binding here, too, and adjust other uses of incoming
-                      ;; (e.g. in prune-unsupported) to take that structure into account
                       (match-define (list unwidened-sbc-pair rename-map) sbc-result)
                       (define (seen? new-pair)
                         (or (set-member? to-visit new-pair)
@@ -378,12 +376,6 @@
     ;; than continuing to evaluate other possible steps from this configuration, we call this
     ;; continuation to abort the whole evaluation step.
     (define (abort) (return-continuation #f))
-
-
-
-    ;; TODO: (perf. improvement) share the results between the observed and unobserved external
-    ;; receives, because often many of the results will be the same (because the same address might
-    ;; receive messages from both the observed and unobserved environments)
     (define triggers (impl-triggers-from impl-config spec-config))
     (widen-printf "Finding impl steps from ~s triggers\n" (length triggers))
     (append*
@@ -410,8 +402,6 @@
 (define (impl-triggers-from impl-config spec-config)
   (define obs-triggers
     (let ([obs-interface (aps#-config-obs-interface spec-config)])
-      ;; TODO: refactor this interface to be a list of 0 or 1 typed addresses, rather than the UNKNOWN
-      ;; thing
       (if (aps#-unknown-address? obs-interface)
           null
           (map (curryr list #t) (external-triggers-for-interface (list obs-interface))))))
@@ -838,15 +828,12 @@
                 (worklist-loop widened-pair)]
                [new-s
                 (stat-set! STAT-widen-spec-match-count (add1 (stat-value STAT-widen-spec-match-count)))
-
-                ;; TODO: what should I do with the rename map? I don't remember what that was used
-                ;; for. I think maybe to correlate output commitments across multiple steps? So yeah,
-                ;; I probably need to adjust that here... (although if the spec didn't change, then
-                ;; aren't I okay to leave it as is?)
-
                 ;; If there's a possible way for a spec to match this step, then apply the transition
-                ;; once more to get "many-of" instances of new spawns and messages, so we have the best
-                ;; chance of this configuration being greater than its predecessor
+                ;; once more to get "many-of" instances of new spawns and messages, so we have the
+                ;; best chance of this configuration being greater than its predecessor.
+                ;;
+                ;; We can ignore the rename-map: the spec doesn't change, so the rename-map doesn't
+                ;; change, either.
                 (define once-applied-pair
                   (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
                 (cond
@@ -2332,14 +2319,6 @@
               (make-empty-queues-config (list request-response-actor2 statically-delegating-responder-actor) null)
               (make-exclusive-spec request-response-spec)))
 
-  ;; TODO: tests for:
-  ;; * commitment satisfied immediately
-  ;; * satisfied in a later internal send
-  ;; * satisfied only if another receive comes in
-  ;; * never satisfied
-  ;; * satisfied only if no other receive comes in
-
-  ;; TODO: test for obs/unobs receptionists changing over time
 
   ;;;; Self Reveal
   (define self-reveal-spec
@@ -2366,21 +2345,25 @@
             (goto Running))))
        (goto Init ((Addr (Addr Nat)) (addr 1)))))))
 
-  ;; TODO: redo this test in a type-correct way, with a second ignore-all actor
-  ;; (define reveal-wrong-address-actor
-  ;;   (term
-  ;;    ((addr 0 (Addr Nat))
-  ;;     (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
-  ;;         (goto Init r)
-  ;;         [(timeout 5)
-  ;;          (begin
-  ;;            (send r r)
-  ;;            (goto Running))])
-  ;;       (define-state (Running) (r)
-  ;;         (begin
-  ;;           (send r 1)
-  ;;           (goto Running))))
-  ;;      (goto Init (addr 1))))))
+  (define reveal-wrong-address-actor
+    (term
+     (((Addr Nat) (addr 0))
+      (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
+          (goto Init r)
+          [(timeout 5)
+           (begin
+             (send r ((Addr Nat) (addr 2)))
+             (goto Running))])
+        (define-state (Running) (r)
+          (begin
+            (send r 1)
+            (goto Running))))
+       (goto Init ((Addr (Addr Nat)) (addr 1)))))))
+  (define to-reveal-ignore-all-actor
+    (term
+     (((Addr Nat) (addr 2))
+      (((define-state (IgnoreAll) (r) (goto IgnoreAll)))
+       (goto IgnoreAll)))))
 
   (define reveal-self-double-output-actor
     (term
@@ -2398,11 +2381,9 @@
             (goto Running))))
        (goto Init ((Addr (Addr Nat)) (addr 1)))))))
 
-  ;; TODO: do a version of this test with an ignore-all actor rather than double-send
-
   (test-valid-actor? self-reveal-actor)
-  ;; TODO: redo this test later
-  ;; (check-not-false ( reveal-wrong-address-actor))
+  (test-valid-actor? reveal-wrong-address-actor)
+  (test-valid-actor? to-reveal-ignore-all-actor)
   (test-valid-actor? reveal-self-double-output-actor)
   (test-valid-instance? self-reveal-spec)
 
@@ -2410,20 +2391,17 @@
              (check-conformance/config
               (make-single-actor-config self-reveal-actor)
               (make-exclusive-spec self-reveal-spec)))
-  ;; TODO: redo this test later
-  ;; (test-false "Catch self-reveal of wrong address"
-  ;;             (check-conformance/config
-  ;;              (make-single-actor-config reveal-wrong-address-actor)
-  ;;              self-reveal-spec
-  ;;              (term ((addr 0 (Addr (Addr (Addr Nat)))))) null
-  ;;              (hash)))
+
+  (test-false "Catch self-reveal of wrong address"
+              (check-conformance/config
+               (make-empty-queues-config null
+                                         (list reveal-wrong-address-actor to-reveal-ignore-all-actor))
+               (make-exclusive-spec self-reveal-spec)))
+
   (test-false "Catch self-reveal of actor that doesn't follow its behavior"
               (check-conformance/config
                (make-single-actor-config reveal-self-double-output-actor)
                (make-exclusive-spec self-reveal-spec)))
-
-  ;; TODO: write tests for when we try to reveal it twice, but the second time the address doesn't
-  ;; match the first one
 
   ;;;; Spawn
   (define echo-spawning-actor
@@ -2431,7 +2409,6 @@
      (((Addr (Addr (Addr Nat))) (addr 0))
       (((define-state (Always) (response-target)
           (begin
-            ;; TODO: refactor this as a new use of the dynamic response actor above
             (let ([child
                    (spawn
                     echo-spawn
@@ -2451,7 +2428,6 @@
      (((Addr (Addr (Addr Nat))) (addr 0))
       (((define-state (Always) (response-target)
           (begin
-            ;; TODO: refactor this as a new use of the dynamic response actor above
             (let ([child
                    (spawn
                     double-response-spawn
@@ -2486,7 +2462,7 @@
              (check-conformance/config
               (make-single-actor-config echo-spawning-actor)
               (make-exclusive-spec echo-spawn-spec)))
-  ;; TODO: also add a sink-spawning actor when commitment satisfaction is working
+
   (test-false "Spawned double-response actor does not match dynamic response spec"
               (check-conformance/config
                (make-single-actor-config double-response-spawning-actor)
@@ -2604,8 +2580,6 @@
      (make-single-actor-config spawn-and-retain-but-send-new)
      (make-exclusive-spec echo-spawn-spec)))
 
-  ;; TODO: try variations on this test. E.g., send child address during its constructor rather than in
-  ;; a later timeout, have spec have one state for child instead of two, etc.
   (define spawn-self-revealing-echo
     (term
      (((Addr (Addr (Addr Nat))) (addr 0))
@@ -2762,8 +2736,6 @@
 
   ;; Actor that creates a worker to handle each new request, where the worker then sends the result
   ;; back to another statically-known actor for sending back to the client
-  ;;
-  ;; TODO: do a version of this that sends to the actor instead of closing over the address
   (define forwarding-type (term (Record [result Nat] [dest (Addr Nat)])))
   (define (make-down-and-back-server child-behavior)
     (term
@@ -2883,10 +2855,6 @@
     (check-conformance/config
      (make-single-actor-config conflicts-only-test-actor)
      (make-exclusive-spec echo-spawn-spec)))
-
-  ;; TODO: write a test to check my auth theory: worker in done state, unobserved master creates a new
-  ;; worker, spec accidentally switches to watch new worker instead of old (and complains when the
-  ;; worker that the spec thinks should be done actually sends a message)
 
   ;; Master creates workers, each worker reveals itself after timeout, sends response to next message
   ;; and dies. The worker is stateful, so this models an error I found in the authN example

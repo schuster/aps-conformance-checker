@@ -41,11 +41,9 @@
      (goto q e ...)
      (send e e)
      (begin e ... e)
-     ;; TODO: let should probably be syntactic sugar for a special kind of case statement
+     ;; REFACTOR: let should probably be syntactic sugar for a special kind of case statement
      (let ([x e] ...) e)
      (case e [(t x ...) e] ...)
-     ;; TODO: come up with vocab for tagged unions: is a "variant" the full type, or one branch of the
-     ;; type, or what?
      (variant t e ...)
      (record [l e] ...)
      (: e l) ; record lookup

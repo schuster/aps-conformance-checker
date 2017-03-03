@@ -171,8 +171,8 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Message generation
 
-;; TODO: create a second type of "fresh" external address instead (one that gets converted into the
-;; other one during canonicalization), so I don't have to worry about overlapping with existing
+;; REFACTOR: create a second type of "fresh" external address instead (one that gets converted into
+;; the other one during canonicalization), so I don't have to worry about overlapping with existing
 ;; addresses
 (define FIRST-GENERATED-ADDRESS 100)
 (define next-generated-address FIRST-GENERATED-ADDRESS)
@@ -313,7 +313,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
 
-;; TODO: give these structs better names
+;; REFACTOR: give these structs better names
 
 ;; Represents the effects of a single handler-level transition of an actor, before the results are
 ;; applied to the pre-handler configuration. Used for the widening optimization.
@@ -570,8 +570,8 @@
          cached-results]))
 
     (for/list ([machine-state final-machine-states])
-      ;; TODO: rename outputs to something like "transmissions", because some of them stay internal
-      ;; to the configuration
+      ;; REFACTOR: rename outputs to something like "transmissions", because some of them stay
+      ;; internal to the configuration
       (match-define (list final-exp (list outputs spawns)) machine-state)
       (redex-let csa# ([(in-hole E# (goto q v#_param ...)) final-exp])
         (csa#-transition-effect
@@ -604,7 +604,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Interpreter
 
-;; TODO: ideal thing would be a match-like macro that has special markers around the sub-terms to
+;; REFACTOR: ideal thing would be a match-like macro that has special markers around the sub-terms to
 ;; eval, and each clause only deals with the *values* (stuck states are returned automatically). I
 ;; think that takes more macro-fu than I have time to learn right now, though (mostly because it
 ;; requires handling ellipses in patterns). If I did ever write it, though, it would probably be a
@@ -613,8 +613,6 @@
 ;; Also, this should probably be written in a more canonical monad style (I think this is just a
 ;; combination of a state monad and some kind of non-determinism monad), but I don't know enough about
 ;; monads to do that right now.
-
-;; TODO: type definitions and names
 
 ;; A MachineState is (Tuple Exp (Tuple Transmissions Spawns)), where Transmissions and Spawns are as
 ;; in H#
@@ -841,7 +839,6 @@
            [`(,(or 'vector-take 'vector-drop 'vector-copy) ,v ,_ ...)
             (value-result v effects)]
            [`(vector-length ,_) (value-result `(* Nat) effects)]
-           ;; TODO: figure out if the type is ever *not* big enough to also cover the other vector
            [`(vector-append (* (Vectorof ,type)) (* (Vectorof ,type2)))
             (value-result `(* (Vectorof ,type)) effects)]
            ;; at least one of the vectors is precise, so convert the whole thing to a precise vector
@@ -938,8 +935,8 @@
              ;; Haven't seen this loop yet: return the result of skipping the loop as well as
              ;; iterating with every possible member of the collection.
              ;;
-             ;; We set the empty-eval-result as the loop-result while evaluating the loop body: this is
-             ;; what we expect to return if we reduce to this exact same state from here (the notes
+             ;; We set the empty-eval-result as the loop-result while evaluating the loop body: this
+             ;; is what we expect to return if we reduce to this exact same state from here (the notes
              ;; above explain why). After evaluation complete, we set the loop-result to the full set
              ;; of resulting states.
              (hash-set! (loop-results) this-loop empty-eval-result)
@@ -948,7 +945,6 @@
                  [`(,(or 'list-val 'vector-val) ,items ...) items]
                  [`(* (,(or 'Listof 'Vectorof) ,type)) (list `(* ,type))]))
              (define result-after-skipping (value-result result-val effects))
-             ;; TODO: memoize the result
              (define final-results
                (for/fold ([full-result result-after-skipping])
                          ([member collection-members])
@@ -1037,7 +1033,6 @@
          (flush-output)
          (value-result `(* Nat) effects))
        (lambda (stucks) `(printf ,@stucks)))]
-    ;; TODO: add print-len back in for lists and vectors
     ;; Misc. Values
     [`(variant ,tag ,exps ...)
      (eval-and-then* exps effects
@@ -1050,7 +1045,6 @@
             `(blurred-spawn-addr ,_)
             `(obs-ext ,_)))
      (value-result exp effects)]
-    ;; TODO: need clauses for value forms
     [_ (error 'eval-machine/internal "Don't know how to evaluate ~s\n" exp)]))
 
 ;; (Listof Exp)
@@ -1173,8 +1167,8 @@
     (match-define (list `(,final-exps ,_) ...) (append value-states stuck-states))
     final-exps)
 
-  ;; TODO: rename this to something like check-exp-reduces*-to, since it reduces all the way to either
-  ;; a stuck state or a value
+  ;; REFACTOR: rename this to something like check-exp-reduces*-to, since it reduces all the way to
+  ;; either a stuck state or a value
   (define-check (check-exp-steps-to? e1 e2)
     (define terminal-exps (exp-reduce* e1))
     (unless (equal? terminal-exps (list e2))
@@ -1556,32 +1550,10 @@
   ;;               ([(obs-ext 1) (variant B)])
   ;;               ()))))
 
-  ;; Check that internal addresses in the transmissions do not change the evaluation (had a problem
-  ;; with this before)
-  ;; TODO: rewrite these tests
-  ;; (check-equal?
-  ;;  (apply-reduction-relation* handler-step# (inject/H# (term (begin (send (Nat (init-addr 1)) (* Nat)) (goto A)))))
-  ;;  (list (term ((begin (goto A)) (((init-addr 1) (* Nat) single)) ()))))
-
-  ;; (check-equal?
-  ;;  (apply-reduction-relation* handler-step#
-  ;;    (inject/H# (term (begin (spawn L Nat (goto A) (define-state (A) (x) (goto A))) (goto B)))))
-  ;;  (list (term ((begin (goto B)) () ([(spawn-addr L NEW) [((define-state (A) (x) (goto A))) (goto A)]])))))
-
-  ;; ;; loop spawn test
-  ;; (check-equal?
-  ;;  (list->set
-  ;;   (apply-reduction-relation* handler-step#
-  ;;                              (inject/H#
-  ;;                               (term
-  ;;                                (begin
-  ;;                                  (for/fold ([x (* Nat)])
-  ;;                                            ([y (list-val (* Nat))])
-  ;;                                    (spawn L Nat (goto A) (define-state (A) (x) (goto A))))
-  ;;                                  (goto B))))))
-  ;;  (set (term ((begin (goto B)) () ()))
-  ;;       (term ((begin (goto B)) () ([(blurred-spawn-addr L) [((define-state (A) (x) (goto A))) (goto A)]])))))
-  )
+  ;; testing this because I had a problem with it before
+  (test-equal? "Internal addresses in the transmissions do not change the evaluation"
+   (eval-machine `(begin (send (Nat (init-addr 1)) (* Nat)) (goto A)) empty-effects #f)
+   (value-result `(goto A) `((((init-addr 1) (* Nat) single)) ()))))
 
 (define (vector-values v)
   (match v
@@ -2647,7 +2619,7 @@
 ;; single entry with the many-of multiplicity. These kinds of duplicate messages may arise, for
 ;; example, during blurring.
 ;;
-;; TODO: Do some kind of ordering on the messages to avoid symmetry issues
+;; OPTIMIZE: Do some kind of ordering on the messages to avoid symmetry issues
 (define (deduplicate-packets message-list)
   (let loop ([processed-messages null]
              [remaining-messages message-list])
@@ -2975,8 +2947,6 @@
    (Union [t_3 τ_3 ...] ...)
    (where ([t_3 τ_3 ...] ...)
           ,(sort (remove-duplicates (term ([t_1 τ_1 ...] ... [t_2 τ_2 ...] ...))) sexp<?))]
-  ;; TODO: allow for more sophisticated joins that look at the inner types of records, variants,
-  ;; etc. and go recur into Union fields
   [(type-join τ τ) τ])
 
 (module+ test
@@ -3084,7 +3054,6 @@
   [-------------------
    (type<=/j String String)]
 
-  ;; TODO: think abut whether recursive types screw with subtyping in a weird way
   [--------------
    (type<=/j X X)]
 
@@ -3482,8 +3451,6 @@
                  (if prev-config (csa#-config-message-packets prev-config) null)))]
         [_ #f])))
 
-;; TODO: what about renaming in between???
-
 (module+ test
   (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (init-addr 1) (* Nat))
                                                   `(internal-receive (init-addr 1) (* String))
@@ -3858,7 +3825,6 @@
           [`(many   many)   'eq]
           [`(many   ,_)      'gt])))]))
 
-;; TODO: for real, write some tests
 ;; TODO: test the new message rule
 
 ;; (module+ test
