@@ -126,17 +126,20 @@
   (list satisfying-pairs unsatisfying-pairs))
 
 (module+ test
-  (define com-sat-ext-type `(Union [W] [X] [Y] [Z]))
-  (define (make-com-sat-ext-address number) `(obs-ext ,number ,com-sat-ext-type))
+  (define (make-com-sat-ext-address number) `(obs-ext ,number))
   (define (sat-test-node name commitment-address-number commitment-patterns)
     (define mult-patterns (map (lambda (pat) `(single (variant ,pat))) commitment-patterns))
     (config-pair name
-                 `(() () ([,(make-com-sat-ext-address commitment-address-number) ,@mult-patterns]))))
+                 `(UNKNOWN
+                   ()
+                   (goto A)
+                   ()
+                   ([,(make-com-sat-ext-address commitment-address-number) ,@mult-patterns]))))
   (define (sat-other-derivative-node name)
-    (config-pair name `(() () ())))
-  (define (sat-impl-step trigger) (impl-step trigger #f null #f))
+    (config-pair name `(UNKNOWN () (goto A) () ())))
+  (define (sat-impl-step trigger) (impl-step trigger #f null null #f))
   (define (letters->sat-list addr sat-letters)
-    (map (lambda (letter) `((obs-ext ,addr ,com-sat-ext-type) (variant ,letter)))
+    (map (lambda (letter) `((obs-ext ,addr) (variant ,letter)))
          sat-letters))
   (define (sat-spec-step com-addr-number . satisfied-commitment-letters)
     (spec-step #f #f (letters->sat-list com-addr-number satisfied-commitment-letters)))
@@ -159,12 +162,12 @@
   (define m-node (sat-other-derivative-node 'M))
 
   ;; en stands for "enabled necessary", others use 'ue' for enabled unnecessary
-  (define sat-en-trigger1 `(timeout/empty-queue (init-addr 1 Nat)))
-  (define sat-en-trigger2 `(internal-receive (init-addr 2 Nat) (* Nat) single))
-  (define sat-en-trigger3 `(internal-receive (init-addr 3 Nat) (* Nat) single))
-  (define sat-en-trigger4 `(internal-receive (init-addr 4 Nat) (* Nat) single))
+  (define sat-en-trigger1 `(timeout/empty-queue (init-addr 1)))
+  (define sat-en-trigger2 `(internal-receive (init-addr 2) (* Nat) single))
+  (define sat-en-trigger3 `(internal-receive (init-addr 3) (* Nat) single))
+  (define sat-en-trigger4 `(internal-receive (init-addr 4) (* Nat) single))
 
-  (define sat-eu-trigger1 `(external-receive (init-addr 1 Nat) (* Nat)))
+  (define sat-eu-trigger1 `(external-receive (init-addr 1) (* Nat)))
 
   (define ag-impl-step (sat-impl-step sat-en-trigger1))
   (define ai-impl-step (sat-impl-step sat-en-trigger2))
@@ -327,10 +330,11 @@
                l-node)))
 
   (test-case "partition-by-satisfaction: no satisfaction for many-of commitments"
-    (define a-node (config-pair 'A `(() () ([(obs-ext 1 Nat) (many *)]))))
-    (define a-node2 (config-pair 'A `(() () ([(obs-ext 1 Nat) (single *)]))))
-    (define aa-impl-step (impl-step `(internal-receive (init-addr 1 Nat) (* Nat) single) #f null #f))
-    (define aa-spec-step (spec-step #f #f (list `((obs-ext 1 Nat) *))))
+    (define a-node (config-pair 'A `(UNKNOWN () (goto A) () ([(obs-ext 1) (many *)]))))
+    (define a-node2 (config-pair 'A `(UNKNOWN () (goto A) () ([(obs-ext 1) (single *)]))))
+    (define aa-impl-step
+      (impl-step `(internal-receive (init-addr 1) (* Nat) single) #f null null #f))
+    (define aa-spec-step (spec-step #f #f (list `((obs-ext 1) *))))
     (check-equal?
      (partition-by-satisfaction
       (set a-node)
@@ -745,8 +749,8 @@
                                    (mapped-derivative 'B (list `[2 3]))
                                    (mapped-derivative 'C (list `[1 4] `[5 2]))
                                    (mapped-derivative 'D (list `[6 1]`[3 2])))
-                             `((obs-ext 3 Nat) *))
-   (list 'D `((obs-ext 2 Nat) *))))
+                             `((obs-ext 3) *))
+   (list 'D `((obs-ext 2) *))))
 
 ;; Returns the vertex with the given value in the graph, or adds such a vertex if none exists and
 ;; returns it
