@@ -38,11 +38,6 @@
     [StartRing]
     [StopRing]))
 
-(define desugared-list-of-digits-type
-  `(minfixpt TheList
-             (Union (NoDigits)
-                    (Cons Nat TheList))))
-
 (define desugared-analyzer-result-type
   `(Union [Invalid]
           [Valid (Record [id Nat]
@@ -51,7 +46,7 @@
 
 (define desugared-analyzer-message-type
   `(Union
-    [AnalysisRequest ,desugared-list-of-digits-type
+    [AnalysisRequest (Listof Nat)
                      (Addr ,desugared-analyzer-result-type)]))
 
 (define desugared-controller-message-type
@@ -102,23 +97,13 @@
 (define-function (send-peer [peer Peer] [message PeerMessage])
   (send (: peer address) (variant PeerMessage (fold PeerMessage message))))
 
-(define-type ListOfDigits
-  (minfixpt TheList
-            (Union (NoDigits)
-                   (Cons Nat TheList))))
-(define-function (NoDigits)
-  (variant NoDigits))
-
-(define-function (Cons [n Nat] [l ListOfDigits])
-  (variant Cons n l))
-
 (define-variant AnalyzerResult
   (Invalid)
   (Valid [peer Peer])
   (GetMoreDigits))
 
 (define-variant AnalyzerMessage
-  (AnalysisRequest [digits ListOfDigits] [response-dest (Addr AnalyzerResult)]))
+  (AnalysisRequest [digits (Listof Nat)] [response-dest (Addr AnalyzerResult)]))
 
 (define-type ControllerMessage
   (Union
@@ -173,7 +158,7 @@
        (send lim (StopTone))
        (goto Idle)]
       [(Digit n)
-       (let ([digits (fold ListOfDigits (Cons n (fold ListOfDigits (NoDigits))))])
+       (let ([digits (list n)])
          (send lim (StopTone))
          (send analyzer (AnalysisRequest digits self))
          (goto WaitOnAnalysis digits))]
@@ -193,11 +178,11 @@
       [(Valid a) (goto GettingFirstDigit)]
       [(GetMoreDigits) (goto GettingFirstDigit)]))
 
-  (define-state (GettingNumber [number ListOfDigits]) (m)
+  (define-state (GettingNumber [number (Listof Nat)]) (m)
     (case m
       [(OnHook) (goto Idle)]
       [(Digit n)
-       (let ([digits (fold ListOfDigits (Cons n number))])
+       (let ([digits (cons n number)])
          (send analyzer (AnalysisRequest digits self))
          (goto WaitOnAnalysis digits))]
       [(PeerMessage p)
@@ -216,7 +201,7 @@
       [(Valid a) (goto GettingNumber number)]
       [(GetMoreDigits) (goto GettingNumber number)]))
 
-  (define-state (WaitOnAnalysis [number ListOfDigits]) (m)
+  (define-state (WaitOnAnalysis [number (Listof Nat)]) (m)
     (case m
       [(OnHook) (goto Idle)]
       [(PeerMessage p)
