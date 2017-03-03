@@ -542,7 +542,7 @@
    (match-trigger/j _ (timeout/non-empty-queue _) _ unobs ())]
 
   [----------------------------------------------------------------------
-   (match-trigger/j _ (internal-receive _ _) _ unobs ())]
+   (match-trigger/j _ (internal-receive _ _ _) _ unobs ())]
 
   [-----------------------------------------------------------------------
    (match-trigger/j #f (external-receive _ _) _ unobs ())]
@@ -572,13 +572,13 @@
    (list '(x (obs-ext 1))))
 
   (check-false
-   (match-trigger #f '(internal-receive (init-addr 0) (* Nat)) '(Nat (init-addr 0)) 'x))
+   (match-trigger #f '(internal-receive (init-addr 0) (* Nat) single) '(Nat (init-addr 0)) 'x))
 
   (check-false
    (match-trigger #t '(external-receive (init-addr 0) (* Nat)) '(Nat (init-addr 0)) 'x))
 
   (check-equal?
-   (match-trigger #f '(internal-receive (init-addr 0) (* Nat)) '(Nat (init-addr 0)) 'unobs)
+   (match-trigger #f '(internal-receive (init-addr 0) (* Nat) single) '(Nat (init-addr 0)) 'unobs)
    null)
 
   (check-false

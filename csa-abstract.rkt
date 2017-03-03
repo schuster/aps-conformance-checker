@@ -147,7 +147,7 @@
       (coerce E# τ))
   (trigger# (timeout/empty-queue a#int)
             (timeout/non-empty-queue a#int)
-            (internal-receive a#int v#)
+            (internal-receive a#int v# m)
             (external-receive a#int v#)))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -340,10 +340,8 @@
 (define (csa#-enabled-internal-actions config)
   (define internal-message-triggers
     (for/list ([packet-entry (csa#-config-message-packets config)])
-      (define packet (csa#-packet-entry->packet packet-entry))
-      (define address (csa#-message-packet-address packet))
-      (define message (csa#-message-packet-value packet))
-      (term (internal-receive ,address ,message))))
+      (match-define `[,address ,message ,multiplicity] packet-entry)
+      (term (internal-receive ,address ,message ,multiplicity))))
   (define atomic-actor-timeouts
     (for/fold ([timeout-triggers null])
               ([actor (csa#-config-actors config)])
@@ -383,7 +381,7 @@
      (eval-timeout config addr trigger abort)]
     [`(timeout/non-empty-queue ,addr)
      (eval-timeout config addr trigger abort)]
-    [`(internal-receive ,addr ,message)
+    [`(internal-receive ,addr ,message ,mult)
      (eval-message config addr message trigger abort)]
     [`(external-receive ,addr ,message)
      (eval-message config addr message trigger abort)]))
@@ -1623,7 +1621,7 @@
   ;; 1. If the handler was triggered by an internal message, remove the message
   (define with-trigger-message-removed
     (match trigger
-      [`(internal-receive ,_ ,message) (config-remove-packet config (list addr message))]
+      [`(internal-receive ,_ ,message ,_) (config-remove-packet config (list addr message))]
       [_ config]))
   ;; 2. update the behavior
   (define new-behavior (csa#-transition-effect-behavior transition-effect))
@@ -2756,11 +2754,6 @@
 (define (csa#-blurred-actor-behaviors a)
   (second a))
 
-;; (a#int v# multiplicity) -> (a#int v#)
-(define (csa#-packet-entry->packet entry)
-  (redex-let csa# ([(a#int v# _) entry])
-    (term (a#int v#))))
-
 (define (csa#-message-packet-address packet)
   (first packet))
 
@@ -2896,7 +2889,7 @@
   trigger-address/mf : trigger# -> a#int
   [(trigger-address/mf (timeout/empty-queue a#int)) a#int]
   [(trigger-address/mf (timeout/non-empty-queue a#int)) a#int]
-  [(trigger-address/mf (internal-receive a#int _)) a#int]
+  [(trigger-address/mf (internal-receive a#int _ _)) a#int]
   [(trigger-address/mf (external-receive a#int _)) a#int])
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -2915,6 +2908,10 @@
 (define (precise-internal-address? addr)
   (redex-match? csa# a#int-precise addr))
 
+;; A necessary action is an action that must eventually be run in a fair execution if it is
+;; continuously enabled. In CSA#, a timeout action is necessary if it's on an atomic actor that have
+;; no incoming messages (an "empty queue"), and an internal receive action is necessary if the message
+;; is a one-of. External receives are never necessary.
 (define (necessary-action? trigger)
   (judgment-holds (necessary-action?/j ,trigger)))
 
@@ -2923,18 +2920,26 @@
   #:contract (necessary-action?/j trigger#)
 
   [-----------------------------------------------------
-   (necessary-action?/j (timeout/empty-queue a#int))]
+   (necessary-action?/j (timeout/empty-queue a#int-precise))]
 
   [-----------------------------------------------------
-   (necessary-action?/j (internal-receive a#int v#))])
+   (necessary-action?/j (internal-receive a#int v# single))])
 
 (module+ test
   (test-true "necessary-action? 1"
     (necessary-action? (term (timeout/empty-queue (init-addr 1)))))
+  (test-false "necessary-action? collective actor timeout"
+    (necessary-action? (term (timeout/empty-queue (blurred-spawn-addr 1)))))
   (test-false "necessary-action? 2"
     (necessary-action? (term (timeout/non-empty-queue (init-addr 1)))))
-  (test-true "necessary-action? 3"
-    (necessary-action? (term (internal-receive (init-addr 1) (* Nat)))))
+  (test-true "necessary-action? atomic actor, single message"
+    (necessary-action? (term (internal-receive (init-addr 1) (* Nat) single))))
+  (test-false "necessary-action? atomic actor, many-of message"
+    (necessary-action? (term (internal-receive (init-addr 1) (* Nat) many))))
+  (test-true "necessary-action? collective actor, single message"
+    (necessary-action? (term (internal-receive (blurred-spawn-addr 1) (* Nat) single))))
+  (test-false "necessary-action? collecive actor, many-of message"
+    (necessary-action? (term (internal-receive (blurred-spawn-addr 1) (* Nat) many))))
   (test-false "necessary-action? 4"
     (necessary-action? (term (external-receive (init-addr 1) (* Nat))))))
 
@@ -3444,7 +3449,7 @@
         [#f #f]
         [loc (member loc spawn-locs)])
       (match trigger
-        [`(internal-receive ,target-addr ,message)
+        [`(internal-receive ,target-addr ,message ,_)
          (not
           (findf (lambda (send) (and (equal? (first send) target-addr)
                                      (equal? (second send) message)))
@@ -3452,24 +3457,24 @@
         [_ #f])))
 
 (module+ test
-  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (init-addr 1) (* Nat))
-                                                  `(internal-receive (init-addr 1) (* String))
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (init-addr 1) (* Nat) single)
+                                                  `(internal-receive (init-addr 1) (* String) single)
                                                   #f
                                                   null))
-  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (spawn-addr 1 OLD) (* Nat))
-                                                  `(internal-receive (init-addr 1) (* String))
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (spawn-addr 1 OLD) (* Nat) single)
+                                                  `(internal-receive (init-addr 1) (* String) single)
                                                   #f
                                                   (list 1)))
-  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (blurred-spawn-addr 1) (* Nat))
-                                                  `(internal-receive (init-addr 1) (* String))
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (blurred-spawn-addr 1) (* Nat) single)
+                                                  `(internal-receive (init-addr 1) (* String) single)
                                                   #f
                                                   (list 1)))
-  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (init-addr 1) (* Nat))
-                                                  `(internal-receive (init-addr 2) (* String))
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (init-addr 1) (* Nat) single)
+                                                  `(internal-receive (init-addr 2) (* String) single)
                                                   `(() () ([(init-addr 1) (* String) many]))
                                                   null))
-  (check-false (csa#-trigger-updated-by-step? `(internal-receive (spawn-addr 1 OLD) (* Nat))
-                                              `(internal-receive (init-addr 2) (* String))
+  (check-false (csa#-trigger-updated-by-step? `(internal-receive (spawn-addr 1 OLD) (* Nat) single)
+                                              `(internal-receive (init-addr 2) (* String) single)
                                               `(() () ([(spawn-addr 1 OLD) (* Nat) many]
                                                        [(blurred-spawn-addr 1) (* Nat) many]))
                                               (list `[(spawn-addr 2 NEW) (() (goto S))]))))
@@ -4125,42 +4130,54 @@
   (test-equal? "comp-result-and lt/not-gteq" (comp-result-and 'lt 'not-gteq) 'not-gteq))
 
 ;; Returns a true value (i.e. non-#f) if the action represented by the given trigger is enabled in the
-;; given configuration; #f otherwise
+;; given configuration; #f otherwise. Assumes the trigger will be a trigger that is enabled in a
+;; configuration that can reach this config. Also assumes that timeout/empty-queue and
+;; timeout-non-empty-queue are the same for the purposes of this function, as well as internal
+;; receives that differ only in multiplicity.
 (define (csa#-action-enabled? config trigger)
   ;; if it's not an internal messsage, or the received message will be available in the new config
   (match trigger
-    [`(internal-receive ,addr ,message)
+    [`(internal-receive ,addr ,message ,_)
      (findf (lambda (packet)
               (and (equal? (csa#-message-packet-address packet) addr)
                    (equal? (csa#-message-packet-value packet) message)))
             (csa#-config-message-packets config))]
+    [`(timeout/empty-queue ,addr)
+     (ormap get-timeout-handler-exp (csa#-behaviors-of config addr))]
+    [`(timeout/non-empty-queue ,addr)
+     (ormap get-timeout-handler-exp (csa#-behaviors-of config addr))]
     [_ #t]))
 
 ;; TODO: redo these tests
 
-;; (module+ test
-;;   ;; timeout, internal receive repeatable (in effects), internal repeatable (many-of in config),
-;;   ;; internal not repeatable
-;;   (define repeatable-action-test-config
-;;     (redex-let csa# ([i# `(() () ([(init-addr 0) (* Nat) many] [(init-addr 1) (* Nat) single]))])
-;;       (term i#)))
-;;   (define (make-trigger-only-effect trigger)
-;;     (csa#-transition-effect trigger '(() (goto A)) null null))
-;;   (test-false "Not repeatable action"
-;;     (csa#-repeatable-action? repeatable-action-test-config
-;;                              (make-trigger-only-effect '(internal-receive (init-addr 1) (* Nat)))))
-;;   (test-not-false "Repeatable timeout"
-;;     (csa#-repeatable-action? repeatable-action-test-config
-;;                              (make-trigger-only-effect '(timeout/empty-queue (init-addr 1)))))
-;;   (test-not-false "Repeatable internal receive (many-of message)"
-;;     (csa#-repeatable-action? repeatable-action-test-config
-;;                              (make-trigger-only-effect '(internal-receive (init-addr 0) (* Nat)))))
-;;   (test-not-false "Repeatable internal receive (from effect)"
-;;     (csa#-repeatable-action? repeatable-action-test-config
-;;                              (csa#-transition-effect '(internal-receive (init-addr 1) (* Nat))
-;;                                                      '(() (goto A))
-;;                                                      (list `((init-addr 1) (* Nat) single))
-;;                                                      null))))
+(module+ test
+  (define enabled-action-test-config
+    (redex-let csa# ([i# `(([(init-addr 0)
+                             (((define-state (A) (x) (goto A) ([timeout (* Nat)] (goto A))))
+                              (goto A))]
+                            [(init-addr 1)
+                             (((define-state (A) (x) (goto A) ([timeout (* Nat)] (goto A)))
+                               (define-state (B) (x) (goto B)))
+                              (goto B))])
+                           ()
+                           ([(init-addr 0) (* Nat) many]))])
+      (term i#)))
+
+  (test-not-false "Enabled internal receive"
+    (csa#-action-enabled? enabled-action-test-config
+                          '(internal-receive (init-addr 0) (* Nat) single)))
+  (test-false "Disabled internal receive"
+    (csa#-action-enabled? enabled-action-test-config
+                          '(internal-receive (init-addr 1) (* Nat) single)))
+  (test-not-false "External receives are always enabled"
+    (csa#-action-enabled? enabled-action-test-config
+                          '(external-receive (init-addr 1) (* Nat))))
+  (test-not-false "Enabled timeout"
+    (csa#-action-enabled? enabled-action-test-config
+                          '(timeout/empty-queue (init-addr 0))))
+  (test-false "Disabled timeout"
+    (csa#-action-enabled? enabled-action-test-config
+                          '(timeout/empty-queue (init-addr 1)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debug helpers

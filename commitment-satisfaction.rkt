@@ -160,9 +160,9 @@
 
   ;; en stands for "enabled necessary", others use 'ue' for enabled unnecessary
   (define sat-en-trigger1 `(timeout/empty-queue (init-addr 1 Nat)))
-  (define sat-en-trigger2 `(internal-receive (init-addr 2 Nat) (* Nat)))
-  (define sat-en-trigger3 `(internal-receive (init-addr 3 Nat) (* Nat)))
-  (define sat-en-trigger4 `(internal-receive (init-addr 4 Nat) (* Nat)))
+  (define sat-en-trigger2 `(internal-receive (init-addr 2 Nat) (* Nat) single))
+  (define sat-en-trigger3 `(internal-receive (init-addr 3 Nat) (* Nat) single))
+  (define sat-en-trigger4 `(internal-receive (init-addr 4 Nat) (* Nat) single))
 
   (define sat-eu-trigger1 `(external-receive (init-addr 1 Nat) (* Nat)))
 
@@ -329,7 +329,7 @@
   (test-case "partition-by-satisfaction: no satisfaction for many-of commitments"
     (define a-node (config-pair 'A `(() () ([(obs-ext 1 Nat) (many *)]))))
     (define a-node2 (config-pair 'A `(() () ([(obs-ext 1 Nat) (single *)]))))
-    (define aa-impl-step (impl-step `(internal-receive (init-addr 1 Nat) (* Nat)) #f null #f))
+    (define aa-impl-step (impl-step `(internal-receive (init-addr 1 Nat) (* Nat) single) #f null #f))
     (define aa-spec-step (spec-step #f #f (list `((obs-ext 1 Nat) *))))
     (check-equal?
      (partition-by-satisfaction

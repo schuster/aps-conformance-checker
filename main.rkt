@@ -445,7 +445,7 @@
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f null null #f))
+      (impl-step '(internal-receive (init-addr 0) (* Nat) single) #f null null #f))
      (mutable-set (spec-step null-spec-config null null))))
   (test-case "Null transition not okay for observed input"
     (check-exn
@@ -465,19 +465,19 @@
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f (list '((obs-ext 1) (* Nat) single)) null  #f))
+      (impl-step '(internal-receive (init-addr 0) (* Nat) single) #f (list '((obs-ext 1) (* Nat) single)) null  #f))
      (mutable-set (spec-step null-spec-config null null))))
   (test-case "No match if outputs do not match"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1))))
-      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f (list '((obs-ext 1) (* Nat) single)) null #f))
+      (impl-step '(internal-receive (init-addr 0) (* Nat) single) #f (list '((obs-ext 1) (* Nat) single)) null #f))
      (mutable-set)))
   (test-case "Output can be matched by previous commitment"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1) (single *))))
-      (impl-step '(internal-receive (init-addr 0) (* Nat)) #f (list '((obs-ext 1) (* Nat) single)) null #f))
+      (impl-step '(internal-receive (init-addr 0) (* Nat) single) #f (list '((obs-ext 1) (* Nat) single)) null #f))
      (mutable-set (spec-step (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1))))
                              null
                              (list `[(obs-ext 1) *])))))
