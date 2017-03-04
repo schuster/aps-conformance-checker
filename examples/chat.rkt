@@ -316,7 +316,7 @@
 
 (define chat-spec
   `(specification (receptionists [auth ,desugared-auth-command]) (externals)
-     [auth ,desugared-auth-command]
+     ([auth ,desugared-auth-command])
      ([auth ,desugared-auth-command])
      (goto AuthAlways)
      (define-state (AuthAlways)

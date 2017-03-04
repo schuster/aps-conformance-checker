@@ -268,7 +268,7 @@
 
 (define authN-specification
   `(specification (receptionists [guard ,desugared-GetSessionType]) (externals)
-     [guard ,desugared-GetSessionType] ; observed environment interface
+     ([guard ,desugared-GetSessionType]) ; observed environment interface
      () ; unobserved environment interface
      (goto Ready)
      (define-state (Ready)
@@ -283,13 +283,13 @@
 (define worker-specification
   `(specification (receptionists [worker ,desugared-AuthenticateType])
                   (externals [reply-to ,desugared-GetSessionResultType])
-     [worker ,desugared-AuthenticateType]
+     ([worker ,desugared-AuthenticateType])
      ()
      ,@worker-spec-behavior))
 
 (define server-specification
   `(specification (receptionists [server ,desugared-SessionCommand]) (externals)
-     [server ,desugared-SessionCommand]
+     ([server ,desugared-SessionCommand])
      ()
      ,@server-spec-behavior))
 

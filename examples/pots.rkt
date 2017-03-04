@@ -366,7 +366,7 @@
   `(specification (receptionists [controller ,desugared-controller-message-type])
                   (externals [lim ,desugared-lim-message-type]
                              [analyzer ,desugared-analyzer-message-type])
-     [controller (Union [PeerMessage ,desugared-peer-message-type])]
+     ([controller (Union [PeerMessage ,desugared-peer-message-type])])
      ([controller ,desugared-controller-message-type])
      (goto Idle)
 

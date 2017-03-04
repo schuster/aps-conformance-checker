@@ -1289,7 +1289,7 @@
                              [status-updates ,desugared-connection-status]
                              [close-notifications
                               (Union [SessionCloseNotification ,desugared-session-id])])
-     [session (Union (OrderedTcpPacket ,desugared-tcp-packet-type))]
+     ([session (Union (OrderedTcpPacket ,desugared-tcp-packet-type))])
      ([session (Union
                 (Register (Addr ,desugared-tcp-session-event))
                 (Write (Vectorof Nat) (Addr ,desugared-write-response))

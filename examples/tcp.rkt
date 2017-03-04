@@ -2247,7 +2247,7 @@
     (externals [session-packet-dest (Addr (Union [InTcpPacket ,desugared-tcp-packet-type]))]
                [packets-out ,desugared-tcp-output]
                [close-notifications (Union [SessionCloseNotification ,desugared-session-id])])
-    [launcher (Addr ,desugared-connection-status)]
+    ([launcher (Addr ,desugared-connection-status)])
     ()
     (goto Init)
     (define-state (Init)
@@ -2264,7 +2264,7 @@
 (define manager-spec
   `(specification (receptionists [tcp ,desugared-tcp-input])
                   (externals [packets-out ,desugared-tcp-output])
-     [tcp  (Union [UserCommand ,desugared-user-command])] ; obs interface
+     ([tcp  (Union [UserCommand ,desugared-user-command])])    ; obs interface
      ([tcp (Union [InPacket Nat ,desugared-tcp-packet-type])])  ; unobs interface
      (goto Managing)
      (define-state (Managing)

@@ -83,7 +83,7 @@
 (define raft-spec
   (term
    (specification (receptionists [raft-server ,full-raft-actor-type]) (externals)
-     [raft-server (Union (PeerMessage ,desugared-raft-message-type))] ; obs interface
+     ([raft-server (Union (PeerMessage ,desugared-raft-message-type))]) ; obs interface
      ([raft-server ,unobserved-interface-type]) ; unobs interface
      (goto Init)
      (define-state (Init)

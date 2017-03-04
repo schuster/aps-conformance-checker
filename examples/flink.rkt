@@ -1193,7 +1193,7 @@
 
 (define task-manager-spec
   `(specification (receptionists) (externals [job-manager ,desugared-tm-to-jm-type])
-     UNKNOWN
+     ()
      ()
      (goto Init job-manager)
      (define-state (Init job-manager)
@@ -1211,7 +1211,7 @@
 
 (define job-manager-client-pov-spec
   `(specification (receptionists [job-manager ,desugared-job-manager-command]) (externals)
-     [job-manager ,desugared-job-manager-command]
+     ([job-manager ,desugared-job-manager-command])
      ([job-manager (Union [TaskManagerTerminated Nat])])
      (goto Running)
      (define-state (Running)
@@ -1233,7 +1233,7 @@
 
 (define job-manager-tm-pov-spec
   `(specification (receptionists [job-manager ,desugared-job-manager-input]) (externals)
-     [job-manager ,desugared-tm-to-jm-type]
+     ([job-manager ,desugared-tm-to-jm-type])
      ([job-manager (Union ,@(cdr desugared-job-manager-command) [TaskManagerTerminated Nat])])
      (goto Running)
      (define-state (Running)

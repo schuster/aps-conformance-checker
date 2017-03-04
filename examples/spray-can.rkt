@@ -937,7 +937,7 @@
   `(specification (receptionists)
                   (externals [app-listener ,desugared-http-listener-event]
                              [tcp-session ,desugared-tcp-session-command])
-     UNKNOWN
+     ()
      ()
      (goto Init app-listener)
      (define-state (Init app-listener)
@@ -977,7 +977,7 @@
                   (externals [bind-commander ,desugared-http-bind-response]
                              [app-listener ,desugared-http-listener-event]
                              [tcp ,desugared-tcp-user-command])
-     UNKNOWN
+     ()
      ()
      (goto Init bind-commander app-listener)
      (define-state (Init bind-commander app-listener)
@@ -990,7 +990,7 @@
 (define http-manager-spec
   `(specification (receptionists [manager ,desugared-http-manager-command])
                   (externals [tcp ,desugared-tcp-user-command])
-     [manager ,desugared-http-manager-command]
+     ([manager ,desugared-http-manager-command])
      ()
      (goto Running)
      (define-state (Running)
