@@ -6,11 +6,12 @@
  aps-eval
  aps-valid-spec?
  aps-valid-config?
- aps-config-interface-addresses
+ aps-config-receptionists
 
  ;; Testing helpers
  make-spec
  make-exclusive-spec
+ make-unrevealed-exclusive-spec
  instantiate-configs)
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -28,13 +29,13 @@
   (spec
    (specification (receptionists [x_rec τ] ...)
                   (externals [x_ext τ] ...)
-                  UNKNOWN
+                  ()
                   ([x τ] ...)
                   (goto φ x ...)
                   Φ ...)
    (specification (receptionists [x_rec τ] ...)
                   (externals [x_ext τ] ...)
-                  [x τ]
+                  ([x τ])
                   ([x τ] ...)
                   (goto φ x ...)
                   Φ ...))
@@ -63,10 +64,9 @@
 
 (define-extended-language aps-eval
   aps
-  ;; Specification configuration contains the observed environment interface σ, unobserved environment
-  ;; interface (a ...), current state, state definitions, and obligation map
-  (s (σ (τa ...) (goto φ u ...) (Φ ...) O))
-  (σ τa UNKNOWN)
+  ;; Specification configuration contains the observed receptionists ρ_obs, unobserved receptionists
+  ;; ρ_unobs, current state, state definitions, and obligation map
+  (s (ρ_obs ρ_unobs (goto φ u ...) (Φ ...) O))
   (O ([a po ...] ...))
   ;; arguments in aps-eval can be instantiated (as addresses)
   (u .... a))
@@ -142,40 +142,39 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
 
+;; TODO: rename this
 ;; Returns all addresses mentioned in interfaces of the configuration
-(define (aps-config-interface-addresses config)
-  (term (aps-config-interface-addresses/mf ,config)))
+(define (aps-config-receptionists config)
+  (term (aps-config-receptionists/mf ,config)))
 
 (define-metafunction aps-eval
-  aps-config-interface-addresses/mf : s -> (τa ...)
-  [(aps-config-interface-addresses/mf (UNKNOWN (τa ...) _ ...))
-   (τa ...)]
-  [(aps-config-interface-addresses/mf (τa_1 (τa_2 ...) _ ...))
-   (τa_1 τa_2 ...)])
+  aps-config-receptionists/mf : s -> (τa ...)
+  [(aps-config-receptionists/mf ((τa_1 ...) (τa_2 ...) _ ...))
+   (τa_1 ... τa_2 ...)])
 
 (module+ test
   (test-case "config interface addresses 1"
-    (redex-let aps-eval ([s (term ((Nat (addr 1))
+    (redex-let aps-eval ([s (term (((Nat (addr 1)))
                                    ((Nat (addr 2))
                                     (Nat (addr 3))
                                     (Nat (addr 4)))
                                    (goto A)
                                    ((define-state (A)))
                                    ()))])
-      (check-equal? (aps-config-interface-addresses (term s))
+      (check-equal? (aps-config-receptionists (term s))
                     '((Nat (addr 1))
                       (Nat (addr 2))
                       (Nat (addr 3))
                       (Nat (addr 4))))))
   (test-case "config interface addresses 2"
-    (redex-let aps-eval ([s (term (UNKNOWN
+    (redex-let aps-eval ([s (term (()
                                    ((Nat (addr 2))
                                     (Nat (addr 3))
                                     (Nat (addr 4)))
                                    (goto A)
                                    ((define-state (A)))
                                    ()))])
-      (check-equal? (aps-config-interface-addresses (term s))
+      (check-equal? (aps-config-receptionists (term s))
                     '((Nat (addr 2))
                       (Nat (addr 3))
                       (Nat (addr 4)))))))
@@ -186,10 +185,15 @@
 (define (make-exclusive-spec defs-state-and-addr)
   (make-spec defs-state-and-addr null))
 
-(define (make-spec defs-state-and-addr receptionists)
-  (redex-let* aps-eval ([((Φ ...) (goto φ a_arg ...) σ) defs-state-and-addr]
-                        [(τa_rec ...) receptionists]
-                        [s (term (σ (τa_rec ...) (goto φ a_arg ...) (Φ ...) ([a_arg] ...)))])
+(define (make-spec defs-state-and-addr unobs-receptionists)
+  (redex-let* aps-eval ([((Φ ...) (goto φ a_arg ...) τa_obs) defs-state-and-addr]
+                        [(τa_unobs ...) unobs-receptionists]
+                        [s (term ((τa_obs) (τa_unobs ...) (goto φ a_arg ...) (Φ ...) ([a_arg] ...)))])
+              (term s)))
+
+(define (make-unrevealed-exclusive-spec defs-and-state)
+  (redex-let* aps-eval ([((Φ ...) (goto φ a_arg ...)) defs-and-state]
+                        [s (term (() () (goto φ a_arg ...) (Φ ...) ([a_arg] ...)))])
               (term s)))
 
 ;; Instantiates the given program and specification as configurations, allocating fresh addresses for
@@ -215,7 +219,7 @@
                         [c (let () (spawn 3 Nat      (goto S3)))])))
     (define the-spec
       `(specification (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Union)])
-                      UNKNOWN
+                      ()
                       ()
                       (goto S1)))
     (check-true (redex-match? csa-eval P the-prog))
@@ -242,7 +246,7 @@
         ((String (addr 3)) ((Union) (addr 4))))
        ;; spec config
        (;; obs interface
-        UNKNOWN
+        ()
         ;; unobserved environment interface
         ()
         ;; current state
@@ -258,13 +262,13 @@
   instantiate-spec/mf : spec ([x τa] ...) -> s
   [(instantiate-spec/mf (specification (receptionists [x_rec _] ...)
                                        (externals [x_cont _] ...)
-                                       any_obs-int
+                                       ([x_obs τ_obs] ...)
                                        ([x_unobs τ_unobs] ...)
                                        (goto φ x_arg ...)
                                        Φ ...)
                         ([x_binding (τ_binding a_binding)] ...))
    (; observed environment interface
-    σ
+    (τa_obs ...)
     ;; unobserved environment interface
     (τa_unobs ...)
     ;; current state
@@ -273,16 +277,17 @@
     ((subst-n/aps-eval/Φ Φ [x_binding a_binding] ...) ...)
     ;; output commitment map
     ([a_state-arg] ...))
+   (where (τa_obs ...)
+          (resolve-receptionists/mf ((x_obs τ_obs) ...) ([x_binding a_binding] ...)))
    (where (τa_unobs ...)
-          (resolve-unobs-interface/mf ((x_unobs τ_unobs) ...) ([x_binding a_binding] ...)))
-   (where σ (resolve-spec-obs-int/mf any_obs-int ([x_binding a_binding] ...)))
+          (resolve-receptionists/mf ((x_unobs τ_unobs) ...) ([x_binding a_binding] ...)))
    (where (a_state-arg ...) ((subst-n/aps-eval/u x_arg [x_binding a_binding] ...) ...))])
 
 (module+ test
   (test-case "instantiate spec"
       (define the-spec
       `(specification (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Union)])
-                      UNKNOWN
+                      ()
                       ()
                       (goto S1 d)))
       (check-true (redex-match? aps spec the-spec))
@@ -294,7 +299,7 @@
                                    [d (String (addr 3))]
                                    [e ((Union) (addr 4))])))
        `(;; self-address
-         UNKNOWN
+         ()
          ;; unobserved environment interface
          ()
          ;; current statep
@@ -304,24 +309,10 @@
          ;; obligation map
          ([(addr 3)])))))
 
-;; Resolves the observed environment interface address of a specification (either UNKNOWN or [x τ]) to
-;; either UNKNOWN or an address, using the given name/address bindings as necessary
 (define-metafunction aps-eval
-  resolve-spec-obs-int/mf : any ([x a] ...) -> σ
-  [(resolve-spec-obs-int/mf UNKNOWN _) UNKNOWN]
-  [(resolve-spec-obs-int/mf [x τ] (_ ... [x a] _ ...))
-   (τ a)])
-
-(module+ test
-  (test-equal? "resolve-spec-obs-int on known address"
-    (term (resolve-spec-obs-int/mf (ping-server (Addr (Union (Pong))))
-                                   ((ping-server (addr 0)))))
-    (term ((Addr (Union (Pong))) (addr 0)))))
-
-(define-metafunction aps-eval
-  resolve-unobs-interface/mf : ([x τ] ...) ([x a] ...) -> (τa ...)
-  [(resolve-unobs-interface/mf () _) ()]
-  [(resolve-unobs-interface/mf ([x τ] any_rest ...) any_subs)
+  resolve-receptionists/mf : ([x τ] ...) ([x a] ...) -> (τa ...)
+  [(resolve-receptionists/mf () _) ()]
+  [(resolve-receptionists/mf ([x τ] any_rest ...) any_subs)
    ((τ a) any_results ...)
    (where (_ ... [x a] _ ...) any_subs)
-   (where (any_results ...) (resolve-unobs-interface/mf (any_rest ...) any_subs))])
+   (where (any_results ...) (resolve-receptionists/mf (any_rest ...) any_subs))])

@@ -130,13 +130,13 @@
   (define (sat-test-node name commitment-address-number commitment-patterns)
     (define mult-patterns (map (lambda (pat) `(single (variant ,pat))) commitment-patterns))
     (config-pair name
-                 `(UNKNOWN
+                 `(()
                    ()
                    (goto A)
                    ()
                    ([,(make-com-sat-ext-address commitment-address-number) ,@mult-patterns]))))
   (define (sat-other-derivative-node name)
-    (config-pair name `(UNKNOWN () (goto A) () ())))
+    (config-pair name `(() () (goto A) () ())))
   (define (sat-impl-step trigger) (impl-step trigger #f null null #f))
   (define (letters->sat-list addr sat-letters)
     (map (lambda (letter) `((obs-ext ,addr) (variant ,letter)))
@@ -330,8 +330,8 @@
                l-node)))
 
   (test-case "partition-by-satisfaction: no satisfaction for many-of commitments"
-    (define a-node (config-pair 'A `(UNKNOWN () (goto A) () ([(obs-ext 1) (many *)]))))
-    (define a-node2 (config-pair 'A `(UNKNOWN () (goto A) () ([(obs-ext 1) (single *)]))))
+    (define a-node (config-pair 'A `(() () (goto A) () ([(obs-ext 1) (many *)]))))
+    (define a-node2 (config-pair 'A `(() () (goto A) () ([(obs-ext 1) (single *)]))))
     (define aa-impl-step
       (impl-step `(internal-receive (init-addr 1) (* Nat) single) #f null null #f))
     (define aa-spec-step (spec-step #f #f (list `((obs-ext 1) *))))

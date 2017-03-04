@@ -159,29 +159,29 @@
 ;; Returns #t if all addresses mentioned in observable or unobservable interfaces in the spec are
 ;; receptionists; #f otherwise.
 (define (spec-interfaces-available? impl-config spec-config)
-  (define spec-receptionists (map csa-address-strip-type (aps-config-interface-addresses spec-config)))
+  (define spec-receptionists (map csa-address-strip-type (aps-config-receptionists spec-config)))
   (define impl-receptionists (map csa-address-strip-type (csa-config-receptionists impl-config)))
   (and (andmap (curryr member impl-receptionists) spec-receptionists) #t))
 
 (module+ test
   (test-false "spec address receptionist check 1"
     (spec-interfaces-available? (term ((((addr 1) (() (goto A)))) () () ()))
-                                (term ((Nat (addr 1)) () (goto A) () ()))))
+                                (term (((Nat (addr 1))) () (goto A) () ()))))
   (test-false "spec address receptionist check 2"
     (spec-interfaces-available? (term ((((addr 500) (() (goto A)))) () () ()))
-                                (term ((Nat (addr 1)) () (goto A) () ()))))
+                                (term (((Nat (addr 1))) () (goto A) () ()))))
   (test-not-false "spec address receptionist check 3"
     (spec-interfaces-available? (term ((((addr 1) (() (goto A)))) () ((Nat (addr 1))) ()))
-                                (term ((Nat (addr 1)) () (goto A) () ()))))
+                                (term (((Nat (addr 1))) () (goto A) () ()))))
   (test-not-false "spec address receptionist check 4"
     (spec-interfaces-available? (term ((((addr 1) (() (goto A)))) () ((Nat (addr 1))) ()))
-                                (term (UNKNOWN () (goto A) () ()))))
+                                (term (() () (goto A) () ()))))
   (test-false "spec address receptionist: unobserved addresses 1"
     (spec-interfaces-available? (term ((((addr 1) (() (goto A)))) () () ()))
-                                (term (UNKNOWN ((Nat (addr 1))) (goto A) () ()))))
+                                (term (() ((Nat (addr 1))) (goto A) () ()))))
   (test-not-false "spec address receptionist: unobserved addresses 2"
     (spec-interfaces-available? (term ((((addr 1) (() (goto A)))) () ((Nat (addr 1))) ()))
-                                (term (UNKNOWN ((Nat (addr 1))) (goto A) () ())))))
+                                (term (() ((Nat (addr 1))) (goto A) () ())))))
 
 ;; Abstracts and sbc's the initial pair, returning the list of initial abstract pairs, or #f if the
 ;; abstraction was not possible for some reason
@@ -401,21 +401,19 @@
 ;; whether the trigger is observed or not
 (define (impl-triggers-from impl-config spec-config)
   (define obs-triggers
-    (let ([obs-interface (aps#-config-obs-interface spec-config)])
-      (if (aps#-unknown-address? obs-interface)
-          null
-          (map (curryr list #t) (external-triggers-for-interface (list obs-interface))))))
+    (map (curryr list #t)
+         (external-triggers-for-receptionists (aps#-config-obs-receptionists spec-config))))
   (define unobs-triggers
     (map (curryr list #f)
          (append (csa#-enabled-internal-actions impl-config)
-                 (external-triggers-for-interface (aps#-config-receptionists spec-config)))))
+                 (external-triggers-for-receptionists (aps#-config-unobs-receptionists spec-config)))))
   (append obs-triggers unobs-triggers))
 
 ;; (Listof τa) -> (Listof trigger#)
 ;;
 ;; Returns all possible external actions that would be allowed by the interface given by the typed
 ;; addresses
-(define (external-triggers-for-interface typed-addrs)
+(define (external-triggers-for-receptionists typed-addrs)
   (append*
    (for/list ([typed-addr typed-addrs])
      (for/list ([message (csa#-messages-of-type (csa#-address-type typed-addr))])
@@ -596,7 +594,7 @@
        ()
        ())
      ;; spec config: all addresses in the unobs interface
-     '((Nat (spawn-addr 2 NEW))
+     '(((Nat (spawn-addr 2 NEW)))
        ((Nat (spawn-addr 2 NEW))
         (Nat (spawn-addr 2 OLD))
         (Nat (spawn-addr 3 NEW))
@@ -616,7 +614,7 @@
         ((blurred-spawn-addr 4) ((() (goto A)))))
        ())
      ;; spec config result
-     '((Nat (spawn-addr 2 NEW))
+     '(((Nat (spawn-addr 2 NEW)))
        ((Nat (spawn-addr 2 NEW))
         (Nat (blurred-spawn-addr 2))
         (Nat (spawn-addr 3 NEW))
@@ -638,7 +636,7 @@
        ()
        ())
      ;; spec config: all addresses in the unobs interface
-     '((Nat (spawn-addr 2 OLD))
+     '(((Nat (spawn-addr 2 OLD)))
        ((Nat (spawn-addr 2 NEW))
         (Nat (spawn-addr 2 OLD))
         (Nat (spawn-addr 3 NEW))
@@ -658,7 +656,7 @@
         ((blurred-spawn-addr 4) ((() (goto A)))))
        ())
      ;; spec config result
-     '((Nat (spawn-addr 2 OLD))
+     '(((Nat (spawn-addr 2 OLD)))
        ((Nat (blurred-spawn-addr 2))
         (Nat (spawn-addr 2 OLD))
         (Nat (blurred-spawn-addr 3))
@@ -687,35 +685,35 @@
 ;; Decides whether to blur spawn-addresses with the OLD or NEW flag based on the current impl and spec
 ;; configs, returning the flag for addresses that should be blurred.
 (define (choose-spawn-flag-to-blur impl-config spec-config)
-  ;; 1. if the spec address is unknown but only init-addr actors and actors with just one of the flags
-  ;; have addresses from the output commitment set, blur the other flag
+  ;; 1. if there are no observable spec receptionists but only init-addr actors and actors with just
+  ;; one of the flags have addresses from the output commitment set, blur the other flag
   ;;
   ;; 2. if the spec address is a spawn-address, return the opposite of its flag
   ;;
   ;; 3. otherwise, just return OLD by default
-  (define obs-interface (aps#-config-obs-interface spec-config))
   (define (other-flag f)
     (match f
        ['OLD 'NEW]
        ['NEW 'OLD]))
-  (cond
-    [(aps#-unknown-address? obs-interface)
+  (match (aps#-config-obs-receptionists spec-config)
+    [(list)
      (match (csa#-flags-that-know-externals impl-config (aps#-relevant-external-addrs spec-config))
        [(list flag) (other-flag flag)] ; use "other" flag if exactly one flag knows externals
        [_ 'OLD])]
-    [(csa#-spawn-address? (csa#-address-strip-type obs-interface))
-     (other-flag (csa#-spawn-address-flag (csa#-address-strip-type obs-interface)))]
-    [else 'OLD]))
+    [(list obs-receptionist)
+     (if (csa#-spawn-address? (csa#-address-strip-type obs-receptionist))
+         (other-flag (csa#-spawn-address-flag (csa#-address-strip-type obs-receptionist)))
+         'OLD)]))
 
 (module+ test
   (test-equal? "choose spawn flag 1"
-    (choose-spawn-flag-to-blur '(() () ()) '((Nat (spawn-addr 2 NEW)) () (goto A) () ()))
+    (choose-spawn-flag-to-blur '(() () ()) '(((Nat (spawn-addr 2 NEW))) () (goto A) () ()))
     'OLD)
   (test-equal? "choose spawn flag 2"
-    (choose-spawn-flag-to-blur '(() () ()) '((Nat (spawn-addr 2 OLD)) () (goto A) () ()))
+    (choose-spawn-flag-to-blur '(() () ()) '(((Nat (spawn-addr 2 OLD))) () (goto A) () ()))
     'NEW)
   (test-equal? "choose spawn flag 3"
-    (choose-spawn-flag-to-blur '(() () ()) '(UNKNOWN () (goto A) () ()))
+    (choose-spawn-flag-to-blur '(() () ()) '(() () (goto A) () ()))
     'OLD))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -933,7 +931,7 @@
   (define widen-spec
     ;; Just a spec that observes only inputs and says nothing ever happens
     (term
-     ((Nat (init-addr 1))
+     (((Nat (init-addr 1)))
       ()
       (goto SpecA)
       ((define-state (SpecA) [* -> () (goto SpecA)]))
@@ -985,7 +983,7 @@
 (module+ test
   (define first-spec-step-test-config
     (redex-let aps# ([s#
-                      `([Nat (init-addr 1)]
+                      `(([Nat (init-addr 1)])
                         ([Nat (init-addr 1)])
                         (goto A)
                         ((define-state (A)
@@ -1012,7 +1010,7 @@
   (test-false "first-spec-step-to-same-state: no step"
     (first-spec-step-to-same-state
      ;; spec config:
-     `([Nat (init-addr 1)]
+     `(([Nat (init-addr 1)])
        ([Nat (init-addr 1)])
        (goto A)
        ((define-state (A)
@@ -1291,7 +1289,7 @@
            #,(syntax/loc stx (check-valid-actor? the-term)))]))
 
   (define-simple-check (check-valid-instance? actual)
-    (redex-match? aps-eval ((Φ ...) (goto φ u ...) σ) actual))
+    (redex-match? aps-eval ((Φ ...) (goto φ u ...) [τ a]) actual))
 
   (define-syntax (test-valid-instance? stx)
     (syntax-parse stx
@@ -2327,8 +2325,7 @@
          [unobs -> ([obligation r self]) (goto Running)])
        (define-state (Running)
          [r -> ([obligation r *]) (goto Running)]))
-      (goto Init (addr 1))
-      UNKNOWN)))
+      (goto Init (addr 1)))))
 
   (define self-reveal-actor
     (term
@@ -2385,23 +2382,23 @@
   (test-valid-actor? reveal-wrong-address-actor)
   (test-valid-actor? to-reveal-ignore-all-actor)
   (test-valid-actor? reveal-self-double-output-actor)
-  (test-valid-instance? self-reveal-spec)
+  ;; (test-valid-instance? self-reveal-spec)
 
   (test-true "Reveal self works"
              (check-conformance/config
               (make-single-actor-config self-reveal-actor)
-              (make-exclusive-spec self-reveal-spec)))
+              (make-unrevealed-exclusive-spec self-reveal-spec)))
 
   (test-false "Catch self-reveal of wrong address"
               (check-conformance/config
                (make-empty-queues-config null
                                          (list reveal-wrong-address-actor to-reveal-ignore-all-actor))
-               (make-exclusive-spec self-reveal-spec)))
+               (make-unrevealed-exclusive-spec self-reveal-spec)))
 
   (test-false "Catch self-reveal of actor that doesn't follow its behavior"
               (check-conformance/config
                (make-single-actor-config reveal-self-double-output-actor)
-               (make-exclusive-spec self-reveal-spec)))
+               (make-unrevealed-exclusive-spec self-reveal-spec)))
 
   ;;;; Spawn
   (define echo-spawning-actor
@@ -3018,7 +3015,7 @@
            ((Nat (addr 2))))))
   ;; Spec with no real transitions, but a commitment on address 2
   (define new-spawn-spec-config
-    (term (((Union [FromEnv]) (addr 1))
+    (term ((((Union [FromEnv]) (addr 1)))
            ()
            (goto Always)
            ((define-state (Always)
