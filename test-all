@@ -1,0 +1,3 @@
+#!/bin/sh
+
+raco test aps.rkt aps-abstract.rkt commitment-satisfaction.rkt csa.rkt csa-abstract.rkt main.rkt
