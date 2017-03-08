@@ -108,6 +108,8 @@
     (thread
      (lambda ()
        (when stats-directory
+         (unless (directory-exists? stats-directory)
+           (make-directory stats-directory))
          (let loop ()
            ;; write to two different files, so that we always have one good file if the job is
            ;; terminated while we're writing to the file
