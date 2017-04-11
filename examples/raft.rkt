@@ -1124,15 +1124,17 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing code
 
-(module+ test
-  (require
-   rackunit
-   "../csa.rkt" ; for csa-valid-type?
-   "../main.rkt")
+;; module+ test
+(require
+ rackunit
+ "../csa.rkt" ; for csa-valid-type?
+ "../main.rkt")
 
-  (test-true "Client response type" (csa-valid-type? desugared-client-response-type))
-  (test-true "Raft message type" (csa-valid-type? desugared-raft-message-type))
-  (test-true "Full Raft actor type" (csa-valid-type? full-raft-actor-type))
+(check-conformance raft-actor-prog raft-spec)
 
-  (test-true "Raft verification"
-    (check-conformance raft-actor-prog raft-spec)))
+;; (test-true "Client response type" (csa-valid-type? desugared-client-response-type))
+;; (test-true "Raft message type" (csa-valid-type? desugared-raft-message-type))
+;; (test-true "Full Raft actor type" (csa-valid-type? full-raft-actor-type))
+
+;; (test-true "Raft verification"
+;;   (check-conformance raft-actor-prog raft-spec))
