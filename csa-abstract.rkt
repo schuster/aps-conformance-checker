@@ -36,6 +36,9 @@
  internals-in
  externals-in
  csa#-sort-config-components
+ csa#-addrs-to-evict
+ csa#-evict
+ merge-receptionists
 
  ;; Required by APS#; should go into a "common" language instead
  csa#
@@ -986,36 +989,19 @@
     ;; Spawns
     [`(spawn ,loc ,type ,init-exp ,raw-state-defs ...)
      (define-values (address address-value)
-       (if (and (USE-EVICTION?) (evictable-location? loc))
-           (values `(* (Addr ,type)) `(* (Addr ,type)))
-           (let ([address (if (or (in-collective-handler?) (in-loop-context?))
-                              `(blurred-spawn-addr ,loc)
-                              `(spawn-addr ,loc NEW))])
-             (values address `(,type ,address)))))
+       (let ([address (if (or (in-collective-handler?) (in-loop-context?))
+                          `(blurred-spawn-addr ,loc)
+                          `(spawn-addr ,loc NEW))])
+         (values address `(,type ,address))))
      (define state-defs
        (for/list ([def raw-state-defs])
          (csa#-subst-n/Q# def (list `[self ,address-value]))))
      (eval-and-then (csa#-subst-n init-exp (list `[self ,address-value])) effects
        (lambda (goto-val effects)
          (match-define (list sends spawns) effects)
-         (cond
-           [(and (USE-EVICTION?) (evictable-location? loc))
-            (when (not (null? (externals-in (list goto-val state-defs))))
-              (error 'evict "Cannot evict actor ~s with behavior ~s" loc (list state-defs goto-val)))
-            (define contained-internals (internals-in (list state-defs goto-val)))
-            (define packet-with-contained-internals
-              `[(* (Addr Nat)) (list-val ,@contained-internals) single])
-            (value-result address-value
-                          ;; Note that the coercion on contained addresses was already applied before
-                          ;; we got to this spawn expression (because it's part of the surrounding
-                          ;; let-expression when we desugar), so we don't need to worry about further
-                          ;; coercion
-                          `[,(add-output sends packet-with-contained-internals)
-                            ,spawns])]
-           [else
-            (value-result address-value
-                          (list sends
-                                (add-spawn spawns `[,address (,state-defs ,goto-val)])))]))
+         (value-result address-value
+                       (list sends
+                             (add-spawn spawns `[,address (,state-defs ,goto-val)]))))
        (lambda (stuck) `(spawn ,loc ,type ,stuck ,@raw-state-defs)))]
     ;; Goto
     [`(goto ,state-name ,args ...)
@@ -1433,32 +1419,6 @@
                               `(() ([(spawn-addr loc NEW)
                                      (((define-state (Foo) (m) (goto Foo)))
                                       (goto Foo (Nat (spawn-addr loc NEW))))]))))
-
-  (test-equal? "Spawn an evictable actor"
-    (eval-machine
-     `(spawn EVICT Nat
-             (begin
-               (send self (* Nat))
-               (send ((Addr Nat) (init-addr 1)) self)
-               (goto Foo self))
-             (define-state (Foo) (m) (goto Foo ((Addr Nat) (init-addr 2)))))
-     empty-effects
-     #f)
-    (value-result `(* (Addr Nat))
-                  `(([(* (Addr Nat)) (* Nat) single]
-                     [(* (Addr Nat)) (list-val ((Addr Nat) (init-addr 2))) single]
-                     [(init-addr 1) (* (Addr Nat)) single])
-                    ())))
-
-  (test-exn "Can't evict an actor that contains obs-ext addrs"
-    (lambda (x) #t)
-    (lambda ()
-      (eval-machine
-       `(spawn EVICT Nat
-               (goto Foo (Nat (obs-ext 1)))
-               (define-state (Foo) (m) (goto Foo)))
-     empty-effects
-     #f)))
 
   (test-case "Spawn in loop is a collective actor"
     (check-same-items?
@@ -3133,6 +3093,81 @@
     (judgment-holds (union-variant<=/j [A (Union [C] [D])]
                                      (Union [A (Union [C])] [B])))))
 
+;; v# τ -> ρ#
+(define (internal-addr-types v type)
+  (define (get-types-and-merge-all v-type-pairs)
+    (for/fold ([results null])
+              ([vtp v-type-pairs])
+      (match-define (list v type) vtp)
+      (merge-receptionists results (internal-addr-types v type))))
+
+  (match (list v type)
+    [(list _ `(Addr ,type))
+     (match v
+       [`(* ,_) null]
+       [`(,internal-type ,addr)
+        (list `[,type ,addr])])]
+    [(list `(folded ,type ,v) `(minfixpt ,X ,fold-type))
+     (internal-addr-types v (term (type-subst ,fold-type ,X (minfixpt ,X ,fold-type))))]
+    [(list `(variant ,tag ,vs ...) `(Union ,cases ...))
+     (match-define `(,_ ,case-arg-types ...)
+       (first (filter (lambda (case) (equal? (first case) tag)) cases)))
+     (get-types-and-merge-all (map list vs case-arg-types))]
+    [(list `(record ,rec-fields ...) `(Record ,rec-field-types ...))
+     (get-types-and-merge-all (map list (map second rec-fields) (map second rec-field-types)))]
+    [(list `(list-val ,vs ...) `(List ,type))
+     (get-types-and-merge-all (map (lambda (v) (list v type)) vs))]
+    [(list `(vector-val ,vs ...) `(Vector ,type))
+     (get-types-and-merge-all (map (lambda (v) (list v type)) vs))]
+    [(list `(hash-val ,vs1 ,vs2) `(Hash ,type1 ,type2))
+     (merge-receptionists
+      (get-types-and-merge-all (map (lambda (v) (list v type1)) vs1))
+      (get-types-and-merge-all (map (lambda (v) (list v type2)) vs2)))]
+    [_ null]))
+
+;; TODO: tests
+(module+ test
+  (test-equal? "internal-addr-types 1"
+    (internal-addr-types `(Nat (init-addr 1)) `(Addr Nat))
+    (list `(Nat (init-addr 1))))
+  (test-equal? "internal-addr-types 2"
+    (internal-addr-types `(record [a ((Addr (Union [A] [B])) (init-addr 1))]
+                                  [b ((Addr (Union [A] [B])) (init-addr 1))])
+                         `(Record [a (Addr (Union [A]))] [b (Addr (Union [B]))]))
+    (list `((Union [A] [B]) (init-addr 1)))))
+
+;; Merges the list of new receptionists into the old one, taking the join of types for duplicate
+;; entries and adding new entries otherwise
+(define (merge-receptionists old-recs new-recs)
+  (for/fold ([old-recs old-recs])
+            ([new-rec new-recs])
+    (define raw-new-address (csa#-address-strip-type new-rec))
+    (define (matches-new-rec? old-rec)
+      (equal? raw-new-address
+              (csa#-address-strip-type old-rec)))
+    (match (find-with-rest matches-new-rec? old-recs)
+      [#f (append old-recs (list new-rec))]
+      [`[,before ,old-rec ,after]
+       (define joined-type
+         (term (type-join ,(csa#-address-type old-rec) ,(csa#-address-type new-rec))))
+       (append before (list `[,joined-type ,raw-new-address]) after)])))
+
+(module+ test
+  (test-equal? "merge receptionists"
+    (merge-receptionists
+     `((Nat (init-addr 1))
+       ((Union [B]) (spawn-addr 2 NEW))
+       ((Union [C]) (init-addr 2)))
+     `(((Union [A]) (spawn-addr 2 NEW))
+       (Nat (init-addr 1))
+       ((Union [D]) (init-addr 2))
+       (Nat (spawn-addr 3 OLD))))
+    (term
+     ((Nat (init-addr 1))
+      ((Union [A] [B]) (spawn-addr 2 NEW))
+      ((Union [C] [D]) (init-addr 2))
+      (Nat (spawn-addr 3 OLD))))))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Address containment
 
@@ -3187,19 +3222,75 @@
 ;; itself contain precise external addresses). This allows potentially more messages to come from
 ;; those actors than would be generated otherwise, but it avoids the state explosion from precisely
 ;; modeling
-;;
-;; Note: originally this was called eviction because the child actor would be spawned but then removed
-;; (evicted) at the end of the handler. Later this was changed to just never generate the child at all
-;; and instead create an external address, forcing the contained internal addresses in the child into
-;; a message to the outside world to add to the unobserved interface in the spec.
 
-(define (evictable? address)
+(define (csa#-addrs-to-evict i)
+  (map csa#-actor-address
+       (filter evictable? (csa#-config-actors i))))
+
+(module+ test
+  (define non-evictable1 `[(spawn-addr 1 NEW) (() (goto S))])
+  (define evictable-addr1
+    `(spawn-addr (2-EVICT Nat
+                          ([(0 3 1) (Addr String)]
+                           [(0 4 1 1) (Record [a (Addr String)])]))
+                 NEW))
+  (define evictable1
+    `[,evictable-addr1
+      (((define-state (A [x (Union [Foo (Addr Nat)])]) (m)
+          (send (String (init-addr 2)) "foobar")
+          (send (: (record [a (String (init-addr 3))]) a) "foo")
+          (goto A x)))
+       (goto A (variant Foo (Nat (init-addr 1)))))])
+  (define non-evictable2
+    `[(spawn-addr (3-EVICT Nat ()) OLD)
+      [((define-state (B) (m) (begin (Nat ,evictable-addr1) (Nat (obs-ext 1)) (goto B))))
+       (goto B)]])
+
+  (define evict-test-config
+    `((,non-evictable1 ,evictable1 ,non-evictable2)
+      ;; β#
+      ()
+      ;; μ#
+      ()))
+
+  (define expected-evicted-config
+    `(([(spawn-addr 1 NEW) (() (goto S))]
+       [(spawn-addr (3-EVICT Nat ()) OLD)
+        [((define-state (B) (m) (begin (* (Addr Nat)) (Nat (obs-ext 1)) (goto B))))
+         (goto B)]])
+      ;; β#
+      ()
+      ;; μ#
+      ()))
+
+  (test-equal? "Addresses to evict"
+    (csa#-addrs-to-evict evict-test-config)
+    (list `(spawn-addr (2-EVICT Nat ([(0 3 1) (Addr String)]
+                                     [(0 4 1 1) (Record [a (Addr String)])]))
+                       NEW))))
+
+(define (evictable? actor)
+  (and (evictable-addr? (csa#-actor-address actor))
+       (null? (externals-in (actor-behavior actor)))))
+
+(module+ test
+  (test-false "non-evictable actor 1" (evictable? non-evictable1))
+  (test-true "evictable actor 1" (evictable? evictable1))
+  (test-false "non-evictable actor 2" (evictable? non-evictable2)))
+
+(define (evictable-addr? address)
   (match (spawn-address-location address)
     [#f #f]
     [loc (evictable-location? loc)]))
 
+(module+ test
+  (test-true "evictable address 1" (evictable-addr? evictable-addr1)))
+
 (define (evictable-location? loc)
-  (regexp-match? #rx"EVICT$" (location->string loc)))
+  (match loc
+    [(list (? (lambda (kw) (regexp-match? #rx"EVICT$" (location->string kw)))) _ _)
+     #t]
+    [_ #f]))
 
 (define (location->string loc)
   (match loc
@@ -3208,12 +3299,78 @@
     [_ (error 'location->string "Don't know how to convert ~s into a string" loc)]))
 
 (module+ test
-  (check-false (evictable? `(init-addr 1)))
-  (check-true (evictable? `(spawn-addr L-EVICT NEW)))
-  (check-false (evictable? `(spawn-addr L NEW)))
-  (check-false (evictable? `(blurred-spawn-addr L)))
-  (check-true (evictable? `(blurred-spawn-addr L-EVICT)))
-  (check-false (evictable? `(blurred-spawn-addr EVICT-NOT))))
+  (check-false (evictable-addr? `(init-addr 1)))
+  (check-true (evictable-addr? `(spawn-addr (L-EVICT Nat ()) NEW)))
+  (check-false (evictable-addr? `(spawn-addr (L Nat ()) NEW)))
+  (check-false (evictable-addr? `(blurred-spawn-addr (L Nat ()))))
+  (check-true (evictable-addr? `(blurred-spawn-addr (L-EVICT Nat ()))))
+  (check-false (evictable-addr? `(blurred-spawn-addr (EVICT-NOT Nat ())))))
+
+;; i# a# -> (list i# ρ#)
+;; Evicts the given address from the given config
+(define (csa#-evict i addr)
+  (match-define (list first-actors to-evict later-actors)
+    (config-actor-and-rest-by-address i addr))
+  (define remaining-actors (append first-actors later-actors))
+  (match-define `(,state-defs (goto ,state-name ,state-args ...)) (actor-behavior to-evict))
+  (match-define `(spawn-addr (,_ ,evicted-type ,state-defs-type-env) ,_) addr)
+  (define state-def-captured-receptionists
+    (for/fold ([receptionists null])
+              ([env-binding state-defs-type-env])
+      (match-define `(,path ,type) env-binding)
+      (merge-receptionists receptionists
+                           (internal-addr-types (sexp-by-path state-defs path) type))))
+  (match-define `(define-state ,(list _ [list _ arg-types] ...) ,_ ...)
+    (state-def-by-name state-defs state-name))
+  (define state-arg-captured-receptionists
+    (for/fold ([receptionists null])
+              ([arg state-args]
+               [type arg-types])
+      (merge-receptionists receptionists (internal-addr-types arg type))))
+  (list (rename-address `(,remaining-actors
+                          ,(csa#-config-blurred-actors i)
+                          ,(csa#-config-message-packets i))
+                        addr
+                        `(* (Addr ,evicted-type)))
+        (merge-receptionists state-def-captured-receptionists state-arg-captured-receptionists)))
+
+(module+ test
+  (test-equal? "csa#-evict"
+    (csa#-evict evict-test-config evictable-addr1)
+    (list expected-evicted-config
+          `([String (init-addr 2)]
+            [String (init-addr 3)]
+            [Nat (init-addr 1)]))))
+
+(define (sexp-by-path sexp path)
+  (match path
+    [(list) sexp]
+    [(list index path-rest ...) (sexp-by-path (list-ref sexp index) path-rest)]))
+
+(module+ test
+  (test-equal? "sexp-by-path 1" (sexp-by-path `(foo (bar) baz) null) `(foo (bar) baz))
+  (test-equal? "sexp-by-path 2" (sexp-by-path `(foo (bar (quux 2)) baz) (list 1 1 0)) `quux))
+
+(define (rename-address exp old new)
+  (match exp
+    [`(,_ ,(and found-addr `(spawn-addr ,_ ,_)))
+     (if (equal? found-addr old)
+         new
+         (map (lambda (e) (rename-address e old new)) exp))]
+    [(list exps ...)
+     (map (lambda (e) (rename-address e old new)) exps)]
+    [_ exp]))
+
+(module+ test
+  (test-equal? "rename-address 1"
+    (rename-address 'foo `(spawn-addr 1 2) `(* (Addr Nat)))
+    'foo)
+  (test-equal? "rename-address 2"
+    (rename-address `(begin (Nat (spawn-addr 1 2))
+                            (Nat (spawn-addr 5 6)))
+                    `(spawn-addr 1 2)
+                    `(* (Addr Nat)))
+    `(begin (* (Addr Nat)) (Nat (spawn-addr 5 6)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pre-sbc maybe-widen check

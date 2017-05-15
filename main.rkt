@@ -565,12 +565,17 @@
 ;; that the address values do not keep increasing towards infinity and instead stay within a bounded
 ;; space.
 (define (sbc pair)
+  ;; NOTE: eviction is added here now as well, as part of the general T transform
+  (match-define (list evicted-i evicted-s)
+    (if (USE-EVICTION?)
+        (evict-pair (config-pair-impl-config pair) (config-pair-spec-config pair))
+        (list (config-pair-impl-config pair) (config-pair-spec-config pair))))
   (display-step-line "Splitting a specification config")
-  (define spec-config-components (split-spec (config-pair-spec-config pair)))
+  (define spec-config-components (split-spec evicted-s))
   (define blur-results
     (for/list ([spec-config-component spec-config-components])
       (display-step-line "Blurring an implementation config")
-      (blur-by-relevant-addresses (config-pair-impl-config pair) spec-config-component)))
+      (blur-by-relevant-addresses evicted-i spec-config-component)))
   (for/list ([blur-result blur-results])
     (match-define (list blurred-impl blurred-spec) blur-result)
     (display-step-line "Canonicalizing the pair, adding to queue")

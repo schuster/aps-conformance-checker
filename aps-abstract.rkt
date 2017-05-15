@@ -18,6 +18,7 @@
  reverse-rename-address
  aps#-config-has-commitment?
  aps#-completed-no-transition-config?
+ evict-pair
  ;; needed for widening
  aps#-config<=
 
@@ -1102,38 +1103,6 @@
     ,(aps#-config-state-defs config)
     ,(aps#-config-commitment-map config)))
 
-;; Merges the list of new receptionists into the old one, taking the join of types for duplicate
-;; entries and adding new entries otherwise
-(define (merge-receptionists old-recs new-recs)
-  (for/fold ([old-recs old-recs])
-            ([new-rec new-recs])
-    (define raw-new-address (csa#-address-strip-type new-rec))
-    (define (matches-new-rec? old-rec)
-      (equal? raw-new-address
-              (csa#-address-strip-type old-rec)))
-    (match (find-with-rest matches-new-rec? old-recs)
-      [#f (append old-recs (list new-rec))]
-      [`[,before ,old-rec ,after]
-       (define joined-type
-         (term (type-join ,(csa#-address-type old-rec) ,(csa#-address-type new-rec))))
-       (append before (list `[,joined-type ,raw-new-address]) after)])))
-
-(module+ test
-  (test-equal? "merge receptionists"
-    (merge-receptionists
-     `((Nat (init-addr 1))
-       ((Union [B]) (spawn-addr 2 NEW))
-       ((Union [C]) (init-addr 2)))
-     `(((Union [A]) (spawn-addr 2 NEW))
-       (Nat (init-addr 1))
-       ((Union [D]) (init-addr 2))
-       (Nat (spawn-addr 3 OLD))))
-    (term
-     ((Nat (init-addr 1))
-      ((Union [A] [B]) (spawn-addr 2 NEW))
-      ((Union [C] [D]) (init-addr 2))
-      (Nat (spawn-addr 3 OLD))))))
-
 (define (aps#-config-has-commitment? config address pattern)
   (judgment-holds (aps#-commitment-map-has-commitment?/j ,(aps#-config-commitment-map config)
                                                          ,address
@@ -2030,6 +1999,69 @@
   (test-equal? "try-rename-address success"
     (reverse-rename-address (term ([1 3] [2 4])) (term (obs-ext 4)))
     (term (obs-ext 2))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Eviction
+
+(define (evict-pair i s)
+  ;; TODO: add the rename map stuff (although technically it's not needed, since the only changed
+  ;; addresses are no longer in the resulting configuration
+  (for/fold ([pair (list i s)])
+            ;; need to check for obs externals, obs internal
+            ([addr (csa#-addrs-to-evict i)])
+    (match (aps#-config-obs-receptionists s)
+      [(list `(,_ (? (curry equal? addr)))) pair]
+      [_
+       (match-define (list new-impl-config new-unobs-receptionists)
+         (csa#-evict i addr))
+       (define all-unobs-receptionists
+         (merge-receptionists
+          (remove-receptionist (aps#-config-unobs-receptionists s) addr)
+          new-unobs-receptionists))
+       (define new-spec-config
+         `(,(aps#-config-obs-receptionists s)
+           ,all-unobs-receptionists
+           ,(aps#-config-current-state s)
+           ,(aps#-config-state-defs s)
+           ,(aps#-config-commitment-map s)))
+       (list new-impl-config new-spec-config)])))
+
+(module+ test
+  (test-equal? "evict-pair"
+    (evict-pair
+     `[([(init-addr 1)
+         [((define-state (A) (m)
+             (begin (Nat (spawn-addr (EVICT Nat ()) OLD))
+                    (goto A))))
+          (goto A)]]
+        [(spawn-addr (EVICT Nat ()) OLD)
+         [((define-state (B [x (Addr String)]) (m) (goto B x)))
+          (goto B (String (init-addr 2)))]])
+       ()
+       ()]
+     `[()
+       ((Nat (init-addr 1)) (Nat (spawn-addr (EVICT Nat ()) OLD)))
+       (goto A)
+       ()
+       ()])
+    (list
+     `[([(init-addr 1)
+         [((define-state (A) (m)
+             (begin (* (Addr Nat))
+                    (goto A))))
+          (goto A)]])
+       ()
+       ()]
+     `[()
+       ((Nat (init-addr 1))
+        (String (init-addr 2)))
+       (goto A)
+       ()
+       ()])))
+
+(define (remove-receptionist receptionists addr-to-remove)
+  (filter (lambda (rec) (not (equal? (second rec) addr-to-remove)))
+          receptionists))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Widening helpers
