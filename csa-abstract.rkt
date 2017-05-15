@@ -3227,12 +3227,12 @@
 
 (define (csa#-addrs-to-evict i)
   (map csa#-actor-address
-       (filter evictable? (csa#-config-actors i))))
+       (filter (curryr evictable? i) (csa#-config-actors i))))
 
 (module+ test
   (define non-evictable1 `[(spawn-addr 1 NEW) (() (goto S))])
   (define evictable-addr1
-    `(spawn-addr (2-EVICT Nat
+    `(spawn-addr (2-EVICT (Addr Nat)
                           ([(0 3 1) (Addr String)]
                            [(0 4 1 1) (Record [a (Addr String)])]))
                  NEW))
@@ -3247,38 +3247,47 @@
     `[(spawn-addr (3-EVICT Nat ()) OLD)
       [((define-state (B) (m) (begin (Nat ,evictable-addr1) (Nat (obs-ext 1)) (goto B))))
        (goto B)]])
+  (define non-evictable-has-obs-ext-message
+    `[(spawn-addr (4-EVICT (Addr Nat) ()) OLD)
+      [((define-state (A) (m) (goto A))) (goto A)]])
 
   (define evict-test-config
-    `((,non-evictable1 ,evictable1 ,non-evictable2)
+    `((,non-evictable1 ,evictable1 ,non-evictable2 ,non-evictable-has-obs-ext-message)
       ;; β#
       ()
       ;; μ#
-      ()))
+      ([,evictable-addr1 (Nat (init-addr 4)) single]
+       [(spawn-addr (4-EVICT (Addr Nat) ()) OLD) (Nat (obs-ext 3)) single])))
 
   (define expected-evicted-config
     `(([(spawn-addr 1 NEW) (() (goto S))]
        [(spawn-addr (3-EVICT Nat ()) OLD)
-        [((define-state (B) (m) (begin (* (Addr Nat)) (Nat (obs-ext 1)) (goto B))))
-         (goto B)]])
+        [((define-state (B) (m) (begin (* (Addr (Addr Nat))) (Nat (obs-ext 1)) (goto B))))
+         (goto B)]]
+       ,non-evictable-has-obs-ext-message)
       ;; β#
       ()
       ;; μ#
-      ()))
+      ([(spawn-addr (4-EVICT (Addr Nat) ()) OLD) (Nat (obs-ext 3)) single])))
 
   (test-equal? "Addresses to evict"
     (csa#-addrs-to-evict evict-test-config)
-    (list `(spawn-addr (2-EVICT Nat ([(0 3 1) (Addr String)]
-                                     [(0 4 1 1) (Record [a (Addr String)])]))
-                       NEW))))
+    (list evictable-addr1)))
 
-(define (evictable? actor)
-  (and (evictable-addr? (csa#-actor-address actor))
-       (null? (externals-in (actor-behavior actor)))))
+(define (evictable? actor i)
+  (define addr (csa#-actor-address actor))
+  (and (evictable-addr? addr)
+       (let ([packets-to-this-actor
+              (filter (lambda (packet) (equal? (csa#-message-packet-address packet) addr))
+                      (csa#-config-message-packets i))])
+         (null? (externals-in (list (actor-behavior actor) packets-to-this-actor))))))
 
 (module+ test
-  (test-false "non-evictable actor 1" (evictable? non-evictable1))
-  (test-true "evictable actor 1" (evictable? evictable1))
-  (test-false "non-evictable actor 2" (evictable? non-evictable2)))
+  (test-false "non-evictable actor 1" (evictable? non-evictable1 evict-test-config))
+  (test-true "evictable actor 1" (evictable? evictable1 evict-test-config))
+  (test-false "non-evictable actor 2" (evictable? non-evictable2 evict-test-config))
+  (test-false "non-evictable b/c external in message"
+    (evictable? non-evictable-has-obs-ext-message evict-test-config)))
 
 (define (evictable-addr? address)
   (match (spawn-address-location address)
@@ -3329,12 +3338,22 @@
               ([arg state-args]
                [type arg-types])
       (merge-receptionists receptionists (internal-addr-types arg type))))
+  (define-values (evicted-packets non-evicted-packets)
+    (partition (lambda (packet) (equal? addr (csa#-message-packet-address packet)))
+               (csa#-config-message-packets i)))
+  (define message-captured-receptionists
+    (for/fold ([receptionists null])
+              ([packet evicted-packets])
+      (merge-receptionists receptionists
+                           (internal-addr-types (csa#-message-packet-value packet) evicted-type))))
   (list (rename-address `(,remaining-actors
                           ,(csa#-config-blurred-actors i)
-                          ,(csa#-config-message-packets i))
+                          ,non-evicted-packets)
                         addr
                         `(* (Addr ,evicted-type)))
-        (merge-receptionists state-def-captured-receptionists state-arg-captured-receptionists)))
+        (merge-receptionists
+         (merge-receptionists state-def-captured-receptionists state-arg-captured-receptionists)
+         message-captured-receptionists)))
 
 (module+ test
   (test-equal? "csa#-evict"
@@ -3342,7 +3361,8 @@
     (list expected-evicted-config
           `([String (init-addr 2)]
             [String (init-addr 3)]
-            [Nat (init-addr 1)]))))
+            [Nat (init-addr 1)]
+            [Nat (init-addr 4)]))))
 
 (define (sexp-by-path sexp path)
   (match path
