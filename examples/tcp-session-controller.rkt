@@ -1229,15 +1229,6 @@
 (define desugared-session-id
   `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
 
-(define desugared-tcp-session-event
-  `(Union
-    [ReceivedData (Vectorof Nat)]
-    [Closed]
-    [ConfirmedClosed]
-    [Aborted]
-    [PeerClosed]
-    [ErrorClosed]))
-
 (define desugared-write-response
   `(Union
     [CommandFailed]
