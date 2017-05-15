@@ -3123,8 +3123,8 @@
      (merge-receptionists
       (get-types-and-merge-all (map (lambda (v) (list v type1)) vs1))
       (get-types-and-merge-all (map (lambda (v) (list v type2)) vs2)))]
-    [(list (? exact-nonnegative-integer?) 'Nat) null]
-    [(list (? string?) 'String) null]
+    [(list `(* Nat) 'Nat) null]
+    [(list `(* String) 'String) null]
     [_ (error 'internal-addr-types "Unknown val/type combo ~s ~s" v type)]))
 
 ;; TODO: tests
@@ -3136,7 +3136,13 @@
     (internal-addr-types `(record [a ((Addr (Union [A] [B])) (init-addr 1))]
                                   [b ((Addr (Union [A] [B])) (init-addr 1))])
                          `(Record [a (Addr (Union [A]))] [b (Addr (Union [B]))]))
-    (list `((Union [A] [B]) (init-addr 1)))))
+    (list `((Union [A] [B]) (init-addr 1))))
+  (test-equal? "internal-addr-types 3"
+    (internal-addr-types `(* Nat) `Nat)
+    null)
+  (test-equal? "internal-addr-types 4"
+    (internal-addr-types `(* String) `String)
+    null))
 
 ;; Merges the list of new receptionists into the old one, taking the join of types for duplicate
 ;; entries and adding new entries otherwise
