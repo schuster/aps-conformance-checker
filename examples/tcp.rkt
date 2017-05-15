@@ -20,6 +20,22 @@
 (define register-timeout 5000) ; in milliseconds (5 seconds is the Akka default)
 (define timeout-fudge-factor 500) ; in milliseconds
 
+(define timer-type-env
+  (list `[,(list 1 4 2 1 1) (Addr (Union [RegisterTimeout] [RetransmitTimeout] [TimeWaitTimeout]))]
+        `[,(list 1 4 2 1 2) (Union [RegisterTimeout] [RetransmitTimeout] [TimeWaitTimeout])]))
+(define desugared-TimerCommand
+  `(Union
+    (Stop)
+    (Start Nat)))
+(define desugared-tcp-session-event
+  `(Union
+    [ReceivedData (Vectorof Nat)]
+    [Closed]
+    [ConfirmedClosed]
+    [Aborted]
+    [PeerClosed]
+    [ErrorClosed]))
+
 (define tcp-definitions
   (quasiquote
 (
@@ -451,7 +467,8 @@
                                          [window Nat]
                                          [rxmt-timer (Addr TimerCommand)])
        (send status-updates (Connected id self))
-       (let ([reg-timer (spawn reg-timer-EVICT Timer (RegisterTimeout) self)])
+       (let ([reg-timer (spawn (reg-timer-EVICT ,desugared-TimerCommand ,timer-type-env)
+                               Timer (RegisterTimeout) self)])
          (send reg-timer (Start ,register-timeout))
          (goto AwaitingRegistration
                (SendBuffer 0 snd-nxt window snd-nxt (NoFinSeq) (vector))
@@ -466,7 +483,8 @@
                                      [rcv-nxt Nat]
                                      [receive-buffer ReceiveBuffer]
                                      [octet-stream (Addr TcpSessionEvent)])
-       (let ([timer (spawn time-wait-timer-EVICT Timer (TimeWaitTimeout) self)])
+       (let ([timer (spawn (time-wait-timer-EVICT ,desugared-TimerCommand ,timer-type-env)
+                           Timer (TimeWaitTimeout) self)])
          (send timer (Start (mult 2 max-segment-lifetime-in-ms)))
          (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream timer)))
 
@@ -662,7 +680,8 @@
 
     ;; initialization
     (let ([iss (get-iss)]
-          [rxmt-timer (spawn rxmt-timer-EVICT Timer (RetransmitTimeout) self)])
+          [rxmt-timer (spawn (rxmt-timer-EVICT ,desugared-TimerCommand ,timer-type-env)
+                             Timer (RetransmitTimeout) self)])
       (send rxmt-timer (Start wait-time-in-milliseconds))
       (case open
         [(ActiveOpen)
@@ -838,7 +857,7 @@
                       receive-buffer
                       (Close close-handler)
                       (SentFin)
-                      (spawn close-await-sink-EVICT Sink)
+                      (spawn (close-await-sink-EVICT ,desugared-tcp-session-event ()) Sink)
                       rxmt-timer)]
         [(ConfirmedClose close-handler)
          (start-close send-buffer
@@ -846,7 +865,7 @@
                       receive-buffer
                       (ConfirmedClose close-handler)
                       (SentFin)
-                      (spawn confirmed-close-await-sink-EVICT Sink)
+                      (spawn (confirmed-close-await-sink-EVICT ,desugared-tcp-session-event ()) Sink)
                       rxmt-timer)]
         [(Abort close-handler)
          (abort-connection (: send-buffer send-next))
@@ -2028,15 +2047,6 @@
 
 (define desugared-session-id
   `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
-
-(define desugared-tcp-session-event
-  `(Union
-    [ReceivedData (Vectorof Nat)]
-    [Closed]
-    [ConfirmedClosed]
-    [Aborted]
-    [PeerClosed]
-    [ErrorClosed]))
 
 (define desugared-write-response
   `(Union

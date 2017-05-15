@@ -23,6 +23,22 @@
 (define BIND-WAIT-TIME-IN-MS 2000)
 (define UNBIND-WAIT-TIME-IN-MS 2000)
 
+(define desugared-sink-type
+  `(Union [CommandFailed]
+          [WriteAck]
+          [Closed]
+          [ConfirmedClosed]
+          [Aborted]
+          [PeerClosed]
+          [ErrorClosed]))
+(define desugared-TimerCommand
+  `(Union
+    (Stop)
+    (Start Nat)))
+(define timer-type-env
+  (list `[(1 4 2 1 1) (Addr (Union [BindTimeout] [UnbindTimeout]))]
+        `[(1 4 2 1 2) (Union [BindTimeout] [UnbindTimeout])]))
+
 (define spray-can-definitions
   (quasiquote
    (
@@ -207,7 +223,7 @@
     (send app-layer (IncomingRequest request self))
     (goto AwaitingAppResponse))
   (define-state/timeout (AwaitingAppResponse) (m)
-    (send tcp-connection (Write m (spawn write-response-EVICT Sink)))
+    (send tcp-connection (Write m (spawn (write-response-EVICT ,desugared-sink-type ()) Sink)))
     (goto Done)
     (timeout ,RESPONSE-WAIT-TIME-IN-MS
       ;; don't notify the application layer here: just assume they'll watch for the stop notification
@@ -260,7 +276,7 @@
        (send tcp-session (Register self))
        (goto Running (vector) handler)])
     (timeout ,REGISTER-WAIT-TIME-IN-MS
-      (send tcp-session (Close (spawn close-session-EVICT Sink)))
+      (send tcp-session (Close (spawn (close-session-EVICT ,desugared-sink-type ()) Sink)))
       (goto Closed)))
 
   (define-state (Running [held-data (Vectorof Byte)] [handler (Addr IncomingRequest)]) (m)
@@ -297,7 +313,8 @@
   ((define-function (unbind [tcp-listener (Addr TcpListenerCommand)]
                             [unbind-commanders (Listof (Addr HttpUnbindResponse))])
      (send tcp-listener (Unbind self))
-     (let ([unbind-timer (spawn unbind-timer-EVICT Timer (UnbindTimeout) self)])
+     (let ([unbind-timer (spawn (unbind-timer-EVICT ,desugared-TimerCommand ,timer-type-env)
+                                Timer (UnbindTimeout) self)])
        (send unbind-timer (Start ,UNBIND-WAIT-TIME-IN-MS))
        (goto Unbinding unbind-timer unbind-commanders))))
 

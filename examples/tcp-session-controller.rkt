@@ -50,6 +50,22 @@
 (define register-timeout 5000) ; in milliseconds (5 seconds is the Akka default)
 (define timeout-fudge-factor 500) ; in milliseconds
 
+(define timer-type-env
+  (list `[,(list 1 4 2 1 1) (Addr (Union [RegisterTimeout] [RetransmitTimeout] [TimeWaitTimeout]))]
+        `[,(list 1 4 2 1 2) (Union [RegisterTimeout] [RetransmitTimeout] [TimeWaitTimeout])]))
+(define desugared-TimerCommand
+  `(Union
+    (Stop)
+    (Start Nat)))
+(define desugared-tcp-session-event
+  `(Union
+    [ReceivedData (Vectorof Nat)]
+    [Closed]
+    [ConfirmedClosed]
+    [Aborted]
+    [PeerClosed]
+    [ErrorClosed]))
+
 (define remote-ip 500) ; we're faking IPs with natural numbers, so the actual number doesn't matter
 (define remote-port 80)
 (define local-port 55555)
@@ -259,13 +275,15 @@
 
      (define-function (finish-connecting)
        (send status-updates (Connected id self))
-       (let ([reg-timer (spawn reg-timer-EVICT Timer (RegisterTimeout) self)])
+       (let ([reg-timer (spawn (reg-timer-EVICT ,desugared-TimerCommand ,timer-type-env)
+                               Timer (RegisterTimeout) self)])
          (send reg-timer (Start ,register-timeout))
          (goto AwaitingRegistration reg-timer)))
 
      ;; Transitions to time-wait, starting a timer on the way in
      (define-function (goto-TimeWait [octet-stream (Addr TcpSessionEvent)])
-       (let ([timer (spawn time-wait-timer-EVICT Timer (TimeWaitTimeout) self)])
+       (let ([timer (spawn (time-wait-timer-EVICT ,desugared-TimerCommand ,timer-type-env)
+                           Timer (TimeWaitTimeout) self)])
          (send timer (Start (mult 2 max-segment-lifetime-in-ms)))
          (goto TimeWait octet-stream timer)))
 
@@ -416,11 +434,11 @@
          (send close-handler (Closed))
          (start-close (Close close-handler)
                       (SentFin)
-                      (spawn close-await-sink-EVICT Sink))]
+                      (spawn (close-await-sink-EVICT desugared-tcp-session-event ()) Sink))]
         [(ConfirmedClose close-handler)
          (start-close (ConfirmedClose close-handler)
                       (SentFin)
-                      (spawn confirmed-close-await-sink-EVICT Sink))]
+                      (spawn (confirmed-close-await-sink-EVICT desugared-tcp-session-event ()) Sink))]
         [(Abort close-handler)
          (abort-connection)
          (send close-handler (Aborted))
