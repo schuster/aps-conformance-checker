@@ -3123,7 +3123,9 @@
      (merge-receptionists
       (get-types-and-merge-all (map (lambda (v) (list v type1)) vs1))
       (get-types-and-merge-all (map (lambda (v) (list v type2)) vs2)))]
-    [_ null]))
+    [(list (? exact-nonnegative-integer?) 'Nat) null]
+    [(list (? string?) 'String) null]
+    [_ (error 'internal-addr-types "Unknown val/type combo ~s ~s" v type)]))
 
 ;; TODO: tests
 (module+ test
