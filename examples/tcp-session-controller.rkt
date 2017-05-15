@@ -434,11 +434,11 @@
          (send close-handler (Closed))
          (start-close (Close close-handler)
                       (SentFin)
-                      (spawn (close-await-sink-EVICT desugared-tcp-session-event ()) Sink))]
+                      (spawn (close-await-sink-EVICT ,desugared-tcp-session-event ()) Sink))]
         [(ConfirmedClose close-handler)
          (start-close (ConfirmedClose close-handler)
                       (SentFin)
-                      (spawn (confirmed-close-await-sink-EVICT desugared-tcp-session-event ()) Sink))]
+                      (spawn (confirmed-close-await-sink-EVICT ,desugared-tcp-session-event ()) Sink))]
         [(Abort close-handler)
          (abort-connection)
          (send close-handler (Aborted))
