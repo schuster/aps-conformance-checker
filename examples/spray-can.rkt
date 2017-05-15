@@ -36,8 +36,8 @@
     (Stop)
     (Start Nat)))
 (define timer-type-env
-  (list `[(1 4 2 1 1) (Addr (Union [BindTimeout] [UnbindTimeout]))]
-        `[(1 4 2 1 2) (Union [BindTimeout] [UnbindTimeout])]))
+  (list `[(1 4 1 1 1) (Addr (Union [BindTimeout] [UnbindTimeout]))]
+        `[(1 4 1 1 2) (Union [BindTimeout] [UnbindTimeout])]))
 
 (define spray-can-definitions
   (quasiquote

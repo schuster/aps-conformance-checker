@@ -21,8 +21,8 @@
 (define timeout-fudge-factor 500) ; in milliseconds
 
 (define timer-type-env
-  (list `[,(list 1 4 2 1 1) (Addr (Union [RegisterTimeout] [RetransmitTimeout] [TimeWaitTimeout]))]
-        `[,(list 1 4 2 1 2) (Union [RegisterTimeout] [RetransmitTimeout] [TimeWaitTimeout])]))
+  (list `[,(list 1 4 1 1 1) (Addr (Union [RegisterTimeout] [RetransmitTimeout] [TimeWaitTimeout]))]
+        `[,(list 1 4 1 1 2) (Union [RegisterTimeout] [RetransmitTimeout] [TimeWaitTimeout])]))
 (define desugared-TimerCommand
   `(Union
     (Stop)
