@@ -3315,7 +3315,6 @@
        ;; more behaviors would technically be okay, but my proof in the dissertation is only for
        ;; single behaviors
        (= 1 (length behaviors))
-       (printf "foobar\n")
        (let ([packets-to-this-actor
               (filter (lambda (packet) (equal? (csa#-message-packet-address packet) addr))
                       (csa#-config-message-packets i))])
