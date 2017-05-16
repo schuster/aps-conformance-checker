@@ -791,6 +791,9 @@
             (impl-triggers-from original-i original-s))])
       ;; previous trigger may not be valid in this state because of a new spec
       (if (and previous-step (member previous-step updated-triggers))
+          ;; NOTE: after running this for an hour or so on the TCP example, it appears the "true" case
+          ;; here never fires. This makes sense: previuos step is a *transition* (which includes a
+          ;; trigger), but updated-triggers is just a list of triggers, so there's a type error here
           (cons `[,(impl-step-trigger previous-step) ,(impl-step-from-observer? previous-step)]
                 updated-triggers)
           updated-triggers)))
