@@ -3232,16 +3232,22 @@
 ;; modeling
 
 (define (csa#-addrs-to-evict i)
-  (map csa#-actor-address
-       (filter (curryr evictable? i) (csa#-config-actors i))))
+  (filter (curryr evictable? i)
+          (append (map csa#-actor-address (csa#-config-actors i))
+                  (map csa#-blurred-actor-address (csa#-config-blurred-actors i)))))
 
 (module+ test
-  (define non-evictable1 `[(spawn-addr 1 NEW) (() (goto S))])
+  (define non-evictable1-addr `(spawn-addr 1 NEW))
+  (define non-evictable1 `[,non-evictable1-addr (() (goto S))])
   (define evictable-addr1
     `(spawn-addr (2-EVICT (Addr Nat)
                           ([(0 3 1) (Addr String)]
                            [(0 4 1 1) (Record [a (Addr String)])]))
                  NEW))
+    (define collective-evictable-addr1
+      `(blurred-spawn-addr (2-EVICT (Addr Nat)
+                                    ([(0 3 1) (Addr String)]
+                                     [(0 4 1 1) (Record [a (Addr String)])]))))
   (define evictable1
     `[,evictable-addr1
       (((define-state (A [x (Union [Foo (Addr Nat)])]) (m)
@@ -3249,51 +3255,78 @@
           (send (: (record [a (String (init-addr 3))]) a) "foo")
           (goto A x)))
        (goto A (variant Foo (Nat (init-addr 1)))))])
+  (define collective-evictable1
+    `[,collective-evictable-addr1
+      ([((define-state (A [x (Union [Foo (Addr Nat)])]) (m)
+           (send (String (init-addr 2)) "foobar")
+           (send (: (record [a (String (init-addr 3))]) a) "foo")
+           (goto A x)))
+        (goto A (variant Foo (Nat (init-addr 1))))])])
+  (define non-evictable2-addr `(spawn-addr (3-EVICT Nat ()) OLD))
   (define non-evictable2
-    `[(spawn-addr (3-EVICT Nat ()) OLD)
+    `[,non-evictable2-addr
       [((define-state (B) (m) (begin (Nat ,evictable-addr1) (Nat (obs-ext 1)) (goto B))))
        (goto B)]])
+  (define non-evictable-has-obs-ext-message-addr `(spawn-addr (4-EVICT (Addr Nat) ()) OLD))
   (define non-evictable-has-obs-ext-message
-    `[(spawn-addr (4-EVICT (Addr Nat) ()) OLD)
+    `[,non-evictable-has-obs-ext-message-addr
       [((define-state (A) (m) (goto A))) (goto A)]])
 
   (define evict-test-config
     `((,non-evictable1 ,evictable1 ,non-evictable2 ,non-evictable-has-obs-ext-message)
       ;; β#
-      ()
+      (,collective-evictable1)
       ;; μ#
       ([,evictable-addr1 (Nat (init-addr 4)) single]
-       [(spawn-addr (4-EVICT (Addr Nat) ()) OLD) (Nat (obs-ext 3)) single])))
+       [(spawn-addr (4-EVICT (Addr Nat) ()) OLD) (Nat (obs-ext 3)) single]
+       [,non-evictable2-addr ((Addr Nat) ,collective-evictable-addr1)])))
 
-  (define expected-evicted-config
+  (define expected-precise-evicted-config
     `(([(spawn-addr 1 NEW) (() (goto S))]
        [(spawn-addr (3-EVICT Nat ()) OLD)
         [((define-state (B) (m) (begin (* (Addr (Addr Nat))) (Nat (obs-ext 1)) (goto B))))
          (goto B)]]
        ,non-evictable-has-obs-ext-message)
       ;; β#
-      ()
+      (,collective-evictable1)
       ;; μ#
-      ([(spawn-addr (4-EVICT (Addr Nat) ()) OLD) (Nat (obs-ext 3)) single])))
+      ([(spawn-addr (4-EVICT (Addr Nat) ()) OLD) (Nat (obs-ext 3)) single]
+       [,non-evictable2-addr ((Addr Nat) ,collective-evictable-addr1)])))
+
+    (define expected-blurred-evicted-config
+      `((,non-evictable1
+         ,evictable1
+         ,non-evictable2
+         ,non-evictable-has-obs-ext-message)
+        ;; β#
+        ()
+        ;; μ#
+        ([,evictable-addr1 (Nat (init-addr 4)) single]
+         [(spawn-addr (4-EVICT (Addr Nat) ()) OLD) (Nat (obs-ext 3)) single]
+         [,non-evictable2-addr (* (Addr (Addr Nat)))])))
 
   (test-equal? "Addresses to evict"
     (csa#-addrs-to-evict evict-test-config)
-    (list evictable-addr1)))
+    (list evictable-addr1 collective-evictable-addr1)))
 
-(define (evictable? actor i)
-  (define addr (csa#-actor-address actor))
+(define (evictable? addr i)
+  (define behaviors (csa#-behaviors-of i addr))
   (and (evictable-addr? addr)
+       ;; more behaviors would technically be okay, but my proof in the dissertation is only for
+       ;; single behaviors
+       (= 1 (length behaviors))
+       (printf "foobar\n")
        (let ([packets-to-this-actor
               (filter (lambda (packet) (equal? (csa#-message-packet-address packet) addr))
                       (csa#-config-message-packets i))])
-         (null? (externals-in (list (actor-behavior actor) packets-to-this-actor))))))
+         (null? (externals-in (list behaviors packets-to-this-actor))))))
 
 (module+ test
-  (test-false "non-evictable actor 1" (evictable? non-evictable1 evict-test-config))
-  (test-true "evictable actor 1" (evictable? evictable1 evict-test-config))
-  (test-false "non-evictable actor 2" (evictable? non-evictable2 evict-test-config))
+  (test-false "non-evictable actor 1" (evictable? non-evictable1-addr evict-test-config))
+  (test-true "evictable actor 1" (evictable? evictable-addr1 evict-test-config))
+  (test-false "non-evictable actor 2" (evictable? non-evictable2-addr evict-test-config))
   (test-false "non-evictable b/c external in message"
-    (evictable? non-evictable-has-obs-ext-message evict-test-config)))
+    (evictable? non-evictable-has-obs-ext-message-addr evict-test-config)))
 
 (define (evictable-addr? address)
   (match (spawn-address-location address)
@@ -3326,11 +3359,22 @@
 ;; i# a# -> (list i# ρ#)
 ;; Evicts the given address from the given config
 (define (csa#-evict i addr)
-  (match-define (list first-actors to-evict later-actors)
-    (config-actor-and-rest-by-address i addr))
-  (define remaining-actors (append first-actors later-actors))
-  (match-define `(,state-defs (goto ,state-name ,state-args ...)) (actor-behavior to-evict))
-  (match-define `(spawn-addr (,_ ,evicted-type ,state-defs-type-env) ,_) addr)
+  (match-define (list remaining-actors remaining-blurred-actors evicted-behavior)
+    (cond
+      [(precise-internal-address? addr)
+       (match-define (list first-actors to-evict later-actors)
+         (config-actor-and-rest-by-address i addr))
+       (list (append first-actors later-actors)
+             (csa#-config-blurred-actors i)
+             (actor-behavior to-evict))]
+      [else
+       (match-define (list first-actors to-evict later-actors)
+         (config-collective-actor-and-rest-by-address i addr))
+       (list (csa#-config-actors i)
+             (append first-actors later-actors)
+             (first (csa#-blurred-actor-behaviors to-evict)))]))
+  (match-define `(,state-defs (goto ,state-name ,state-args ...)) evicted-behavior)
+  (match-define `(,_ ,evicted-type ,state-defs-type-env) (spawn-address-location addr))
   (define state-def-captured-receptionists
     (for/fold ([receptionists null])
               ([env-binding state-defs-type-env])
@@ -3353,7 +3397,7 @@
       (merge-receptionists receptionists
                            (internal-addr-types (csa#-message-packet-value packet) evicted-type))))
   (list (rename-address `(,remaining-actors
-                          ,(csa#-config-blurred-actors i)
+                          ,remaining-blurred-actors
                           ,non-evicted-packets)
                         addr
                         `(* (Addr ,evicted-type)))
@@ -3362,13 +3406,20 @@
          message-captured-receptionists)))
 
 (module+ test
-  (test-equal? "csa#-evict"
+  (test-equal? "csa#-evict atomic address"
     (csa#-evict evict-test-config evictable-addr1)
-    (list expected-evicted-config
+    (list expected-precise-evicted-config
           `([String (init-addr 2)]
             [String (init-addr 3)]
             [Nat (init-addr 1)]
-            [Nat (init-addr 4)]))))
+            [Nat (init-addr 4)])))
+
+  (test-equal? "csa#-evict collective address"
+    (csa#-evict evict-test-config collective-evictable-addr1)
+    (list expected-blurred-evicted-config
+          `([String (init-addr 2)]
+            [String (init-addr 3)]
+            [Nat (init-addr 1)]))))
 
 (define (sexp-by-path sexp path)
   (match path
@@ -3385,6 +3436,10 @@
      (if (equal? found-addr old)
          new
          (map (lambda (e) (rename-address e old new)) exp))]
+    [`(,_ ,(and found-addr `(blurred-spawn-addr ,_)))
+     (if (equal? found-addr old)
+         new
+         (map (lambda (e) (rename-address e old new)) exp))]
     [(list exps ...)
      (map (lambda (e) (rename-address e old new)) exps)]
     [_ exp]))
@@ -3397,6 +3452,12 @@
     (rename-address `(begin (Nat (spawn-addr 1 2))
                             (Nat (spawn-addr 5 6)))
                     `(spawn-addr 1 2)
+                    `(* (Addr Nat)))
+    `(begin (* (Addr Nat)) (Nat (spawn-addr 5 6))))
+    (test-equal? "rename-address 2"
+    (rename-address `(begin (Nat (blurred-spawn-addr 2))
+                            (Nat (spawn-addr 5 6)))
+                    `(blurred-spawn-addr 2)
                     `(* (Addr Nat)))
     `(begin (* (Addr Nat)) (Nat (spawn-addr 5 6)))))
 
