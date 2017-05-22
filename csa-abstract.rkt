@@ -3474,8 +3474,8 @@
     (comp-result-and
      ;; 1. Are there any spawns?
      (if (not (empty? (csa#-transition-effect-spawns transition-result))) 'gt 'eq)
-     ;; 2. Do all atomic spawns have have a corresponding existing actor with that spawn location, and
-     ;; have the same state name?
+     ;; 2. Do all atomic spawns either come from an evictable location or have have a corresponding
+     ;; existing actor with that spawn location, and have the same state name?
      ;;
      ;; REFACTOR: should probably just compare behaviors without state defs for spawns instead of
      ;; looking at the state name
@@ -3484,7 +3484,10 @@
        (cond
          [(precise-internal-address? addr)
           (match-define `(spawn-addr ,loc ,_) addr)
-          (if (atomic-state-name-by-address original-i `(spawn-addr ,loc OLD)) 'eq 'not-gteq)]
+          (if (or (evictable-location? loc)
+                  (atomic-state-name-by-address original-i `(spawn-addr ,loc OLD)))
+              'eq
+              'not-gteq)]
          [else 'eq]))
      (let ([after-pseudo-blur (pseudo-blur-transition-result transition-result)])
        (comp-result-and
