@@ -1492,6 +1492,24 @@
       (list `((obs-ext 2) [single (fork (goto B (obs-ext 1)))])
             `((obs-ext 1))))))
 
+
+  (let ([dummy-spec-with-fork
+         (aps#-make-no-transition-config
+          null
+          `(((obs-ext 1) [single (fork (goto B (obs-ext 2)))]) ((obs-ext 2))))])
+    (test-equal? "split dummy spec with an address in a fork pattern"
+      (split-spec dummy-spec-with-fork)
+      (list dummy-spec-with-fork)))
+
+    ;; TODO: try this test after implementing delayed-fork
+  ;; (let ([dummy-spec-with-fork
+  ;;        (aps#-make-no-transition-config
+  ;;         null
+  ;;         `(((obs-ext 1)) ((obs-ext 2) [single (fork (goto B (obs-ext 1)))])))])
+  ;;   (test-equal? "split dummy spec with an address in a fork pattern"
+  ;;     (split-spec dummy-spec-with-fork)
+  ;;     (list dummy-spec-with-fork)))
+
   (test-equal? "split spec with an address in a fork pattern, all relevant"
     (split-spec (term (()
                        ()
@@ -1713,14 +1731,28 @@
 ;; Makes a specification config with no observed receptionist and an FSM with no transitions. Used for
 ;; specifications where only the commitments are important.
 (define (aps#-make-no-transition-config unobs-receptionists commitments)
+  ;; TODO: expecting the first entry to be the relevant entry is a hack and should be removed once I
+  ;; switch over to delayed forks
   (term (()
          ,unobs-receptionists
-         (goto DummySpecFsmState)
-         ((define-state (DummySpecFsmState)))
+         (goto DummySpecFsmState ,(aps#-commitment-entry-address (first commitments)))
+         ((define-state (DummySpecFsmState x)))
          ,commitments)))
 
+(module+ test
+  (test-equal? "aps#-make-no-transition-config"
+    (aps#-make-no-transition-config (list `[Nat (init-addr 0)])
+                                    (list `[(obs-ext 0) [* single]]
+                                          `[(obs-ext 1)]))
+    `(()
+      ([Nat (init-addr 0)])
+      (goto DummySpecFsmState (obs-ext 0))
+      ((define-state (DummySpecFsmState x)))
+      ([(obs-ext 0) [* single]]
+       [(obs-ext 1)]))))
+
 ;; Creates a spec config with a transition-less FSM and a commitment map with just the given
-;; entry. The receptionists for the unobserved environment will be the given list plus the given FSM
+;; entries. The receptionists for the unobserved environment will be the given list plus the given FSM
 ;; address if it is not UNKONWN.
 (define (aps#-config-from-commitment-entries entries obs-receptionists unobs-receptionists)
   (aps#-make-no-transition-config (merge-receptionists unobs-receptionists obs-receptionists)
@@ -1744,12 +1776,12 @@
      '(((obs-ext 0) (single *) (single (record [a *] [b *]))))))
 
   (test-equal? "Merge obs address into unobs addrs"
-    (aps#-config-from-commitment-entries (list (term ((obs-ext 0 Nat))))
+    (aps#-config-from-commitment-entries (list (term ((obs-ext 0))))
                                          `(((Union [A]) (init-addr 0)))
                                          `(((Union [B]) (init-addr 0))))
     (aps#-make-no-transition-config
      `(((Union [A] [B]) (init-addr 0)))
-     '(((obs-ext 0 Nat))))))
+     '(((obs-ext 0))))))
 
 (define (aps#-completed-no-transition-config? s)
   ;; A configuration is a completed, no-transition configuration if its only current transition is the
@@ -1814,7 +1846,7 @@
                          (Nat (spawn-addr 2 NEW))
                          (Nat (blurred-spawn-addr 1))
                          (Nat (spawn-addr 2 OLD)))
-                       `())
+                       `([(obs-ext 0)]))
                       (list (term (spawn-addr 1 NEW))))
     (aps#-make-no-transition-config
      `((Nat (init-addr 0))
@@ -1822,7 +1854,7 @@
        (Nat (blurred-spawn-addr 1))
        (Nat (spawn-addr 2 NEW))
        (Nat (spawn-addr 2 OLD)))
-     `()))
+     `([(obs-ext 0)])))
 
   (test-equal? "aps#-blur-config merges addresses after blur"
     (aps#-blur-config `(()
