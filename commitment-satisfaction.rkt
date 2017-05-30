@@ -428,12 +428,16 @@
 ;; Returns a hash table that gives the enabled necessary actions for each implementation config in
 ;; outgoing.
 (define (catalog-enabled-necessary-actions outgoing)
-  (for/hash ([(config-pair full-steps) outgoing])
+  (for/fold ([the-hash (make-immutable-hash)])
+            ([(config-pair full-steps) outgoing])
     (define all-actions
       (for/list ([full-step full-steps])
         (impl-step-trigger (full-step-impl-step full-step))))
-    (values (config-pair-impl-config config-pair)
-            (list->set (filter necessary-action? all-actions)))))
+    (define i (config-pair-impl-config config-pair))
+    (hash-set the-hash
+              i
+              (set-union (hash-ref the-hash i (set))
+                         (list->set (filter necessary-action? all-actions))))))
 
 (module+ test
   (define com-sat-en-actions
@@ -451,7 +455,15 @@
                     ['L (set)]
                     ['M (set)]))
   (test-equal? "catalog-enabled-necessary-actions"
-    (catalog-enabled-necessary-actions com-sat-outgoing) com-sat-en-actions))
+    (catalog-enabled-necessary-actions com-sat-outgoing) com-sat-en-actions)
+
+  (test-equal? "Necessary actions should take union of actions from all pairs with that impl config"
+    (catalog-enabled-necessary-actions
+     (immutable-hash [(config-pair 'A 'X) (set (full-step (impl-step sat-en-trigger1 #f null null #f)
+                                                          (spec-step null null null)
+                                                          null))]
+                     [(config-pair 'A 'Y) (set)]))
+    (immutable-hash ['A (set sat-en-trigger1)])))
 
 ;; Type:
 ;;

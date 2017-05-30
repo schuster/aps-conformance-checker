@@ -56,6 +56,7 @@
   (po *
       (or po ...)
       (fork (goto φ u ...) Φ ...)
+      (delayed-fork (goto φ) Φ ...)
       self
       (variant t po ...)
       (record [l po] ...))

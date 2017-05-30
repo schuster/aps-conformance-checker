@@ -59,7 +59,7 @@
   (ρ# (τa# ...))
   (u .... a#ext)
   (O# ((a#ext (m po) ...) ...))
-  (fork-info (ρ#_obs (goto φ a# ...) (Φ ...))))
+  (match-fork (ρ#_obs (goto φ) (Φ ...))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
@@ -151,6 +151,8 @@
   [(subst/aps#/po (fork (goto φ u ...) Φ ...) x a#)
    (fork (goto φ (subst/aps#/u u x a#) ...)
          Φ ...)]
+  [(subst/aps#/po (delayed-fork (goto φ) Φ ...) x a#)
+   (delayed-fork (goto φ) Φ ...)]
   [(subst/aps#/po self _ _) self]
   [(subst/aps#/po (variant t po ...) x a#) (variant t (subst/aps#/po po x a#) ...)]
   [(subst/aps#/po (record [l po] ...) x a#) (record [l (subst/aps#/po po x a#)] ...)])
@@ -168,7 +170,13 @@
 
   (test-equal? "Substitute into goto in an output obligation fork"
     (term (subst/aps#/f [obligation (obs-ext 0) (variant A (fork (goto S x)))] x (obs-ext 1)))
-    (term [obligation (obs-ext 0) (variant A (fork (goto S (obs-ext 1))))])))
+    (term [obligation (obs-ext 0) (variant A (fork (goto S (obs-ext 1))))]))
+
+  (test-equal? "Substitute for fork and delayed-fork"
+    (term (subst/aps#/f [obligation x (variant A (fork (goto B y)) (delayed-fork (goto C)))]
+                        y
+                        (obs-ext 1)))
+    (term [obligation x (variant A (fork (goto B (obs-ext 1))) (delayed-fork (goto C)))])))
 
 (define-judgment-form aps#
   #:mode (pattern-binds-var I I)
@@ -317,6 +325,8 @@
                       null)
             ()])))
 
+;; s# spec-state-transition bool trigger -> [s# (s# ...)] or #f
+;;
 ;; Returns the config updated by running the given transition, if it can be taken from the given
 ;; trigger, along with all configs spawned in the transition, or #f if the transition is not possible
 ;; from this trigger
@@ -327,20 +337,23 @@
                         (aps#-transition-trigger transition))
     [#f #f]
     [(list bindings ...)
-     (match-define (list new-goto commitments fork-infos) (aps#-eval transition bindings))
-     (define updated-commitment-map
+     (match-define (list new-obligations pre-configs)
+       (perform (subst-into-effects (aps#-transition-effects transition) bindings)
+                (merge-receptionists (aps#-config-obs-receptionists config)
+                                     (aps#-config-unobs-receptionists config))))
+     (define updated-obligation-map
        (term
         (add-commitments
          ,(observe-addresses-from-subst
            (aps#-config-commitment-map config) bindings)
-         ,@commitments)))
-     (define stepped-current-config
+         ,@new-obligations)))
+     (define stepped-current-pre-config
        (term (,(aps#-config-obs-receptionists config)
               ,(aps#-config-unobs-receptionists config)
-              ,new-goto
+              ,(subst-into-goto (aps#-transition-goto transition) bindings)
               ,(aps#-config-state-defs config)
-              ,updated-commitment-map)))
-     (fork-configs stepped-current-config fork-infos)]))
+              ())))
+     (dist stepped-current-pre-config pre-configs updated-obligation-map)]))
 
 (module+ test
   (test-equal? "Transition should put observed no-commitment addresses in commitment map"
@@ -359,78 +372,233 @@
        (goto A)
        ((define-state (A) [r -> () (goto A)]))
        ([(obs-ext 1)]))
-     `())))
+     `()))
 
-;; transition ([x a#] ...) -> goto-exp ([a# po] ...) (fork-info ...)
+  (test-case "Immediate fork pattern transition"
+    (define fork-pattern `(fork (goto Z y) (define-state (Z y) [* -> () (goto Z y)])))
+    (check-equal?
+     (attempt-transition
+      `(([(Addr Nat) (init-addr 1)])
+        ([String (init-addr 2)])
+        (goto A (obs-ext 1))
+        ((define-state (A x) [y -> ([obligation x ,fork-pattern]) (goto B)])
+         (define-state (B) [* -> () (goto B)]))
+        ;; check for captured and uncaptured addresses, too
+        ([(obs-ext 1)]
+         [(obs-ext 3) (many *)]))
+      `[y -> ([obligation (obs-ext 1) ,fork-pattern]) (goto B)]
+      #t
+      `(external-receive (init-addr 1) ((Addr Nat) (obs-ext 2))))
+     (list
+      `(([(Addr Nat) (init-addr 1)])
+        ([String (init-addr 2)])
+        (goto B)
+        ((define-state (A x) [y -> ([obligation x ,fork-pattern]) (goto B)])
+         (define-state (B) [* -> () (goto B)]))
+        ([(obs-ext 3) (many *)]))
+      (list
+       `(()
+         ([(Addr Nat) (init-addr 1)] [String (init-addr 2)])
+         (goto Z (obs-ext 2))
+         ((define-state (Z y) [* -> () (goto Z y)]))
+         ([(obs-ext 2)]
+          [(obs-ext 1) (single self)]))))))
+
+  (test-case "Delayed fork pattern transition"
+    (define fork-pattern `(delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)])))
+    (check-equal?
+     (attempt-transition
+      `(([(Addr Nat) (init-addr 1)])
+        ([String (init-addr 2)])
+        (goto A (obs-ext 1))
+        ((define-state (A x) [* -> ([obligation x ,fork-pattern]) (goto B)])
+         (define-state (B) [* -> () (goto B)]))
+        ;; check for captured and uncaptured addresses, too
+        ([(obs-ext 1)]
+         [(obs-ext 2)]
+         [(obs-ext 3) (many *)]))
+      `[* -> ([obligation (obs-ext 1) ,fork-pattern]) (goto B)]
+      #t
+      `(external-receive (init-addr 1) ((Addr Nat) (obs-ext 2))))
+     (list
+      `(([(Addr Nat) (init-addr 1)])
+        ([String (init-addr 2)])
+        (goto B)
+        ((define-state (A x) [* -> ([obligation x ,fork-pattern]) (goto B)])
+         (define-state (B) [* -> () (goto B)]))
+        ([(obs-ext 1) (single ,fork-pattern)]
+         [(obs-ext 2)]
+         [(obs-ext 3) (many *)]))
+      null))))
+
+;; (f ...) ([x a#] ...) -> (f ...)
 ;;
-;; Evaluates the given spec transition with the given variable bindings and returns the results (a
-;; goto, the new output commitments, and fork-info for any forked specs
-(define (aps#-eval transition bindings)
-  (term (aps#-eval/mf ,transition ,bindings)))
+;; Substitutes the given bindings into the given effects
+(define (subst-into-effects effects bindings)
+  (redex-let aps# ([([x a#] ...) bindings])
+    (for/list ([effect effects])
+      (term (subst-n/aps#/f ,effect [x a#] ...)))))
 
-(define-metafunction aps#
-  aps#-eval/mf : (pt -> (f ...) (goto φ u ...)) ([x a#] ...)
-  -> [(goto φ a#ext ...) ([a#ext po] ...) ((ρ#_obs (goto φ a#ext ...) (Φ ...)) ...)]
-  [(aps#-eval/mf (_ -> (f ...) (goto φ u ...)) ([x a#] ...))
-   ((goto φ (subst-n/aps#/u u [x a#] ...) ...)
-    ([a#_ob po] ...)
-    ([() any_fork-state (any_state-defs ...)] ...))
-   (where (((obligation a#_ob po) ...)
-           ((fork any_fork-state any_state-defs ...) ...))
-          ,(collect-effects (term ((subst-n/aps#/f f [x a#] ...) ...))))])
-
-;; (f ...) -> [(f_obligation ...) (f_fork ...)]
-(define (collect-effects fs)
-  (define-values (obligations forks) (partition (lambda (f) (equal? (car f) 'obligation)) fs))
-  (list obligations forks))
-
-;; s# (fork-info ...) -> s# (s# ...)
+;; (goto state x ...) ([x a#] ...) -> (goto state a ...)
 ;;
-;; Given the current configuration and the info needed to fork new configs, splits information from
-;; the current configuration off to form the new configurations
-(define (fork-configs current-config fork-infos)
-  (redex-let aps# ([(ρ#_obs ρ#_unobs any_goto any_states O#) current-config])
-    (define fork-unobs-base (merge-receptionists (term ρ#_unobs) (term ρ#_obs)))
-    (define all-fork-obs-receptionists (append* (map first fork-infos)))
-    (define-values (commitment-map forked-configs)
-      (for/fold ([current-commitment-map (term O#)]
-                 [forked-configs null])
-                ([fork-info fork-infos])
-        (match-define (list obs-receptionists goto state-defs) fork-info)
-        (match-define (list remaining-map forked-map)
-          (fork-commitment-map current-commitment-map (externals-in goto)))
-        ;; The new unobs receptionists are *all* receptionists from the parent config, plus the
-        ;; observable receptionists of the other forks
-        (define other-fork-obs-receptionists
-          (filter (negate (curryr member obs-receptionists)) all-fork-obs-receptionists))
-        (define unobs-receptionists
-          (merge-receptionists fork-unobs-base other-fork-obs-receptionists))
-        (values remaining-map
-                (cons (term (,obs-receptionists ,unobs-receptionists ,goto ,state-defs ,forked-map))
-                      forked-configs))))
-    (define new-unobs-receptionists (merge-receptionists (term ρ#_unobs) all-fork-obs-receptionists))
-    (list (term (ρ#_obs ,new-unobs-receptionists any_goto any_states ,commitment-map))
-          forked-configs)))
+;; Substitutes the given bindings into the given specification goto expression
+(define (subst-into-goto goto bindings)
+  (redex-let aps# ([([x a#] ...) bindings]
+                   [(goto φ u ...) goto])
+    (term (goto φ (subst-n/aps#/u u [x a#] ...) ...))))
+
+;; (f ...) ρ -> (([a# po] ...) (ς ...))
+;;
+;; Performs the given effects in the context of the given receptionist interface, returning new
+;; obligations and forked pre-configurations
+(define (perform effects receptionists)
+  (for/fold ([results (list null null)])
+            ([effect effects])
+    (match-define (list obls-so-far pre-configs-so-far) results)
+    (match effect
+      [`(obligation ,address ,pattern)
+       (match-define (list post-extract-pattern extracted-pre-configs)
+         (extract pattern receptionists address))
+       (list (cons `[,address ,post-extract-pattern] obls-so-far)
+             (append pre-configs-so-far extracted-pre-configs))]
+      [`(fork ,goto ,state-defs ...)
+       (list obls-so-far
+             (cons `(() ,receptionists ,goto ,state-defs ()) pre-configs-so-far))])))
 
 (module+ test
-  (test-equal? "Degenerate fork config case"
-               (fork-configs (term (() () (goto A) ((define-state (A))) ())) null)
+  (test-equal? "perform 1"
+    (perform
+     (list `[obligation (obs-ext 1)
+                        (fork (goto Z (obs-ext 2)) (define-state (Z a) [* -> () (goto Z a)]))])
+     `([Nat (init-addr 1)]
+       [String (init-addr 2)]))
+    `(([(obs-ext 1) self])
+      ([()
+        ([Nat (init-addr 1)]
+         [String (init-addr 2)])
+        (goto Z (obs-ext 2))
+        ((define-state (Z a) [* -> () (goto Z a)]))
+        ((obs-ext 1))])))
+
+  (test-equal? "perform delayed-fork obligation"
+    (perform
+     (list `[obligation (obs-ext 1)
+                        (delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)]))])
+     `([Nat (init-addr 1)]
+       [String (init-addr 2)]))
+    `(([(obs-ext 1) (delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)]))])
+      ()))
+
+  (test-equal? "perform fork"
+    (perform (list `[fork (goto A (obs-ext 1))])
+             '())
+    `(() ([() () (goto A (obs-ext 1)) () ()]))))
+
+;; po ρ a# -> (po, (ς ...))
+;;
+;; Extracts all forks from the given pattern that is an obligation on the given address, replacing
+;; those patterns with the "self" pattern and creating pre-configurations for each fork using the
+;; given receptionists as the unobs receptionists
+(define (extract pattern receptionists addr)
+  (define (extract-sub-patterns sub-patterns make-pattern)
+    (match-define (list `[,extracted-pats ,pre-configs] ...)
+      (map (curryr extract receptionists addr) sub-patterns))
+    (list (make-pattern extracted-pats) (append* pre-configs)))
+  (match pattern
+    [`* (list pattern null)]
+    [`(or ,pats ...)
+     (extract-sub-patterns pats (lambda (pats) `(or ,@pats)))]
+    [`(variant ,tag ,pats ...)
+     (extract-sub-patterns pats (lambda (pats) `(variant ,tag ,@pats)))]
+    [`(record [,fields ,pats] ...)
+     (extract-sub-patterns
+      pats
+      (lambda (pats) `(record ,@(map (lambda (f p) `[,f ,p]) fields pats))))]
+    [`(fork ,goto ,state-defs ...)
+     (list 'self `([() ,receptionists ,goto ,state-defs (,addr)]))]
+    [`(delayed-fork ,_ ,_ ...) (list pattern null)]
+    ['self (list pattern null)]))
+
+(module+ test
+  (test-equal? "extract 1"
+    (extract `(or (fork (goto A (obs-ext 1))) (fork (goto B (obs-ext 2))))
+             `([Nat (init-addr 1)])
+             `(obs-ext 3))
+    `[(or self self)
+      ([() ([Nat (init-addr 1)]) (goto A (obs-ext 1)) () ((obs-ext 3))]
+       [() ([Nat (init-addr 1)]) (goto B (obs-ext 2)) () ((obs-ext 3))])])
+
+  (test-equal? "extract fork"
+    (extract `(fork (goto A (obs-ext 1)) (define-state (A x)))
+             `([Nat (init-addr 1)])
+             `(obs-ext 3))
+    `[self
+      ([()
+        ([Nat (init-addr 1)])
+        (goto A (obs-ext 1))
+        ((define-state (A x)))
+        ((obs-ext 3))])])
+
+  (test-equal? "extract delayed-fork"
+    (extract `(delayed-fork (goto B) (define-state (B)) (define-state (C)))
+             `()
+             `(obs-ext 2))
+    `[(delayed-fork (goto B) (define-state (B)) (define-state (C)))
+      ()]))
+
+;; ς (ς ...) O# -> (s# (s# ...))
+;;
+;; As described in the dissertation, distributes the obligations in the obligation map to each
+;; pre-configuration according to the external addresses "relevant" to each pre-config (determined by
+;; the state arguments on that configuration and any extra addresses set in the pre-config). Static
+;; constraints on the specification ensure that every observed external address is relevant to at most
+;; one spec config.
+;;
+;; The dist function described in the dissertation assigns obligations non-deterministically if the
+;; address is not relevant in any pre-config. Here we use the strategy of assigning them to the
+;; "current" config by default.
+(define (dist current-pre-config forked-pre-configs obligation-map)
+  (define-values (remaining-obligation-map forked-configs)
+   (for/fold ([obligation-map obligation-map]
+              [forked-configs null])
+             ([pre-config forked-pre-configs])
+     (match-define (list obs-receptionists unobs-receptionists goto state-defs relevants) pre-config)
+     (match-define (list remaining-obligation-map forked-map)
+       (fork-commitment-map obligation-map (append (externals-in goto) relevants)))
+     ;; The new unobs receptionists are *all* receptionists from the parent config, plus the
+     ;; observable receptionists of the other forks
+     (values remaining-obligation-map
+             (cons (term (,obs-receptionists ,unobs-receptionists ,goto ,state-defs ,forked-map))
+                   forked-configs))))
+  (match current-pre-config
+    [`(,obs-receptionists ,unobs-receptionists ,goto ,state-defs ,_)
+     (list `(,obs-receptionists ,unobs-receptionists ,goto ,state-defs ,remaining-obligation-map)
+           forked-configs)]))
+
+(module+ test
+  (test-equal? "Degenerate dist case"
+               (dist (term (() () (goto A) ((define-state (A))) ())) null null)
                (list (term (() () (goto A) ((define-state (A))) ())) null))
 
-  (test-equal? "Basic fork config case"
-    (fork-configs (term (() () (goto A) ((define-state (A))) ([(obs-ext 1) (single *)] [(obs-ext 2) (single (record))])))
-                  (term ([() (goto B (obs-ext 2)) ((define-state (B r)))])))
+  (test-equal? "Basic dist case"
+    (dist (term (() () (goto A) ((define-state (A))) ()))
+          (list `[() () (goto B (obs-ext 2)) ((define-state (B r))) ()])
+          (term ([(obs-ext 1) (single *)] [(obs-ext 2) (single (record))])))
     (list (term (() () (goto A) ((define-state (A))) ([(obs-ext 1) (single *)])))
           (list (term (() () (goto B (obs-ext 2)) ((define-state (B r))) ([(obs-ext 2) (single (record))]))))))
 
-  (test-equal? "Add two forks"
-    (fork-configs (term (() () (goto A) () ()))
-                  `((((Nat (spawn-addr 1 OLD))) (goto B) ())
-                    (((Nat (spawn-addr 2 OLD))) (goto C) ())))
-    `((() ((Nat (spawn-addr 1 OLD)) (Nat (spawn-addr 2 OLD))) (goto A) () ())
-      ((((Nat (spawn-addr 2 OLD))) ((Nat (spawn-addr 1 OLD))) (goto C) () ())
-       (((Nat (spawn-addr 1 OLD))) ((Nat (spawn-addr 2 OLD))) (goto B) () ())))))
+  (test-equal? "Dist with extra relevant address"
+    (dist (term (() () (goto A (obs-ext 1)) () ()))
+          (list (term (() () (goto B) () ((obs-ext 2)))))
+          (term ([(obs-ext 1) (single *)]
+                 [(obs-ext 2) (many *)])))
+    (list (term (() () (goto A (obs-ext 1)) () ([(obs-ext 1) (single *)])))
+          (list (term (() () (goto B) () ([(obs-ext 2) (many *)])))))))
 
+;; O# (a# ...) -> (O#_old O#_new)
+;;
+;; Moves entries from the given obligation map whose address is in the given list and creates a new
+;; obligation map from that list
 (define (fork-commitment-map commitment-map addresses)
   (term (fork-commitment-map/mf ,commitment-map () ,addresses)))
 
@@ -495,7 +663,7 @@
                  [(obs-ext 2) [single *]])))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Pattern matching
+;; Input pattern matching
 
 ;; Matches the trigger against the given transition pattern, returning the bindings created from the
 ;; match if such a match exists, else #f
@@ -614,40 +782,59 @@
   (check-equal? (judgment-holds (aps#-match/j (folded Nat (* Nat)) * any_bindings) any_bindings)
                 (list '())))
 
-;;  aps#-match-po : v# ρ#_obs po -> [ρ#_obs (fork-info ...) ρ#_unobs]
+;; ---------------------------------------------------------------------------------------------------
+;; Output pattern matching
+
+;; v# ρ# (listof pattern) -> (listof [po ρ#_obs ρ#_unobs (match-fork ...)])
 ;;
-;; Returns an output-match-result (a 3-tuple of new observed receptionists, fork infos, and new
-;; receptionists) if the value and old observed receptionists matches the pattern; #f otherwise.
+;; Attempts to match the given value and observed receptionist map against all of the given patterns,
+;; returning a list of tuples [po ρ#_obs ρ#_unobs (match-fork ...)] for each way to match against one
+;; of the given patterns.
+(define (find-matching-patterns value obs-receptionists patterns)
+  (reverse
+   (for/fold ([success-results null])
+             ([pattern patterns])
+     (define this-pattern-results
+       (map (curry cons pattern) (aps#-match-po value obs-receptionists pattern)))
+     (append success-results this-pattern-results))))
+
+(module+ test
+  (check-equal?
+   (list->set (find-matching-patterns `(variant A) null (list '* '(variant A) '(variant B))))
+   (set `[* () () ()]
+        `[(variant A) () () ()])))
+
+;; v# ρ#_obs po -> (Listof [ρ#_obs ρ#_unobs (match-fork ...)])
+;;
+;; Attempts to match the given message and observed receptionist set against the given
+;; pattern. Returns the outputs from every successful judgment for the match relation.
 (define (aps#-match-po value obs-receptionists pattern)
-  (match (judgment-holds (aps#-matches-po?/j ,value
-                                             ,obs-receptionists
-                                             ,pattern
-                                             any_new-obs-receptionists
-                                             any_fork-infos
-                                             any_new-unobs-receptionists)
-                         (any_new-obs-receptionists any_fork-infos any_new-unobs-receptionists))
-    [(list) #f]
-    [(list result) result]
-    [_ (error "Got multiple possible matches from match-po; shouldn't happen")]))
+  (judgment-holds (aps#-matches-po?/j ,value
+                                      ,obs-receptionists
+                                      ,pattern
+                                      any_new-obs-receptionists
+                                      any_new-unobs-receptionists
+                                      any_forks)
+                  (any_new-obs-receptionists any_new-unobs-receptionists any_forks)))
 
 (define-judgment-form aps#
   #:mode (aps#-matches-po?/j I I I O O O)
-  #:contract (aps#-matches-po?/j v# ρ#_obs po ρ#_obs-new (fork-info ...) ρ#_unobs)
+  #:contract (aps#-matches-po?/j v# ρ#_obs po ρ#_obs-new ρ#_unobs (match-fork ...))
 
   [-----
-   (aps#-matches-po?/j v# ρ#_obs * ρ#_obs () ,(internals-in (term v#)))]
+   (aps#-matches-po?/j v# ρ#_obs * ρ#_obs ,(internals-in (term v#)) ())]
 
-  [(aps#-matches-po?/j v# ρ#_obs po                  any_obs-recs any_forks any_unobs-receptionists)
+  [(aps#-matches-po?/j v# ρ#_obs po                  any_obs-recs any_unobs-receptionists any_forks)
    -----
-   (aps#-matches-po?/j v# ρ#_obs (or _ ... po _ ...) any_obs-recs any_forks any_unobs-receptionists)]
+   (aps#-matches-po?/j v# ρ#_obs (or _ ... po _ ...) any_obs-recs any_unobs-receptionists any_forks)]
 
   [----
    (aps#-matches-po?/j (τ a#int)
                        ρ#_obs
-                       (fork (goto φ a# ...) Φ ...)
+                       (delayed-fork (goto φ) Φ ...)
                        ρ#_obs
-                       ((([τ a#int]) (goto φ a# ...) (Φ ...)))
-                       ())]
+                       ()
+                       ((([τ a#int]) (goto φ) (Φ ...))))]
 
   [----
    (aps#-matches-po?/j τa# (τa#) self (τa#) () ())]
@@ -655,121 +842,128 @@
   [----
    (aps#-matches-po?/j [τ a#int] () self ([τ a#int]) () ())]
 
-  [(aps#-list-matches-po?/j ((v# po) ...) ρ#_obs any_obs-recs any_forks any_unobs-receptionists)
+  [(aps#-list-matches-po?/j ((v# po) ...) ρ#_obs any_obs-recs any_unobs-receptionists any_forks)
    ------
    (aps#-matches-po?/j (variant t v# ..._n)
                        ρ#_obs
                        (variant t po ..._n)
                        any_obs-recs
-                       any_forks
-                       any_unobs-receptionists)]
+                       any_unobs-receptionists
+                       any_forks)]
 
   ;; Records
 
-  [(aps#-list-matches-po?/j ((v# po) ...) ρ#_obs any_obs-recs any_forks any_unobs-receptionists)
+  [(aps#-list-matches-po?/j ((v# po) ...) ρ#_obs any_obs-recs any_unobs-receptionists any_forks)
    ------
    (aps#-matches-po?/j (record [l v#] ..._n)
                        ρ#_obs
                        (record [l po] ..._n)
                        any_obs-recs
-                       any_forks
-                       any_unobs-receptionists)]
+                       any_unobs-receptionists
+                       any_forks)]
 
-  [(aps#-list-matches-po?/j (((* τ) po) ...) ρ#_obs any_obs-recs any_forks any_unobs-receptionists)
+  [(aps#-list-matches-po?/j (((* τ) po) ...) ρ#_obs any_obs-recs any_unobs-receptionists any_forks)
    -----
    (aps#-matches-po?/j (* (Record [l τ] ..._n))
                        ρ#_obs
                        (record [l po] ..._n)
                        any_obs-recs
-                       any_forks
-                       any_unobs-receptionists)]
+                       any_unobs-receptionists
+                       any_forks)]
 
   ;; Just ignore folds in the values: in a real language, the programmer wouldn't see them and
   ;; therefore would not write patterns for them
-  [(aps#-matches-po?/j v# ρ#_obs po any_obs-recs any_forks any_unobs-receptionists)
+  [(aps#-matches-po?/j v# ρ#_obs po any_obs-recs any_unobs-receptionists any_forks)
    -------------------------------------------------------------------------------------
-   (aps#-matches-po?/j (folded _ v#) ρ#_obs po any_obs-recs any_forks any_unobs-receptionists)])
+   (aps#-matches-po?/j (folded _ v#) ρ#_obs po any_obs-recs any_unobs-receptionists any_forks)])
 
 (define-judgment-form aps#
   #:mode (aps#-list-matches-po?/j I I O O O)
-  #:contract (aps#-list-matches-po?/j ((v# po) ...)
-                                      ρ#_obs
-                                      ρ#_unobs
-                                      ((ρ#_fork (goto φ a# ...) (Φ ...)) ...)
-                                      (τa# ...))
+  #:contract (aps#-list-matches-po?/j ((v# po) ...) ρ#_obs ρ#_obs-new ρ#_unobs (match-fork ...))
+
   [---------
    (aps#-list-matches-po?/j () any_addr any_addr () ())]
 
-  [(aps#-matches-po?/j v# ρ#_obs po any_addr1 (any_fork-infos1 ...) (any_unobs-receptionists1 ...))
+  [(aps#-matches-po?/j v# ρ#_obs po any_obs-rec1 (any_unobs-receptionists1 ...) (any_forks1 ...))
    (aps#-list-matches-po?/j (any_rest ...)
-                            any_addr1
-                            any_addr2
-                            (any_fork-infos2 ...)
-                            (any_unobs-receptionists2 ...))
+                            any_obs-rec1
+                            any_obs-rec2
+                            (any_unobs-receptionists2 ...)
+                            (any_forks2 ...))
    ---------
    (aps#-list-matches-po?/j ((v# po) any_rest ...)
                             ρ#_obs
-                            any_addr2
-                            (any_fork-infos1 ... any_fork-infos2 ...)
-                            (any_unobs-receptionists1 ... any_unobs-receptionists2 ...))])
+                            any_obs-rec2
+                            (any_unobs-receptionists1 ... any_unobs-receptionists2 ...)
+                            (any_forks1 ... any_forks2 ...))])
 
 (module+ test
   (check-equal?
    (aps#-match-po '(* Nat) '() '*)
-   (list '() null null))
-  (check-false
-   (aps#-match-po '(* Nat) '() '(record)))
+   (list (list '() null null)))
+  (check-equal?
+   (aps#-match-po '(* Nat) '() '(record))
+   null)
   (check-equal?
    (aps#-match-po '(Nat (init-addr 0)) '() 'self)
-   (list '((Nat (init-addr 0))) null null))
+   (list (list '((Nat (init-addr 0))) null null)))
   (check-equal?
    (aps#-match-po '(Nat (init-addr 0)) '() '*)
-   (list '() null (list '(Nat (init-addr 0)))))
-  (check-false
-   (aps#-match-po '(Nat (obs-ext 0)) '() 'self))
+   (list (list '() (list '(Nat (init-addr 0))) null)))
+  (check-equal?
+   (aps#-match-po '(Nat (obs-ext 0)) '() 'self)
+   null)
   (check-equal?
    (aps#-match-po '(variant A (* Nat) (Nat (init-addr 2))) '() '(variant A * self))
-   (list '((Nat (init-addr 2))) '() '()))
+   (list (list '((Nat (init-addr 2))) '() '())))
   (check-equal?
    (aps#-match-po '(variant A (* Nat) (Nat (init-addr 2))) '() '(variant A * *))
-   (list '() '() '((Nat (init-addr 2)))))
+   (list (list '() '((Nat (init-addr 2))) '())))
   (check-equal?
    (aps#-match-po '(variant A (* Nat) (Nat (init-addr 2))) '((Nat (init-addr 2))) '(variant A * self))
-   (list '((Nat (init-addr 2))) '() '()))
+   (list (list '((Nat (init-addr 2))) '() '())))
   (check-equal?
    (aps#-match-po '(variant A (* Nat) (Nat (init-addr 2)))
                   '((Nat (init-addr 2)))
                   '(or (variant A * self) (variant B)))
-   (list '((Nat (init-addr 2))) '() '()))
+   (list (list '((Nat (init-addr 2))) '() '())))
   (check-equal? (aps#-match-po (term (variant A)) '() (term (or (variant A) (variant B))))
-                (list '() null null))
+                (list (list '() null null)))
   (check-equal? (aps#-match-po (term (variant B)) '() (term (or (variant A) (variant B))))
-                (list '() null null))
-  (check-false (aps#-match-po (term (variant C)) '() (term (or (variant A) (variant B)))))
-  (check-false
+                (list (list '() null null)))
+  (check-equal?
+   (aps#-match-po (term (variant C)) '() (term (or (variant A) (variant B))))
+   null)
+  (check-equal?
    (aps#-match-po '(variant A (* Nat) (Nat (init-addr 2)))
                   '((Nat (init-addr 1)))
-                  '(variant A * self)))
+                  '(variant A * self))
+   null)
   (test-equal? "Spawn match po test"
    (aps#-match-po '(Nat (spawn-addr 'foo NEW))
                   '()
-                  '(fork (goto B) (define-state (B))))
-   (list '()
-         '([([Nat (spawn-addr 'foo NEW)]) (goto B) ((define-state (B)))])
-         '()))
+                  '(delayed-fork (goto B) (define-state (B))))
+   (list (list '()
+               '()
+               '([([Nat (spawn-addr 'foo NEW)]) (goto B) ((define-state (B)))]))))
   (test-equal? "Full match po test"
    (aps#-match-po '(variant A (Nat (spawn-addr 'foo NEW)) (Nat (init-addr 2)))
                   '()
-                  '(variant A (fork (goto B) (define-state (B))) self))
-   (list '((Nat (init-addr 2)))
-         '([([Nat (spawn-addr 'foo NEW)])
-            (goto B)
-            ((define-state (B)))])
-         '()))
+                  '(variant A (delayed-fork (goto B) (define-state (B))) self))
+   (list (list '((Nat (init-addr 2)))
+               '()
+               '([([Nat (spawn-addr 'foo NEW)])
+                  (goto B)
+                  ((define-state (B)))]))))
 
   (test-equal? "Fold test"
    (aps#-match-po '(folded Nat (variant A)) '() '(variant A))
-   (list '() '() '())))
+   (list (list '() '() '())))
+
+  (test-equal? "'Or' pattern can match in multiple ways"
+    (list->set (aps#-match-po `[Nat (init-addr 1)] null `(or * self)))
+    (set `[([Nat (init-addr 1)]) () ()]
+         `[() ([Nat (init-addr 1)]) ()])))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Commitment Satisfaction
@@ -788,136 +982,66 @@
            "Cannot check conformance for program that sends observed external addresses to environment. Violating outputs: ~s"
            outputs))
 
-  ;; REFACTOR: rewrite this function for readability (probably need to split some tasks into helper
-  ;; functions)
-  (let loop ([spec-configs spec-configs]
-             [satisfied-commitments null]
-             [remaining-outputs outputs])
-    (match remaining-outputs
-      [(list) (list `(,spec-configs ,satisfied-commitments))]
-      [(list output remaining-outputs ...)
-       (define address (csa#-output-address output))
-       (define message (csa#-output-message output))
-       (match (find-with-rest (curryr config-observes-address? address) spec-configs)
-         [#f
-          ;; we can ignore outputs on unobserved addresses, but need to add any escaped internal
-          ;; addresses as part of the unobserved receptionists on all configs
-          (loop (map (curryr config-merge-unobs-addresses (internals-in message)) spec-configs)
-                satisfied-commitments
-                remaining-outputs)]
-         [(list earlier-configs config later-configs)
-          (define old-obs-receptionists (aps#-config-obs-receptionists config))
-
-          ;; Defines how to continue once a match has been found
-          (define (handle-match-success match-results)
-            (append*
-             ;; for each possible way to match, loop again to resolve the remaining outputs
-             (for/list ([match-result match-results])
-               (match-define `(,config (,pat
-                                        ,new-obs-receptionists
-                                        ,new-spawn-infos
-                                        ,new-unobs-receptionists))
-                 match-result)
-               ;; update this config (obs and unobs receptionists, commitments)
-               (define updated-config
-                 `(,new-obs-receptionists
-                   ,(merge-receptionists (aps#-config-unobs-receptionists config) new-unobs-receptionists)
-                   ,(aps#-config-current-state config)
-                   ,(aps#-config-state-defs config)
-                   ,(aps#-remove-commitment-pattern (aps#-config-commitment-map config) address pat)))
-               ;; add unobs (and new self address, if updated) to all other configs
-               (define new-unobs-for-others
-                 (append new-unobs-receptionists
-                         (if (equal? new-obs-receptionists old-obs-receptionists)
-                             null
-                             new-obs-receptionists)))
-               (define updated-earlier-configs
-                 (map (curryr config-merge-unobs-addresses new-unobs-for-others) earlier-configs))
-               (define updated-later-configs
-                 (map (curryr config-merge-unobs-addresses new-unobs-for-others) later-configs))
-               ;; add spawns
-               (match-define (list final-updated-config (list spawned-configs ...))
-                 (fork-configs updated-config new-spawn-infos))
-               (loop (append updated-earlier-configs
-                             (list final-updated-config)
-                             updated-later-configs
-                             spawned-configs)
-                     (append satisfied-commitments (list `[,address ,pat]))
-                     remaining-outputs))))
-
-          (match (csa#-output-multiplicity output)
-            ['single
-             (define commitment-patterns
-               (map commitment-pattern
-                    (commitments-for-address (aps#-config-commitment-map config) address)))
-             (match (find-matching-patterns commitment-patterns message old-obs-receptionists)
-               [(list)
-                ;; if we can't find a match with existing patterns, try the free-output patterns
-                (define free-patterns (hash-ref (build-free-output-map config) address null))
-                (match (find-matching-patterns free-patterns message old-obs-receptionists)
-                  [(list)
-                   ;; if free-output patterns also don't match, try the other unobs-transition
-                   ;; patterns as a last resort
-                   (define transition-patterns (get-unobs-transition-patterns config address))
-                   (define match-results
-                     (find-matching-patterns (hash-keys transition-patterns)
-                                             message
-                                             old-obs-receptionists))
-                   (define match-results-with-config
-                     (for/list ([match-result match-results])
-                       (define matched-pattern (first match-result))
-                       (define transitioned-config
-                         `(,(aps#-config-obs-receptionists config)
-                           ,(aps#-config-unobs-receptionists config)
-                           ,(hash-ref transition-patterns matched-pattern)
-                           ,(aps#-config-state-defs config)
-                           ,(aps#-config-commitment-map config)))
-                       (list transitioned-config match-result)))
-                   (handle-match-success match-results-with-config)]
-                  [results (handle-match-success (map (curry list config) results))])]
-               [results (handle-match-success (map (curry list config) results))])]
-            ['many
-             ;; have to use free-output patterns if output may have been sent more than once (e.g. in
-             ;; a loop)
-             (define free-patterns (hash-ref (build-free-output-map config) address null))
-             (handle-match-success
-              (map (curry list config)
-                   (find-matching-patterns free-patterns message old-obs-receptionists)))])])])))
-
-(define (config-observes-address? config addr)
-  (match (commitments-for-address (aps#-config-commitment-map config) addr)
-    [#f #f]
-    [_ #t]))
-
-;; (listof pattern) v# ρ# -> (listof output-match-result)
-;;
-;; Returns all possible match results
-;; (i.e. pattern/self-address/list-of-spawn-infos/list-of-unobs-receptionists) tuples
-(define (find-matching-patterns patterns message obs-receptionists)
-  (append*
-   (for/list ([pattern patterns])
-     (judgment-holds (aps#-matches-po?/j ,message
-                                         ,obs-receptionists
-                                         ,pattern
-                                         any_new-obs-receptionists
-                                         any_spawn-infos
-                                         any_unobs-recs)
-                     (,pattern any_new-obs-receptionists any_spawn-infos any_unobs-recs)))))
+  (match outputs
+    [(list) (list `(,spec-configs ()))]
+    [(list output remaining-outputs ...)
+     (define address (csa#-output-address output))
+     (define message (csa#-output-message output))
+     (define quantity (csa#-output-multiplicity output))
+     ;; TODO: compute the new receptionists with output-matching instead when I switch the addresses
+     ;; to not include types
+     (define exposed-receptionists (internals-in message))
+     (match (find-with-rest (curryr config-observes-address? address) spec-configs)
+       [#f
+        ;; we can ignore outputs on unobserved addresses, but need to add any escaped internal
+        ;; addresses as part of the unobserved receptionists on all configs
+        (aps#-resolve-outputs
+         (map (curryr config-merge-unobs-addresses exposed-receptionists) spec-configs)
+         remaining-outputs)]
+       [(list earlier-configs config later-configs)
+        (define updated-unobserving-configs
+          (map (curryr config-merge-unobs-addresses exposed-receptionists)
+               (append earlier-configs later-configs)))
+        ;; for every possible way to match this particular output
+        (for/fold ([results null])
+                  ([resolve-result (resolve-output config address message quantity)])
+          (match-define (list resolved-configs fulfilled-pattern) resolve-result)
+          ;; for every possible way to match the remaining outputs
+          (for/fold ([results results])
+                    ([next-result (aps#-resolve-outputs
+                                   (append updated-unobserving-configs resolved-configs)
+                                   remaining-outputs)])
+            ;; add the result to our list of possible results
+            (match-define (list final-configs other-fulfillments) next-result)
+            (define new-resolve-outputs-result
+              `[,final-configs ,(cons `[,address ,fulfilled-pattern] other-fulfillments)])
+            (cons new-resolve-outputs-result results)))])]))
 
 (module+ test
   (define (make-dummy-spec commitments)
     (term (() () (goto DummyState) ((define-state (DummyState))) ,commitments)))
+
+  (test-equal? "resolve test: no outputs"
+    (aps#-resolve-outputs
+     (list (make-dummy-spec `(((obs-ext 1)))))
+     (term ()))
+    (list `[,(list (make-dummy-spec `(((obs-ext 1))))) ()]))
   (test-equal? "resolve test 1"
     (aps#-resolve-outputs
      (list (make-dummy-spec `(((obs-ext 1)))))
      (term (((obs-ext 1) (* Nat) single))))
+    null)
+  (test-equal? "resolve test 1: many"
+    (aps#-resolve-outputs
+     (list (make-dummy-spec `(((obs-ext 1)))))
+     (term (((obs-ext 1) (* Nat) many))))
     null)
   (test-equal? "resolve test 2"
     (aps#-resolve-outputs
      (list (make-dummy-spec `(((obs-ext 1) (single *)))))
      (term (((obs-ext 1) (* Nat) single))))
     (list `[,(list (make-dummy-spec `(((obs-ext 1)))))
-            (((obs-ext 1) *))]))
+            ([(obs-ext 1) *])]))
   (test-equal? "resolve test 3"
     (aps#-resolve-outputs
      (list (make-dummy-spec `(((obs-ext 1) (single *) (single (record))))))
@@ -952,17 +1076,36 @@
     (aps#-resolve-outputs (list free-output-spec) (term ([(obs-ext 1) (variant C) many])))
     (list `[,(list free-output-spec) ([(obs-ext 1) (variant C)])]))
 
-  (test-equal? "resolve against two different branches of an 'or' pattern"
+  (test-equal? "resolve with unobs transitions"
     (aps#-resolve-outputs
-     (list
-      (term
-       (()
-        ()
-        (goto S1)
-        ((define-state (S1)))
-        ([(obs-ext 1) (single (or * (fork (goto B))))]))))
-     (term ([(obs-ext 1) (Nat (init-addr 2)) single])))
-    (list
+     (list `[()
+             ()
+             (goto A (obs-ext 1))
+             ((define-state (A x)
+                [unobs -> ([obligation x (variant C)]) (goto B)]))
+             ([(obs-ext 1)])])
+     (term ([(obs-ext 1) (variant C) single])))
+    (list `[,(list
+              `[()
+                ()
+                (goto B)
+                ((define-state (A x)
+                   [unobs -> ([obligation x (variant C)]) (goto B)]))
+                ([(obs-ext 1)])])
+            ([(obs-ext 1) (variant C)])]))
+
+  (test-equal? "resolve against two different branches of an 'or' pattern"
+    (list->set
+     (aps#-resolve-outputs
+      (list
+       (term
+        (()
+         ()
+         (goto S1)
+         ((define-state (S1)))
+         ([(obs-ext 1) (single (or * (delayed-fork (goto B))))]))))
+      (term ([(obs-ext 1) (Nat (init-addr 2)) single]))))
+    (set
      ;; result 1 (match against the fork)
      `[,(list
          (term
@@ -977,7 +1120,7 @@
            (goto B)
            ()
            ())))
-       ,(list (term [(obs-ext 1) (or * (fork (goto B)))]))]
+       ,(list (term [(obs-ext 1) (or * (delayed-fork (goto B)))]))]
      ;; result 2 (match against *)
      `[,(list
          (term
@@ -986,7 +1129,7 @@
            (goto S1)
            ((define-state (S1)))
            ([(obs-ext 1)]))))
-       ,(list (term [(obs-ext 1) (or * (fork (goto B)))]))]))
+       ,(list (term [(obs-ext 1) (or * (delayed-fork (goto B)))]))]))
 
   (test-equal? "Resolve against spawned spec"
     (aps#-resolve-outputs
@@ -1008,6 +1151,42 @@
                      ([(obs-ext 2)])))
             ,(list '[(obs-ext 1) (variant A *)]
                    '[(obs-ext 2) (variant B *)])]))
+
+  (test-equal? "Resolve against self pattern, no existing obs receptionist"
+    (aps#-resolve-outputs
+     (list `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1) [single self]])))
+     (list `[(obs-ext 1) [Nat (init-addr 1)] single]))
+    (list `[,(list `(([Nat (init-addr 1)])
+                     ()
+                     (goto S1)
+                     ((define-state (S1)))
+                     ([(obs-ext 1)])))
+            ,(list `[(obs-ext 1) self])]))
+
+  (test-equal? "Resolve against self pattern, existing obs receptionist"
+    (aps#-resolve-outputs
+     (list `(([Nat (init-addr 1)])
+             ()
+             (goto S1)
+             ((define-state (S1)))
+             ([(obs-ext 1) [single self]])))
+     (list `[(obs-ext 1) [Nat (init-addr 1)] single]))
+    (list `[,(list `(([Nat (init-addr 1)])
+                     ()
+                     (goto S1)
+                     ((define-state (S1)))
+                     ([(obs-ext 1)])))
+            ,(list `[(obs-ext 1) self])]))
+
+  (test-equal? "Resolve against self pattern, existing other obs receptionist"
+    (aps#-resolve-outputs
+     (list `(([Nat (init-addr 1)])
+             ()
+             (goto S1)
+             ((define-state (S1)))
+             ([(obs-ext 1) [single self]])))
+     (list `[(obs-ext 1) [Nat (init-addr 2)] single]))
+    null)
 
   (test-equal? "Addresses in unobserved messages are added to receptionists"
     (aps#-resolve-outputs
@@ -1054,6 +1233,152 @@
      (list (make-dummy-spec (list `[(obs-ext 1)])))
      (list `[(* (Addr (Addr Nat))) (Nat (obs-ext 2)) single]))
     (list `[,(list (make-dummy-spec (list `[(obs-ext 1)]))) ()])))
+
+;; s# a# v# m -> ([(s# ...) po] ...)
+;;
+;; Returns a set of tuples each containing a list of specification configs and a pattern such that the
+;; input configuration can take an output step with the given message to the given configurations and
+;; using the returned pattern to match the message.
+(define (resolve-output config address message quantity)
+  (match quantity
+    ['single
+     (match (resolve-with-obligation config address message)
+       [(list)
+        ;; if we can't find a match with existing patterns, try the free-output patterns
+        (match (resolve-with-free-obl-patterns config address message)
+          [(list)
+           ;; if free-output patterns also don't match, try the other unobs-transition
+           ;; patterns as a last resort
+           (resolve-with-unobs-transition config address message)]
+          [results results])]
+       [results results])]
+    ['many
+     ;; have to use free-output patterns if output may have been sent more than once (e.g. in
+     ;; a loop)
+     (resolve-with-free-obl-patterns config address message)]))
+
+(module+ test
+  (test-equal? "resolve-output 1"
+    (resolve-output
+     (make-dummy-spec `([(obs-ext 1) [single *]]))
+     `(obs-ext 1)
+     `(* Nat)
+     `single)
+    (list `[(,(make-dummy-spec `([(obs-ext 1)]))) *])))
+
+;; s# a# v# -> ([(s# ...) po] ...)
+(define (resolve-with-obligation config address message)
+  (define commitment-patterns
+    (map commitment-pattern
+         (commitments-for-address (aps#-config-commitment-map config) address)))
+  (match-define (list obs-recs unobs-recs goto state-defs obligations) config)
+  (define success-results
+    (filter values (find-matching-patterns message obs-recs commitment-patterns)))
+  (for/list ([match-result success-results])
+    (define matched-pattern (first match-result))
+    (define remaining-obligations
+      (aps#-remove-commitment-pattern obligations address matched-pattern))
+    (list (incorporate-output-match-results `(,obs-recs ,unobs-recs ,goto ,state-defs ())
+                                            remaining-obligations
+                                            (rest match-result))
+          matched-pattern)))
+
+(module+ test
+ (test-equal? "resolve-with-obligation 1"
+   (resolve-with-obligation
+    (make-dummy-spec `([(obs-ext 1) [single *]]))
+    `(obs-ext 1)
+    `(* Nat))
+   (list `[(,(make-dummy-spec `([(obs-ext 1)]))) *])))
+
+(define (resolve-with-unobs-transition config address message)
+  (define transition-patterns (get-unobs-transition-patterns config address))
+  (match-define (list obs-recs unobs-recs _ state-defs obligations) config)
+  (define success-results
+    (filter values (find-matching-patterns message obs-recs (hash-keys transition-patterns))))
+  (for/list ([match-result success-results])
+    (define matched-pattern (first match-result))
+    (define transitioned-pre-config
+      `(,(aps#-config-obs-receptionists config)
+        ,(aps#-config-unobs-receptionists config)
+        ,(hash-ref transition-patterns matched-pattern)
+        ,(aps#-config-state-defs config)
+        ()))
+    (list (incorporate-output-match-results transitioned-pre-config
+                                            (aps#-config-commitment-map config)
+                                            (rest match-result))
+          matched-pattern)))
+
+;; s# a# v# -> ([(s# ...) po] ...)
+;;
+;; Returns a set of tuples each containing a list of specification configs and a pattern such that the
+;; input configuration can take an output step with the given message to the given configurations and
+;; using the returned free obligation pattern to match the message.
+(define (resolve-with-free-obl-patterns config address message)
+  (define free-patterns (hash-ref (build-free-output-map config) address null))
+  (match-define `[,obs-recs ,unobs-recs ,goto ,state-defs ,obligations] config)
+  (define success-results (filter values (find-matching-patterns message obs-recs free-patterns)))
+  (for/list ([success-result success-results])
+    (list (incorporate-output-match-results
+           `[,obs-recs ,unobs-recs ,goto ,state-defs ()]
+           obligations
+           (rest success-result))
+          (first success-result))))
+
+;; s# O# [ρ#_o ρ#_u (match-fork ...)] -> (s# ...)
+(define (incorporate-output-match-results original-pre-config
+                                          obligations
+                                          match-result)
+  (match-define (list matched-obs-receptionists matched-unobs-receptionists match-forks) match-result)
+  (match-define (list _ original-unobs-recs goto state-defs _) original-pre-config)
+  (define all-fork-obs-receptionists (append* (map first match-forks)))
+  (define updated-pre-config
+    (list matched-obs-receptionists
+          (merge-receptionists
+           original-unobs-recs
+           (merge-receptionists matched-unobs-receptionists all-fork-obs-receptionists))
+          goto
+          state-defs
+          null))
+  (define forked-pre-configs
+    (for/list ([match-fork match-forks])
+      (match-define (list (list fork-obs-rec) goto state-defs) match-fork)
+      (define other-fork-obs-receptionists
+        ;; "remove" removes only the first item that matches, so if any other fork had the same
+        ;; receptionist address and type, it will be included in the unobs receptionist here
+        (remove fork-obs-rec all-fork-obs-receptionists))
+      `[(,fork-obs-rec)
+        ,(merge-receptionists
+          matched-obs-receptionists
+          (merge-receptionists matched-unobs-receptionists other-fork-obs-receptionists))
+        ,goto
+        ,state-defs
+        ()]))
+  (match-define (list s1 (list s2s ...)) (dist updated-pre-config forked-pre-configs obligations))
+  (cons s1 s2s))
+
+(module+ test
+  (test-equal? "incorporate-output-match-results 1"
+    (incorporate-output-match-results
+     `(() () (goto A) ((define-state (A))) ())
+     null
+     `[([Nat (init-addr 1)]) ([String (init-addr 2)]) ()])
+    (list `(([Nat (init-addr 1)]) ([String (init-addr 2)]) (goto A) ((define-state (A))) ())))
+
+  (test-equal? "incorporate-output-match-results with delayed-fork"
+    (list->set
+     (incorporate-output-match-results
+      `(() () (goto A) ((define-state (A))) ())
+      `([(obs-ext 1) [single *]])
+      `[() () ([([Nat (init-addr 1)]) (goto B) ((define-state (B)))])]))
+    (set
+     `(() ([Nat (init-addr 1)]) (goto A) ((define-state (A))) ([(obs-ext 1) [single *]]))
+     `(([Nat (init-addr 1)]) () (goto B) ((define-state (B))) ()))))
+
+(define (config-observes-address? config addr)
+  (match (commitments-for-address (aps#-config-commitment-map config) addr)
+    [#f #f]
+    [_ #t]))
 
 (define (aps#-remove-commitment-pattern commitment-map address pat)
   (term (remove-commitment-pattern/mf ,commitment-map ,address ,pat)))
@@ -1297,6 +1622,12 @@
   (redex-let aps# ([(pt -> _ _) transition])
     (term pt)))
 
+(define (aps#-transition-effects transition)
+  (third transition))
+
+(define (aps#-transition-goto transition)
+  (fourth transition))
+
 (define (aps#-commitment-entry-address entry)
   (redex-let aps# ([(a#ext _ ...)  entry])
              (term a#ext)))
@@ -1383,57 +1714,26 @@
 ;; interface does not change in any of the new configs.
 (define (split-spec config)
   (define entries (aps#-config-commitment-map config))
-  ;; Don't bother splitting if this is already a commitment-only config with just one commitment entry
-  (cond
-    [(and (equal? (aps#-config-current-state config) `(goto DummySpecFsmState))
-          (= 1 (length entries)))
-     (list config)]
-    [else
-     ;; A commitment map entry is "relevant" if its address is used as a state argument, any of its
-     ;; patterns contain the "self" pattern, or it's used as a state argument in a fork pattern for a
-     ;; different relevant entry. An entry is "independent" if its address is not contained in a fork
-     ;; pattern for some other entry. For each irrelevant, independent entry, we split off a new spec
-     ;; config.
-     (define unobs-receptionists (aps#-config-unobs-receptionists config))
-     (define containing-address-map (compute-containing-entries entries))
-     (define independents (get-independent-addresses containing-address-map))
-     (define-values (state-args-or-self-relevants maybe-irrelevants)
-       (partition
-        (lambda (entry)
-          (or (member (aps#-commitment-entry-address entry) (aps#-config-current-state-args config))
-              (ormap pattern-contains-self? (aps#-commitment-entry-patterns entry))))
-        (aps#-config-commitment-map config)))
-     (define-values (contained-relevants irrelevants)
-       (let ([addresses-contained-by-relevants
-              ;; Should I need to remove duplicates here? Would affect only speed, not correctness,
-              ;; but not sure if anything would be gained
-              (append*
-               (for/list ([entry state-args-or-self-relevants])
-                 (hash-ref containing-address-map (aps#-commitment-entry-address entry))))])
-         (partition
-          (lambda (entry) (member (aps#-commitment-entry-address entry)
-                                  addresses-contained-by-relevants))
-          maybe-irrelevants)))
-     (define independent-irrelevant-entries
-       (filter (lambda (entry) (set-member? independents (aps#-commitment-entry-address entry)))
-               irrelevants))
-
-     ;; We have all the necessary info; now make the actual spec configs
-     (define commitment-only-configs
-       (for/list ([entry independent-irrelevant-entries])
-         (define contained-fork-entries
-           (map (curry commitment-entry-by-address irrelevants)
-                (hash-ref containing-address-map (aps#-commitment-entry-address entry))))
-         (aps#-config-from-commitment-entries
-          (cons entry contained-fork-entries)
-          (aps#-config-obs-receptionists config)
-          unobs-receptionists)))
-     (cons (term (,(aps#-config-obs-receptionists config)
-                  ,unobs-receptionists
-                  ,(aps#-config-current-state config)
-                  ,(aps#-config-state-defs config)
-                  ,(append state-args-or-self-relevants contained-relevants)))
-           commitment-only-configs)]))
+  ;; A commitment map entry is "relevant" if its address is used as a state argument or one of its
+  ;; patterns contains the "self" pattern. For each irrelevant entry, we split off a new spec config.
+  (define-values (relevant-entries irrelevant-entries)
+    (partition
+     (lambda (entry)
+       (or (member (aps#-commitment-entry-address entry) (aps#-config-current-state-args config))
+           (ormap pattern-contains-self? (aps#-commitment-entry-patterns entry))))
+     (aps#-config-commitment-map config)))
+  (define commitment-only-configs
+    (for/list ([entry irrelevant-entries])
+      (aps#-config-from-commitment-entry
+       entry
+       (aps#-config-obs-receptionists config)
+       (aps#-config-unobs-receptionists config))))
+  (cons (term (,(aps#-config-obs-receptionists config)
+               ,(aps#-config-unobs-receptionists config)
+               ,(aps#-config-current-state config)
+               ,(aps#-config-state-defs config)
+               ,relevant-entries))
+        commitment-only-configs))
 
 (module+ test
   (define (make-simple-spec-for-split-test commitments)
@@ -1473,81 +1773,14 @@
                  ()
                  (((obs-ext 1) (single self)))))))
 
-  (test-equal? "split spec with an address in a fork pattern"
-    (split-spec (term (()
-                       ()
-                       (goto A (obs-ext 3))
-                       ()
-                       (((obs-ext 1))
-                        ((obs-ext 2) [single (fork (goto B (obs-ext 1)))])
-                        ((obs-ext 3))))))
-    (list
-     (term (()
-            ()
-            (goto A (obs-ext 3))
-            ()
-            (((obs-ext 3)))))
-     (aps#-make-no-transition-config
-      null
-      (list `((obs-ext 2) [single (fork (goto B (obs-ext 1)))])
-            `((obs-ext 1))))))
-
-
-  (let ([dummy-spec-with-fork
-         (aps#-make-no-transition-config
-          null
-          `(((obs-ext 1) [single (fork (goto B (obs-ext 2)))]) ((obs-ext 2))))])
-    (test-equal? "split dummy spec with an address in a fork pattern"
-      (split-spec dummy-spec-with-fork)
-      (list dummy-spec-with-fork)))
-
-    ;; TODO: try this test after implementing delayed-fork
-  ;; (let ([dummy-spec-with-fork
-  ;;        (aps#-make-no-transition-config
-  ;;         null
-  ;;         `(((obs-ext 1)) ((obs-ext 2) [single (fork (goto B (obs-ext 1)))])))])
-  ;;   (test-equal? "split dummy spec with an address in a fork pattern"
-  ;;     (split-spec dummy-spec-with-fork)
-  ;;     (list dummy-spec-with-fork)))
-
-  (test-equal? "split spec with an address in a fork pattern, all relevant"
-    (split-spec (term (()
-                       ()
-                       (goto A (obs-ext 2))
-                       ()
-                       (((obs-ext 1))
-                        ((obs-ext 2) [single (fork (goto B (obs-ext 1)))])))))
-    (list
-     (term (()
-            ()
-            (goto A (obs-ext 2))
-            ()
-            (((obs-ext 2) [single (fork (goto B (obs-ext 1)))])
-             ((obs-ext 1)))))))
-
-  (test-equal? "split spec with irrelevant address in its own commitment"
-    (split-spec (term (()
-                       ()
-                       (goto A (obs-ext 2))
-                       ()
-                       (((obs-ext 1) [single (fork (goto B (obs-ext 1)))])
-                        ((obs-ext 2))))))
-    (list
-     (term (()
-            ()
-            (goto A (obs-ext 2))
-            ()
-            (((obs-ext 2)))))
-     (aps#-make-no-transition-config null (list '((obs-ext 1) [single (fork (goto B (obs-ext 1)))])))))
-
   (test-equal? "split spec with fork mentioning self pattern"
     (split-spec (term (()
                        ()
                        (goto A (obs-ext 2))
                        ()
-                       (((obs-ext 1) [single (fork (goto B (obs-ext 1))
-                                                   (define-state (B x)
-                                                     [unobs -> ([obligation x self]) (goto B x)]))])
+                       (((obs-ext 1) [single (fork (goto B)
+                                                   (define-state (B)
+                                                     [x -> ([obligation x self]) (goto B)]))])
                         ((obs-ext 2))))))
     (list
      (term (()
@@ -1557,151 +1790,16 @@
             (((obs-ext 2)))))
      (aps#-make-no-transition-config
       null
-      (list `((obs-ext 1) [single (fork (goto B (obs-ext 1))
-                                        (define-state (B x)
-                                          [unobs -> ([obligation x self]) (goto B x)]))])))))
-
-  (test-equal? "split spec with 'nested' forks"
-    (split-spec (term (()
-                       ()
-                       (goto A (obs-ext 1))
-                       ()
-                       (((obs-ext 1) [single (fork (goto B (obs-ext 2)))])
-                        ((obs-ext 2) [single (fork (goto C (obs-ext 3)))])
-                        ((obs-ext 3))
-                        ((obs-ext 4) [single (fork (goto B (obs-ext 5)))])
-                        ((obs-ext 5) [single (fork (goto C (obs-ext 6)))])
-                        ((obs-ext 6))))))
-    (list
-     (term (()
-            ()
-            (goto A (obs-ext 1))
-            ()
-            (((obs-ext 1) [single (fork (goto B (obs-ext 2)))])
-             ((obs-ext 2) [single (fork (goto C (obs-ext 3)))])
-             ((obs-ext 3)))))
-     (aps#-make-no-transition-config null
-                                     (list `((obs-ext 4) [single (fork (goto B (obs-ext 5)))])
-                                           `((obs-ext 5) [single (fork (goto C (obs-ext 6)))])
-                                           `((obs-ext 6)))))))
-
-;; O# -> (Hash a# (Listof a#))
-;;
-;; Returns a hash indicating, for a given address for a commitment map entry, all entries that are
-;; (recursively) referred to by that entry through fork patterns.
-(define (compute-containing-entries entries)
-  (for/fold ([container-map (hash)])
-            ([entry entries])
-    (hash-set container-map
-              (aps#-commitment-entry-address entry)
-              (addresses-referred-to-by entries entry))))
-
-(module+ test
-  (define test-commitment-entries
-    `(((obs-ext 1) [single (fork (goto B (obs-ext 2)))])
-       ((obs-ext 2) [single (fork (goto C (obs-ext 3)))])
-       ((obs-ext 3))
-       ((obs-ext 4) [single (fork (goto B (obs-ext 5)))])
-       ((obs-ext 5) [single (fork (goto C (obs-ext 6)))])
-      ((obs-ext 6))))
-  (define test-commitment-containing-map
-    (hash `(obs-ext 1) (list `(obs-ext 2) `(obs-ext 3))
-          `(obs-ext 2) (list `(obs-ext 3))
-          `(obs-ext 3) (list)
-          `(obs-ext 4) (list `(obs-ext 5) `(obs-ext 6))
-          `(obs-ext 5) (list `(obs-ext 6))
-          `(obs-ext 6) (list)))
-
-  (test-equal? "compute-containing-entries"
-    (compute-containing-entries test-commitment-entries)
-    test-commitment-containing-map))
-
-(define (addresses-referred-to-by entries entry)
-  (define (addresses-referred-to-by/internal entries entry)
-    (define immediate-references
-      (remove (aps#-commitment-entry-address entry)
-       (remove-duplicates
-        (append*
-         (map state-args-in-output-pattern (aps#-commitment-entry-patterns entry))))))
-    (append immediate-references
-            (append*
-             (for/list ([addr immediate-references])
-               (addresses-referred-to-by/internal entries (commitment-entry-by-address entries addr))))))
-  (remove-duplicates (addresses-referred-to-by/internal entries entry)))
-
-(module+ test
-  (test-equal? "addresses-referred-to-by 1"
-    (addresses-referred-to-by test-commitment-entries `((obs-ext 3)))
-    null)
-  (test-equal? "addresess-referred-to-by 2"
-    (addresses-referred-to-by test-commitment-entries
-                              `((obs-ext 4) [single (fork (goto B (obs-ext 5)))]))
-    (list `(obs-ext 5) `(obs-ext 6)))
-  (test-equal? "addresess-referred-to-by 3"
-    (addresses-referred-to-by `(((obs-ext 1))
-                                ((obs-ext 2))
-                                (obs-ext 3 [single (fork (goto B (obs-ext 1)))]
-                                           [single (record [a (fork (goto C (obs-ext 2)))])]))
-                              `((obs-ext 3)
-                                [single (fork (goto B (obs-ext 1)))]
-                                [single (record [a (fork (goto C (obs-ext 2)))])]))
-    (list `(obs-ext 1) `(obs-ext 2))))
-
-(define (state-args-in-output-pattern pat)
-  (match pat
-    [(? symbol?) null]
-    [`(fork (goto ,_ ,args ...) ,_ ...) args]
-    [`(or ,pats ...) (append* (map state-args-in-output-pattern pats))]
-    [`(variant ,_ ,pats ...) (append* (map state-args-in-output-pattern pats))]
-    [`(record [,_ ,pats] ...) (append* (map state-args-in-output-pattern pats))]))
-
-(module+ test
-  (test-equal? "state-args-in-output-pattern 1"
-    (state-args-in-output-pattern `(fork (goto A (obs-ext 1) (obs-ext 2))))
-    (list `(obs-ext 1) `(obs-ext 2)))
-  (test-equal? "state-args-in-output-pattern 2"
-    (state-args-in-output-pattern `(variant A
-                                            (fork (goto A (obs-ext 1) (obs-ext 2)))
-                                            (fork (goto B (obs-ext 3)))
-                                            ))
-    (list `(obs-ext 1) `(obs-ext 2) `(obs-ext 3)))
-  (test-equal? "state-args-in-output-pattern: nested forks"
-    (state-args-in-output-pattern
-     `(fork (goto A)
-            (define-state (A) [* -> ([fork (goto B (obs-ext 1))]) (goto A)])))
-    null))
-
-;; (Hash a# (Listof a#)) -> (Setof a#)
-;;
-;; Returns the set of addresses that are not in any list in a value of the given hash
-(define (get-independent-addresses containing-map)
-  (define all-addresses (hash-keys containing-map))
-  (for/fold ([independents (list->set all-addresses)])
-            ([address all-addresses])
-    (set-subtract independents (list->set (hash-ref containing-map address)))))
-
-(module+ test
-  (test-equal? "get-independent-addresses"
-    (get-independent-addresses test-commitment-containing-map)
-    (set `(obs-ext 1) `(obs-ext 4))))
-
-(define (commitment-entry-by-address entries addr)
-  (findf (lambda (entry) (equal? (aps#-commitment-entry-address entry) addr)) entries))
-
-(module+ test
-  (test-equal? "commitment-entry-by-address"
-    (commitment-entry-by-address test-commitment-entries `(obs-ext 4))
-    `((obs-ext 4) [single (fork (goto B (obs-ext 5)))]))
-
-  (test-equal? "commitment-entry-by-address 2"
-    (commitment-entry-by-address test-commitment-entries `(obs-ext 7))
-    #f))
+      (list `((obs-ext 1) [single (fork (goto B)
+                                        (define-state (B)
+                                          [x -> ([obligation x self]) (goto B)]))]))))))
 
 (define (pattern-contains-self? pat)
   (match pat
     ['self #t]
     [(? symbol?) #f]
     [`(fork ,_ ...) #f]
+    [`(delayed-fork ,_ ...) #f]
     [`(or ,pats ...) (ormap pattern-contains-self? pats)]
     [`(variant ,_ ,pats ...) (ormap pattern-contains-self? pats)]
     [`(record [,_ ,pats] ...) (ormap pattern-contains-self? pats)]))
@@ -1719,14 +1817,9 @@
   (test-false "pattern-contains-self?: false"
     (pattern-contains-self? `(record [a *] [b (variant B)])))
   (test-false "pattern-contains-self?: false 2"
-    (pattern-contains-self? `(record [a (fork (goto A))] ))))
-
-(define (address-containing-this-addr-in-fork-pattern config entry)
-  (define address (aps#-commitment-entry-address entry))
-  (for/or ([other-entry (aps#-config-commitment-map config)])
-    (if (member address (externals-in (aps#-commitment-entry-patterns other-entry)))
-        (aps#-commitment-entry-address other-entry)
-        #f)))
+    (pattern-contains-self? `(record [a (fork (goto A))] )))
+  (test-false "pattern-contains-self?: false 3"
+    (pattern-contains-self? `(record [a (delayed-fork (goto A))] ))))
 
 ;; Makes a specification config with no observed receptionist and an FSM with no transitions. Used for
 ;; specifications where only the commitments are important.
@@ -1752,23 +1845,23 @@
        [(obs-ext 1)]))))
 
 ;; Creates a spec config with a transition-less FSM and a commitment map with just the given
-;; entries. The receptionists for the unobserved environment will be the given list plus the given FSM
+;; entry. The receptionists for the unobserved environment will be the given list plus the given FSM
 ;; address if it is not UNKONWN.
-(define (aps#-config-from-commitment-entries entries obs-receptionists unobs-receptionists)
+(define (aps#-config-from-commitment-entry entry obs-receptionists unobs-receptionists)
   (aps#-make-no-transition-config (merge-receptionists unobs-receptionists obs-receptionists)
-                                  entries))
+                                  (list entry)))
 
 (module+ test
   (check-equal?
-   (aps#-config-from-commitment-entries
-    (term (((obs-ext 0) (single *) (single (record [a *] [b *])))))
+   (aps#-config-from-commitment-entry
+    (term ((obs-ext 0) (single *) (single (record [a *] [b *]))))
     '()
     null)
    (aps#-make-no-transition-config '() '(((obs-ext 0) (single *) (single (record [a *] [b *]))))))
 
   (test-equal? "Commitment entry spec should also include old FSM address as unobs receptionist"
-    (aps#-config-from-commitment-entries
-     (list (term ((obs-ext 0) (single *) (single (record [a *] [b *])))))
+    (aps#-config-from-commitment-entry
+     (term ((obs-ext 0) (single *) (single (record [a *] [b *]))))
      '((Nat (init-addr 0)))
      null)
     (aps#-make-no-transition-config
@@ -1776,7 +1869,7 @@
      '(((obs-ext 0) (single *) (single (record [a *] [b *]))))))
 
   (test-equal? "Merge obs address into unobs addrs"
-    (aps#-config-from-commitment-entries (list (term ((obs-ext 0))))
+    (aps#-config-from-commitment-entry (term ((obs-ext 0)))
                                          `(((Union [A]) (init-addr 0)))
                                          `(((Union [B]) (init-addr 0))))
     (aps#-make-no-transition-config
@@ -1888,8 +1981,11 @@
 ;; 1. Changes all spawn address new/old flags to OLD (assumes that these configs have already been
 ;; blurred so that either an OLD or a NEW version of an address exists, but not both)
 ;;
-;; 2. Renames all precise external addresses such that the first one is address 0, then address 1,
-;; then address 2, and so on.
+;; 2. Renames all atomic external addresses such that the first one in the spec config's state
+;; argument list is address 0, then address 1, then address 2, and so on. The remaining atomic
+;; external addresses are sorted and then given the next available address identifiers in order (so if
+;; addresses 52, 81, and 35 remain and 6 is the next available identifier, 35 would map to 6, 52 to 7,
+;; and 81 to 8).
 ;;
 ;; 3. Also sorts the escaped addresses in the impl config and the receptionists in the spec config
 ;; (not strictly necessary to ensure a bounded state space, but provides a form of symmetry
@@ -1897,16 +1993,26 @@
 (define (canonicalize-pair impl-config spec-config)
   (match-define (list aged-impl-config aged-spec-config)
     (age-addresses (list impl-config spec-config)))
-  (define commitment-map (aps#-config-commitment-map spec-config))
-  (define substitutions
-    (for/list ([entry commitment-map]
-               [new-number (build-list (length commitment-map) values)])
-      (redex-let aps# ([((obs-ext natural) _ ...) entry])
+  (define state-args (aps#-config-current-state-args aged-spec-config))
+  (define state-arg-substitutions
+    (for/list ([state-arg state-args]
+               [new-number (build-list (length state-args) values)])
+      (redex-let aps# ([(obs-ext natural) state-arg])
         (list (term natural) new-number))))
+  (define remaining-observed-addrs
+    (filter (lambda (addr) (not (member addr state-args)))
+            (map aps#-commitment-entry-address (aps#-config-commitment-map aged-spec-config))))
+  (define remaining-substitutions
+    (for/list ([addr (sort remaining-observed-addrs sexp<?)]
+               [new-number (build-list (length remaining-observed-addrs)
+                                       (curry + (length state-args)))])
+      (redex-let aps# ([(obs-ext natural) addr])
+        (list (term natural) new-number))))
+  (define substitutions (append state-arg-substitutions remaining-substitutions))
   (match-define (list renamed-impl-config renamed-spec-config)
     (rename-external-addresses (list aged-impl-config aged-spec-config) substitutions))
   (list (csa#-sort-config-components renamed-impl-config)
-        (aps#-sort-receptionists renamed-spec-config)
+        (aps#-sort-obligation-entries (aps#-sort-receptionists renamed-spec-config))
         substitutions))
 
 (module+ test
@@ -1956,7 +2062,33 @@
        (goto A (obs-ext 0) (obs-ext 1) (obs-ext 2))
        ((define-state (A c b a) [* -> () (goto A)]))
        (((obs-ext 0)) ((obs-ext 1)) ((obs-ext 2))))
-      ([25 0] [42 1] [10 2])))))
+      ([25 0] [42 1] [10 2]))))
+
+  (test-equal? "canonicalize spec config with self patterns"
+    (canonicalize-pair
+     (make-single-actor-abstract-config
+      (term ((init-addr 1)
+             (() (goto A)))))
+     `[()
+       ()
+       (goto B (obs-ext 99))
+       ()
+       ([(obs-ext 57) [single self]]
+        [(obs-ext 99)]
+        [(obs-ext 42) [single self]])])
+    `[,(make-single-actor-abstract-config
+        (term ((init-addr 1)
+               (() (goto A)))))
+      [()
+       ()
+       (goto B (obs-ext 0))
+       ()
+       ([(obs-ext 0)]
+        [(obs-ext 1) [single self]]
+        [(obs-ext 2) [single self]])]
+      [[99 0]
+       [42 1]
+       [57 2]]]))
 
 ;; Given a term, changes all spawn addresses of the form (spawn-addr _ NEW _) to (spawn-addr _ OLD _),
 ;; to ensure that spawned addresses in the next handler are fresh.
@@ -2006,6 +2138,17 @@
 (define (aps#-sort-receptionists config)
   (redex-let aps# ([(any_obs-receptionists any_unobs-receptionists any_rest ...) config])
     (term (any_obs-receptionists ,(sort (term any_unobs-receptionists) sexp<?) any_rest ...))))
+
+(define (aps#-sort-obligation-entries config)
+  (match-define `[,obs-recs ,unobs-recs ,goto ,state-defs ,obligation-map] config)
+  (define (entry< entry1 entry2)
+    (sexp<? (aps#-commitment-entry-address entry1)
+            (aps#-commitment-entry-address entry2)))
+  `[,obs-recs
+    ,unobs-recs
+    ,goto
+    ,state-defs
+    ,(sort obligation-map entry<)])
 
 (define (try-rename-address rename-map addr)
   (redex-let aps# ([(obs-ext natural) addr])
