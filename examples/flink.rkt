@@ -820,9 +820,10 @@
     [CancelJob Nat (Addr ,desugared-cancellation-result)]))
 
 (define task-runner-only-program
-    `(program (receptionists [task-runner Nat]) (externals [job-manager Nat] [task-manager Nat])
-              ,@flink-definitions
-              (actors [task-runner (spawn task-runner-loc TaskRunner job-manager task-manager)])))
+  (desugar
+   `(program (receptionists [task-runner Nat]) (externals [job-manager Nat] [task-manager Nat])
+             ,@flink-definitions
+             (actors [task-runner (spawn task-runner-loc TaskRunner job-manager task-manager)]))))
 
 (define task-manager-program
   (desugar
