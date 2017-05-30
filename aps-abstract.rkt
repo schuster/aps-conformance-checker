@@ -232,7 +232,7 @@
           ;; Remove the free-output transitions: these would cause the checker to make many "bad
           ;; guesses" about what conforms to what, and the outputs they use can always be used for
           ;; other transitions.
-          (filter (negate (curryr transition-free-output-info (aps#-config-current-state spec-config)))
+          (filter (negate (curryr free-transition? (aps#-config-current-state spec-config)))
                   (config-current-transitions spec-config))))))
   (when (null? results)
     (error 'aps#-matching-steps
@@ -1019,7 +1019,8 @@
      (define message (csa#-output-message output))
      (define quantity (csa#-output-multiplicity output))
      ;; TODO: compute the new receptionists with output-matching instead when I switch the addresses
-     ;; to not include types
+     ;; to not include types. Also do this in resolve-with-transitions, which has to do something
+     ;; similar
      (define exposed-receptionists (internals-in message))
      (match (find-with-rest (curryr config-observes-address? address) spec-configs)
        [#f
@@ -1321,23 +1322,61 @@
     `(* Nat))
    (list `[(,(make-dummy-spec `([(obs-ext 1)]))) *])))
 
+;; s# a# v# -> ([(s# ...) po] ...)
 (define (resolve-with-unobs-transition config address message)
-  (define transition-patterns (get-unobs-transition-patterns config address))
-  (match-define (list obs-recs unobs-recs _ state-defs obligations) config)
-  (define success-results
-    (filter values (find-matching-patterns message obs-recs (hash-keys transition-patterns))))
-  (for/list ([match-result success-results])
-    (define matched-pattern (first match-result))
-    (define transitioned-pre-config
-      `(,(aps#-config-obs-receptionists config)
-        ,(aps#-config-unobs-receptionists config)
-        ,(hash-ref transition-patterns matched-pattern)
-        ,(aps#-config-state-defs config)
-        ()))
-    (list (incorporate-output-match-results transitioned-pre-config
-                                            (aps#-config-commitment-map config)
-                                            (rest match-result))
-          matched-pattern)))
+  (define non-free-transitions
+    (filter
+     (negate (curry transition-to-same-state? config))
+     (get-unobs-transitions-for-resolution config address)))
+  (resolve-with-transitions config address message non-free-transitions))
+
+(module+ test
+  (test-equal? "resolve-with-unobs-transition with fork"
+   (resolve-with-unobs-transition
+    `[()
+      ()
+      (goto A (obs-ext 1))
+      ((define-state (A x)
+         [unobs -> ([obligation x [fork (goto C) (define-state (C))]]) (goto B)]))
+      ([(obs-ext 1)])]
+    `(obs-ext 1)
+    `(Nat (init-addr 1)))
+   `([([([Nat (init-addr 1)])
+        ()
+        (goto C)
+        ((define-state (C)))
+        ([(obs-ext 1)])]
+       [()
+        ([Nat (init-addr 1)])
+        (goto B)
+        ((define-state (A x)
+           [unobs -> ([obligation x [fork (goto C) (define-state (C))]]) (goto B)]))
+        ()])
+      self])))
+
+;; s# a# v# (transition# ...) -> ([(s# ...) po] ...)
+;;
+;; Attempts to resolve the given output step from the given spec config using any one of the given
+;; transitions (only one transition per attempt).
+(define (resolve-with-transitions config address message possible-transitions)
+  (for/fold ([results null])
+            ([trans possible-transitions])
+    ;; REFACTOR: I'm using a fake trigger here, but attempt-transition probably shouldn't require a
+    ;; trigger at all
+    (match-define (list this-config forks)
+      (attempt-transition config trans #f `(timeout/empty-queue (init-addr 1))))
+    (define all-configs (cons this-config forks))
+    (match-define (list earlier-configs observing-config later-configs)
+      (find-with-rest (curryr config-observes-address? address) all-configs))
+    (define exposed-receptionists (internals-in message))
+    (define updated-unobserving-configs
+          (map (curryr config-merge-unobs-addresses exposed-receptionists)
+               (append earlier-configs later-configs)))
+    (append
+     results
+     (for/list ([result (resolve-with-obligation observing-config address message)])
+       (match-define `[,resolved-configs ,pattern] result)
+       `[,(append resolved-configs updated-unobserving-configs) ,pattern]))))
 
 ;; s# a# v# -> ([(s# ...) po] ...)
 ;;
@@ -1345,15 +1384,11 @@
 ;; input configuration can take an output step with the given message to the given configurations and
 ;; using the returned free obligation pattern to match the message.
 (define (resolve-with-free-obl-patterns config address message)
-  (define free-patterns (hash-ref (build-free-output-map config) address null))
-  (match-define `[,obs-recs ,unobs-recs ,goto ,state-defs ,obligations] config)
-  (define success-results (filter values (find-matching-patterns message obs-recs free-patterns)))
-  (for/list ([success-result success-results])
-    (list (incorporate-output-match-results
-           `[,obs-recs ,unobs-recs ,goto ,state-defs ()]
-           obligations
-           (rest success-result))
-          (first success-result))))
+  (define free-transitions
+    (filter
+     (curry transition-to-same-state? config)
+     (get-unobs-transitions-for-resolution config address)))
+  (resolve-with-transitions config address message free-transitions))
 
 ;; s# O# [ρ#_o ρ#_u (match-fork ...)] -> (s# ...)
 (define (incorporate-output-match-results original-pre-config
@@ -1480,51 +1515,24 @@
   (test-true "aps#-config-has-commitment? 1"
     (aps#-config-has-commitment? has-commitment-test-config (term (obs-ext 2)) (term (record)))))
 
-;; If the specification's current state has an unobserved transition to the same state whose only
-;; effect is a single obligation on an observed address, we call that obligation "free" because we may
-;; take that transition an unbounded number of times to match an unbounded number of outputs that
-;; match that pattern.
-;;
-;; This function returns a hashtable from addresses to patterns indicating all free patterns in the
-;; current configuration.
-(define (build-free-output-map config)
-  (define current-state (aps#-config-current-state config))
-  (for/fold ([free-pattern-map (hash)])
-            ([trans (config-current-transitions config)])
-    (match (transition-free-output-info trans current-state)
-      [(list addr pattern)
-       (hash-set free-pattern-map
-                 addr
-                 (match (hash-ref free-pattern-map addr #f)
-                   [#f (list pattern)]
-                   [other-patterns (cons pattern other-patterns)]))]
-      [_ free-pattern-map])))
-
-(define (transition-free-output-info trans current-state)
-  (match trans
-    [`(unobs -> ([obligation ,addr ,pattern]) ,(== current-state))
-     (list addr pattern)]
+;; Returns #t if this transition goes to the given state and has exactly one effect (an obligation)
+(define (free-transition? transition full-state)
+  (match transition
+    [`(unobs -> ([obligation ,_ ,_]) ,(== full-state)) #t]
     [_ #f]))
 
-(module+ test
-  (check-equal?
-   (build-free-output-map
-    free-output-spec)
-   (hash '(obs-ext 1) (list '(variant C) '(variant B))
-         '(obs-ext 2) (list '(variant D)))))
-
-;; s# a# -> (Hash po (goto φ u ...))
-(define (get-unobs-transition-patterns config target-addr)
-  (define current-state (aps#-config-current-state config))
-  (for/fold ([unobs-transition-patterns (hash)])
-            ([trans (config-current-transitions config)])
-    (match trans
-      [`(unobs -> ([obligation ,obligation-addr ,pattern]) ,new-state)
-       (if (and (equal? obligation-addr target-addr)
-                (not (equal? new-state current-state)))
-           (hash-set unobs-transition-patterns pattern new-state)
-           unobs-transition-patterns)]
-      [_ unobs-transition-patterns])))
+;; s# a# -> ([pt -> (f ...) (goto φ u ...)])
+;;
+;; Returns the transitions (after subsitution with the current state arguments) with an unobs trigger
+;; and a single effect: an obligation
+(define (get-unobs-transitions-for-resolution config target-addr)
+  (filter
+   (lambda (trans)
+     (match trans
+       [`(unobs -> ([obligation ,obligation-addr ,_]) ,_)
+        (equal? obligation-addr target-addr)]
+       [_ #f]))
+   (config-current-transitions config)))
 
 (module+ test
   (define unobs-transition-spec
@@ -1542,12 +1550,26 @@
          [unobs -> ([obligation b (variant E)]) (goto S2 a b)]))
       ([(obs-ext 1)] [(obs-ext 2)]))))
   (check-equal?
-   (get-unobs-transition-patterns unobs-transition-spec `(obs-ext 1))
-   (hash `(variant A) `(goto S2 (obs-ext 1) (obs-ext 2))
-         `(variant B) `(goto S2 (obs-ext 1) (obs-ext 1))))
+   (get-unobs-transitions-for-resolution unobs-transition-spec `(obs-ext 1))
+   `([unobs -> ([obligation (obs-ext 1) (variant A)]) (goto S2 (obs-ext 1) (obs-ext 2))]
+     [unobs -> ([obligation (obs-ext 1) (variant B)]) (goto S2 (obs-ext 1) (obs-ext 1))]
+     [unobs -> ([obligation (obs-ext 1) (variant C)]) (goto S1 (obs-ext 1) (obs-ext 2))]))
   (check-equal?
-   (get-unobs-transition-patterns unobs-transition-spec `(obs-ext 2))
-   (hash `(variant E) `(goto S2 (obs-ext 1) (obs-ext 2)))))
+   (get-unobs-transitions-for-resolution unobs-transition-spec `(obs-ext 2))
+   `([unobs -> ([obligation (obs-ext 2) (variant D)]) (goto S1 (obs-ext 1) (obs-ext 2))]
+     [unobs -> ([obligation (obs-ext 2) (variant E)]) (goto S2 (obs-ext 1) (obs-ext 2))])))
+
+(define (transition-to-same-state? config transition)
+  (equal? (aps#-transition-goto transition) (aps#-config-current-state config)))
+
+(module+ test
+  (let ([transition-test-config `[() () (goto A (obs-ext 1)) () ()]])
+    (test-true "transition-to-same-state? true"
+      (transition-to-same-state? transition-test-config `[unobs -> () (goto A (obs-ext 1))]))
+    (test-false "transition-to-same-state? wrong state"
+      (transition-to-same-state? transition-test-config `[unobs -> () (goto B (obs-ext 1))]))
+    (test-false "transition-to-same-state? wrong address"
+      (transition-to-same-state? transition-test-config `[unobs -> () (goto A (obs-ext 2))]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
