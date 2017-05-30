@@ -374,6 +374,24 @@
        ([(obs-ext 1)]))
      `()))
 
+  (test-equal? "Address with commitments and added to state arg should be added exactly once to obligations"
+    (attempt-transition
+     `((((Addr Nat) (init-addr 0)))
+       ()
+       (goto A)
+       ((define-state (A) [r -> ([obligation r *]) (goto B r)]))
+       ())
+     `[r -> ([obligation r *]) (goto B r)]
+     #t
+     `(external-receive (init-addr 0) (Nat (obs-ext 1))))
+    (list
+     `((((Addr Nat) (init-addr 0)))
+       ()
+       (goto B (obs-ext 1))
+       ((define-state (A) [r -> ([obligation r *]) (goto B r)]))
+       ([(obs-ext 1) [single *]]))
+     `()))
+
   (test-case "Immediate fork pattern transition"
     (define fork-pattern `(fork (goto Z y) (define-state (Z y) [* -> () (goto Z y)])))
     (check-equal?
@@ -593,17 +611,24 @@
           (term ([(obs-ext 1) (single *)]
                  [(obs-ext 2) (many *)])))
     (list (term (() () (goto A (obs-ext 1)) () ([(obs-ext 1) (single *)])))
-          (list (term (() () (goto B) () ([(obs-ext 2) (many *)])))))))
+          (list (term (() () (goto B) () ([(obs-ext 2) (many *)]))))))
+
+  (test-equal? "Dist an obligation with self pattern and that address in the fork's args"
+    (dist (term (() () (goto A) () ()))
+          (list (term (() () (goto B (obs-ext 1)) () ((obs-ext 1)))))
+          (term ([(obs-ext 1) [single (variant X self)]])))
+    (list (term (() () (goto A) () ()) )
+          (list (term (() () (goto B (obs-ext 1)) () ([(obs-ext 1) [single (variant X self)]])))))))
 
 ;; O# (a# ...) -> (O#_old O#_new)
 ;;
 ;; Moves entries from the given obligation map whose address is in the given list and creates a new
-;; obligation map from that list
+;; obligation map from that list. The list of addresses may contain duplicates.
 (define (fork-commitment-map commitment-map addresses)
-  (term (fork-commitment-map/mf ,commitment-map () ,addresses)))
+  (term (fork-commitment-map/mf ,commitment-map () ,(remove-duplicates addresses))))
 
 ;; Takes all entries from the first O# that match an address in the given list and moves it to the
-;; second O#
+;; second O#. The list of addresses must *not* contain duplicates.
 (define-metafunction aps#
   fork-commitment-map/mf : O# O# (a#ext ...) -> (O# O#)
   [(fork-commitment-map/mf O#_current O#_new ())
@@ -631,7 +656,12 @@
            ((obs-ext 4) (single (record)))))
     (term (((obs-ext 1) (single *))
            ((obs-ext 3))
-           ((obs-ext 5)))))))
+           ((obs-ext 5))))))
+
+  (test-equal? "fork-commitment-map: No duplicate entries when address list has duplicates"
+    (fork-commitment-map `([(obs-ext 1) [single *]]) (list `(obs-ext 1) `(obs-ext 1)))
+    `[()
+      ([(obs-ext 1) [single *]])]))
 
 ;; Adds all addresses matched in the substitution (i.e. the set of bindings) as keys in the output
 ;; commitment map
