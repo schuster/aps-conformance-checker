@@ -256,7 +256,7 @@
      (define-state (WaitingForCredentials)
        [(variant Authenticate * * reply-to) ->
         ([obligation reply-to (or (variant FailedSession)
-                                  (variant ActiveNewSession * (fork ,@server-spec-behavior)))])
+                                  (variant ActiveNewSession * (delayed-fork ,@server-spec-behavior)))])
         (goto Done)])
      (define-state (Done)
        [(variant Authenticate * * reply-to) -> () (goto Done)])))
@@ -273,8 +273,8 @@
      (goto Ready)
      (define-state (Ready)
        [(variant GetSession * reply-to) ->
-        ([obligation reply-to (or (variant ActiveOldSession (fork ,@server-spec-behavior))
-                                  (variant NewSession (fork ,@worker-spec-behavior)))])
+        ([obligation reply-to (or (variant ActiveOldSession (delayed-fork ,@server-spec-behavior))
+                                  (variant NewSession (delayed-fork ,@worker-spec-behavior)))])
         (goto Ready)])))
 
 ;; ---------------------------------------------------------------------------------------------------

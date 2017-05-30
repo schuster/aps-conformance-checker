@@ -321,8 +321,9 @@
      (goto AuthAlways)
      (define-state (AuthAlways)
        [(variant LogIn * * callback) ->
-        ([obligation callback (or (variant AuthenticationFailed)
-                                  (variant AuthenticationSucceeded (fork ,@server-spec-behavior)))])
+        ([obligation callback
+                     (or (variant AuthenticationFailed)
+                         (variant AuthenticationSucceeded (delayed-fork ,@server-spec-behavior)))])
         (goto AuthAlways)])))
 
 (module+ test
