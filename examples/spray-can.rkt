@@ -960,7 +960,7 @@
      (define-state (Init app-listener)
        [unobs ->
               ([obligation app-listener
-                           (variant HttpConnected * (fork ,@connection-spec-behavior))])
+                           (variant HttpConnected * (delayed-fork ,@connection-spec-behavior))])
               (goto Done)])
      (define-state (Done))))
 
@@ -976,7 +976,8 @@
   `((goto Connected app-listener)
     (define-state (Connected app-listener)
       [unobs ->
-             ([obligation app-listener (variant HttpConnected * (fork ,@connection-spec-behavior))])
+             ([obligation app-listener
+                          (variant HttpConnected * (delayed-fork ,@connection-spec-behavior))])
              (goto Connected app-listener)]
       ;; Checker isn't precise enough to know that an unbind result will only be sent once, so we
       ;; have to write a spec that allows for many sends instead

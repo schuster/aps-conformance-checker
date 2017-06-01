@@ -2263,7 +2263,7 @@
     (define-state (Init)
       [status-updates ->
        ([obligation status-updates (or (variant CommandFailed)
-                                       (variant Connected * (fork ,@session-spec-behavior)))])
+                                       (variant Connected * (delayed-fork ,@session-spec-behavior)))])
        (goto Done)])
     (define-state (Done)
       [* -> () (goto Done)])))
@@ -2284,7 +2284,7 @@
                  [unobs ->
                   ([obligation status-updates
                                (or (variant CommandFailed)
-                                   (variant Connected * (fork ,@session-spec-behavior)))])
+                                   (variant Connected * (delayed-fork ,@session-spec-behavior)))])
                   (goto Done)])
                (define-state (Done))])
         (goto Managing)]
