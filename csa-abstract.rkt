@@ -162,16 +162,6 @@
            (goto TestState1)))))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Constants
-
-;; The maximum number of times to unfold a recursive type while generating an exhaustive set of
-;; abstract values for that type.
-;;
-;; This number is an arbitrary choice for now. Later it may make sense to base it off of the level of
-;; detail in the spec or program.
-(define MAX-RECURSION-DEPTH 1)
-
-;; ---------------------------------------------------------------------------------------------------
 ;; Message generation
 
 ;; REFACTOR: create a second type of "fresh" external address instead (one that gets converted into
@@ -186,63 +176,60 @@
   ;; (or even the same type, if metafunction caching ever goes away here)
   (set! next-generated-address FIRST-GENERATED-ADDRESS)
   (parameterize ([caching-enabled? #f])
-    (term (messages-of-type/mf ,type ,MAX-RECURSION-DEPTH))))
+    (term (messages-of-type/mf ,type))))
 
-;; Returns an exhaustive list of abstract messages for the given type with the natural argument
-;; indicating the maximum number of times to unfold recursive types.
+;; Returns an exhaustive list of abstract messages for the given type.
 (define-metafunction csa#
-  messages-of-type/mf : τ natural -> (v# ...)
-  [(messages-of-type/mf Nat _) ((* Nat))]
-  [(messages-of-type/mf String _) ((* String))]
-  [(messages-of-type/mf (Union) _) ()]
-  [(messages-of-type/mf (Union [t_1 τ_1 ...] [t_rest τ_rest ...] ...) natural_max-depth)
+  messages-of-type/mf : τ -> (v# ...)
+  [(messages-of-type/mf Nat) ((* Nat))]
+  [(messages-of-type/mf String) ((* String))]
+  [(messages-of-type/mf (Union)) ()]
+  [(messages-of-type/mf (Union [t_1 τ_1 ...] [t_rest τ_rest ...] ...))
    (v#_1 ... v#_rest ...)
-   (where (v#_1 ...) (generate-variants natural_max-depth t_1 τ_1 ...))
+   (where (v#_1 ...) (generate-variants t_1 τ_1 ...))
    (where (v#_rest ...)
-          (messages-of-type/mf (Union [t_rest τ_rest ...] ...) natural_max-depth))]
-  [(messages-of-type/mf (Union) _) ()]
-  [(messages-of-type/mf (minfixpt X τ) 0)
-   ((* (minfixpt X τ)))]
-  [(messages-of-type/mf (minfixpt X τ) natural_max-depth)
+          (messages-of-type/mf (Union [t_rest τ_rest ...] ...)))]
+  [(messages-of-type/mf (minfixpt X τ))
    ((folded (minfixpt X τ) v#) ...)
    (where (v# ...)
-          (messages-of-type/mf (type-subst τ X (minfixpt X τ)) ,(sub1 (term natural_max-depth))))]
-  [(messages-of-type/mf (Record [l_1 τ_1] [l_rest τ_rest] ...) natural_max-depth)
+          (messages-of-type/mf (type-subst τ X (minfixpt X τ))))]
+  [(messages-of-type/mf (Record [l_1 τ_1] [l_rest τ_rest] ...))
    ,(for/fold ([records-so-far null])
-              ([sub-record (term (messages-of-type/mf (Record [l_rest τ_rest] ...) natural_max-depth))])
+              ([sub-record (term (messages-of-type/mf (Record [l_rest τ_rest] ...)))])
       (append
-       (for/list ([generated-v (term (messages-of-type/mf τ_1 natural_max-depth))])
+       (for/list ([generated-v (term (messages-of-type/mf τ_1))])
          (redex-let csa# ([(record [l_other v#_other] ...) sub-record]
                           [v#_1 generated-v])
            (term (record [l_1 v#_1] [l_other v#_other] ...))))
        records-so-far))]
-  [(messages-of-type/mf (Record) natural_max-depth)
+  [(messages-of-type/mf (Record))
    ((record))]
-  [(messages-of-type/mf (Addr τ) _)
+  [(messages-of-type/mf (Addr τ))
    ,(begin
       (set! next-generated-address (add1 next-generated-address))
+      ;; (printf "Generated address: ~s\n" (term (τ (obs-ext ,next-generated-address))))
       (term ((τ (obs-ext ,next-generated-address)))))]
-  [(messages-of-type/mf (Listof τ) natural_max-depth)
+  [(messages-of-type/mf (Listof τ))
    (,(normalize-collection (term (list-val v# ...))))
-   (where (v# ...) (messages-of-type/mf τ natural_max-depth))]
-  [(messages-of-type/mf (Vectorof τ) natural_max-depth)
+   (where (v# ...) (messages-of-type/mf τ))]
+  [(messages-of-type/mf (Vectorof τ))
    (,(normalize-collection (term (vector-val v# ...))))
-   (where (v# ...) (messages-of-type/mf τ natural_max-depth))]
-  [(messages-of-type/mf (Hash τ_1 τ_2) natural_max-depth)
+   (where (v# ...) (messages-of-type/mf τ))]
+  [(messages-of-type/mf (Hash τ_1 τ_2))
    (,(normalize-collection (term (hash-val (v#_keys ...) (v#_vals ...)))))
-   (where (v#_keys ...) (messages-of-type/mf τ_1 natural_max-depth))
-   (where (v#_vals ...) (messages-of-type/mf τ_2 natural_max-depth))])
+   (where (v#_keys ...) (messages-of-type/mf τ_1))
+   (where (v#_vals ...) (messages-of-type/mf τ_2))])
 
 ;; Generate an exhaustive list of variant values for the given tag and type, with the natural argument
 ;; acting as max-depth for the number of recursive type unfoldings
 (define-metafunction csa#
-  generate-variants : natural t τ ... -> ((variant t v# ...) ...)
-  [(generate-variants _ t) ((variant t))]
-  [(generate-variants natural_max-depth t τ_1 τ_rest ...)
+  generate-variants : t τ ... -> ((variant t v# ...) ...)
+  [(generate-variants t) ((variant t))]
+  [(generate-variants t τ_1 τ_rest ...)
    ,(for/fold ([variants-so-far null])
-              ([sub-variant (term (generate-variants natural_max-depth t τ_rest ...))])
+              ([sub-variant (term (generate-variants t τ_rest ...))])
       (append
-       (for/list ([generated-v (term (messages-of-type/mf τ_1 natural_max-depth))])
+       (for/list ([generated-v (term (messages-of-type/mf τ_1))])
          (redex-let csa# ([(variant t v#_other ...) sub-variant]
                           [v#_1 generated-v])
            (term (variant t v#_1 v#_other ...))))
@@ -254,60 +241,48 @@
    "rackunit-helpers.rkt")
 
   (test-same-items?
-   (term (messages-of-type/mf Nat 0))
+   (term (messages-of-type/mf Nat))
    '((* Nat)))
-  (test-same-items? (term (messages-of-type/mf (Union [Begin]) 0)) (list '(variant Begin)))
+  (test-same-items? (term (messages-of-type/mf (Union [Begin]))) (list '(variant Begin)))
   (test-same-items?
-   (term (messages-of-type/mf (Union [A] [B]) 0))
+   (term (messages-of-type/mf (Union [A] [B])))
    '((variant A) (variant B)))
-  (test-same-items? (term (messages-of-type/mf (Union) 0)) null)
+  (test-same-items? (term (messages-of-type/mf (Union))) null)
   (test-same-items?
-   (term (messages-of-type/mf (minfixpt Dummy Nat) 0))
-   (list '(* (minfixpt Dummy Nat))))
-  (test-same-items?
-   (term (messages-of-type/mf (minfixpt Dummy Nat) 1))
+   (term (messages-of-type/mf (minfixpt Dummy Nat)))
    (list '(folded (minfixpt Dummy Nat) (* Nat))))
   (test-same-items?
-   (term (messages-of-type/mf (Record [a Nat] [b Nat]) 0))
+   (term (messages-of-type/mf (Record [a Nat] [b Nat])))
    (list '(record [a (* Nat)] [b (* Nat)])))
   (test-same-items?
    (csa#-messages-of-type `(Record [a (Addr Nat)] [b (Addr Nat)]))
    (list '(record [a (Nat (obs-ext 102))] [b (Nat (obs-ext 101))])))
   (test-same-items?
-   (term (messages-of-type/mf (Record [x (Union [A] [B])] [y (Union [C] [D])]) 0))
+   (term (messages-of-type/mf (Record [x (Union [A] [B])] [y (Union [C] [D])])))
    (list '(record [x (variant A)] [y (variant C)])
          '(record [x (variant A)] [y (variant D)])
          '(record [x (variant B)] [y (variant C)])
          '(record [x (variant B)] [y (variant D)])))
-  (define list-of-nat '(minfixpt NatList (Union [Null] [Cons Nat NatList])))
+  (define recursive-record-type `(minfixpt RecType (Record [a (Addr RecType)])))
   (test-same-items?
-   (term (messages-of-type/mf ,list-of-nat 0))
-   (list `(* ,list-of-nat)))
+   (csa#-messages-of-type recursive-record-type)
+   (list `(folded ,recursive-record-type (record [a (,recursive-record-type (obs-ext 101))]))))
   (test-same-items?
-   (term (messages-of-type/mf ,list-of-nat 1))
-   (list `(folded ,list-of-nat (variant Null))
-         `(folded ,list-of-nat (variant Cons (* Nat) (* ,list-of-nat)))))
-  (test-same-items?
-   (term (messages-of-type/mf ,list-of-nat 2))
-   (list `(folded ,list-of-nat (variant Null))
-         `(folded ,list-of-nat (variant Cons (* Nat) (folded ,list-of-nat (variant Null))))
-         `(folded ,list-of-nat (variant Cons (* Nat) (folded ,list-of-nat (variant Cons (* Nat) (* ,list-of-nat)))))))
-  (test-same-items?
-   (term (messages-of-type/mf (Union) 0))
+   (term (messages-of-type/mf (Union)))
    '())
   (test-same-items?
-   (term (messages-of-type/mf (Union [A] [B String (Union [C] [D])]) 0))
+   (term (messages-of-type/mf (Union [A] [B String (Union [C] [D])])))
    '((variant A)
      (variant B (* String) (variant C))
      (variant B (* String) (variant D))))
   (test-same-items?
-   (term (messages-of-type/mf (Vectorof Nat) 0))
+   (term (messages-of-type/mf (Vectorof Nat)))
    (list `(vector-val (* Nat))))
   (test-same-items?
-   (term (messages-of-type/mf (Listof Nat) 0))
+   (term (messages-of-type/mf (Listof Nat)))
    (list `(list-val (* Nat))))
   (test-same-items?
-   (term (messages-of-type/mf (Hash Nat (Union [A] [B] [C])) 0))
+   (term (messages-of-type/mf (Hash Nat (Union [A] [B] [C]))))
    (list `(hash-val ((* Nat)) ((variant A) (variant B) [variant C]))))
   (test-case "Generated address number is re-used for each top-level generation"
     (check-equal? (second (first (csa#-messages-of-type `(Addr Nat))))
@@ -734,12 +709,7 @@
        (lambda (v effects)
          (match v
            [`(* ,_) (value-result `(* ,type) effects)]
-           [_
-            (if (< (term (fold-depth/mf ,v)) MAX-RECURSION-DEPTH)
-                (value-result `(folded ,type ,v) effects)
-                (if (csa#-contains-address? v)
-                    ((abort-evaluation-param))
-                    (value-result `(* ,type) effects)))]))
+           [_ (value-result `(folded ,type ,v) effects)]))
        (lambda (stuck) `(fold ,type ,stuck)))]
     [`(unfold ,type ,e)
      (eval-and-then e effects
@@ -1200,19 +1170,13 @@
                        (term (record [a (* Nat)] [b (variant C)] [c (* String)])))
   (check-exp-steps-to? (term (fold   (Union [A]) (variant A)))
                        (term (folded (Union [A]) (variant A))))
-  (define nat-list-type (term (minfixpt NatList (Union (Null) (Cons Nat NatList)))))
-  (check-exp-steps-to? (term (fold   ,nat-list-type (variant Null)))
-                       (term (folded ,nat-list-type (variant Null))))
-  (check-exp-steps-to? (term (fold   ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type))))
-                       (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
-  (check-exp-steps-to? (term (fold ,nat-list-type (variant Cons (* Nat)
-                               (fold ,nat-list-type (variant Cons (* Nat)
-                                 (fold ,nat-list-type (variant Null)))))))
-                       (term (folded ,nat-list-type (variant Cons (* Nat) (* ,nat-list-type)))))
-  (check-exp-steps-to? `(unfold (minfixpt NatAddrList (Union [Nil] [ConsIt (Addr Nat) NatAddrList]))
-                                (* (minfixpt NatAddrList (Union [Nil] [ConsIt (Addr Nat) NatAddrList]))))
-                       `(* (Union [Nil]
-                                  [ConsIt (Addr Nat) (minfixpt NatAddrList (Union [Nil] [ConsIt (Addr Nat) NatAddrList]))])))
+  (check-exp-steps-to? (term (fold   ,recursive-record-type (variant Null)))
+                       (term (folded ,recursive-record-type (variant Null))))
+  (check-exp-steps-to? (term (fold   ,recursive-record-type (record [a (,recursive-record-type (obs-ext 1))])))
+                       (term (folded ,recursive-record-type (record [a (,recursive-record-type (obs-ext 1))]))))
+  (check-exp-steps-to? `(unfold ,recursive-record-type
+                                (folded ,recursive-record-type (record [a (,recursive-record-type (obs-ext 1))])))
+                       `(record [a (,recursive-record-type (obs-ext 1))]))
   (check-exp-steps-to-all? `(< (* Nat) (let () (* Nat)))
                            (list `(variant True) `(variant False)))
   (check-exp-steps-to? `(+ (* Nat) (let () (* Nat)))
@@ -1679,29 +1643,6 @@
                         ((((define-state (A) (x) (goto A))) (goto A)))))
                       ()))))
 
-;; Returns a natural number indicating the maximum number of folds that may be crossed in a path from
-;; the root of the given AST to a leaf
-(define-metafunction csa#
-  fold-depth/mf : any -> natural
-  [(fold-depth/mf (folded _ any)) ,(add1 (term (fold-depth/mf any)))]
-  [(fold-depth/mf (* _)) 0]
-  [(fold-depth/mf (any ...))
-   ,(apply max 0 (term (natural_result ...)))
-   (where (natural_result ...) ((fold-depth/mf any) ...))]
-  [(fold-depth/mf any) 0])
-
-(module+ test
-  (test-equal? "fold-depth 1" (term (fold-depth/mf (* Nat))) 0)
-  (test-equal? "fold-depth 2"
-    (term (fold-depth/mf (folded Nat (variant A (folded Nat (variant B))))))
-    2)
-  (test-equal? "fold-depth 3"
-    (term
-     (fold-depth/mf (folded Nat (variant A
-                                         (folded Nat (variant B))
-                                         (folded Nat (variant A (folded Nat (variant B))))))))
-    3))
-
 ;; Returns true if the given expression contains *any* address
 (define (csa#-contains-address? e)
   (not (empty? (csa#-contained-addresses e))))
@@ -1910,24 +1851,36 @@
 ;; Substitutes the second type for X in the first type
 (define-metafunction csa#
   type-subst : τ X τ -> τ
-  [(type-subst Nat _ _) Nat]
-  [(type-subst String _ _) String]
-  [(type-subst (minfixpt X τ_1) X τ_2)
-   (minfixpt X τ_1)]
-  [(type-subst (minfixpt X_1 τ_1) X_2 τ_2)
-   (minfixpt X_fresh (type-subst (type-subst τ_1 X_1 X_fresh) X_2 τ_2))
-   (where X_fresh ,(variable-not-in (term ((minfixpt X_1 τ_1) X_2 τ_2)) (term X_1)))]
-  [(type-subst X X τ) τ]
-  [(type-subst X_1 X_2 τ) X_1]
-  [(type-subst (Union [t τ ...] ...) X τ_2)
-   (Union [t (type-subst τ X τ_2) ...] ...)]
-  [(type-subst (Record [l τ_l] ...) X τ)
-   (Record [l (type-subst τ_l X τ)] ...)]
-  [(type-subst (Addr τ) X τ_2)
-   (Addr (type-subst τ X τ_2))]
-  [(type-subst (Listof τ_e) X τ) (Listof (type-subst τ_e X τ))]
-  [(type-subst (Vectorof τ_e) X τ) (Vectorof (type-subst τ_e X τ))]
-  [(type-subst (Hash τ_k τ_v) X τ) (Hash (type-subst τ_k X τ) (type-subst τ_v X τ))])
+  [(type-subst τ_1 X τ_2) (type-subst/internal τ_1 X τ_2)])
+
+(define-metafunction csa#
+  type-subst/internal : τ X any -> any
+  [(type-subst/internal Nat _ _) Nat]
+  [(type-subst/internal String _ _) String]
+  [(type-subst/internal (minfixpt X any_1) X τ_2)
+   (minfixpt X any_1)]
+  [(type-subst/internal (minfixpt X_1 τ_1) X_2 any)
+   (minfixpt X_fresh (type-subst/internal (type-subst/internal τ_1 X_1 X_fresh) X_2 any))
+   (where X_fresh ,(variable-not-in (term ((minfixpt X_1 τ_1) X_2 any)) (term X_1)))]
+  [(type-subst/internal (Addr X) X any) (Addr any)]
+  [(type-subst/internal (Addr X_1) X_2 any) (Addr X_1)]
+  [(type-subst/internal (Union [t τ ...] ...) X any)
+   (Union [t (type-subst/internal τ X any) ...] ...)]
+  [(type-subst/internal (Record [l τ_l] ...) X any)
+   (Record [l (type-subst/internal τ_l X any)] ...)]
+  [(type-subst/internal (Addr τ) X any)
+   (Addr (type-subst/internal τ X any))]
+  [(type-subst/internal (Listof τ_e) X any) (Listof (type-subst/internal τ_e X any))]
+  [(type-subst/internal (Vectorof τ_e) X any) (Vectorof (type-subst/internal τ_e X any))]
+  [(type-subst/internal (Hash τ_k τ_v) X any)
+   (Hash (type-subst/internal τ_k X any) (type-subst/internal τ_v X any))])
+
+(module+ test
+  (test-equal? "type-subst on non-matching minfixpt"
+    (term (type-subst (minfixpt SomeType (Record [a (Addr AnotherType)] [b (Addr SomeType)]))
+                      AnotherType
+                      Nat))
+    (term (minfixpt SomeType1 (Record (a (Addr Nat)) (b (Addr SomeType1)))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
@@ -1936,119 +1889,108 @@
 ;; abstraction was not possible for some reason (e.g. an address was under a folded past the max fold
 ;; depth).
 ;;
+;; NOTE: I think I've removed all code that would ever return #f (because max recursion depth is no
+;; longer a thing), but I haven't taken the time to confirm that
+;;
 ;; NOTE: currently supports only no-messages, no-externals configs
 (define (csa#-abstract-config concrete-config internal-addresses)
-  (let/cc result-kont
-   (parameterize ([abstract-config-result-continuation result-kont])
-     (term (abstract-config/mf ,concrete-config ,internal-addresses ,MAX-RECURSION-DEPTH)))))
-
-(define abstract-config-result-continuation (make-parameter #f))
-(define (cancel-abstraction)
-  ((abstract-config-result-continuation) #f))
+  (term (abstract-config/mf ,concrete-config ,internal-addresses)))
 
 (define-metafunction csa#
-  abstract-config/mf : i (a_internal ...) natural_recursion-depth -> i#
+  abstract-config/mf : i (a_internal ...) -> i#
   [(abstract-config/mf (((a b) ...) ; actors
                  () ; messages-in-transit
                  _ ; receptionists (ignored because the spec config manages these)
                  _ ; externals (ignored because the spec config manages these)
                  )
-                (a_internal ...)
-                natural_depth)
+                (a_internal ...))
    (([a# b#] ...) () ())
-   (where ([a# b#] ...) ((abstract-actor (a b) (a_internal ...) natural_depth) ...))])
+   (where ([a# b#] ...) ((abstract-actor (a b) (a_internal ...)) ...))])
 
 (define-metafunction csa#
-  abstract-actor : (a b) (a_internals ...) natural_depth -> [a# b#]
-  [(abstract-actor (a_this ((Q ...) e)) (a ...) natural_depth)
+  abstract-actor : (a b) (a_internals ...) -> [a# b#]
+  [(abstract-actor (a_this ((Q ...) e)) (a ...))
    ((abstract-address a_this (a ...))
-    (((abstract-Q Q (a ...) natural_depth) ...)
-     (abstract-e e (a ...) natural_depth)))])
+    (((abstract-Q Q (a ...)) ...)
+     (abstract-e e (a ...))))])
 
 (define-metafunction csa#
-  abstract-Q : Q (a_internals ...) natural_depth -> Q#
-  [(abstract-Q (define-state (q [x τ] ...) (x_m) e) (a ...) natural_depth)
-   (define-state (q [x τ] ...) (x_m) (abstract-e e (a ...) natural_depth))]
+  abstract-Q : Q (a_internals ...) -> Q#
+  [(abstract-Q (define-state (q [x τ] ...) (x_m) e) (a ...))
+   (define-state (q [x τ] ...) (x_m) (abstract-e e (a ...)))]
   [(abstract-Q (define-state (q [x τ] ...) (x_m) e [(timeout e_timeout) e_t-handler])
-               (a ...)
-               natural_depth)
+               (a ...))
    (define-state (q [x τ] ...) (x_m)
-     (abstract-e e (a ...) natural_depth)
-     [(timeout (abstract-e e_timeout (a ...) natural_depth))
-      (abstract-e e_t-handler (a ...) natural_depth)])])
+     (abstract-e e (a ...))
+     [(timeout (abstract-e e_timeout (a ...)))
+      (abstract-e e_t-handler (a ...))])])
 
 (module+ test
-  (check-equal? (term (abstract-Q (define-state (S) (m) (goto S) [(timeout 5) (goto S)]) () 1))
+  (check-equal? (term (abstract-Q (define-state (S) (m) (goto S) [(timeout 5) (goto S)]) ()))
                 (term (define-state (S) (m) (goto S) [(timeout (* Nat)) (goto S)])))
   (check-equal? (term (abstract-Q (define-state (S) (m) (goto S)
-                                    [(timeout (case x [(A) 1] [(B) 2])) (goto S)]) () 1))
+                                    [(timeout (case x [(A) 1] [(B) 2])) (goto S)]) ()))
                 (term (define-state (S) (m) (goto S)
                         [(timeout (case x [(A) (* Nat)] [(B) (* Nat)])) (goto S)]))))
 
 ;; Abstracts the given expression to the given depth, with the given address list indicating the set
 ;; of internal addresses
 (define-metafunction csa#
-  abstract-e : e (a ...) natural_depth -> e#
-  [(abstract-e natural _ _) (* Nat)]
-  [(abstract-e string _ _) (* String)]
-  [(abstract-e x _ _) x]
-  [(abstract-e (τ a) (a_int ...) _) (τ (abstract-address a (a_int ...)))]
-  [(abstract-e (goto q e ...) (a ...) natural_depth)
-   (goto q (abstract-e e (a ...) natural_depth) ...)]
-  [(abstract-e (begin e ...) (a ...) natural_depth) (begin (abstract-e e (a ...) natural_depth) ...)]
-  [(abstract-e (send e_1 e_2) (a ...) natural_depth)
-   (send (abstract-e e_1 (a ...) natural_depth) (abstract-e e_2 (a ...) natural_depth))]
-  [(abstract-e (spawn any_location τ e Q ...) (a ...) natural_depth)
+  abstract-e : e (a ...) -> e#
+  [(abstract-e natural _) (* Nat)]
+  [(abstract-e string _) (* String)]
+  [(abstract-e x _) x]
+  [(abstract-e (τ a) (a_int ...)) (τ (abstract-address a (a_int ...)))]
+  [(abstract-e (goto q e ...) (a ...))
+   (goto q (abstract-e e (a ...)) ...)]
+  [(abstract-e (begin e ...) (a ...)) (begin (abstract-e e (a ...)) ...)]
+  [(abstract-e (send e_1 e_2) (a ...))
+   (send (abstract-e e_1 (a ...)) (abstract-e e_2 (a ...)))]
+  [(abstract-e (spawn any_location τ e Q ...) (a ...))
    (spawn any_location
           τ
-          (abstract-e e (a ...) natural_depth)
-          (abstract-Q Q (a ...) natural_depth) ...)]
-  [(abstract-e (let ([x e_binding] ...) e_body) (a ...) natural)
-   (let ([x (abstract-e e_binding (a ...) natural)] ...) (abstract-e e_body (a ...) natural))]
-  [(abstract-e (case e_val [(t x ...) e_clause] ...) (a ...) natural_depth)
-   (case (abstract-e e_val (a ...) natural_depth)
-     [(t x ...) (abstract-e e_clause (a ...) natural_depth)] ...)]
-  [(abstract-e (printf string e ...) (a ...) natural_depth)
-   (printf string (abstract-e e (a ...) natural_depth) ...)]
-  [(abstract-e (primop e ...) (a ...) natural_depth)
-   (primop (abstract-e e (a ...) natural_depth) ...)]
-  [(abstract-e (variant t e ...) (a ...) natural_depth)
-   (variant t (abstract-e e (a ...) natural_depth) ...)]
-  [(abstract-e (record [l e] ...) (a ...) natural_depth)
-   (record [l (abstract-e e (a ...) natural_depth)] ...)]
-  [(abstract-e (: e l) (a ...) natural_depth) (: (abstract-e e (a ...) natural_depth) l)]
-  [(abstract-e (! e_1 [l e_2]) (a ...) natural_depth)
-   (! (abstract-e e_1 (a ...) natural_depth) [l (abstract-e e_2 (a ...) natural_depth)])]
-  [(abstract-e (folded τ e) (a ...) 0)
-   (* τ)
-   ;; We're currently not able to give any addresses in a "folded" past our maximum fold-depth a sound
-   ;; abstraction if the address is an internal address or an external address observed by the spec,
-   ;; so we take the easy way out here and just bail out if the expression contains *any* address
-   (side-condition (when (csa-contains-address? (term e)) (cancel-abstraction)))]
-  [(abstract-e (folded τ e) (a ...) natural_depth)
-   (folded τ (abstract-e e (a ...) ,(sub1 (term natural_depth))))]
-  [(abstract-e (fold τ e) (a ...) natural_depth)
-   (fold τ (abstract-e e (a ...) natural_depth))]
-  [(abstract-e (unfold τ e) (a ...) natural_depth)
-   (unfold τ (abstract-e e (a ...) natural_depth))]
-  [(abstract-e (list v ...) (a ...) natural_depth)
-   ,(normalize-collection (term (list-val (abstract-e v (a ...) natural_depth) ...)))]
-  [(abstract-e (list e ...) (a ...) natural_depth)
-   (list (abstract-e e (a ...) natural_depth) ...)]
-  [(abstract-e (vector v ...) (a ...) natural_depth)
-   ,(normalize-collection (term (vector-val (abstract-e v (a ...) natural_depth) ...)))]
-  [(abstract-e (vector e ...) (a ...) natural_depth)
-   (vector (abstract-e e (a ...) natural_depth) ...)]
-  [(abstract-e (hash [v_key v_val] ...) (a ...) natural_depth)
-   ,(normalize-collection (term (hash-val ((abstract-e v_key (a ...) natural_depth) ...)
-                                          ((abstract-e v_val (a ...) natural_depth) ...))))]
-  [(abstract-e (hash [e_key e_val] ...) (a ...) natural_depth)
-   (hash [(abstract-e e_key (a ...) natural_depth) (abstract-e e_val (a ...) natural_depth)] ...)]
-  [(abstract-e (for/fold ([x_1 e_1]) ([x_2 e_2]) e) (a ...) natural)
-   (for/fold ([x_1 (abstract-e e_1 (a ...) natural)])
-             ([x_2 (abstract-e e_2 (a ...) natural)])
-     (abstract-e e (a ...) natural))]
-  [(abstract-e (coerce e τ) (a ...) natural) (coerce (abstract-e e (a ...) natural) τ)])
+          (abstract-e e (a ...))
+          (abstract-Q Q (a ...)) ...)]
+  [(abstract-e (let ([x e_binding] ...) e_body) (a ...))
+   (let ([x (abstract-e e_binding (a ...))] ...) (abstract-e e_body (a ...)))]
+  [(abstract-e (case e_val [(t x ...) e_clause] ...) (a ...))
+   (case (abstract-e e_val (a ...))
+     [(t x ...) (abstract-e e_clause (a ...))] ...)]
+  [(abstract-e (printf string e ...) (a ...))
+   (printf string (abstract-e e (a ...)) ...)]
+  [(abstract-e (primop e ...) (a ...))
+   (primop (abstract-e e (a ...)) ...)]
+  [(abstract-e (variant t e ...) (a ...))
+   (variant t (abstract-e e (a ...)) ...)]
+  [(abstract-e (record [l e] ...) (a ...))
+   (record [l (abstract-e e (a ...))] ...)]
+  [(abstract-e (: e l) (a ...)) (: (abstract-e e (a ...)) l)]
+  [(abstract-e (! e_1 [l e_2]) (a ...))
+   (! (abstract-e e_1 (a ...)) [l (abstract-e e_2 (a ...))])]
+  [(abstract-e (folded τ e) (a ...))
+   (folded τ (abstract-e e (a ...)))]
+  [(abstract-e (fold τ e) (a ...))
+   (fold τ (abstract-e e (a ...)))]
+  [(abstract-e (unfold τ e) (a ...))
+   (unfold τ (abstract-e e (a ...)))]
+  [(abstract-e (list v ...) (a ...))
+   ,(normalize-collection (term (list-val (abstract-e v (a ...)) ...)))]
+  [(abstract-e (list e ...) (a ...))
+   (list (abstract-e e (a ...)) ...)]
+  [(abstract-e (vector v ...) (a ...))
+   ,(normalize-collection (term (vector-val (abstract-e v (a ...)) ...)))]
+  [(abstract-e (vector e ...) (a ...))
+   (vector (abstract-e e (a ...)) ...)]
+  [(abstract-e (hash [v_key v_val] ...) (a ...))
+   ,(normalize-collection (term (hash-val ((abstract-e v_key (a ...)) ...)
+                                          ((abstract-e v_val (a ...)) ...))))]
+  [(abstract-e (hash [e_key e_val] ...) (a ...))
+   (hash [(abstract-e e_key (a ...)) (abstract-e e_val (a ...))] ...)]
+  [(abstract-e (for/fold ([x_1 e_1]) ([x_2 e_2]) e) (a ...))
+   (for/fold ([x_1 (abstract-e e_1 (a ...))])
+             ([x_2 (abstract-e e_2 (a ...))])
+     (abstract-e e (a ...)))]
+  [(abstract-e (coerce e τ) (a ...)) (coerce (abstract-e e (a ...)) τ)])
 
 ;; Abstracts the address a, where internal-addresses is the list of all addresses belonging to actors
 ;; in a's implementation configuration.
@@ -2061,55 +2003,45 @@
   [(abstract-address (addr natural) _) (obs-ext natural)])
 
 (module+ test
-  (check-equal? (term (abstract-e (record [f1 1] [f2 2]) () 1))
+  (check-equal? (term (abstract-e (record [f1 1] [f2 2]) ()))
                 (term (record [f1 (* Nat)] [f2 (* Nat)])))
   (check-not-false
    (redex-match? csa#
                  (variant Foo (Nat (init-addr 1)) (Nat (obs-ext 2)))
-                 (term (abstract-e (variant Foo (Nat (addr 1)) (Nat (addr 2))) ((addr 1)) 10))))
-  (check-equal? (term (abstract-e (list 1 2) () 10))
+                 (term (abstract-e (variant Foo (Nat (addr 1)) (Nat (addr 2))) ((addr 1))))))
+  (check-equal? (term (abstract-e (list 1 2) ()))
                 (term (list-val (* Nat))))
-  (check-equal? (term (abstract-e (list 1 (let () 1)) () 10))
+  (check-equal? (term (abstract-e (list 1 (let () 1)) ()))
                 (term (list (* Nat) (let () (* Nat)))))
-  (check-equal? (term (abstract-e (vector 1 2) () 10))
+  (check-equal? (term (abstract-e (vector 1 2) ()))
                 (term (vector-val (* Nat))))
-  (check-equal? (term (abstract-e (vector 1 (let () 1)) () 10))
+  (check-equal? (term (abstract-e (vector 1 (let () 1)) ()))
                 (term (vector (* Nat) (let () (* Nat)))))
-  (check-equal? (term (abstract-e (list (variant B) (variant A)) () 10))
+  (check-equal? (term (abstract-e (list (variant B) (variant A)) ()))
                 (term (list-val (variant A) (variant B))))
-  (check-equal? (term (abstract-e (vector (variant B) (variant A)) () 10))
+  (check-equal? (term (abstract-e (vector (variant B) (variant A)) ()))
                 (term (vector-val (variant A) (variant B))))
-  (check-equal? (term (abstract-e (hash [1 (variant B)] [2 (variant A)]) () 10))
+  (check-equal? (term (abstract-e (hash [1 (variant B)] [2 (variant A)]) ()))
                 (term (hash-val ((* Nat)) ((variant A) (variant B)))))
-  (check-equal? (term (abstract-e (hash [1 2] [3 4]) () 10))
+  (check-equal? (term (abstract-e (hash [1 2] [3 4]) ()))
                 (term (hash-val ((* Nat)) ((* Nat)))))
-  (check-equal? (term (abstract-e (hash) () 10))
+  (check-equal? (term (abstract-e (hash) ()))
                 (term (hash-val () ())))
-  (check-equal? (term (abstract-e (hash [1 (let ([x 1]) x)] [3 4]) () 10))
+  (check-equal? (term (abstract-e (hash [1 (let ([x 1]) x)] [3 4]) ()))
                 (term (hash [(* Nat) (let ([x (* Nat)]) x)] [(* Nat) (* Nat)])))
   (check-equal? (term (abstract-e (coerce ((Union [A] [B]) (addr 1)) (Addr (Union [B])))
-                                  ((addr 1))
-                                  10))
+                                  ((addr 1))))
                 (term (coerce ((Union [A] [B]) (init-addr 1)) (Addr (Union [B])))))
   (test-equal? "Abstraction on non-matching addresses"
-               (term (abstract-e ((Union [A]) (addr 1)) ((addr 1)) 0))
+               (term (abstract-e ((Union [A]) (addr 1)) ((addr 1))))
                (term ((Union [A]) (init-addr 1))))
   (test-equal? "Abstraction on non-matching addresses"
-               (term (abstract-e ((Union [A]) (addr 2)) ((addr 1)) 0))
+               (term (abstract-e ((Union [A]) (addr 2)) ((addr 1))))
                (term ((Union [A]) (obs-ext 2))))
-  (test-case "Unable to abstract addresses past max fold depth"
-    (define nat-addr-list-type `(minfixpt NatAddrList (Union [Nil] [Cons (Addr Nat) NatAddrList])))
-    (check-false
-     (csa#-abstract-config
-      `((((addr 1)
-          (() (folded ,nat-addr-list-type
-                      (variant Cons (Nat (addr 1))
-                               (folded ,nat-addr-list-type
-                                       (variant Cons (Nat (addr 2))
-                                                (folded ,nat-addr-list-type
-                                                        (variant Nil)))))))))
-        () () ())
-      null))))
+  (test-equal? "Abstraction okay on folded"
+    (term (abstract-e (folded ,recursive-record-type (record [a (,recursive-record-type (addr 1))]))
+                      ()))
+    `(folded ,recursive-record-type (record [a (,recursive-record-type (obs-ext 1))]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selecting the spawn flag to blur
@@ -2908,11 +2840,67 @@
 
 (define-metafunction csa#
   type-join : τ τ -> τ
-  [(type-join (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))
+  [(type-join τ_1 τ_2) (type-join/internal τ_1 () τ_2 ())])
+
+;; The X -> τ mappings are the type environments for recursive type variables
+;;
+;; NOTE: non-equality-based join for lists, vectors, and hashes is not implemented
+(define-metafunction csa#
+  type-join/internal : τ ([X τ] ...) τ ([X τ] ...) -> τ
+  [(type-join/internal (Union [t_1 τ_1 ...] ...) any_1 (Union [t_2 τ_2 ...] ...) any_2)
    (Union [t_3 τ_3 ...] ...)
    (where ([t_3 τ_3 ...] ...)
-          ,(sort (remove-duplicates (term ([t_1 τ_1 ...] ... [t_2 τ_2 ...] ...))) sexp<?))]
-  [(type-join τ τ) τ])
+          ,(let ()
+             (define branches1 (term ([t_1 τ_1 ...] ...)))
+             (define branches2 (term ([t_2 τ_2 ...] ...)))
+             (define type1-branches
+              (for/list ([branch1 branches1])
+                (define tag (first branch1))
+                (match (findf (lambda (branch2) (equal? (first branch2) tag)) branches2)
+                  [#f branch1]
+                  [branch2
+                   (define (join-components type1 type2)
+                     (term (type-join/internal ,type1 any_1 ,type2 any_2)))
+                   ;; NOTE: assumes that the branches have the same number of components
+                   `[,tag ,@(map join-components (rest branch1) (rest branch2))]])))
+             (define remaining-branch2-branches
+               (filter (lambda (b2)
+                         (not (findf (lambda (b1) (equal? (first b1) (first b2))) branches1)))
+                       branches2))
+             (define all-new-branches (append type1-branches remaining-branch2-branches))
+             ;; NOTE: We sort here to get the types into a canonical form and avoid repeated states,
+             ;; but only when the number of branches is different from the original number in each
+             ;; list (as a conservative heuristic to detect when the types might be the
+             ;; possibly-out-order types from the original program)
+             (if (and (= (length all-new-branches) (length branches1))
+                      (= (length all-new-branches) (length branches2)))
+                 all-new-branches
+                 (sort all-new-branches sexp<?))))]
+  [(type-join/internal (Record [l_1 τ_1] ...) any_1 (Record [l_2 τ_2] ...) any_2)
+   (Record [l_1 (type-join/internal τ_1 any_1 τ_2 any_2)] ...)]
+  [(type-join/internal (minfixpt X τ_1) (any_1 ...) (minfixpt X τ_2) (any_2 ...))
+   (minfixpt X (type-join/internal τ_1 ([X (minfixpt X τ_1)] any_1 ...)
+                                   τ_2 ([X (minfixpt X τ_2)] any_2 ...)))]
+  [(type-join/internal (minfixpt X_1 τ_1) (any_1 ...) (minfixpt X_2 τ_2) (any_2 ...))
+   (minfixpt X_fresh
+             (type-join/internal τ_1subst
+                                 ([X_fresh (minfixpt X_fresh τ_1subst)] any_1 ...)
+                                 τ_2subst
+                                 ([X_fresh (minfixpt X_fresh τ_2subst)])))
+   (where X_fresh ,(variable-not-in (term ((minfixpt X_1 τ_1) (minfixpt X_2 τ_2))) (term X_1)))
+   (where τ_1subst (type-subst/internal τ_1 X_1 X_fresh))
+   (where τ_2subst (type-subst/internal τ_2 X_2 X_fresh))]
+  [(type-join/internal (Addr X) _ (Addr X) _) (Addr X)]
+  [(type-join/internal (Addr X) any_1 (Addr τ_2) any_2)
+   (type-join/internal (Addr τ_1) any_1 (Addr τ_2) any_2)
+   (where τ_1 ,(second (assoc (term X) (term any_1))))]
+  [(type-join/internal (Addr τ_1) any_1 (Addr X) any_2)
+   ;; this clause should match
+   (type-join/internal (Addr τ_1) any_1 (Addr τ_2) any_2)
+   (where τ_2 ,(second (assoc (term X) (term any_2))))]
+  [(type-join/internal (Addr τ_1) any_1 (Addr τ_2) any_2)
+   (Addr (type-join/internal τ_1 any_1 τ_2 any_2))]
+  [(type-join/internal τ any_1 τ any_2) τ])
 
 (module+ test
   (test-equal? "type-join 1" (term (type-join Nat Nat)) 'Nat)
@@ -2924,8 +2912,47 @@
                '(Union [A] [B]))
   (test-equal? "type-join 3"
                (term (type-join (Union [A] [B]) (Union [B])))
-               '(Union [A] [B])))
+               '(Union [A] [B]))
 
+  (test-equal? "type-join for records"
+    (term (type-join (Record [a (Union [A])]) (Record [a (Union [B])])))
+    (term (Record [a (Union [A] [B])])))
+
+  (test-equal? "type-join on minfixpts with the same names"
+    (term (type-join (minfixpt A (Union [M (Addr A)]))
+                     (minfixpt A (Union [N (Addr A)]))))
+    (term (minfixpt A (Union [M (Addr A)] [N (Addr A)]))))
+
+  (test-equal? "type-join on minfixpts with different names"
+    (term (type-join (minfixpt A (Union [M (Addr A)]))
+                     (minfixpt B (Union [N (Addr B)]))))
+    (term (minfixpt A1 (Union [M (Addr A1)] [N (Addr A1)]))))
+
+  (test-equal? "type-join on minfixpts with different numbers of unfoldings"
+    (term (type-join (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)])))]))
+                     (minfixpt A (Union [M (Addr A)]))))
+    (term (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)])))]))))
+
+    (test-equal? "type-join on minfixpts with different numbers of unfoldings, reverse ordrer"
+      (term (type-join (minfixpt A (Union [M (Addr A)]))
+                       (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)])))]))))
+    (term (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)])))]))))
+
+  (test-equal? "type-join on sub-typed minfixpts with different numbers of unfoldings"
+    (term (type-join (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)])))] [N Nat]))
+                     (minfixpt A (Union [M (Addr A)]))))
+    (term (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)])))] [N Nat]))))
+
+  (test-equal? "type-join on incomparable minfixpts with different numbers of unfoldings"
+    (term (type-join (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)])))] [N Nat]))
+                     (minfixpt A (Union [M (Addr A)] [O]))))
+    (term (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)] [O])))] [N Nat] [O]))))
+
+  (test-equal? "No sorting when we have same number of branches in result and original inputs"
+    (term (type-join (Union [B] [A]) (Union [B] [A])))
+    (term (Union [B] [A]))))
+
+;; TODO: ermove coercion altogether
 ;; Coerces the abstract value v# according to the type τ (just change the types of addresses in
 ;; v). The type system should always make this sound
 (define-metafunction csa#
@@ -2981,16 +3008,11 @@
   (test-equal? "coerce/mf record"
     (term (coerce/mf (record [foo (* (Addr (Union [A] [B])))]) (Record [foo (Addr (Union [A]))])))
     (term (record [foo (* (Addr (Union [A])))])))
-  (test-equal? "coerce/mf fold"
-    (term (coerce/mf (folded (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A] [B])) AddrList]))
-                          (* (Union [Empty]
-                                    [Cons (Addr (Union [A] [B]))
-                                          (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A] [B])) AddrList]))])))
-                  (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A])) AddrList]))))
-    (term (folded (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A])) AddrList]))
-                  (* (Union [Empty]
-                            [Cons (Addr (Union [A]))
-                                  (minfixpt AddrList (Union [Empty] [Cons (Addr (Union [A])) AddrList]))])))))
+  ;; NOTE: this may not be a strong enough test
+  (test-equal? "coerce/mf folded"
+    (term (coerce/mf (folded ,recursive-record-type (record [a (,recursive-record-type (obs-ext 1))]))
+                     ,recursive-record-type))
+    (term (folded ,recursive-record-type (record [a (,recursive-record-type (obs-ext 1))]))))
   (test-equal? "coerce/mf list"
     (term (coerce/mf (list-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
                   (Listof (Addr (Union [A])))))
@@ -3020,9 +3042,11 @@
    (type<=/j String String)]
 
   [--------------
-   (type<=/j X X)]
+   (type<=/j (Addr X) (Addr X))]
 
   [(type<=/j τ_1 τ_2)
+   ;; TODO: ideally this should allow the types to have different bound names and then rename each to
+   ;; have the same name and check those instead
    --------------------------------------------
    (type<=/j (minfixpt X τ_1) (minfixpt X τ_2))]
 
@@ -3068,7 +3092,10 @@
   (test-true "type<= vector 1" (type<= `(Vectorof ,union-a) `(Vectorof ,union-ab)))
   (test-false "type<= vector 2" (type<= `(Vectorof ,union-ab) `(Vectorof ,union-a)))
   (test-true "type<= hash 1" (type<= `(Hash ,union-a ,union-a) `(Hash ,union-ab ,union-ab)))
-  (test-false "type<= hash 2" (type<= `(Hash ,union-ab ,union-ab)  `(Hash ,union-a ,union-a))))
+  (test-false "type<= hash 2" (type<= `(Hash ,union-ab ,union-ab)  `(Hash ,union-a ,union-a)))
+
+  ;; TODO: need more complicated tests for recursive types, I think
+  )
 
 ;; Holds if the variant [t_1 τ_1 ...] has a >= variant in the given union type
 (define-judgment-form csa#

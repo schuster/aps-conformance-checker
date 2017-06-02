@@ -2023,27 +2023,6 @@
               (check-conformance/config (make-single-actor-config record-req-wrong-resp-actor)
                            (make-exclusive-spec record-req-resp-spec)))
 
-  ;;;; Recursive Types
-  (define log-list-type (term (minfixpt LogList (Union [Null] [Cons Nat LogList]))))
-  (define cons-inputs-echo
-    (term
-     ((Nat (addr 0))
-      (((define-state (Always [response-address (Addr Nat)]
-                              [input-log ,log-list-type]) (m)
-          (begin
-            (send response-address (variant Ack 0))
-            (goto Always
-                  response-address
-                  (fold ,log-list-type (variant Cons input-log))))))
-       (goto Always ,static-response-address (folded ,log-list-type (variant Null)))))))
-
-  (test-valid-actor? cons-inputs-echo)
-
-  (test-true "Abstraction can deal with unboundedly large recursively typed values"
-   (check-conformance/config
-    (make-single-actor-config cons-inputs-echo)
-    (make-exclusive-spec static-response-spec)))
-
   ;;;; Let
   (define static-response-let-actor
     (term
@@ -2923,52 +2902,6 @@
     (check-conformance/config
      (make-single-actor-config worker-spawner)
      (make-exclusive-spec worker-spawner-spec)))
-
-  ;;;; Abstraction past max fold depth
-  (test-case "Cannot test conformance if address found below max fold depth"
-    (define nat-addr-list-type `(minfixpt NatAddrList (Union [Nil] [Cons (Addr Nat) NatAddrList])))
-    (check-false
-     (check-conformance/config
-      (make-single-actor-config
-       `((Nat (addr 0))
-         (() (folded ,nat-addr-list-type
-                     (variant Cons (Nat (addr 1))
-                              (folded ,nat-addr-list-type
-                                      (variant Cons (Nat (addr 2))
-                                               (folded ,nat-addr-list-type
-                                                       (variant Nil)))))))))
-      (make-exclusive-spec static-response-spec))))
-
-  (test-case "Cannot test conformance if address is folded into a wildcard during handler evaluation"
-    (define nat-addr-list-type `(minfixpt NatAddrList (Union [Nil] [ConsIt (Addr Nat) NatAddrList])))
-    (define addr-list-actor
-      ;; Idea: send to the received address, then add it to the address list, then send to the second
-      ;; ddress in the list (should be below the max unfold depth) if it exists. This does not conform
-      ;; to the request/response spec because of the extra send, but would only be caught by checking
-      ;; for addresses getting folded into wildcard values.
-      (term
-       ((Nat (addr 0))
-        (((define-state (Always [addrs ,nat-addr-list-type]) (new-addr)
-            (let ([addrs (fold ,nat-addr-list-type (variant ConsIt new-addr addrs))])
-              (begin
-                (send new-addr 0)
-                (case (unfold ,nat-addr-list-type addrs)
-                  [(Nil) 0]
-                  [(ConsIt the-addr addrs)
-                   (case (unfold ,nat-addr-list-type addrs)
-                     [(Nil) 0]
-                     [(ConsIt the-addr addrs)
-                      (begin
-                        (send the-addr 1)
-                        0)])])
-                (goto Always addrs)))))
-         (goto Always (folded ,nat-addr-list-type (variant Nil)))))))
-
-    (check-valid-actor? addr-list-actor)
-    (check-false
-     (check-conformance/config
-      (make-single-actor-config addr-list-actor)
-      (make-exclusive-spec request-response-spec))))
 
   ;;;; Type Coercions
 

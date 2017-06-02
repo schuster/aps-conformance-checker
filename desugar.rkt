@@ -151,13 +151,14 @@
   (Type (τ)
         pτ
         (minfixpt T τ)
+        T ; not really the right grammar, but Nanopass seems to require having at most one clause per
+          ; constructor
         (Addr τ)
         (Record [x τ] ...)
         (Union [V τ ...] ...)
         (Listof τ)
         (Vectorof τ)
-        (Hash τ1 τ2)
-        T)
+        (Hash τ1 τ2))
   (entry Prog))
 
 ;; ---------------------------------------------------------------------------------------------------

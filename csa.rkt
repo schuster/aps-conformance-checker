@@ -106,7 +106,7 @@
   (τ Nat
      String
      (minfixpt X τ)
-     X
+     (Addr X)
      (Union [t τ ...] ...)
      (Record [l τ] ...)
      (Addr τ)
