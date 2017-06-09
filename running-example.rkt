@@ -11,13 +11,13 @@
 
 (define-variant TableCommand
   (Read [key String] [response-dest (Addr (Union [Nothing] [Just String]))])
-  (Lock [response-dest (Addr (Union [Unavailable] [Acquired]))]) ;; TODO: figure out if I want to have auth tokens
-  (Unlock)
-  (Write [key String] [value String] [response-dest (Addr (Union [Written]))]))
+  (Write [key String] [value String] [response-dest (Addr (Union [Written]))])
+  (Lock [response-dest (Addr (Union [Unavailable] [Acquired]))])
+  (Unlock))
 
 (define-record DirectoryRequest
   [name String]
-  [response (Addr (Addr TableCommand))])
+  [response-dest (Addr (Addr TableCommand))])
 
 (define-actor TableCommand (TableActor)
   ()
@@ -64,7 +64,7 @@
 (actors [directory (spawn 2 Directory)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Dynamic tests
+;; Testing
 
 (module+ test
   (require
