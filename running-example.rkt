@@ -7,7 +7,7 @@
 
 (define ddb-program
 (desugar
-  `(program (receptionists [directory DirectoryRequiest]) (externals)
+  `(program (receptionists [directory DirectoryRequest]) (externals)
 
 (define-variant TableCommand
   (Read [key String] [response-dest (Addr (Union [Nothing] [Just String]))])
