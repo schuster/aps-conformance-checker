@@ -73,7 +73,11 @@
    (only-in csa record variant)
    csa/eval
    csa/testing
-   rackunit)
+   rackunit
+   "main.rkt"))
+
+(module+ test
+  ;; Dynamic tests
 
   (test-case "Full test for distributed database"
     (define directory (csa-run ddb-program))
@@ -140,3 +144,48 @@
     ;; 4. try to write; fail
     (async-channel-put table (variant Write "foo" "bar" client))
     (check-no-message client #:timeout 3)))
+
+;; ---------------------------------------------------------------------------------------------------
+;; APS Specification
+
+(define desugared-table-command
+  `(Union
+    [Read String (Addr (Union [Nothing] [Just String]))]
+    [Lock (Addr (Union [Unavailable] [Acquired]))]
+    [Unlock]
+    [Write String String (Addr (Union [Written]))]))
+
+(define desugared-directory-request
+  `(Record
+    [name String]
+    [response-dest (Addr (Addr ,desugared-table-command))]))
+
+(define table-spec-behavior
+  `((goto Reading)
+    (define-state (Reading)
+      [(variant Read * r) -> ([obligation r (or (variant Nothing) (variant Just *))]) (goto Reading)]
+      [(variant Write * * *) -> () (goto Reading)]
+      [(variant Lock r) -> ([obligation r (variant Unavailable)]) (goto Reading)]
+      [(variant Lock r) -> ([obligation r (variant Acquired)]) (goto Writing)]
+      [(variant Unlock) -> () (goto Reading)])
+    (define-state (Writing)
+      [(variant Read * r) -> ([obligation r (or (variant Nothing) (variant Just *))]) (goto Writing)]
+      [(variant Write * * r) -> ([obligation r (variant Written)]) (goto Writing)]
+      [(variant Lock r) -> ([obligation r (variant Unavailable)]) (goto Writing)]
+      [(variant Unlock) -> () (goto Reading)]
+      ;; might timeout and go back to Reading
+      [unobs -> () (goto Reading)])))
+
+(define directory-spec
+  `(specification (receptionists [directory ,desugared-directory-request]) (externals)
+     ([directory ,desugared-directory-request])
+     ()
+     (goto Serving)
+     (define-state (Serving)
+       [(record [name *] [response-dest r]) ->
+         ([obligation r (delayed-fork ,@table-spec-behavior)])
+        (goto Serving)])))
+
+(module+ test
+  (test-true "Running example conforms to spec"
+    (check-conformance ddb-program directory-spec)))
