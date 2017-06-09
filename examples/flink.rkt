@@ -536,7 +536,7 @@
                  [task-managers (Hash Nat ManagedTaskManager)]
                  [active-jobs (Hash Nat JobCompletionInfo)]
                  ;; Tasks that are waiting on their input tasks to complete
-                 [waiting-tasks (Listof WatingReduceTask)]
+                 [waiting-tasks (Listof WaitingReduceTask)]
                  [ready-tasks (Listof ReadyTask)]
                  [running-tasks (Hash JobTaskId RunningTaskExecution)]
                  [partitions (Hash JobTaskId UsedPartition)]) (m)
