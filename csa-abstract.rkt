@@ -759,7 +759,7 @@
          (value-result `(variant True) `(variant False) effects))
        (lambda (stucks) `(= ,@stucks)))]
     ;; Lists and Hashes
-    [`(,(and op (or 'list 'cons 'list-as-variant 'list-ref 'remove 'length 'append 'list-copy 'take 'hash-ref 'hash-keys 'hash-values 'hash-set 'hash-remove 'hash-has-key? 'hash-empty? 'sort-numbers-descending))
+    [`(,(and op (or 'list 'cons 'list-as-variant 'list-ref 'remove 'length 'append 'list-copy 'take 'drop 'hash-ref 'hash-keys 'hash-values 'hash-set 'hash-remove 'hash-has-key? 'hash-empty? 'sort-numbers-descending))
        ,args ...)
      (eval-and-then* args effects
        (lambda (vs effects)
@@ -1255,6 +1255,11 @@
                        `(list-val (* Nat)))
   (check-exp-steps-to?
    (term (take (* (Listof (Union [A]))) (* Nat)))
+   (term (* (Listof (Union [A])))))
+  (check-exp-steps-to? `(drop (list-val (* Nat)) (* Nat))
+                       `(list-val (* Nat)))
+  (check-exp-steps-to?
+   (term (drop (* (Listof (Union [A]))) (* Nat)))
    (term (* (Listof (Union [A])))))
   (check-exp-steps-to?
    (term (append (list-val (variant A) (variant B))

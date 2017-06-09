@@ -84,6 +84,7 @@
    append
    list-copy
    take
+   drop
    hash-ref
    hash-keys
    hash-values
