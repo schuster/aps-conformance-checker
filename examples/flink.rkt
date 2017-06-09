@@ -40,7 +40,7 @@
 ;; JobManager's Client-facing API
 
 (define-variant TaskDescription
-  (Map [data (Vectorof Nat)])
+  (Map [data (Listof Nat)])
   (Reduce [left-task-id Nat] [right-task-id Nat]))
 
 (define-record Task
@@ -82,7 +82,7 @@
   [right MaybeReduceData])
 
 (define-variant ReadyTaskWork
-  (MapWork [initial-data (Vectorof String)])
+  (MapWork [initial-data (Listof String)])
   (ReduceWork [left (Hash String Nat)] [right (Hash String Nat)]))
 
 ;; A task with all of its required input data
@@ -91,10 +91,10 @@
   [work ReadyTaskWork])
 
 ;; A partition for a task with a pointer to the index to start sending from on the next
-;; "RequestNextInputSplit" (this index will be beyond the range of the vector once the data is
+;; "RequestNextInputSplit" (this index will be beyond the range of the list once the data is
 ;; exhausted)
 (define-record UsedPartition
-  [data (Vectorof Nat)]
+  [data (Listof Nat)]
   [next-send Nat])
 
 (define-record ManagedTaskManager
@@ -138,7 +138,7 @@
 
 (define-type InputSplitRequest
   (Union
-   [RequestNextInputSplit JobTaskId (Addr (Union [NextInputSplit (Vectorof String)]))]))
+   [RequestNextInputSplit JobTaskId (Addr (Union [NextInputSplit (Listof String)]))]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; TaskManager -> TaskRunner Communication
@@ -162,7 +162,7 @@
 (define-variant TaskRunnerInput
   (RunTask [task ReadyTask])
   (CancelRunnerTask [id JobTaskId])
-  (NextInputSplit [items (Vectorof String)]))
+  (NextInputSplit [items (Listof String)]))
 
 (define-variant TaskManagerInput
   (AcknowledgeRegistration)
@@ -176,7 +176,7 @@
 (define-variant JobManagerInputVariant
   (RegisterTaskManager [id Nat] [num-slots Nat] [address (Addr TaskManagerCommand)])
   (RequestNextInputSplit [id JobTaskId]
-                         [target (Addr (Union [NextInputSplit (Vectorof String)]))])
+                         [target (Addr (Union [NextInputSplit (Listof String)]))])
   (SubmitJob [job Job] [client (Addr JobResult)])
   (CancelJob [id Nat] [result-dest (Addr CancellationResult)])
   ;; these two are responses to SubmitTask
@@ -193,7 +193,7 @@
    (SubmitJob Job (Addr JobResult))
    (Acknowledge JobTaskId)
    (Failure JobTaskId)
-   (RequestNextInputSplit JobTaskId (Addr (Union [NextInputSplit (Vectorof String)])))
+   (RequestNextInputSplit JobTaskId (Addr (Union [NextInputSplit (Listof String)])))
    (UpdateTaskExecutionState JobTaskId ExecutionState)
    (TaskManagerTerminated TaskManagerId)
    (CancelJob Nat (Addr CancellationResult))))
@@ -220,7 +220,7 @@
   (TaskRunner [job-manager (Addr InputSplitRequest)] [task-manager (Addr TaskManagerNotification)])
   ((define-function (count-new-words [id JobTaskId]
                                      [word-count (Hash String Nat)]
-                                     [words (Vectorof String)])
+                                     [words (Listof String)])
      (let ([result-so-far
             (for/fold ([result word-count])
                       ([word words])
@@ -283,7 +283,7 @@
        (goto AboutToRunTask task)]
       [(NextInputSplit words)
        (cond
-         [(= 0 (vector-length words))
+         [(= 0 (length words))
           (send task-manager (UpdateTaskExecutionState id (Finished word-count)))
           (goto AwaitingTask)]
          [else (count-new-words id word-count words)])]
@@ -402,9 +402,9 @@
        (let ([full-id (JobTaskId job-id (: task id))])
          (case (: task type)
            [(Map data)
-            (let ([partition-next-send (min ,partition-chunk-size (vector-length data))])
+            (let ([partition-next-send (min ,partition-chunk-size (length data))])
               (record [need-data (: all-tasks need-data)]
-                      [ready (cons (ReadyTask full-id (MapWork (vector-take data partition-next-send)))
+                      [ready (cons (ReadyTask full-id (MapWork (take data partition-next-send)))
                                    (: all-tasks ready))]
                       [partitions
                        (hash-set (: all-tasks partitions)
@@ -525,7 +525,7 @@
         (hash-set partitions
                   task-id
                   (UsedPartition (: partition data)
-                                 (min ,partition-chunk-size (vector-length (: partition data)))))])))
+                                 (min ,partition-chunk-size (length (: partition data)))))])))
 
   (goto ManagingJobs (hash) (hash) (list) (list) (hash) (hash))
 
@@ -578,14 +578,14 @@
        (let ([new-partitions
               (case (hash-ref partitions id)
                 [(Nothing)
-                 (send target (NextInputSplit (vector)))
+                 (send target (NextInputSplit (list)))
                  partitions]
                 [(Just partition)
                  (let* ([data (: partition data)]
-                        [len (vector-length data)]
+                        [len (length data)]
                         [next-send (: partition next-send)]
                         [num-items-to-send (min ,partition-chunk-size (- len next-send))])
-                   (send target (NextInputSplit (vector-copy data next-send (+ next-send num-items-to-send))))
+                   (send target (NextInputSplit (list-copy data next-send (+ next-send num-items-to-send))))
                    (hash-set partitions id (UsedPartition data (+ next-send num-items-to-send))))])])
          (goto ManagingJobs task-managers active-jobs waiting-tasks ready-tasks running-tasks new-partitions))]
       [(UpdateTaskExecutionState id state)
@@ -762,7 +762,7 @@
 
 (define desugared-ready-task
   `(Record [id ,desugared-job-task-id]
-           [work (Union (MapWork (Vectorof String))
+           [work (Union (MapWork (Listof String))
                         (ReduceWork (Hash String Nat) (Hash String Nat)))]))
 
 (define desugared-submit-cancel-response
@@ -783,7 +783,7 @@
 
 (define desugared-tm-to-jm-type
   `(Union
-    [RequestNextInputSplit ,desugared-job-task-id (Addr (Union [NextInputSplit (Vectorof String)]))]
+    [RequestNextInputSplit ,desugared-job-task-id (Addr (Union [NextInputSplit (Listof String)]))]
     [RegisterTaskManager Nat Nat (Addr ,desugared-task-manager-command)]
     [UpdateTaskExecutionState ,desugared-job-task-id ,desugared-execution-state]))
 
@@ -796,7 +796,7 @@
 
 ;; client-level API
 (define desugared-task-description
-  `(Union [Map (Vectorof Nat)] [Reduce Nat Nat]))
+  `(Union [Map (Listof Nat)] [Reduce Nat Nat]))
 (define desugared-task `(Record [id Nat] [type ,desugared-task-description]))
 (define desugared-job `(Record [id Nat] [tasks (Listof ,desugared-task)] [final-task-id Nat]))
 (define desugared-job-result
@@ -814,7 +814,7 @@
     [Acknowledge ,desugared-job-task-id]
     [Failure ,desugared-job-task-id]
     [RequestNextInputSplit ,desugared-job-task-id
-                           (Addr (Union [NextInputSplit (Vectorof String)]))]
+                           (Addr (Union [NextInputSplit (Listof String)]))]
     [UpdateTaskExecutionState ,desugared-job-task-id ,desugared-execution-state]
     [TaskManagerTerminated Nat]
     [CancelJob Nat (Addr ,desugared-cancellation-result)]))
@@ -931,12 +931,12 @@
       (check-unicast-match jm (csa-variant RequestNextInputSplit (JobTaskId/pat 1 1) target)
                            #:result target
                            #:timeout 3))
-    (async-channel-put split-target (variant NextInputSplit (vector "c" "a" "d")))
+    (async-channel-put split-target (variant NextInputSplit (list "c" "a" "d")))
     (define split-target2
       (check-unicast-match jm (csa-variant RequestNextInputSplit (JobTaskId/pat 1 1) target)
                            #:result target
                            #:timeout 3))
-    (async-channel-put split-target2 (variant NextInputSplit (vector)))
+    (async-channel-put split-target2 (variant NextInputSplit (list)))
     (check-unicast tm (variant UpdateTaskExecutionState
                                (JobTaskId 1 1)
                                (variant Finished (hash "a" 2 "b" 2 "c" 1 "d" 1)))
@@ -1029,10 +1029,10 @@
     (sleep 3)
     ;; 2. Submit the job
     (define job (Job 1
-                     (list (Task 1 (Map (vector "a" "b" "c" "a" "b" "c")))
-                           (Task 2 (Map (vector "a" "b")))
-                           (Task 3 (Map (vector "a" "b")))
-                           (Task 4 (Map (vector "a" "b")))
+                     (list (Task 1 (Map (list "a" "b" "c" "a" "b" "c")))
+                           (Task 2 (Map (list "a" "b")))
+                           (Task 3 (Map (list "a" "b")))
+                           (Task 4 (Map (list "a" "b")))
                            (Task 5 (Reduce 1 2))
                            (Task 6 (Reduce 3 4))
                            (Task 7 (Reduce 5 6)))
@@ -1048,18 +1048,18 @@
     (sleep 3)
     ;; 2. Submit the jobs
     (define job1 (Job 1
-                      (list (Task 1 (Map (vector "a" "b" "c" "a" "b" "c")))
-                            (Task 2 (Map (vector "a" "b")))
-                            (Task 3 (Map (vector "a" "b")))
-                            (Task 4 (Map (vector "a" "b")))
+                      (list (Task 1 (Map (list "a" "b" "c" "a" "b" "c")))
+                            (Task 2 (Map (list "a" "b")))
+                            (Task 3 (Map (list "a" "b")))
+                            (Task 4 (Map (list "a" "b")))
                             (Task 5 (Reduce 1 2))
                             (Task 6 (Reduce 3 4))
                             (Task 7 (Reduce 5 6)))
                       7))
     (define client1 (make-async-channel))
     (define job2 (Job 2
-                      (list (Task 1 (Map (vector "x" "y" "y" "z" "x")))
-                            (Task 2 (Map (vector "y" "y" "y" "z" "z" "z" "x")))
+                      (list (Task 1 (Map (list "x" "y" "y" "z" "x")))
+                            (Task 2 (Map (list "y" "y" "y" "z" "z" "z" "x")))
                             (Task 3 (Reduce 1 2)))
                       3))
     (define client2 (make-async-channel))
@@ -1074,10 +1074,10 @@
     (async-channel-put jm (variant RegisterTaskManager 2 2 (make-async-channel)))
     (sleep 1) ; wait for the registrations to go through
     (define job (Job 1
-                     (list (Task 1 (Map (vector "a" "b" "c" "a" "b" "c")))
-                           (Task 2 (Map (vector "a" "b")))
-                           (Task 3 (Map (vector "a" "b")))
-                           (Task 4 (Map (vector "a" "b")))
+                     (list (Task 1 (Map (list "a" "b" "c" "a" "b" "c")))
+                           (Task 2 (Map (list "a" "b")))
+                           (Task 3 (Map (list "a" "b")))
+                           (Task 4 (Map (list "a" "b")))
                            (Task 5 (Reduce 1 2))
                            (Task 6 (Reduce 3 4))
                            (Task 7 (Reduce 5 6)))
@@ -1091,10 +1091,10 @@
     (match-define-values (jm tm) (csa-run single-tm-job-manager-program))
     (sleep 1) ; wait for the registrations to go through
     (define job (Job 1
-                     (list (Task 1 (Map (vector "a" "b" "c" "a" "b" "c")))
-                           (Task 2 (Map (vector "a" "b")))
-                           (Task 3 (Map (vector "a" "b")))
-                           (Task 4 (Map (vector "a" "b")))
+                     (list (Task 1 (Map (list "a" "b" "c" "a" "b" "c")))
+                           (Task 2 (Map (list "a" "b")))
+                           (Task 3 (Map (list "a" "b")))
+                           (Task 4 (Map (list "a" "b")))
                            (Task 5 (Reduce 1 2))
                            (Task 6 (Reduce 3 4))
                            (Task 7 (Reduce 5 6)))
@@ -1111,8 +1111,8 @@
     (define jm (csa-run job-manager-program))
     (sleep 1) ; wait for the registrations to go through
     (define job (Job 1
-                     (list (Task 1 (Map (vector "a" "b" "c" "a" "b" "c")))
-                           (Task 2 (Map (vector "a" "b")))
+                     (list (Task 1 (Map (list "a" "b" "c" "a" "b" "c")))
+                           (Task 2 (Map (list "a" "b")))
                            (Task 5 (Reduce 1 2)))
                      5))
     (define client (make-async-channel))
@@ -1137,8 +1137,8 @@
     (sleep 3)
     ;; 2. Submit the job
     (define job (Job 1
-                     (list (Task 1 (Map (vector "a" "b" "c" "a" "b" "c")))
-                           (Task 2 (Map (vector "a" "b")))
+                     (list (Task 1 (Map (list "a" "b" "c" "a" "b" "c")))
+                           (Task 2 (Map (list "a" "b")))
                            (Task 5 (Reduce 1 2)))
                      5))
     (define client (make-async-channel))

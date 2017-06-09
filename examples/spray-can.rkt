@@ -61,11 +61,11 @@
 
 (define-type TcpWriteOnlyCommand
   (Union
-   (Write (Vectorof Byte) (Addr TcpWriteResponse))))
+   (Write (Listof Byte) (Addr TcpWriteResponse))))
 
 (define-type TcpSessionEvent
   (Union
-   [ReceivedData (Vectorof Byte)]
+   [ReceivedData (Listof Byte)]
    [Closed]
    [ConfirmedClosed]
    [Aborted]
@@ -74,7 +74,7 @@
 
 (define-variant TcpSessionCommand
   (Register [handler (Addr TcpSessionEvent)])
-  (Write [data (Vectorof Byte)] [handler (Addr TcpWriteResponse)])
+  (Write [data (Listof Byte)] [handler (Addr TcpWriteResponse)])
   (Close [close-handler (Addr (Union [CommandFailed] [Closed]))])
   (ConfirmedClose [close-handler (Addr (Union [CommandFailed] [ConfirmedClosed]))])
   (Abort [close-handler (Addr (Union [CommandFailed] [Aborted]))]))
@@ -108,15 +108,15 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; HTTP types
 
-(define-type HttpRequest (Vectorof Byte))
-(define-type HttpResponse (Vectorof Byte))
+(define-type HttpRequest (Listof Byte))
+(define-type HttpResponse (Listof Byte))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Internal Types
 
 (define-variant HttpServerConnectionInput
   ;; handles all TCP messages, plus HttpRegister
-  [ReceivedData [bytes (Vectorof Byte)]]
+  [ReceivedData [bytes (Listof Byte)]]
   [Closed]
   [ConfirmedClosed]
   [Aborted]
@@ -242,18 +242,18 @@
    ;;
    ;; This fakes the idea of parsing an HTTP request from various received segments from the TCP
    ;; session.
-   (define-function (find-request-tail [data (Vectorof Byte)])
-     ;; returns (Union [FoundTail [prefix (Vectorof Byte)] [rest (Vectorof Byte)]] [TailNotFound])
+   (define-function (find-request-tail [data (Listof Byte)])
+     ;; returns (Union [FoundTail [prefix (Listof Byte)] [rest (Listof Byte)]] [TailNotFound])
      (let ([loop-result
-            (for/fold ([result-so-far (variant LookingForTail (vector))])
+            (for/fold ([result-so-far (variant LookingForTail (list))])
                       ([byte data])
               (case result-so-far
                 [(LookingForTail seen-bytes)
                  (if (= 0 byte)
-                     (variant FoundTail seen-bytes (vector))
-                     (variant LookingForTail (vector-append seen-bytes (vector byte))))]
+                     (variant FoundTail seen-bytes (list))
+                     (variant LookingForTail (append seen-bytes (list byte))))]
                 [(FoundTail prefix rest)
-                 (variant FoundTail prefix (vector-append rest (vector byte)))]))])
+                 (variant FoundTail prefix (append rest (list byte)))]))])
        (case loop-result
          [(LookingForTail seen-bytes) (variant TailNotFound)]
          [(FoundTail prefix rest) (variant FoundTail prefix rest)]))))
@@ -274,20 +274,20 @@
       [(ErrorClosed) (goto Closed)]
       [(HttpRegister handler)
        (send tcp-session (Register self))
-       (goto Running (vector) handler)])
+       (goto Running (list) handler)])
     (timeout ,REGISTER-WAIT-TIME-IN-MS
       (send tcp-session (Close (spawn (close-session-EVICT ,desugared-sink-type ()) Sink)))
       (goto Closed)))
 
-  (define-state (Running [held-data (Vectorof Byte)] [handler (Addr IncomingRequest)]) (m)
+  (define-state (Running [held-data (Listof Byte)] [handler (Addr IncomingRequest)]) (m)
     (case m
       [(ReceivedData data)
        (case (find-request-tail data)
          [(FoundTail tail rest)
-          (spawn request-handler RequestHandler (vector-append held-data tail) handler tcp-session)
+          (spawn request-handler RequestHandler (append held-data tail) handler tcp-session)
           (goto Running rest handler)]
          [(TailNotFound)
-          (goto Running (vector-append held-data data) handler)])]
+          (goto Running (append held-data data) handler)])]
       [(Closed) (goto Closed)]
       [(ConfirmedClosed) (goto Closed)]
       [(Aborted) (goto Closed)]
@@ -495,7 +495,7 @@
         (goto Init)
         (define-state/timeout (Init) (m) (goto Init)
           (timeout 0
-                   (spawn request-handler RequestHandler (vector 1 2 3) app-layer tcp)
+                   (spawn request-handler RequestHandler (list 1 2 3) app-layer tcp)
                    (goto Done)))
         (define-state (Done) (m) (goto Done)))
       (actors [launcher (spawn 1 Launcher app-layer tcp)]))))
@@ -580,17 +580,17 @@
     (define tcp (make-async-channel))
     (csa-run request-handler-only-program app-layer tcp)
     (define handler
-      (check-unicast-match app-layer (csa-record [request (vector 1 2 3)]
+      (check-unicast-match app-layer (csa-record [request (list 1 2 3)]
                                                  [response-dest handler])
                            #:result handler))
-    (async-channel-put handler (vector 4 5 6))
-    (check-unicast-match tcp (csa-variant Write (vector 4 5 6) _)))
+    (async-channel-put handler (list 4 5 6))
+    (check-unicast-match tcp (csa-variant Write (list 4 5 6) _)))
 
   (test-case "RequestHandler times out if no response from application layer"
     (define app-layer (make-async-channel))
     (define tcp (make-async-channel))
     (csa-run request-handler-only-program app-layer tcp)
-    (check-unicast-match app-layer (csa-record [request (vector 1 2 3)] [response-dest _]))
+    (check-unicast-match app-layer (csa-record [request (list 1 2 3)] [response-dest _]))
     (check-no-message tcp #:timeout 2))
 
   ;; HttpServerConnection tests
@@ -625,30 +625,30 @@
     (define tcp-connection (make-async-channel))
     (define handler (make-async-channel))
     (define connection (run-connection-to-registered app-listener tcp-connection handler))
-    (async-channel-put connection (ReceivedData (vector 1 2)))
-    (async-channel-put connection (ReceivedData (vector 3 0)))
-    (check-unicast-match handler (csa-record [request (vector 1 2 3)] [response-dest _])))
+    (async-channel-put connection (ReceivedData (list 1 2)))
+    (async-channel-put connection (ReceivedData (list 3 0)))
+    (check-unicast-match handler (csa-record [request (list 1 2 3)] [response-dest _])))
 
   (test-case "ServerConnection can create multiple request handlers"
     (define app-listener (make-async-channel))
     (define tcp-connection (make-async-channel))
     (define handler (make-async-channel))
     (define connection (run-connection-to-registered app-listener tcp-connection handler))
-    (async-channel-put connection (ReceivedData (vector 1 0)))
+    (async-channel-put connection (ReceivedData (list 1 0)))
     (sleep 0.5) ; make sure the first requet is handled first
-    (async-channel-put connection (ReceivedData (vector 2 0)))
-    (check-unicast-match handler (csa-record [request (vector 1)] [response-dest _]))
-    (check-unicast-match handler (csa-record [request (vector 2)] [response-dest _])))
+    (async-channel-put connection (ReceivedData (list 2 0)))
+    (check-unicast-match handler (csa-record [request (list 1)] [response-dest _]))
+    (check-unicast-match handler (csa-record [request (list 2)] [response-dest _])))
 
   (test-case "ServerConnection does not react to requests after TCP session closes"
     (define app-listener (make-async-channel))
     (define tcp-connection (make-async-channel))
     (define handler (make-async-channel))
     (define connection (run-connection-to-registered app-listener tcp-connection handler))
-    (async-channel-put connection (ReceivedData (vector 1 0)))
-    (check-unicast-match handler (csa-record [request (vector 1)] [response-dest _]))
+    (async-channel-put connection (ReceivedData (list 1 0)))
+    (check-unicast-match handler (csa-record [request (list 1)] [response-dest _]))
     (async-channel-put connection (Closed))
-    (async-channel-put connection (ReceivedData (vector 2 0)))
+    (async-channel-put connection (ReceivedData (list 2 0)))
     (check-no-message handler))
 
   (test-case "ServerConnection might close before registration"
@@ -847,15 +847,15 @@
     (async-channel-put http-connection (HttpRegister app-handler))
     (check-unicast-match tcp-session (csa-variant Register _))
     ;; Send in a new request from the wire
-    (async-channel-put http-connection (ReceivedData (vector 1 2)))
-    (async-channel-put http-connection (ReceivedData (vector 3 0)))
+    (async-channel-put http-connection (ReceivedData (list 1 2)))
+    (async-channel-put http-connection (ReceivedData (list 3 0)))
     (define http-handler
       (check-unicast-match app-handler
-                           (csa-record [request (vector 1 2 3)] [response-dest handler])
+                           (csa-record [request (list 1 2 3)] [response-dest handler])
                            #:result handler))
-    (async-channel-put http-handler (vector 4 5 6))
+    (async-channel-put http-handler (list 4 5 6))
     ;; HTTP server sends our response to TCP, hurray!
-    (check-unicast-match tcp-session (csa-variant Write (vector 4 5 6) _))))
+    (check-unicast-match tcp-session (csa-variant Write (list 4 5 6) _))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Desugared types
@@ -867,7 +867,7 @@
   `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
 (define desugared-tcp-session-event
   `(Union
-    [ReceivedData (Vectorof Nat)]
+    [ReceivedData (Listof Nat)]
     [Closed]
     [ConfirmedClosed]
     [Aborted]
@@ -880,7 +880,7 @@
 (define desugared-tcp-session-command
   `(Union
     (Register (Addr ,desugared-tcp-session-event))
-    (Write (Vectorof Nat) (Addr ,desugared-tcp-write-response))
+    (Write (Listof Nat) (Addr ,desugared-tcp-write-response))
     (Close (Addr (Union [CommandFailed] [Closed])))
     (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
     (Abort (Addr (Union [CommandFailed] [Aborted])))))
@@ -904,7 +904,7 @@
 
 ;; HTTP types
 (define desugared-http-incoming-request
-  `(Record [request (Vectorof Nat)] [response-dest (Addr (Vectorof Nat))]))
+  `(Record [request (Listof Nat)] [response-dest (Addr (Listof Nat))]))
 (define desugared-http-connection-command
   `(Union
     [HttpRegister (Addr ,desugared-http-incoming-request)]))

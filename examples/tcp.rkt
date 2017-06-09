@@ -29,7 +29,7 @@
     (Start Nat)))
 (define desugared-tcp-session-event
   `(Union
-    [ReceivedData (Vectorof Nat)]
+    [ReceivedData (Listof Nat)]
     [Closed]
     [ConfirmedClosed]
     [Aborted]
@@ -83,7 +83,7 @@
     [syn Syn?]
     [fin Fin?]
     [window Nat]
-    [payload (Vectorof Byte)])
+    [payload (Listof Byte)])
 
   (define-function (make-rst/global [received-packet TcpPacket])
     (TcpPacket (: received-packet destination-port)
@@ -95,7 +95,7 @@
                (NoSyn)
                (NoFin)
                ,DEFAULT-WINDOW-SIZE
-               (vector)))
+               (list)))
 
   (define-function (packet-ack? [packet TcpPacket])
     (= (: packet ack-flag) 1))
@@ -113,7 +113,7 @@
   ;; segment carries no octets.
   (define-function (segment-last-seq [packet TcpPacket])
     (+ (: packet seq)
-       (max 0 (- (vector-length (: packet payload)) 1))))
+       (max 0 (- (length (: packet payload)) 1))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Receive Buffer
@@ -121,15 +121,15 @@
   ;; The receive buffer buffers packets that have been received by a socket but are not yet ready to
   ;; be processed (because some other packet earlier in the stream is still missing).
 
-  (define-type ReceiveBuffer (Vectorof TcpPacket))
+  (define-type ReceiveBuffer (Listof TcpPacket))
 
   (define-record ReceiveBufferRetrieval
-    [retrieved (Vectorof TcpPacket)]
+    [retrieved (Listof TcpPacket)]
     [remaining ReceiveBuffer])
 
   ;; Returns a ReceiveBuffer
   (define-function (create-empty-rbuffer)
-    (vector))
+    (list))
 
   ;; Helper for rbuffer-add
   (define-record RBufferAddRec
@@ -144,23 +144,23 @@
              (cond
                [(and (< (: packet seq) (: buffered-packet seq))
                      (not (: add-rec added?)))
-                (RBufferAddRec (vector-append (: add-rec buffer) (vector packet buffered-packet))
+                (RBufferAddRec (append (: add-rec buffer) (list packet buffered-packet))
                                (variant True))]
-               [else (RBufferAddRec (vector-append (: add-rec buffer) (vector buffered-packet))
+               [else (RBufferAddRec (append (: add-rec buffer) (list buffered-packet))
                                     (: add-rec added?))]))])
       (cond
         [(: final-add-rec added?) (: final-add-rec buffer)]
-        [else (vector-append (: final-add-rec buffer) (vector packet))])))
+        [else (append (: final-add-rec buffer) (list packet))])))
 
   ;; Gets all packets from the receive buffer whose SEQ is less than stop-seq. Returns a
   ;; ReceiveBufferRetrieval that also includes the remaining buffer.
   (define-function (rbuffer-retrieve-up-to [buffer ReceiveBuffer] [stop-seq Nat])
-    (for/fold ([result (ReceiveBufferRetrieval (vector) buffer)])
+    (for/fold ([result (ReceiveBufferRetrieval (list) buffer)])
               ([packet buffer])
       (cond
         [(<= (: packet seq) stop-seq)
-         (ReceiveBufferRetrieval (vector-append (: result retrieved) (vector packet))
-                                 (vector-drop (: result remaining) 1))]
+         (ReceiveBufferRetrieval (append (: result retrieved) (list packet))
+                                 (drop (: result remaining) 1))]
         [else result])))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -179,11 +179,11 @@
     [window Nat] ; window size in octets
     [send-next Nat]
     [maybe-fin MaybeFinSeq]
-    [buffer (Vectorof Byte)])
+    [buffer (Listof Byte)])
 
   ;; Returns the total number of octets to send stored in the buffer
   (define-function (send-buffer-length [s SendBuffer])
-    (vector-length (: s buffer)))
+    (length (: s buffer)))
 
   ;; Returns true if the send buffer contains no more bytes/FINs to send
   (define-function (send-buffer-empty? [s SendBuffer])
@@ -202,14 +202,14 @@
 
   ;; Adds the given octets to the send buffer and updates the send-next pointer
   (define-function (send-buffer-add-octets [s SendBuffer]
-                                           [data (Vectorof Byte)]
+                                           [data (Listof Byte)]
                                            [send-next Nat])
     (SendBuffer (: s retransmit-count)
                 (: s unacked-seq)
                 (: s window)
                 send-next
                 (: s maybe-fin)
-                (vector-append (: s buffer) data)))
+                (append (: s buffer) data)))
 
   (define-function (send-buffer-add-fin [s SendBuffer])
     (SendBuffer (: s retransmit-count)
@@ -255,7 +255,7 @@
 ;; Some types for TCP
 
   (define-variant TcpSessionEvent
-    [ReceivedData [bytes (Vectorof Byte)]]
+    [ReceivedData [bytes (Listof Byte)]]
     [Closed]
     [ConfirmedClosed]
     [Aborted]
@@ -284,7 +284,7 @@
   (define-type TcpSessionCommand
     (Union
      (Register (Addr TcpSessionEvent))
-     (Write (Vectorof Byte) (Addr WriteResponse))
+     (Write (Listof Byte) (Addr WriteResponse))
      (Close (Addr (Union [CommandFailed] [Closed])))
      (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
      (Abort (Addr (Union [CommandFailed] [Aborted])))))
@@ -352,7 +352,7 @@
     ;; technically guarantee this, but any real implementation would order them.
     (OrderedTcpPacket [packet TcpPacket])
     (Register [handler (Addr TcpSessionEvent)])
-    (Write [data (Vectorof Byte)] [handler (Addr WriteResponse)])
+    (Write [data (Listof Byte)] [handler (Addr WriteResponse)])
     (Close [close-handler (Addr (Union [CommandFailed] [Closed]))])
     (ConfirmedClose [close-handler (Addr (Union [CommandFailed] [ConfirmedClosed]))])
     (Abort [close-handler (Addr (Union [CommandFailed] [Aborted]))])
@@ -392,7 +392,7 @@
                   (Syn)
                   (NoFin)
                   ,DEFAULT-WINDOW-SIZE
-                  (vector)))
+                  (list)))
 
      (define-function (make-syn-ack [seq Nat] [ack Nat])
        (TcpPacket (: id local-port)
@@ -404,7 +404,7 @@
                   (Syn)
                   (NoFin)
                   ,DEFAULT-WINDOW-SIZE
-                  (vector)))
+                  (list)))
 
      (define-function (make-rst [seq Nat])
        (TcpPacket (: id local-port)
@@ -416,7 +416,7 @@
                   (NoSyn)
                   (NoFin)
                   ,DEFAULT-WINDOW-SIZE
-                  (vector)))
+                  (list)))
 
      (define-function (make-fin [seqno Nat] [ackno Nat])
        (TcpPacket (: id local-port)
@@ -428,9 +428,9 @@
                   (NoSyn)
                   (Fin)
                   ,DEFAULT-WINDOW-SIZE
-                  (vector)))
+                  (list)))
 
-     (define-function (make-fin-with-payload [seqno Nat] [ackno Nat] [payload (Vectorof Byte)])
+     (define-function (make-fin-with-payload [seqno Nat] [ackno Nat] [payload (Listof Byte)])
        (TcpPacket (: id local-port)
                   (: (: id remote-address) port)
                   seqno
@@ -442,7 +442,7 @@
                   ,DEFAULT-WINDOW-SIZE
                   payload))
 
-     (define-function (make-normal-packet [seq Nat] [ack Nat] [payload (Vectorof Byte)])
+     (define-function (make-normal-packet [seq Nat] [ack Nat] [payload (Listof Byte)])
        (TcpPacket (: id local-port)
                   (: (: id remote-address) port)
                   seq
@@ -460,7 +460,7 @@
        (+ (: packet seq)
           (+ (: packet syn)
              (+ (: packet fin)
-                (vector-length (: packet payload))))))
+                (length (: packet payload))))))
 
      (define-function (finish-connecting [snd-nxt Nat]
                                          [rcv-nxt Nat]
@@ -471,8 +471,8 @@
                                Timer (RegisterTimeout) self)])
          (send reg-timer (Start ,register-timeout))
          (goto AwaitingRegistration
-               (SendBuffer 0 snd-nxt window snd-nxt (NoFinSeq) (vector))
-               (vector)
+               (SendBuffer 0 snd-nxt window snd-nxt (NoFinSeq) (list))
+               (list)
                rcv-nxt
                (create-empty-rbuffer)
                reg-timer
@@ -531,7 +531,7 @@
           receive-buffer]
          [else
           ;; not acceptable and not an RST, so send back the current ACK
-          (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
+          (send-to-ip (make-normal-packet snd-nxt rcv-nxt (list)))
           receive-buffer]))
 
      ;; Adjust the send buffer as required by the ACK
@@ -554,11 +554,11 @@
                      (if acked-new-data? segment-window (: send-buffer window))
                      (: send-buffer send-next)
                      (: send-buffer maybe-fin)
-                     (vector-drop (: send-buffer buffer)
+                     (drop (: send-buffer buffer)
                                   ;; an ACK for a FIN means there will be more ACKed "bytes" than ther
                                   ;; are buffered bytes waiting to go, so we take the min here
                                   (min (- new-snd-una (: send-buffer unacked-seq))
-                                       (vector-length (: send-buffer buffer)))))))
+                                       (length (: send-buffer buffer)))))))
 
      ;; Does the necessary handling for segment text (and the FIN) on the next in-order packet,
      ;; returning the new receive-next
@@ -568,19 +568,19 @@
                                             [receive-data? (Union (True) (False))]
                                             [octet-stream (Addr TcpSessionEvent)])
        (let ([send-next (: send-buffer send-next)]
-             [unseen-payload (vector-copy (: segment payload)
-                                          (- rcv-nxt (: segment seq))
-                                          (vector-length (: segment payload)))]
+             [unseen-payload (list-copy (: segment payload)
+                                        (- rcv-nxt (: segment seq))
+                                        (length (: segment payload)))]
              [new-rcv-nxt (compute-receive-next segment)])
          ;; 1. send ACK if necessary
          (cond
-           [(or (> (vector-length unseen-payload) 0) (packet-fin? packet))
-            (send-to-ip (make-normal-packet send-next new-rcv-nxt (vector)))
+           [(or (> (length unseen-payload) 0) (packet-fin? packet))
+            (send-to-ip (make-normal-packet send-next new-rcv-nxt (list)))
             0]
            [else 0])
          ;; 2. send any unseen data to user
          (cond
-           [(and (> (vector-length unseen-payload) 0) receive-data?)
+           [(and (> (length unseen-payload) 0) receive-data?)
             (send octet-stream (ReceivedData (: segment payload)))
             0]
            [else 0])
@@ -589,39 +589,39 @@
      ;; Splits a byte string into a list of byte strings with each one no longer than the given
      ;; size. We assume that the given byte string is non-empty, and that the size is greater than
      ;; zero.
-     (define-function (segmentize [data (Vectorof Byte)] [max-segment-size Nat])
-       (for/fold ([segments (vector (vector))])
+     (define-function (segmentize [data (Listof Byte)] [max-segment-size Nat])
+       (for/fold ([segments (list (list))])
                  ([b data])
          ;; get the last segment out of the list
          ;; if that segment is full, start a new one
          ;; else, add to that segment
-         (let ([last-segment (vector-ref segments (- (vector-length segments) 1))])
+         (let ([last-segment (list-ref segments (- (length segments) 1))])
            (cond
-             [(< (vector-length last-segment) max-segment-size)
-              (let ([previous-segments (vector-copy segments 0 (- (vector-length segments) 1))]
-                    [updated-segment (vector-append last-segment (vector b))])
-                (vector-append previous-segments (vector updated-segment)))]
+             [(< (length last-segment) max-segment-size)
+              (let ([previous-segments (list-copy segments 0 (- (length segments) 1))]
+                    [updated-segment (append last-segment (list b))])
+                (append previous-segments (list updated-segment)))]
              [else
-              (let ([new-segment (vector b)])
-                (vector-append segments (vector new-segment)))]))))
+              (let ([new-segment (list b)])
+                (append segments (list new-segment)))]))))
 
      ;; Accepts new octets to send from the user, sends the ones it can, and returns the new send
      ;; buffer with the new octets
-     (define-function (accept-new-octets [octets (Vectorof Byte)]
+     (define-function (accept-new-octets [octets (Listof Byte)]
                                          [send-buffer SendBuffer]
                                          [rcv-nxt Nat]
                                          [timer Timer])
        (let* ([first-seq-past-window (+ (: send-buffer unacked-seq) (: send-buffer window))]
               [octets-in-window
-               (vector-copy octets
-                            0
-                            (min (vector-length octets)
-                                 (- first-seq-past-window (: send-buffer send-next))))]
+               (list-copy octets
+                          0
+                          (min (length octets)
+                               (- first-seq-past-window (: send-buffer send-next))))]
               [new-snd-nxt
                (for/fold ([snd-nxt (: send-buffer send-next)])
                          ([data (segmentize octets-in-window ,MAXIMUM-SEGMENT-SIZE-IN-BYTES)])
                  (send-to-ip (make-normal-packet (: send-buffer send-next) rcv-nxt data))
-                 (+ (: send-buffer send-next) (vector-length data)))])
+                 (+ (: send-buffer send-next) (length data)))])
          (send timer (Start wait-time-in-milliseconds))
          (send-buffer-add-octets send-buffer octets new-snd-nxt)))
 
@@ -649,7 +649,7 @@
           (RetransmitFailure)]
          [(not (send-buffer-empty? send-buffer))
           (let* ([payload-length (min (send-buffer-length send-buffer) ,MAXIMUM-SEGMENT-SIZE-IN-BYTES)]
-                 [payload (vector-take (: send-buffer buffer) payload-length)])
+                 [payload (take (: send-buffer buffer) payload-length)])
             (case (: send-buffer maybe-fin)
               [(NoFinSeq)
                (send-to-ip (make-normal-packet (: send-buffer unacked-seq) rcv-nxt payload))]
@@ -706,7 +706,7 @@
                  [(packet-syn? packet)
                   ;; this is the typical SYN/ACK case (step 2 of the 3-way handshake)
                   (let ([rcv-nxt (compute-receive-next packet)])
-                    (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
+                    (send-to-ip (make-normal-packet snd-nxt rcv-nxt (list)))
                     (finish-connecting snd-nxt rcv-nxt (: packet window) rxmt-timer))]
                  [else
                   ;; ACK acceptable but no other interesting fields set. Probably won't happen in
@@ -790,7 +790,7 @@
                (cond
                  [(packet-syn? packet)
                   (let ([rcv-nxt (compute-receive-next packet)])
-                    (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
+                    (send-to-ip (make-normal-packet snd-nxt rcv-nxt (list)))
                     (finish-connecting snd-nxt rcv-nxt (: packet window) rxmt-timer))]
                  [else (finish-connecting snd-nxt rcv-nxt (: packet window) rxmt-timer)])]
               [else
@@ -815,7 +815,7 @@
 
     ;; We're waiting for the user to register an actor to send received octets to
     (define-state (AwaitingRegistration [send-buffer SendBuffer]
-                                        [queued-packets (Vectorof TcpPacket)]
+                                        [queued-packets (Listof TcpPacket)]
                                         [rcv-nxt Nat]
                                         [receive-buffer ReceiveBuffer]
                                         [registration-timer (Addr TimerCommand)]
@@ -834,7 +834,7 @@
         [(OrderedTcpPacket packet)
          (goto AwaitingRegistration
                send-buffer
-               (vector-append queued-packets (vector packet))
+               (append queued-packets (list packet))
                rcv-nxt
                receive-buffer
                registration-timer
@@ -1058,7 +1058,7 @@
                 [(WaitingOnPeerFin)
                  (cond
                    [(packet-fin? packet)
-                    (send-to-ip (make-normal-packet (: send-buffer send-next) new-rcv-nxt (vector)))
+                    (send-to-ip (make-normal-packet (: send-buffer send-next) new-rcv-nxt (list)))
                     (case close-type
                       [(ConfirmedClose close-handler)
                        (send octet-stream (ConfirmedClosed))
@@ -1173,7 +1173,7 @@
             (halt-with-notification)]
            [else
             ;; If we get this far, then this must be a retransmitted FIN, so send back an ACK
-            (send-to-ip (make-normal-packet snd-nxt rcv-nxt (vector)))
+            (send-to-ip (make-normal-packet snd-nxt rcv-nxt (list)))
             (send time-wait-timer (Start (mult 2 max-segment-lifetime-in-ms)))
             (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)])]
         [(Register h) (goto TimeWait snd-nxt rcv-nxt receive-buffer octet-stream time-wait-timer)]
@@ -1349,7 +1349,7 @@
             (syn 1)
             (fin 0)
             (window _)
-            (payload (vector)))])))
+            (payload (list)))])))
 
   (define-match-expander tcp-syn-ack
     (lambda (stx)
@@ -1365,7 +1365,7 @@
             (syn 1)
             (fin 0)
             (window _)
-            (payload (vector)))])))
+            (payload (list)))])))
 
   (define-match-expander tcp-ack
     (lambda (stx)
@@ -1381,7 +1381,7 @@
             (syn 0)
             (fin 0)
             (window _)
-            (payload (vector)))])))
+            (payload (list)))])))
 
   (define-match-expander tcp-rst
     (lambda (stx)
@@ -1397,7 +1397,7 @@
             (syn 0)
             (fin 0)
             (window _)
-            (payload (vector)))])))
+            (payload (list)))])))
 
   (define-match-expander tcp-fin
     (lambda (stx)
@@ -1413,7 +1413,7 @@
             (syn 0)
             (fin 1)
             (window _)
-            (payload (vector)))])))
+            (payload (list)))])))
 
   (define-match-expander tcp-normal
     (lambda (stx)
@@ -1465,7 +1465,7 @@
      [syn 0]
      [fin 0]
      [window DEFAULT-WINDOW-SIZE]
-     [payload (vector)]))
+     [payload (list)]))
 
   (define (make-syn src-port dest-port seqno)
     (record
@@ -1478,7 +1478,7 @@
      [syn 1]
      [fin 0]
      [window DEFAULT-WINDOW-SIZE]
-     [payload (vector)]))
+     [payload (list)]))
 
   (define (make-syn-ack source-port dest-port seq ack)
     (record
@@ -1491,7 +1491,7 @@
      [syn 1]
      [fin 0]
      [window DEFAULT-WINDOW-SIZE]
-     [payload (vector)]))
+     [payload (list)]))
 
   ;; (define (make-ack source-port dest-port seqno ackno)
   ;;   (record
@@ -1504,7 +1504,7 @@
   ;;     [syn NoSyn]
   ;;     [fin NoFin]
   ;;     [window DEFAULT-WINDOW-SIZE]
-  ;;     [payload (vector)])))
+  ;;     [payload (list)])))
 
   (define (make-normal-packet source-port dest-port seq ack payload)
     (record
@@ -1530,7 +1530,7 @@
      [syn 0]
      [fin 1]
      [window DEFAULT-WINDOW-SIZE]
-     [payload (vector)]))
+     [payload (list)]))
 
   (define (InetSocketAddress ip port)
     (record [ip ip] [port port]))
@@ -1578,7 +1578,7 @@
 
   (define (check-closed? session)
     (define write-handler (make-async-channel))
-    (send-session-command session (Write (vector 1) write-handler))
+    (send-session-command session (Write (list 1) write-handler))
     (check-unicast write-handler (CommandFailed))))
 
 (module+ test
@@ -1629,7 +1629,7 @@
                                                    server-port
                                                    (add1 remote-iss)
                                                    (add1 local-iss)
-                                                   (vector)))
+                                                   (list)))
     (check-unicast-match bind-handler (csa-variant Connected _ _)))
 
   (test-case "Proper handshake/upper layer notification on simultaneous open"
@@ -1654,7 +1654,7 @@
                                                    local-port
                                                    (add1 remote-iss)
                                                    (add1 local-iss)
-                                                   (vector)))
+                                                   (list)))
     (check-unicast-match status-updates (csa-variant Connected _ _)))
 
   (test-case "Proper handshake/upper layer notification on simultaneous open with simultaneous SYN/ACK"
@@ -1712,8 +1712,8 @@
                                                    local-port
                                                    (add1 remote-iss)
                                                    (add1 local-iss)
-                                                   (vector 1 2 3)))
-    (check-unicast octet-dest (ReceivedData (vector 1 2 3))))
+                                                   (list 1 2 3)))
+    (check-unicast octet-dest (ReceivedData (list 1 2 3))))
 
   (test-case "Timeout before registration closes the session"
     (match-define (list packets-out tcp local-port local-iss session) (connect (make-async-channel)))
@@ -1726,7 +1726,7 @@
                                                    local-port
                                                    (add1 remote-iss)
                                                    (add1 local-iss)
-                                                   (vector 1 2 3)))
+                                                   (list 1 2 3)))
     (check-no-message octet-dest))
 
   (test-case "Octet stream receives data, and data is ACKed"
@@ -1736,8 +1736,8 @@
                                                    local-port
                                                    (add1 remote-iss)
                                                    (add1 local-iss)
-                                                   (vector 1 2 3)))
-    (check-unicast octet-handler (ReceivedData (vector 1 2 3)))
+                                                   (list 1 2 3)))
+    (check-unicast octet-handler (ReceivedData (list 1 2 3)))
     (check-unicast-match packets-out (OutPacket (== remote-ip)
                                                 (tcp-ack local-port
                                                          server-port
@@ -1752,10 +1752,10 @@
                                                    local-port
                                                    (add1 remote-iss)
                                                    (add1 local-iss)
-                                                   (vector 1 2 3)))
+                                                   (list 1 2 3)))
     (sleep 1)
     (send-session-command session (Register octet-dest))
-    (check-unicast octet-dest (ReceivedData (vector 1 2 3))))
+    (check-unicast octet-dest (ReceivedData (list 1 2 3))))
 
   (test-case "Data received out-of-order is reordered"
     (define octet-handler (make-async-channel))
@@ -1764,40 +1764,40 @@
                                                    local-port
                                                    (+ remote-iss 4)
                                                    (add1 local-iss)
-                                                   (vector 4 5 6)))
+                                                   (list 4 5 6)))
     (send-packet tcp remote-ip (make-normal-packet server-port
                                                    local-port
                                                    (add1 remote-iss)
                                                    (add1 local-iss)
-                                                   (vector 1 2 3)))
-    (check-unicast octet-handler (ReceivedData (vector 1 2 3)))
-    (check-unicast octet-handler (ReceivedData (vector 4 5 6))))
+                                                   (list 1 2 3)))
+    (check-unicast octet-handler (ReceivedData (list 1 2 3)))
+    (check-unicast octet-handler (ReceivedData (list 4 5 6))))
 
   (test-case "Can write data to other side; retransmit after no ACK for a while, then no retransmit after ACK"
     (match-define (list packets-out tcp local-port local-iss session) (establish (make-async-channel)))
     (define write-handler (make-async-channel))
-    (send-session-command session (Write (vector 1 2 3) write-handler))
+    (send-session-command session (Write (list 1 2 3) write-handler))
     (check-unicast write-handler (WriteAck))
-    (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-normal local-port server-port  (add1 local-iss) (add1 remote-iss) (vector 1 2 3))) #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
-    (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-normal local-port server-port  (add1 local-iss) (add1 remote-iss) (vector 1 2 3))) #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
-    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (+ 4 local-iss) (vector)))
+    (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-normal local-port server-port  (add1 local-iss) (add1 remote-iss) (list 1 2 3))) #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
+    (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-normal local-port server-port  (add1 local-iss) (add1 remote-iss) (list 1 2 3))) #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (+ 4 local-iss) (list)))
     (check-no-message packets-out #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000)))
 
   (test-case "Can write multiple segments when accepted data is longer than max segment size"
     (match-define (list packets-out tcp local-port local-iss session) (establish (make-async-channel)))
     (define write-handler (make-async-channel))
     (define data-to-write
-      (vector 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127 128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143 144 145 146 147 148 149 150 151 152 153 154 155 156 157 158 159 160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175 176 177 178 179 180 181 182 183 184 185 186 187 188 189 190 191 192 193 194 195 196 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219 220 221 222 223 224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255 256 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271 272 273 274 275 276 277 278 279 280 281 282 283 284 285 286 287 288 289 290 291 292 293 294 295 296 297 298 299 300 301 302 303 304 305 306 307 308 309 310 311 312 313 314 315 316 317 318 319 320 321 322 323 324 325 326 327 328 329 330 331 332 333 334 335 336 337 338 339 340 341 342 343 344 345 346 347 348 349 350 351 352 353 354 355 356 357 358 359 360 361 362 363 364 365 366 367 368 369 370 371 372 373 374 375 376 377 378 379 380 381 382 383 384 385 386 387 388 389 390 391 392 393 394 395 396 397 398 399 400 401 402 403 404 405 406 407 408 409 410 411 412 413 414 415 416 417 418 419 420 421 422 423 424 425 426 427 428 429 430 431 432 433 434 435 436 437 438 439 440 441 442 443 444 445 446 447 448 449 450 451 452 453 454 455 456 457 458 459 460 461 462 463 464 465 466 467 468 469 470 471 472 473 474 475 476 477 478 479 480 481 482 483 484 485 486 487 488 489 490 491 492 493 494 495 496 497 498 499 500 501 502 503 504 505 506 507 508 509 510 511 512 513 514 515 516 517 518 519 520 521 522 523 524 525 526 527 528 529 530 531 532 533 534 535 536))
+      (list 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127 128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143 144 145 146 147 148 149 150 151 152 153 154 155 156 157 158 159 160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175 176 177 178 179 180 181 182 183 184 185 186 187 188 189 190 191 192 193 194 195 196 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219 220 221 222 223 224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255 256 257 258 259 260 261 262 263 264 265 266 267 268 269 270 271 272 273 274 275 276 277 278 279 280 281 282 283 284 285 286 287 288 289 290 291 292 293 294 295 296 297 298 299 300 301 302 303 304 305 306 307 308 309 310 311 312 313 314 315 316 317 318 319 320 321 322 323 324 325 326 327 328 329 330 331 332 333 334 335 336 337 338 339 340 341 342 343 344 345 346 347 348 349 350 351 352 353 354 355 356 357 358 359 360 361 362 363 364 365 366 367 368 369 370 371 372 373 374 375 376 377 378 379 380 381 382 383 384 385 386 387 388 389 390 391 392 393 394 395 396 397 398 399 400 401 402 403 404 405 406 407 408 409 410 411 412 413 414 415 416 417 418 419 420 421 422 423 424 425 426 427 428 429 430 431 432 433 434 435 436 437 438 439 440 441 442 443 444 445 446 447 448 449 450 451 452 453 454 455 456 457 458 459 460 461 462 463 464 465 466 467 468 469 470 471 472 473 474 475 476 477 478 479 480 481 482 483 484 485 486 487 488 489 490 491 492 493 494 495 496 497 498 499 500 501 502 503 504 505 506 507 508 509 510 511 512 513 514 515 516 517 518 519 520 521 522 523 524 525 526 527 528 529 530 531 532 533 534 535 536))
     (send-session-command session (Write data-to-write write-handler))
     (check-unicast write-handler (WriteAck))
     (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-normal local-port server-port  (add1 local-iss) (add1 remote-iss) _)) #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
-    (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-normal local-port server-port  (add1 local-iss) (add1 remote-iss) (vector 536))) #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
-    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (+ 4 local-iss) (vector))))
+    (check-unicast-match packets-out (OutPacket (== remote-ip) (tcp-normal local-port server-port  (add1 local-iss) (add1 remote-iss) (list 536))) #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (+ 4 local-iss) (list))))
 
   (test-case "Give up retransmit after 4 total attempts"
     (match-define (list packets-out tcp local-port local-iss session) (establish (make-async-channel)))
     (define write-handler (make-async-channel))
-    (send-session-command session (Write (vector 1 2 3) write-handler))
+    (send-session-command session (Write (list 1 2 3) write-handler))
     (check-unicast write-handler (WriteAck))
     (check-unicast-match packets-out _ #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
     (check-unicast-match packets-out _ #:timeout (/ (+ wait-time-in-milliseconds timeout-fudge-factor) 1000))
@@ -1817,7 +1817,7 @@
     (check-unicast octet-dest (PeerClosed))
     (check-unicast-match packets-out
                          (OutPacket (== remote-ip)
-                                    (tcp-normal local-port server-port (add1 local-iss) (+ 2 remote-iss) (vector))))
+                                    (tcp-normal local-port server-port (add1 local-iss) (+ 2 remote-iss) (list))))
     (check-unicast-match packets-out
                          (OutPacket (== remote-ip)
                                     (tcp-fin local-port server-port (add1 local-iss) (+ 2 remote-iss))))
@@ -1835,17 +1835,17 @@
                                     (tcp-fin local-port server-port (add1 local-iss) (add1 remote-iss))))
 
     ;; received packets *should* come through to the user (we're only half-closed)
-    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
-    (check-unicast handler (ReceivedData (vector 1 2 3)))
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (add1 local-iss) (list 1 2 3)))
+    (check-unicast handler (ReceivedData (list 1 2 3)))
     (check-unicast-match packets-out
                          (OutPacket (== remote-ip)
                                     (tcp-normal local-port
                                                 server-port
                                                 (+ 2 local-iss)
                                                 (+ 4 remote-iss)
-                                                (vector))))
+                                                (list))))
     ;; now the peer sends its ACK and FIN and closes
-    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 4 remote-iss) (+ 2 local-iss) (vector)))
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 4 remote-iss) (+ 2 local-iss) (list)))
     (send-packet tcp remote-ip (make-fin server-port           local-port (+ 4 remote-iss) (+ 2 local-iss)))
     (check-unicast handler (ConfirmedClosed))
     (check-unicast close-handler (ConfirmedClosed))
@@ -1855,7 +1855,7 @@
                                                 server-port
                                                 (+ 2 local-iss)
                                                 (+ 5 remote-iss)
-                                                (vector))))
+                                                (list))))
     (check-closed? session))
 
   (test-case "ConfirmedClose, through the FIN-with-ACK route"
@@ -1867,7 +1867,7 @@
                          (OutPacket (== remote-ip)
                                     (tcp-fin local-port server-port (add1 local-iss) (add1 remote-iss))))
     (send-packet tcp remote-ip (make-fin server-port           local-port (add1 remote-iss) (+ 1 local-iss)))
-    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 2 remote-iss) (+ 2 local-iss) (vector)))
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 2 remote-iss) (+ 2 local-iss) (list)))
     (check-unicast handler (ConfirmedClosed))
     (check-unicast close-handler (ConfirmedClosed))
     (check-unicast-match packets-out
@@ -1876,7 +1876,7 @@
                                                 server-port
                                                 (+ 2 local-iss)
                                                 (+ 2 remote-iss)
-                                                (vector))))
+                                                (list))))
     (check-closed? session))
 
   (test-case "ConfirmedClose, through the FIN then ACK route"
@@ -1896,7 +1896,7 @@
                                                 server-port
                                                 (+ 2 local-iss)
                                                 (+ 2 remote-iss)
-                                                (vector))))
+                                                (list))))
     (check-closed? session))
 
   (test-case "Close, through the ACK then FIN route"
@@ -1910,7 +1910,7 @@
                          (OutPacket (== remote-ip)
                                     (tcp-fin local-port server-port (add1 local-iss) (add1 remote-iss))))
     ;; received packets should not come through to the user
-    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (add1 local-iss) (list 1 2 3)))
     (check-no-message handler #:timeout 0.5)
     (check-unicast-match packets-out
                          (OutPacket (== remote-ip)
@@ -1918,10 +1918,10 @@
                                                 server-port
                                                 (+ 2 local-iss)
                                                 (+ 4 remote-iss)
-                                                (vector))))
+                                                (list))))
 
     ;; peer ACKs the FIN
-    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 4 remote-iss) (+ 2 local-iss) (vector)))
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 4 remote-iss) (+ 2 local-iss) (list)))
     ;; peer sends its FIN
     (send-packet tcp remote-ip (make-fin server-port local-port (+ 4 remote-iss) (+ 2 local-iss)))
     (check-unicast-match packets-out
@@ -1930,7 +1930,7 @@
                                                 server-port
                                                 (+ 2 local-iss)
                                                 (+ 5 remote-iss)
-                                                (vector))))
+                                                (list))))
     (check-closed? session))
 
   (test-case "Abort from ESTABLISHED"
@@ -1945,7 +1945,7 @@
                                     (tcp-rst local-port server-port (add1 local-iss))))
     (check-closed? session)
     ;; received packets should not come through to the user
-    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (add1 remote-iss) (add1 local-iss) (list 1 2 3)))
     (check-no-message handler #:timeout 0.5))
 
   (test-case "Abort from AwaitingRegistration"
@@ -1965,7 +1965,7 @@
     (check-unicast-match packets-out
                          (OutPacket (== remote-ip)
                                     (tcp-fin local-port server-port (add1 local-iss) (add1 remote-iss))))
-    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 1 remote-iss) (+ 2 local-iss) (vector)))
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 1 remote-iss) (+ 2 local-iss) (list)))
     (send-packet tcp remote-ip (make-fin server-port           local-port (+ 1 remote-iss) (+ 2 local-iss)))
     (check-unicast close-handler (ConfirmedClosed))
     (check-unicast-match packets-out
@@ -1974,7 +1974,7 @@
                                                 server-port
                                                 (+ 2 local-iss)
                                                 (+ 2 remote-iss)
-                                                (vector))))
+                                                (list))))
     (check-closed? session))
 
   (test-case "Close from AwaitingRegistration"
@@ -1986,7 +1986,7 @@
                                     (tcp-fin local-port server-port (add1 local-iss) (add1 remote-iss))))
     (check-unicast close-handler (Closed))
     (check-closed? session)
-    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 1 remote-iss) (+ 2 local-iss) (vector)))
+    (send-packet tcp remote-ip (make-normal-packet server-port local-port (+ 1 remote-iss) (+ 2 local-iss) (list)))
     (send-packet tcp remote-ip (make-fin server-port           local-port (+ 1 remote-iss) (+ 2 local-iss)))
     (check-unicast-match packets-out
                          (OutPacket (== remote-ip)
@@ -1994,7 +1994,7 @@
                                                 server-port
                                                 (+ 2 local-iss)
                                                 (+ 2 remote-iss)
-                                                (vector)))))
+                                                (list)))))
 
   (test-case "Can abort while closing"
     (define handler (make-async-channel))
@@ -2037,7 +2037,7 @@
     [syn Nat]
     [fin Nat]
     [window Nat]
-    [payload (Vectorof Nat)]))
+    [payload (Listof Nat)]))
 
 (define desugared-tcp-output
   `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
@@ -2056,7 +2056,7 @@
 (define desugared-session-command
   `(Union
     (Register (Addr ,desugared-tcp-session-event))
-    (Write (Vectorof Nat) (Addr ,desugared-write-response))
+    (Write (Listof Nat) (Addr ,desugared-write-response))
     (Close (Addr (Union [CommandFailed] [Closed])))
     (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
     (Abort (Addr (Union [CommandFailed] [Aborted])))))
