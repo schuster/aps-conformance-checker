@@ -82,7 +82,7 @@
    remove
    length
    append
-   list-copy ;; TODO: do I need this?
+   list-copy
    take
    hash-ref
    hash-keys
