@@ -81,7 +81,6 @@
       (folded τ v#)
       (* τ)
       (list-val v# ...)
-      (vector-val v# ...)
       (hash-val (v# ...) (v# ...)))
   (e# (spawn any_location τ e# Q# ...)
       (spawning a#int τ e# Q# ...)
@@ -99,7 +98,6 @@
       (primop e# ...)
       (printf string e# ...) ; for debugging only
       (list e# ...)
-      (vector e# ...)
       (hash [e# e#] ...)
       (for/fold ([x e#]) ([x e#]) e#)
       (loop-context e#)
@@ -141,7 +139,6 @@
       (primop v# ... E# e# ...)
       (printf string v# ... E# e# ...)
       (list v# ... E# e# ...)
-      (vector v# ... E# e# ...)
       (hash [v# v#] ... [E# e#] [e# e#] ...)
       (hash [v# v#] ... [v# E#] [e# e#] ...)
       (for/fold ([x E#]) ([x e#]) e#)
@@ -212,9 +209,6 @@
   [(messages-of-type/mf (Listof τ))
    (,(normalize-collection (term (list-val v# ...))))
    (where (v# ...) (messages-of-type/mf τ))]
-  [(messages-of-type/mf (Vectorof τ))
-   (,(normalize-collection (term (vector-val v# ...))))
-   (where (v# ...) (messages-of-type/mf τ))]
   [(messages-of-type/mf (Hash τ_1 τ_2))
    (,(normalize-collection (term (hash-val (v#_keys ...) (v#_vals ...)))))
    (where (v#_keys ...) (messages-of-type/mf τ_1))
@@ -275,9 +269,6 @@
    '((variant A)
      (variant B (* String) (variant C))
      (variant B (* String) (variant D))))
-  (test-same-items?
-   (term (messages-of-type/mf (Vectorof Nat)))
-   (list `(vector-val (* Nat))))
   (test-same-items?
    (term (messages-of-type/mf (Listof Nat)))
    (list `(list-val (* Nat))))
@@ -767,8 +758,8 @@
        (lambda (vs effects)
          (value-result `(variant True) `(variant False) effects))
        (lambda (stucks) `(= ,@stucks)))]
-    ;; Lists, Vectors, and Hashes
-    [`(,(and op (or 'list 'cons 'list-as-variant 'list-ref 'remove 'length 'vector 'vector-ref 'vector-take 'vector-drop 'vector-length 'vector-copy 'vector-append 'hash-ref 'hash-keys 'hash-values 'hash-set 'hash-remove 'hash-has-key? 'hash-empty? 'sort-numbers-descending))
+    ;; Lists and Hashes
+    [`(,(and op (or 'list 'cons 'list-as-variant 'list-ref 'remove 'length 'append 'list-copy 'take 'drop 'hash-ref 'hash-keys 'hash-values 'hash-set 'hash-remove 'hash-has-key? 'hash-empty? 'sort-numbers-descending))
        ,args ...)
      (eval-and-then* args effects
        (lambda (vs effects)
@@ -801,22 +792,16 @@
               [_ (error 'eval-machine/internal "Bad list for list-ref: ~s\n" l)])]
            [`(remove ,_ ,l) (value-result l effects)]
            [`(length ,_) (value-result `(* Nat) effects)]
-           [`(vector ,vs ...) (value-result (normalize-collection `(vector-val ,@vs)) effects)]
-           [`(vector-ref ,v ,_)
-            (match v
-              [`(* (Vectorof ,type)) (value-result `(* ,type) effects)]
-              [`(vector-val ,items ...) (apply value-result (append items (list effects)))]
-              [_ (error 'eval-machine/internal "Bad vector for vector-ref: ~s\n" v)])]
-           [`(,(or 'vector-take 'vector-drop 'vector-copy) ,v ,_ ...)
+
+           [`(,(or 'take 'drop 'list-copy) ,v ,_ ...)
             (value-result v effects)]
-           [`(vector-length ,_) (value-result `(* Nat) effects)]
-           [`(vector-append (* (Vectorof ,type)) (* (Vectorof ,type2)))
-            (value-result `(* (Vectorof ,type)) effects)]
-           ;; at least one of the vectors is precise, so convert the whole thing to a precise vector
+           [`(append (* (Listof ,type)) (* (Listof ,type2)))
+            (value-result `(* (Listof ,type)) effects)]
+           ;; at least one of the lists is precise, so convert the whole thing to a precise list
            ;; (so that we don't lose a precise address)
-           [`(vector-append ,v1 ,v2)
+           [`(append ,v1 ,v2)
             (value-result
-             (normalize-collection `(vector-val ,@(vector-values v1) ,@(vector-values v2)))
+             (normalize-collection `(list-val ,@(list-values v1) ,@(list-values v2)))
              effects)]
            [`(hash-ref ,h ,k)
             (match h
@@ -913,8 +898,8 @@
              (hash-set! (loop-results) this-loop empty-eval-result)
              (define collection-members
                (match items-val
-                 [`(,(or 'list-val 'vector-val) ,items ...) items]
-                 [`(* (,(or 'Listof 'Vectorof) ,type)) (list `(* ,type))]))
+                 [`(list-val ,items ...) items]
+                 [`(* (Listof ,type)) (list `(* ,type))]))
              (define result-after-skipping (value-result result-val effects))
              (define final-results
                (for/fold ([full-result result-after-skipping])
@@ -978,7 +963,7 @@
      (eval-and-then* args effects
        (lambda (arg-vals effects) (value-result `(goto ,state-name ,@arg-vals) effects))
        (lambda (stucks) `(goto ,state-name ,@stucks)))]
-    [`(,(or 'list-val 'vector-val 'hash-val) ,_ ...) (value-result exp effects)]
+    [`(,(or 'list-val 'hash-val) ,_ ...) (value-result exp effects)]
     ;; Debugging
     [`(printf ,template ,args ...)
      (eval-and-then* args effects
@@ -1203,7 +1188,7 @@
   (check-exp-steps-to-all? (term (= (* (Addr Nat)) (Nat (obs-ext 1))))
                           (list (term (variant True)) (term (variant False))))
 
-  ;; Tests for sorting when adding to lists, vectors, and hashes
+  ;; Tests for sorting when adding to lists and hashes
   ;; list
   (check-exp-steps-to?
    (term (list (variant C) (variant B)))
@@ -1238,54 +1223,52 @@
   (check-exp-steps-to?
    (term (list-ref (* (Listof Nat)) (* Nat)))
    (term (* Nat)))
-  ;; vector
   (check-exp-steps-to?
-   (term (vector (variant C) (variant B)))
-   (term (vector-val (variant B) (variant C))))
+   (term (append (list-val (variant A) (variant B))
+                        (list-val (variant C) (variant D))))
+   (term (list-val (variant A) (variant B) (variant C) (variant D))))
   (check-exp-steps-to?
-   (term (vector))
-   (term (vector-val)))
+   (term (append (list-val (variant A) (variant B))
+                        (list-val (variant C) (variant B))))
+   (term (list-val (variant A) (variant B) (variant C))))
   (check-exp-steps-to?
-   (term (vector-append (vector-val (variant A) (variant B))
-                        (vector-val (variant C) (variant D))))
-   (term (vector-val (variant A) (variant B) (variant C) (variant D))))
+   (term (append (list-val (variant C) (variant D))
+                        (list-val (variant A) (variant B))))
+   (term (list-val (variant A) (variant B) (variant C) (variant D))))
   (check-exp-steps-to?
-   (term (vector-append (vector-val (variant A) (variant B))
-                        (vector-val (variant C) (variant B))))
-   (term (vector-val (variant A) (variant B) (variant C))))
+  (term (append (list-val (variant C) (variant D))
+                       (list-val (variant B) (variant A))))
+  (term (list-val (variant A) (variant B) (variant C) (variant D))))
+  (check-exp-steps-to? (term (append (list-val) (list-val))) (term (list-val)))
   (check-exp-steps-to?
-   (term (vector-append (vector-val (variant C) (variant D))
-                        (vector-val (variant A) (variant B))))
-   (term (vector-val (variant A) (variant B) (variant C) (variant D))))
+   (term (append (list-val (variant A)) (list-val)))
+   (term (list-val (variant A))))
   (check-exp-steps-to?
-  (term (vector-append (vector-val (variant C) (variant D))
-                       (vector-val (variant B) (variant A))))
-  (term (vector-val (variant A) (variant B) (variant C) (variant D))))
-  (check-exp-steps-to? (term (vector-append (vector-val) (vector-val))) (term (vector-val)))
-  (check-exp-steps-to?
-   (term (vector-append (vector-val (variant A)) (vector-val)))
-   (term (vector-val (variant A))))
-  (check-exp-steps-to?
-   (term (vector-append (vector-val) (vector-val (variant A))))
-   (term (vector-val (variant A))))
+   (term (append (list-val) (list-val (variant A))))
+   (term (list-val (variant A))))
   (check-exp-steps-to-all?
-   `(vector-ref (vector-val) (* Nat))
+   `(list-ref (list-val) (* Nat))
    null)
-  (check-exp-steps-to? `(vector-copy (vector-val (* Nat)) (* Nat) (* Nat))
-                       `(vector-val (* Nat)))
-  (check-exp-steps-to? `(vector-take (vector-val (* Nat)) (* Nat))
-                       `(vector-val (* Nat)))
+  (check-exp-steps-to? `(list-copy (list-val (* Nat)) (* Nat) (* Nat))
+                       `(list-val (* Nat)))
+  (check-exp-steps-to? `(take (list-val (* Nat)) (* Nat))
+                       `(list-val (* Nat)))
   (check-exp-steps-to?
-   (term (vector-take (* (Vectorof (Union [A]))) (* Nat)))
-   (term (* (Vectorof (Union [A])))))
+   (term (take (* (Listof (Union [A]))) (* Nat)))
+   (term (* (Listof (Union [A])))))
+  (check-exp-steps-to? `(drop (list-val (* Nat)) (* Nat))
+                       `(list-val (* Nat)))
   (check-exp-steps-to?
-   (term (vector-append (vector-val (variant A) (variant B))
-                        (* (Vectorof (Union [A] [B] [C])))))
-   (term (vector-val (* (Union [A] [B] [C])) (variant A) (variant B))))
+   (term (drop (* (Listof (Union [A]))) (* Nat)))
+   (term (* (Listof (Union [A])))))
   (check-exp-steps-to?
-   (term (vector-append (* (Vectorof (Union [A] [B] [C])))
-                        (vector-val (variant A) (variant B))))
-   (term (vector-val (* (Union [A] [B] [C])) (variant A) (variant B))))
+   (term (append (list-val (variant A) (variant B))
+                        (* (Listof (Union [A] [B] [C])))))
+   (term (list-val (* (Union [A] [B] [C])) (variant A) (variant B))))
+  (check-exp-steps-to?
+   (term (append (* (Listof (Union [A] [B] [C])))
+                        (list-val (variant A) (variant B))))
+   (term (list-val (* (Union [A] [B] [C])) (variant A) (variant B))))
 
   ;; hash
   (check-exp-steps-to?
@@ -1477,19 +1460,17 @@
    (eval-machine `(begin (send (Nat (init-addr 1)) (* Nat)) (goto A)) empty-effects #f)
    (value-result `(goto A) `((((init-addr 1) (* Nat) single)) ()))))
 
-(define (vector-values v)
+(define (list-values v)
   (match v
-    [`(vector-val ,vs ...) vs]
-    [`(* (Vectorof ,type)) (list `(* ,type))]))
+    [`(list-val ,vs ...) vs]
+    [`(* (Listof ,type)) (list `(* ,type))]))
 
-;; Puts the given abstract collection value (a list, vector, or hash) and puts it into a canonical
+;; Puts the given abstract collection value (a list or hash) and puts it into a canonical
 ;; form
 (define (normalize-collection v)
   (match v
     [`(list-val ,vs ...)
      `(list-val ,@(sort (remove-duplicates vs) sexp<?))]
-    [`(vector-val ,vs ...)
-     `(vector-val ,@(sort (remove-duplicates vs) sexp<?))]
     [`(hash-val ,keys ,vals)
      `(hash-val ,(sort (remove-duplicates keys) sexp<?)
                 ,(sort (remove-duplicates vals) sexp<?))]))
@@ -1704,7 +1685,7 @@
                  ,@(map (lambda (s) (csa#-subst-n/Q# s non-self-bindings)) states)))]
     [`(goto ,s ,args ...) `(goto ,s ,@(map do-subst args))]
     [`(printf ,str ,args ...) `(printf ,str ,@(map do-subst args))]
-    [(list (and kw (or 'send 'begin (? primop?) 'list 'list-val 'vector 'vector-val 'loop-context)) args ...)
+    [(list (and kw (or 'send 'begin (? primop?) 'list 'list-val 'loop-context)) args ...)
      `(,kw ,@(map do-subst args))]
     [`(hash-val ,args1 ,args2)
      `(hash-val ,(map do-subst args1) ,(map do-subst args2))]
@@ -1784,8 +1765,6 @@
                 (term [(Cons p) (begin p (* Nat))]))
   (check-equal? (csa#-subst-n `(list (* Nat) x) (list `[x (* Nat)]))
                 (term (list (* Nat) (* Nat))))
-  (check-equal? (csa#-subst-n `(vector (* Nat) x) (list `[x (* Nat)]))
-                (term (vector (* Nat) (* Nat))))
   (check-equal? (csa#-subst-n `(variant Foo (* Nat)) (list `[a (* Nat)]))
                 (term (variant Foo (* Nat))))
   (check-equal? (csa#-subst-n `((Union [A] [B]) (init-addr 1)) (list `[x (* Nat)]))
@@ -1871,7 +1850,6 @@
   [(type-subst/internal (Addr τ) X any)
    (Addr (type-subst/internal τ X any))]
   [(type-subst/internal (Listof τ_e) X any) (Listof (type-subst/internal τ_e X any))]
-  [(type-subst/internal (Vectorof τ_e) X any) (Vectorof (type-subst/internal τ_e X any))]
   [(type-subst/internal (Hash τ_k τ_v) X any)
    (Hash (type-subst/internal τ_k X any) (type-subst/internal τ_v X any))])
 
@@ -1977,10 +1955,6 @@
    ,(normalize-collection (term (list-val (abstract-e v (a ...)) ...)))]
   [(abstract-e (list e ...) (a ...))
    (list (abstract-e e (a ...)) ...)]
-  [(abstract-e (vector v ...) (a ...))
-   ,(normalize-collection (term (vector-val (abstract-e v (a ...)) ...)))]
-  [(abstract-e (vector e ...) (a ...))
-   (vector (abstract-e e (a ...)) ...)]
   [(abstract-e (hash [v_key v_val] ...) (a ...))
    ,(normalize-collection (term (hash-val ((abstract-e v_key (a ...)) ...)
                                           ((abstract-e v_val (a ...)) ...))))]
@@ -2013,14 +1987,8 @@
                 (term (list-val (* Nat))))
   (check-equal? (term (abstract-e (list 1 (let () 1)) ()))
                 (term (list (* Nat) (let () (* Nat)))))
-  (check-equal? (term (abstract-e (vector 1 2) ()))
-                (term (vector-val (* Nat))))
-  (check-equal? (term (abstract-e (vector 1 (let () 1)) ()))
-                (term (vector (* Nat) (let () (* Nat)))))
   (check-equal? (term (abstract-e (list (variant B) (variant A)) ()))
                 (term (list-val (variant A) (variant B))))
-  (check-equal? (term (abstract-e (vector (variant B) (variant A)) ()))
-                (term (vector-val (variant A) (variant B))))
   (check-equal? (term (abstract-e (hash [1 (variant B)] [2 (variant A)]) ()))
                 (term (hash-val ((* Nat)) ((variant A) (variant B)))))
   (check-equal? (term (abstract-e (hash [1 2] [3 4]) ()))
@@ -2228,7 +2196,7 @@
      (if (member addr relevant-externals)
          some-term
          (term (* (Addr ,type))))]
-    [(list (and keyword (or `vector-val 'list-val 'hash-val)) terms ...)
+    [(list (and keyword (or 'list-val 'hash-val)) terms ...)
      (define blurred-args (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) terms))
      (normalize-collection `(,keyword ,@blurred-args))]
     [`(hash-val ,keys ,vals)
@@ -2288,7 +2256,7 @@
                  [i# (term (([a# b#]) () ()))])
                 (term i#)))
 
-  ;; Make sure duplicates are removed from vectors, lists, and hashes
+  ;; Make sure duplicates are removed from lists and hashes
   (test-equal? "blur test 3"
    (csa#-blur-addresses
     (redex-let csa#
@@ -2318,35 +2286,35 @@
   (test-equal? "blur test 5"
    (csa#-blur-addresses
     (redex-let csa#
-        ([e# (term (vector-val (Nat (obs-ext 1))
-                               (Nat (obs-ext 2))
-                               (Nat (obs-ext 3))
-                               (Nat (obs-ext 4))))])
+        ([e# (term (list-val (Nat (obs-ext 1))
+                             (Nat (obs-ext 2))
+                             (Nat (obs-ext 3))
+                             (Nat (obs-ext 4))))])
       (term e#))
     null
     `((obs-ext 1) (obs-ext 2) (obs-ext 3) (obs-ext 4)))
-   (term (vector-val (Nat (obs-ext 1)) (Nat (obs-ext 2)) (Nat (obs-ext 3)) (Nat (obs-ext 4)))))
+   (term (list-val (Nat (obs-ext 1)) (Nat (obs-ext 2)) (Nat (obs-ext 3)) (Nat (obs-ext 4)))))
 
   (test-equal? "Blur for addresses with differing types"
-    (csa#-blur-addresses `(vector-val ((Union [A] [B]) (obs-ext 3))
-                                      ((Union [A] [B]) (obs-ext 4))
-                                      ((Union [A] [B]) (spawn-addr 1 OLD))
-                                      ((Union [A] [B]) (spawn-addr 2 OLD))
-                                      ((Union [A]) (obs-ext 3))
-                                      ((Union [A]) (obs-ext 4))
-                                      ((Union [A]) (spawn-addr 1 OLD))
-                                      ((Union [A]) (spawn-addr 2 OLD)))
+    (csa#-blur-addresses `(list-val ((Union [A] [B]) (obs-ext 3))
+                                    ((Union [A] [B]) (obs-ext 4))
+                                    ((Union [A] [B]) (spawn-addr 1 OLD))
+                                    ((Union [A] [B]) (spawn-addr 2 OLD))
+                                    ((Union [A]) (obs-ext 3))
+                                    ((Union [A]) (obs-ext 4))
+                                    ((Union [A]) (spawn-addr 1 OLD))
+                                    ((Union [A]) (spawn-addr 2 OLD)))
                          `((spawn-addr 1 OLD))
                          `((obs-ext 3)))
     ;; Some reordering happens as a result of normalize-collection
-    `(vector-val (* (Addr (Union [A])))
-                 (* (Addr (Union [A] [B])))
-                 ((Union [A]) (blurred-spawn-addr 1))
-                 ((Union [A]) (obs-ext 3))
-                 ((Union [A]) (spawn-addr 2 OLD))
-                 ((Union [A] [B]) (blurred-spawn-addr 1))
-                 ((Union [A] [B]) (obs-ext 3))
-                 ((Union [A] [B]) (spawn-addr 2 OLD)))))
+    `(list-val (* (Addr (Union [A])))
+               (* (Addr (Union [A] [B])))
+               ((Union [A]) (blurred-spawn-addr 1))
+               ((Union [A]) (obs-ext 3))
+               ((Union [A]) (spawn-addr 2 OLD))
+               ((Union [A] [B]) (blurred-spawn-addr 1))
+               ((Union [A] [B]) (obs-ext 3))
+               ((Union [A] [B]) (spawn-addr 2 OLD)))))
 
 ;; Returns #t if the address is of the form (spawn-addr _ flag _), #f otherwise.
 (define (has-spawn-flag? addr flag)
@@ -2844,7 +2812,7 @@
 
 ;; The X -> τ mappings are the type environments for recursive type variables
 ;;
-;; NOTE: non-equality-based join for lists, vectors, and hashes is not implemented
+;; NOTE: non-equality-based join for lists and hashes is not implemented
 (define-metafunction csa#
   type-join/internal : τ ([X τ] ...) τ ([X τ] ...) -> τ
   [(type-join/internal (Union [t_1 τ_1 ...] ...) any_1 (Union [t_2 τ_2 ...] ...) any_2)
@@ -2976,11 +2944,9 @@
   ;; fold
   [(coerce/mf (folded _ v#) (minfixpt X τ))
    (folded (minfixpt X τ) (coerce/mf v# (type-subst τ X (minfixpt X τ))))]
-  ;; lists, vectors, and hashes
+  ;; lists, and hashes
   [(coerce/mf (list-val v# ...) (Listof τ))
    ,(normalize-collection (term (list-val (coerce/mf v# τ) ...)))]
-  [(coerce/mf (vector-val v# ...) (Vectorof τ))
-   ,(normalize-collection (term (vector-val (coerce/mf v# τ) ...)))]
   [(coerce/mf (hash-val (v#_keys ...) (v#_vals ...)) (Hash τ_key τ_val))
    ,(normalize-collection
      (term (hash-val ((coerce/mf v#_keys τ_key) ...) ((coerce/mf v#_vals τ_val) ...))))])
@@ -3017,10 +2983,6 @@
     (term (coerce/mf (list-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
                   (Listof (Addr (Union [A])))))
     (term (list-val (* (Addr (Union [A]))))))
-  (test-equal? "coerce/mf vector"
-    (term (coerce/mf (vector-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
-                  (Vectorof (Addr (Union [A])))))
-    (term (vector-val (* (Addr (Union [A]))))))
   (test-equal? "coerce/mf hash"
     (term (coerce/mf (hash-val ((* Nat)) ((* (Addr (Union [A] [B]))) (* (Addr (Union [A])))))
                   (Hash Nat (Addr (Union [A])))))
@@ -3068,10 +3030,6 @@
    ---------------------------------
    (type<=/j (Listof τ_1) (Listof τ_2))]
 
-  [(type<=/j τ_1 τ_2)
-   ---------------------------------
-   (type<=/j (Vectorof τ_1) (Vectorof τ_2))]
-
   [(type<=/j τ_k1 τ_k2)
    (type<=/j τ_v1 τ_v2)
    -------------------------------------------
@@ -3089,8 +3047,6 @@
   (define union-ab '(Union [A] [B]))
   (test-true "type<= list 1" (type<= `(Listof ,union-a) `(Listof ,union-ab)))
   (test-false "type<= list 2" (type<= `(Listof ,union-ab) `(Listof ,union-a)))
-  (test-true "type<= vector 1" (type<= `(Vectorof ,union-a) `(Vectorof ,union-ab)))
-  (test-false "type<= vector 2" (type<= `(Vectorof ,union-ab) `(Vectorof ,union-a)))
   (test-true "type<= hash 1" (type<= `(Hash ,union-a ,union-a) `(Hash ,union-ab ,union-ab)))
   (test-false "type<= hash 2" (type<= `(Hash ,union-ab ,union-ab)  `(Hash ,union-a ,union-a)))
 
@@ -3143,8 +3099,6 @@
     [(list `(record ,rec-fields ...) `(Record ,rec-field-types ...))
      (get-types-and-merge-all (map list (map second rec-fields) (map second rec-field-types)))]
     [(list `(list-val ,vs ...) `(List ,type))
-     (get-types-and-merge-all (map (lambda (v) (list v type)) vs))]
-    [(list `(vector-val ,vs ...) `(Vector ,type))
      (get-types-and-merge-all (map (lambda (v) (list v type)) vs))]
     [(list `(hash-val ,vs1 ,vs2) `(Hash ,type1 ,type2))
      (merge-receptionists
@@ -3571,7 +3525,7 @@
      (if (< num FIRST-GENERATED-ADDRESS)
          some-term
          (term (* (Addr ,type))))]
-    [(list (and keyword (or `vector-val 'list-val 'hash-val)) terms ...)
+    [(list (and keyword (or 'list-val 'hash-val)) terms ...)
      (define blurred-args (map pseudo-blur terms))
      (normalize-collection `(,keyword ,@blurred-args))]
     [`(hash-val ,keys ,vals)
@@ -4211,20 +4165,20 @@
                 'not-gteq)
   (check-equal? (compare-behavior (term (() (goto A (variant B)))) (term (() (goto A (variant B)))) #t)
                 'eq)
-  (check-equal? (compare-behavior (term (() (goto A (vector-val (variant A) (variant B)))))
-                                  (term (() (goto A (vector-val (variant B)))))
+  (check-equal? (compare-behavior (term (() (goto A (list-val (variant A) (variant B)))))
+                                  (term (() (goto A (list-val (variant B)))))
                                   #t)
                 'gt)
   (check-equal?
    (compare-behavior
-    (term (((define-state (A) (m) (goto A)))         (goto A (vector-val (variant B)))))
-    (term (((define-state (A) (m) (goto A (* Nat)))) (goto A (vector-val (variant B)))))
+    (term (((define-state (A) (m) (goto A)))         (goto A (list-val (variant B)))))
+    (term (((define-state (A) (m) (goto A (* Nat)))) (goto A (list-val (variant B)))))
     #t)
    'not-gteq)
   (check-equal?
    (compare-behavior
-    (term (((define-state (A) (m) (goto A)))         (goto A (vector-val (variant B)))))
-    (term (((define-state (A) (m) (goto A (* Nat)))) (goto A (vector-val (variant B)))))
+    (term (((define-state (A) (m) (goto A)))         (goto A (list-val (variant B)))))
+    (term (((define-state (A) (m) (goto A (* Nat)))) (goto A (list-val (variant B)))))
     #f)
    'eq))
 
@@ -4255,8 +4209,6 @@
          'not-gteq)]
     [(list (list 'list-val args1 ...) (list 'list-val args2 ...))
      (compare-value-sets args1 args2)]
-    [(list (list 'vector-val args1 ...) (list 'vector-val args2 ...))
-     (compare-value-sets args1 args2)]
     [(list (list 'hash-val (list keys1 ...) (list vals1 ...))
            (list 'hash-val (list keys2 ...) (list vals2 ...)))
      (comp-result-and (compare-value-sets keys1 keys2)
@@ -4282,46 +4234,46 @@
 
 (module+ test
   (test-equal? "compare-value record 1"
-    (compare-value `(record [a (vector-val (* Nat))] [b (* Nat)])
-                   `(record [a (vector-val)]         [b (* Nat)]))
+    (compare-value `(record [a (list-val (* Nat))] [b (* Nat)])
+                   `(record [a (list-val)]         [b (* Nat)]))
     'gt)
   (test-equal? "compare-value record 2"
-    (compare-value `(record [a (vector-val (* Nat))] [b (* Nat)])
-                   `(record [a (vector-val (* Nat))] [b (* Nat)]))
+    (compare-value `(record [a (list-val (* Nat))] [b (* Nat)])
+                   `(record [a (list-val (* Nat))] [b (* Nat)]))
     'eq)
   (test-equal? "compare-value record 3"
-    (compare-value `(record [a (vector-val (variant A))] [b (* Nat)])
-                   `(record [a (vector-val (variant B))] [b (* Nat)]))
+    (compare-value `(record [a (list-val (variant A))] [b (* Nat)])
+                   `(record [a (list-val (variant B))] [b (* Nat)]))
     'not-gteq)
 
   (test-equal? "compare-value variant 1"
-    (compare-value `(variant A (vector-val (* Nat)) (* Nat))
-                   `(variant A (vector-val) (* Nat)))
+    (compare-value `(variant A (list-val (* Nat)) (* Nat))
+                   `(variant A (list-val) (* Nat)))
     'gt)
   (test-equal? "compare-value variant 2"
-    (compare-value `(variant A (vector-val (* Nat)) (* Nat))
-                   `(variant A (vector-val (* Nat)) (* Nat)))
+    (compare-value `(variant A (list-val (* Nat)) (* Nat))
+                   `(variant A (list-val (* Nat)) (* Nat)))
     'eq)
   (test-equal? "compare-value variant 3"
-    (compare-value `(variant A (vector-val) (* Nat))
-                   `(variant A (vector-val (* Nat)) (* Nat)))
+    (compare-value `(variant A (list-val) (* Nat))
+                   `(variant A (list-val (* Nat)) (* Nat)))
     'lt)
 
-  (test-equal? "compare-value vector-val 1"
-    (compare-value '(vector-val (* Nat))
-                   '(vector-val))
+  (test-equal? "compare-value list-val 1"
+    (compare-value '(list-val (* Nat))
+                   '(list-val))
     'gt)
-  (test-equal? "compare-value vector-val 2"
-    (compare-value '(vector-val (* Nat))
-                   '(vector-val (* Nat)))
+  (test-equal? "compare-value list-val 2"
+    (compare-value '(list-val (* Nat))
+                   '(list-val (* Nat)))
     'eq)
-  (test-equal? "compare-value vector-val 3"
-    (compare-value '(vector-val)
-                   '(vector-val (* Nat)))
+  (test-equal? "compare-value list-val 3"
+    (compare-value '(list-val)
+                   '(list-val (* Nat)))
     'lt)
-  (test-equal? "compare-value vector-val 4"
-    (compare-value '(vector-val (variant A))
-                   '(vector-val (variant B)))
+  (test-equal? "compare-value list-val 4"
+    (compare-value '(list-val (variant A))
+                   '(list-val (variant B)))
     'not-gteq)
 
   (test-equal? "compare-value hash-val 1"

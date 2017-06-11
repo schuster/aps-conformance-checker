@@ -55,7 +55,6 @@
      x
      n
      (list e ...)
-     (vector e ...)
      (hash [e e] ...)
      (for/fold ([x e]) ([x e]) e)
      (coerce e τ)) ; only used internally; needed for eviction when actor closes over other addresses
@@ -82,12 +81,10 @@
    list-ref
    remove
    length
-   vector-length
-   vector-ref
-   vector-take
-   vector-drop
-   vector-copy
-   vector-append
+   append
+   list-copy
+   take
+   drop
    hash-ref
    hash-keys
    hash-values
@@ -111,7 +108,6 @@
      (Record [l τ] ...)
      (Addr τ)
      (Listof τ)
-     (Vectorof τ)
      (Hash τ τ))
   (X variable-not-otherwise-mentioned))
 
@@ -132,7 +128,6 @@
      τa
      string
      (list v ...)
-     (vector v ...)
      (hash [v v] ...))
   (a (addr natural))
   (τa (τ a)) ; an address a able to carry messages of type τ
@@ -320,7 +315,6 @@
   [(subst (variant t e ...) x v) (variant t (subst e x v) ...)]
   [(subst (primop e ...) x v) (primop (subst e x v) ...)]
   [(subst (list e ...) x v) (list (subst e x v) ...)]
-  [(subst (vector e ...) x v) (vector (subst e x v) ...)]
   [(subst (hash [e_key e_val] ...) x v) (hash [(subst e_key x v) (subst e_val x v)] ...)]
   [(subst (for/fold ([x_1 e_1]) ([x_2 e_2]) e_3) x_1 v)
    (for/fold ([x_1 (subst e_1 x_1 v)]) ([x_2 (subst e_2 x_1 v)]) e_3)]

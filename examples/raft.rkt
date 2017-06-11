@@ -49,7 +49,7 @@
       Nat
       Nat
       Nat
-      (Vectorof ,desugared-entry-type)
+      (Listof ,desugared-entry-type)
       Nat
       (Addr RaftMsgType)
       (Addr (minfixpt RaftMsgType (Union (ClientMessage (Addr ,desugared-client-response-type) String)))))
@@ -98,7 +98,7 @@
       Nat
       Nat
       Nat
-      (Vectorof ,desugared-entry-type)
+      (Listof ,desugared-entry-type)
       Nat
       (Addr ,desugared-raft-message-type)
       (Addr (minfixpt RaftMsgType (Union (ClientMessage (Addr ,desugared-client-response-type) String)))))
@@ -187,14 +187,14 @@
   (Just [val Nat])) ; TODO: come up with an accurate type
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Vector and list helpers
+;; List helpers
 
 ;; Works like Scala's list slice (i.e. returns empty list instead of returning errors)
 ;; TODO: give an accurate type here
-(define-function (vector-slice [v (Vectorof Nat)] [from-index Int] [to-index Int])
-  (vector-copy v
-               (min from-index (vector-length v))
-               (min to-index   (vector-length v))))
+(define-function (list-slice [v (Listof Nat)] [from-index Int] [to-index Int])
+  (list-copy v
+             (min from-index (length v))
+             (min to-index   (length v))))
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -245,7 +245,7 @@
    [term Nat]
    [prev-log-term Nat]
    [prev-log-index Nat]
-   [entries (Vectorof Entry)]
+   [entries (Listof Entry)]
    [leader-commit-id Nat]
    [leader (Addr RaftMessage)]
    [leader-client (Addr ClientMessage)])
@@ -293,7 +293,7 @@
      Nat
      Nat
      Nat
-     (Vectorof ,desugared-entry-type)
+     (Listof ,desugared-entry-type)
      Nat
      (Addr RaftMessage)
      (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
@@ -335,7 +335,7 @@
   (CancelTimer [timer-name String]))
 
 (define-record ReplicatedLog
-  [entries (Vectorof Entry)]
+  [entries (Listof Entry)]
   [committed-index Int])
 
 (define-record AppendResult
@@ -348,16 +348,16 @@
 ;; Replicated log
 
 (define-function (replicated-log-empty)
-  (ReplicatedLog (vector) 0))
+  (ReplicatedLog (list) 0))
 
 ;; Takes the first *take* entries from the log and appends *entries* onto it, returning the new log
 (define-function (replicated-log-append [log ReplicatedLog]
-                                        [entries-to-append (Vectorof Entry)]
-                                        [take Nat])
-  (! log [entries (vector-append (vector-take (: log entries) take) entries-to-append)]))
+                                        [entries-to-append (Listof Entry)]
+                                        [to-take Nat])
+  (! log [entries (append (take (: log entries) to-take) entries-to-append)]))
 
 (define-function (replicated-log+ [replicated-log ReplicatedLog] [entry Entry])
-  (replicated-log-append replicated-log (vector entry) (vector-length (: replicated-log entries))))
+  (replicated-log-append replicated-log (list entry) (length (: replicated-log entries))))
 
 (define-function (replicated-log-commit [replicated-log ReplicatedLog] [n Int])
   (! replicated-log [committed-index n]))
@@ -369,28 +369,28 @@
                                          [to-index Int])
   ;; NOTE: this naive conversion from semantic to implementation indices won't work under log
   ;; compaction
-  (let ([vector-from-index (- from-index 1)]
-        [vector-to-index   (- to-index   1)])
-      (vector-slice (: replicated-log entries) (+ 1 vector-from-index) (+ 1 vector-to-index))))
+  (let ([list-from-index (- from-index 1)]
+        [list-to-index   (- to-index   1)])
+      (list-slice (: replicated-log entries) (+ 1 list-from-index) (+ 1 list-to-index))))
 
 (define-function (replicated-log-last-index [replicated-log ReplicatedLog])
   (let ([entries (: replicated-log entries)])
     (cond
-      [(= 0 (vector-length entries)) 0]
-      [else (: (vector-ref entries (- (vector-length entries) 1)) index)])))
+      [(= 0 (length entries)) 0]
+      [else (: (list-ref entries (- (length entries) 1)) index)])))
 
 (define-function (replicated-log-last-term [replicated-log ReplicatedLog])
   (let ([entries (: replicated-log entries)])
     (cond
-      [(= 0 (vector-length entries)) 0]
-      [else (: (vector-ref entries (- (vector-length entries) 1)) term)])))
+      [(= 0 (length entries)) 0]
+      [else (: (list-ref entries (- (length entries) 1)) term)])))
 
 ;; ;; NOTE: this differs from the akka-raft version, which is broken
 (define-function (replicated-log-next-index [replicated-log ReplicatedLog])
   (let ([entries (: replicated-log entries)])
     (cond
-      [(= 0 (vector-length entries)) 1]
-      [else (+ (: (vector-ref entries (- (vector-length entries) 1)) index) 1)])))
+      [(= 0 (length entries)) 1]
+      [else (+ (: (list-ref entries (- (length entries) 1)) index) 1)])))
 
 (define-variant FindTermResult (NoTerm) (FoundTerm [term Nat]))
 (define-function (replicated-log-term-at [replicated-log ReplicatedLog] [index Nat])
@@ -420,7 +420,7 @@
                                           [prev-log-index Nat])
   (= (replicated-log-term-at replicated-log prev-log-index) prev-log-term))
 
-;; Returns a vector of entries from the log, starting at the from-including index and including either
+;; Returns a list of entries from the log, starting at the from-including index and including either
 ;; all entries with the same term or a total of 5 entries, whichever is less. We assume from-including
 ;; is no less than 1 and no more than 1 + the last index in the log.
 (define-function (replicated-log-entries-batch-from [replicated-log ReplicatedLog]
@@ -428,25 +428,25 @@
   (let* ([how-many 5] ; this is the default parameter in akka-raft
          [first-impl-index 0]
          [first-semantic-index
-          (if (= (vector-length (: replicated-log entries)) 0)
+          (if (= (length (: replicated-log entries)) 0)
               1
-              (: (vector-ref (: replicated-log entries) 0) index))]
+              (: (list-ref (: replicated-log entries) 0) index))]
          [semantic->impl-offset (- first-impl-index first-semantic-index)]
          [from-including-impl (+ from-including semantic->impl-offset)]
-         [to-send (vector-slice (: replicated-log entries)
+         [to-send (list-slice (: replicated-log entries)
                                 from-including-impl
                                 (+ from-including-impl how-many))])
     (cond
-      [(> (vector-length to-send) 0)
-       (let* ([head (vector-ref to-send 0)]
+      [(> (length to-send) 0)
+       (let* ([head (list-ref to-send 0)]
               [batch-term (: head term)])
          ;; this for/fold implements the takeWhile
-         (for/fold ([result (vector)])
+         (for/fold ([result (list)])
                    ([entry to-send])
            (cond
-             [(= (: entry term) batch-term) (vector-append result (vector entry))]
+             [(= (: entry term) batch-term) (append result (list entry))]
              [else result])))]
-      [else (vector)])))
+      [else (list)])))
 
 (define-function (entry-prev-index [entry Entry])
   (- (: entry index) 1))
@@ -636,8 +636,8 @@
 (define-function (leader-is-lagging [append-entries-term Nat] [m StateMetadata])
   (< append-entries-term (: m current-term)))
 
-(define-function (is-heartbeat [append-entries-entries (Vectorof Entry)])
-  (= 0 (vector-length append-entries-entries)))
+(define-function (is-heartbeat [append-entries-entries (Listof Entry)])
+  (= 0 (length append-entries-entries)))
 
 (define-function (AppendEntries-apply [term Nat]
                              [replicated-log ReplicatedLog]
@@ -647,8 +647,8 @@
                              [leader-client (Addr (Union (ClientMessage ClientMessage)))])
   (let ([entries (replicated-log-entries-batch-from replicated-log from-index)])
     (cond
-      [(> (vector-length entries) 0)
-       (let ([head (vector-ref entries 0)])
+      [(> (length entries) 0)
+       (let ([head (list-ref entries 0)])
          (AppendEntries term
                         (replicated-log-term-at replicated-log (entry-prev-index head))
                         (entry-prev-index head)
@@ -704,7 +704,7 @@
   ;; appends the entries to the log and returns the success message to send
   (define-function (append [replicated-log ReplicatedLog]
                            [prev-log-index Nat]
-                           [entries (Vectorof Entry)]
+                           [entries (Listof Entry)]
                            [m StateMetadata])
     (cond
       [(is-heartbeat entries)
@@ -744,7 +744,7 @@
   (define-function (append-entries [term Nat]
                                    [prev-log-term Nat]
                                    [prev-log-index Nat]
-                                   [entries (Vectorof Entry)]
+                                   [entries (Listof Entry)]
                                    [leader-commit-id Nat]
                                    [leader (Addr RaftMessage)]
                                    [m StateMetadata]

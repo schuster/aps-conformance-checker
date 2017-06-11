@@ -59,7 +59,7 @@
     (Start Nat)))
 (define desugared-tcp-session-event
   `(Union
-    [ReceivedData (Vectorof Nat)]
+    [ReceivedData (Listof Nat)]
     [Closed]
     [ConfirmedClosed]
     [Aborted]
@@ -112,7 +112,7 @@
     [syn Syn?]
     [fin Fin?]
     [window Nat]
-    [payload (Vectorof Byte)])
+    [payload (Listof Byte)])
 
   (define-function (packet-ack? [packet TcpPacket])
     (case (: packet ack-flag)
@@ -173,7 +173,7 @@
 ;; Some types for TCP
 
   (define-variant TcpSessionEvent
-    [ReceivedData [bytes (Vectorof Byte)]]
+    [ReceivedData [bytes (Listof Byte)]]
     [Closed]
     [ConfirmedClosed]
     [Aborted]
@@ -205,7 +205,7 @@
   (define-type TcpSessionCommand
     (Union
      (Register (Addr TcpSessionEvent))
-     (Write (Vectorof Byte) (Addr WriteResponse))
+     (Write (Listof Byte) (Addr WriteResponse))
      (Close (Addr (Union [CommandFailed] [Closed])))
      (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
      (Abort (Addr (Union [CommandFailed] [Aborted])))))
@@ -238,13 +238,13 @@
   (define-variant SendBufferCommand
     (SendSyn)
     (SendRst)
-    (SendText [data (Vectorof Byte)])
+    (SendText [data (Listof Byte)])
     (SendFin))
 
   (define-variant TcpSessionInput
     (OrderedTcpPacket [packet TcpPacket])
     (Register [handler (Addr TcpSessionEvent)])
-    (Write [data (Vectorof Byte)] [handler (Addr WriteResponse)])
+    (Write [data (Listof Byte)] [handler (Addr WriteResponse)])
     (Close [close-handler (Addr (Union [CommandFailed] [Closed]))])
     (ConfirmedClose [close-handler (Addr (Union [CommandFailed] [ConfirmedClosed]))])
     (Abort [close-handler (Addr (Union [CommandFailed] [Aborted]))])
@@ -293,7 +293,7 @@
                                             [octet-stream (Addr TcpSessionEvent)])
        (let ([unseen-payload (: segment payload)])
          (cond
-           [(and (> (vector-length unseen-payload) 0) receive-data?)
+           [(and (> (length unseen-payload) 0) receive-data?)
             (send octet-stream (ReceivedData unseen-payload))
             0]
            [else 0])))
@@ -755,7 +755,7 @@
             (syn (csa-variant Syn))
             (fin (csa-variant NoFin))
             (window _)
-            (payload (vector)))])))
+            (payload (list)))])))
 
   (define-match-expander tcp-syn-ack
     (lambda (stx)
@@ -771,7 +771,7 @@
             (syn (csa-variant Syn))
             (fin (csa-variant NoFin))
             (window _)
-            (payload (vector)))])))
+            (payload (list)))])))
 
   (define-match-expander tcp-ack
     (lambda (stx)
@@ -787,7 +787,7 @@
             (syn (csa-variant NoSyn))
             (fin (csa-variant NoFin))
             (window _)
-            (payload (vector)))])))
+            (payload (list)))])))
 
   (define-match-expander tcp-rst
     (lambda (stx)
@@ -803,7 +803,7 @@
             (syn (csa-variant NoSyn))
             (fin (csa-variant NoFin))
             (window _)
-            (payload (vector)))])))
+            (payload (list)))])))
 
   (define-match-expander tcp-fin
     (lambda (stx)
@@ -819,7 +819,7 @@
             (syn (csa-variant NoSyn))
             (fin (csa-variant Fin))
             (window _)
-            (payload (vector)))])))
+            (payload (list)))])))
 
   (define-match-expander tcp-normal
     (lambda (stx)
@@ -872,7 +872,7 @@
      [syn (variant NoSyn)]
      [fin (variant NoFin)]
      [window DEFAULT-WINDOW-SIZE]
-     [payload (vector)]))
+     [payload (list)]))
 
   (define (make-syn src-port dest-port seqno)
     (record
@@ -885,7 +885,7 @@
      [syn (variant Syn)]
      [fin (variant NoFin)]
      [window DEFAULT-WINDOW-SIZE]
-     [payload (vector)]))
+     [payload (list)]))
 
   (define (make-syn-ack source-port dest-port seq ack)
     (record
@@ -898,7 +898,7 @@
      [syn (variant Syn)]
      [fin (variant NoFin)]
      [window DEFAULT-WINDOW-SIZE]
-     [payload (vector)]))
+     [payload (list)]))
 
   ;; (define (make-ack source-port dest-port seqno ackno)
   ;;   (record
@@ -911,7 +911,7 @@
   ;;     [syn NoSyn]
   ;;     [fin NoFin]
   ;;     [window DEFAULT-WINDOW-SIZE]
-  ;;     [payload (vector)])))
+  ;;     [payload (list)])))
 
   (define (make-normal-packet source-port dest-port seq ack payload)
     (record
@@ -937,7 +937,7 @@
      [syn (variant NoSyn)]
      [fin (variant Fin)]
      [window DEFAULT-WINDOW-SIZE]
-     [payload (vector)]))
+     [payload (list)]))
 
   (define (InetSocketAddress ip port)
     (record [ip ip] [port port]))
@@ -984,7 +984,7 @@
 
   (define (check-closed? session)
     (define write-handler (make-async-channel))
-    (send-session-command session (Write (vector 1) write-handler))
+    (send-session-command session (Write (list 1) write-handler))
     (check-unicast write-handler (CommandFailed))))
 
 (module+ test
@@ -1008,7 +1008,7 @@
                                              local-port
                                              (add1 remote-iss)
                                              (add1 local-iss)
-                                             (vector)))
+                                             (list)))
     (check-unicast-match su (csa-variant Connected _ _)))
 
   (test-case "Proper handshake/upper layer notification on simultaneous open with simultaneous SYN/ACK"
@@ -1044,8 +1044,8 @@
                                                    local-port
                                                    (add1 remote-iss)
                                                    (add1 local-iss)
-                                                   (vector 1 2 3)))
-    (check-unicast octet-dest (ReceivedData (vector 1 2 3))))
+                                                   (list 1 2 3)))
+    (check-unicast octet-dest (ReceivedData (list 1 2 3))))
 
   (test-case "Timeout before registration closes the session"
     (match-define (list sb session) (connect))
@@ -1057,7 +1057,7 @@
                                              local-port
                                              (add1 remote-iss)
                                              (add1 local-iss)
-                                             (vector 1 2 3)))
+                                             (list 1 2 3)))
     (check-no-message octet-dest))
 
   (test-case "Octet stream receives data"
@@ -1067,8 +1067,8 @@
                                                    local-port
                                                    (add1 remote-iss)
                                                    (add1 local-iss)
-                                                   (vector 1 2 3)))
-    (check-unicast octet-handler (ReceivedData (vector 1 2 3))))
+                                                   (list 1 2 3)))
+    (check-unicast octet-handler (ReceivedData (list 1 2 3))))
 
   (test-case "Close on receiving a FIN"
     ;; NOTE: we assume that the session should end after receiving a FIN (this is the default in Akka,
@@ -1094,10 +1094,10 @@
     (check-unicast sb (SendFin))
     (async-channel-put session (TheFinSeq fin-seq))
     ;; received packets *should* come through to the user (we're only half-closed)
-    (send-packet session (make-normal-packet remote-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
-    (check-unicast handler (ReceivedData (vector 1 2 3)))
+    (send-packet session (make-normal-packet remote-port local-port (add1 remote-iss) (add1 local-iss) (list 1 2 3)))
+    (check-unicast handler (ReceivedData (list 1 2 3)))
     ;; now the peer sends its ACK and FIN and closes
-    (send-packet session (make-normal-packet remote-port local-port (+ 4 remote-iss) (+ 1 fin-seq) (vector)))
+    (send-packet session (make-normal-packet remote-port local-port (+ 4 remote-iss) (+ 1 fin-seq) (list)))
     (send-packet session (make-fin remote-port           local-port (+ 4 remote-iss) (+ 1 fin-seq)))
     (check-unicast handler (ConfirmedClosed))
     (check-unicast close-handler (ConfirmedClosed))
@@ -1111,7 +1111,7 @@
     (check-unicast sb (SendFin))
     (async-channel-put session (TheFinSeq fin-seq))
     (send-packet session (make-fin remote-port           local-port (add1 remote-iss) (+ 1 fin-seq)))
-    (send-packet session (make-normal-packet remote-port local-port (+ 2 remote-iss) (+ 1 fin-seq) (vector)))
+    (send-packet session (make-normal-packet remote-port local-port (+ 2 remote-iss) (+ 1 fin-seq) (list)))
     (check-unicast handler (ConfirmedClosed))
     (check-unicast close-handler (ConfirmedClosed))
     (check-closed? session))
@@ -1138,11 +1138,11 @@
         (check-unicast sb (SendFin))
     (async-channel-put session (TheFinSeq fin-seq))
     ;; received packets should not come through to the user
-    (send-packet session (make-normal-packet remote-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
+    (send-packet session (make-normal-packet remote-port local-port (add1 remote-iss) (add1 local-iss) (list 1 2 3)))
     (check-no-message handler #:timeout 0.5)
 
     ;; peer ACKs the FIN
-    (send-packet session (make-normal-packet remote-port local-port (+ 4 remote-iss) (add1 fin-seq) (vector)))
+    (send-packet session (make-normal-packet remote-port local-port (+ 4 remote-iss) (add1 fin-seq) (list)))
     ;; peer sends its FIN
     (send-packet session (make-fin remote-port local-port (+ 4 remote-iss) (add1 fin-seq)))
     (check-closed? session))
@@ -1157,7 +1157,7 @@
     (check-unicast sb (SendRst))
     (check-closed? session)
     ;; received packets should not come through to the user
-    (send-packet session (make-normal-packet remote-port local-port (add1 remote-iss) (add1 local-iss) (vector 1 2 3)))
+    (send-packet session (make-normal-packet remote-port local-port (add1 remote-iss) (add1 local-iss) (list 1 2 3)))
     (check-no-message handler #:timeout 0.5))
 
   (test-case "Abort from AwaitingRegistration"
@@ -1174,7 +1174,7 @@
     (send-session-command session (ConfirmedClose close-handler))
     (check-unicast sb (SendFin))
     (async-channel-put session (TheFinSeq fin-seq))
-    (send-packet session (make-normal-packet remote-port local-port (+ 1 remote-iss) (add1 fin-seq) (vector)))
+    (send-packet session (make-normal-packet remote-port local-port (+ 1 remote-iss) (add1 fin-seq) (list)))
     (send-packet session (make-fin remote-port           local-port (+ 1 remote-iss) (add1 fin-seq)))
     (check-unicast close-handler (ConfirmedClosed))
     (check-closed? session))
@@ -1218,7 +1218,7 @@
     [syn (Union [Syn] [NoSyn])]
     [fin (Union [Fin] [NoFin])]
     [window Nat]
-    [payload (Vectorof Nat)]))
+    [payload (Listof Nat)]))
 
 (define desugared-tcp-output
   `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
@@ -1237,7 +1237,7 @@
 (define desugared-session-command
   `(Union
     (Register (Addr ,desugared-tcp-session-event))
-    (Write (Vectorof Nat) (Addr ,desugared-write-response))
+    (Write (Listof Nat) (Addr ,desugared-write-response))
     (Close (Addr (Union [CommandFailed] [Closed])))
     (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
     (Abort (Addr (Union [CommandFailed] [Aborted])))))
@@ -1246,7 +1246,7 @@
   `(Union
     (OrderedTcpPacket ,desugared-tcp-packet-type)
     (Register (Addr ,desugared-tcp-session-event))
-    (Write (Vectorof Nat) (Addr ,desugared-write-response))
+    (Write (Listof Nat) (Addr ,desugared-write-response))
     (Close (Addr (Union [CommandFailed] [Closed])))
     (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
     (Abort (Addr (Union [CommandFailed] [Aborted])))
@@ -1268,7 +1268,7 @@
   `(Union
     [SendSyn]
     [SendRst]
-    [SendText (Vectorof Nat)]
+    [SendText (Listof Nat)]
     [SendFin]))
 
 ;; patterns to be used in the spec
@@ -1301,7 +1301,7 @@
      ([session (Union (OrderedTcpPacket ,desugared-tcp-packet-type))])
      ([session (Union
                 (Register (Addr ,desugared-tcp-session-event))
-                (Write (Vectorof Nat) (Addr ,desugared-write-response))
+                (Write (Listof Nat) (Addr ,desugared-write-response))
                 (Close (Addr (Union [CommandFailed] [Closed])))
                 (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
                 (Abort (Addr (Union [CommandFailed] [Aborted])))
