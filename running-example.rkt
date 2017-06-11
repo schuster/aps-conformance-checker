@@ -162,17 +162,17 @@
 ;; APS Specification
 
 (define editable-table-behavior
-  `((goto Reading)
-    (define-state (Reading)
-      [(variant Write * * r) -> () (goto Reading)]
-      [(variant Save) -> () (goto Reading)]
-      [(variant Edit) -> () (goto Writing)])
+  `((goto Writing)
     (define-state (Writing)
       [(variant Write * * r) -> ([obligation r (variant Written)]) (goto Writing)]
       [(variant Save) -> () (goto Reading)]
       [(variant Edit) -> () (goto Writing)]
       ;; might timeout and go back to Reading
-      [unobs -> () (goto Reading)])))
+      [unobs -> () (goto Reading)])
+    (define-state (Reading)
+      [(variant Write * * r) -> () (goto Reading)]
+      [(variant Save) -> () (goto Reading)]
+      [(variant Edit) -> () (goto Writing)])))
 
 (define readable-table-behavior
   `((goto ReadingOrWriting)
@@ -194,9 +194,9 @@
                            (variant NewTable (delayed-fork ,@editable-table-behavior)))])
         (goto Serving)]
        [(variant Find * r) ->
-        ([obligaiton r (or (variant Nothing)
-                           (variant Just * ;; (delayed-fork ,@readable-table-behavior)
-                                    ))])])))
+        ([obligation r (or (variant Nothing)
+                           (variant Just (delayed-fork ,@readable-table-behavior)))])
+        (goto Serving)])))
 
 (module+ test
   (test-true "Running example conforms to spec"
