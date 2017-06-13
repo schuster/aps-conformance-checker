@@ -22,16 +22,22 @@
 (require
  "../desugar.rkt")
 
-(define desugared-folded-peer-message-type
-  ;; NOTE: this name for the minfixpt type is used in all types that might be joined with it, to
-  ;; ensure type-join doesn't create an infinite number of fresh type variables
-  `(minfixpt PeerMessage
+(define desugared-seizer-peer-address
+  `(Addr
     (Union
-     [Seize (Record [id Nat] [address (Addr PeerMessage)])]
      [Seized]
      [Rejected]
      [Answered]
      [Cleared])))
+
+(define desugared-seizable-peer-message
+  `(Union
+    [Seize (Record [id Nat] [address ,desugared-seizer-peer-address])]
+    [Answered]
+    [Cleared]))
+
+(define desugared-seizable-peer-address
+  `(Addr ,desugared-seizable-peer-message))
 
 (define desugared-lim-message-type
   `(Union
@@ -40,40 +46,63 @@
     [StartRing]
     [StopRing]))
 
-(define desugared-analyzer-result-type
-  `(minfixpt PeerMessage
-             (Union [Invalid]
-                    [Valid (Record [id Nat]
-                                   [address (Addr ,desugared-folded-peer-message-type)])]
-                    [GetMoreDigits])))
-
 (define desugared-analyzer-message-type
   `(Union
-    [AnalysisRequest (Listof Nat)
-                     (Addr ,desugared-analyzer-result-type)]))
+    [AnalysisRequest
+     (Listof Nat)
+     (Addr (Union
+            [Invalid]
+            [Valid (Record [id Nat]
+                           [address ,desugared-seizable-peer-address])]
+            [GetMoreDigits]))]))
 
 (define desugared-controller-message-type
-  ;; NOTE: have to use a recursive type here to match the recursive type for PeerMessage
-  `(minfixpt PeerMessage
-     (Union
-      ;; hardware messages
-      [OnHook]
-      [OffHook]
-      [Digit Nat]
-      ;; analyzer messages
-      [Invalid]
-      [Valid (Record [id Nat] [address (Addr ,desugared-folded-peer-message-type)])]
-      [GetMoreDigits]
-      [Seize (Record [id Nat] [address (Addr ,desugared-folded-peer-message-type)])]
-      [Seized]
-      [Rejected]
-      [Answered]
-      [Cleared])))
+  `(Union
+    ;; hardware messages
+    [OnHook]
+    [OffHook]
+    [Digit Nat]
+    ;; analyzer messages
+    [Invalid]
+    [Valid (Record [id Nat] [address ,desugared-seizable-peer-address])]
+    [GetMoreDigits]
+    [Seize (Record [id Nat] [address ,desugared-seizer-peer-address])]
+    [Seized]
+    [Rejected]
+    [Answered]
+    [Cleared]))
 
 (define pots-program (desugar
 `(program
  (receptionists [controller ControllerMessage])
  (externals [lim LimMessage] [analyzer AnalyzerMessage])
+
+(define-record SeizablePeer
+  [id Nat]
+  [address ,desugared-seizable-peer-address])
+
+(define-record SeizerPeer
+  [id Nat]
+  [address ,desugared-seizer-peer-address])
+
+(define-record Peer
+  [id Nat]
+  [address (Addr (Union [Answered] [Cleared]))])
+
+(define-variant ControllerMessage
+  ;; hardware messages
+  [OnHook]
+  [OffHook]
+  [Digit [digit Nat]]
+  ;; analyzer messages
+  [Invalid]
+  [Valid [peer SeizablePeer]]
+  [GetMoreDigits]
+  [Seize [peer SeizerPeer]]
+  [Seized]
+  [Rejected]
+  [Answered]
+  [Cleared])
 
 (define-variant Tone
   (Dial)
@@ -89,63 +118,20 @@
   (StartRing)
   (StopRing))
 
-;; recursive variants aren't supported in the sugared language right now
-(define-type FoldedPeerMessage ,desugared-folded-peer-message-type)
-(define-type UnfoldedPeerMessage
-  (Union
-   [Seize (Record [id Nat] [address (Addr FoldedPeerMessage)])]
-   [Seized]
-   [Rejected]
-   [Answered]
-   [Cleared]))
-
-(define-record Peer
-  [id Nat]
-  [address (Addr FoldedPeerMessage)])
-(define-function (Seize [peer Peer]) (variant Seize peer))
+(define-function (Seize [peer SeizerPeer]) (variant Seize peer))
 (define-function (Seized) (variant Seized))
 (define-function (Rejected) (variant Rejected))
 (define-function (Answered) (variant Answered))
 (define-function (Cleared) (variant Cleared))
 
-;; Recursive types require a lot of extra annotations/folding, so we abstract that into one function
-;; here
-(define-function (send-peer [peer Peer] [message UnfoldedPeerMessage])
-  (send (: peer address) (fold FoldedPeerMessage message)))
-
 (define-type AnalyzerResult
-  (minfixpt PeerMessage
-    (Union
-     (Invalid)
-     (Valid Peer)
-     (GetMoreDigits))))
-
-;; Defining just to get the constructors
-(define-variant AnalyzerResultBranches
-  (Invalid)
-  (Valid [peer Peer])
-  (GetMoreDigits))
+  (Union
+   (Invalid)
+   (Valid SeizablePeer)
+   (GetMoreDigits)))
 
 (define-variant AnalyzerMessage
   (AnalysisRequest [digits (Listof Nat)] [response-dest (Addr AnalyzerResult)]))
-
-(define-type ControllerMessage
-  ;; NOTE: have to have minfixpt here to match recursive type for peer messages
-  (minfixpt PeerMessage
-   (Union
-    ;; hardware messages
-    [OnHook]
-    [OffHook]
-    [Digit Nat]
-    ;; analyzer messages
-    [Invalid]
-    [Valid Peer]
-    [GetMoreDigits]
-    [Seize (Record [id Nat] [address (Addr FoldedPeerMessage)])]
-    [Seized]
-    [Rejected]
-    [Answered]
-    [Cleared])))
 
 (define-variant HaveTone?
   (HaveTone)
@@ -159,12 +145,13 @@
   (goto Idle)
 
   (define-state (Idle) (m)
-    (case (unfold ControllerMessage m)
+    (case m
       [(OffHook)
        (send lim (StartTone (Dial)))
        (goto GettingFirstDigit)]
       [(Seize peer)
-       (send-peer peer (Seized))
+       ;; TODO: need an unfold here
+       (send (: peer address) (Seized))
        (send lim (StartRing))
        (goto RingingBSide peer)]
       ;; ignore other peer messages
@@ -180,7 +167,7 @@
       [(GetMoreDigits) (goto Idle)]))
 
   (define-state (GettingFirstDigit) (m)
-    (case (unfold ControllerMessage m)
+    (case m
       [(OnHook)
        (send lim (StopTone))
        (goto Idle)]
@@ -190,7 +177,7 @@
          (send analyzer (AnalysisRequest digits self))
          (goto WaitOnAnalysis digits))]
       [(Seize peer)
-       (send-peer peer (Rejected))
+       (send (: peer address) (Rejected))
        (goto GettingFirstDigit)]
       ;; ignore other peer messages
       [(Seized) (goto GettingFirstDigit)]
@@ -204,14 +191,14 @@
       [(GetMoreDigits) (goto GettingFirstDigit)]))
 
   (define-state (GettingNumber [number (Listof Nat)]) (m)
-    (case (unfold ControllerMessage m)
+    (case m
       [(OnHook) (goto Idle)]
       [(Digit n)
        (let ([digits (cons n number)])
          (send analyzer (AnalysisRequest digits self))
          (goto WaitOnAnalysis digits))]
       [(Seize peer)
-       (send-peer peer (Rejected))
+       (send (: peer address) (Rejected))
        (goto GettingNumber number)]
       ;; ignore other peer messages
       [(Seized) (goto GettingNumber number)]
@@ -225,10 +212,10 @@
       [(GetMoreDigits) (goto GettingNumber number)]))
 
   (define-state (WaitOnAnalysis [number (Listof Nat)]) (m)
-    (case (unfold ControllerMessage m)
+    (case m
       [(OnHook) (goto Idle)]
       [(Seize peer)
-       (send-peer peer (Rejected))
+       (send (: peer address) (Rejected))
        (goto WaitOnAnalysis number)]
       ;; ignore other peer messages
       [(Seized) (goto WaitOnAnalysis number)]
@@ -239,7 +226,7 @@
        (send lim (StartTone (Fault)))
        (goto WaitOnHook (HaveTone))]
       [(Valid peer)
-       (send-peer peer (Seize (Peer my-id self)))
+       (send (: peer address) (Seize (Peer my-id self)))
        (goto MakeCallToB peer)]
       [(GetMoreDigits) (goto GettingNumber number)]
       ;; ignore other messages
@@ -251,10 +238,10 @@
 
   ;; Called "calling_B" in Ulf's version
   (define-state (MakeCallToB [peer Peer]) (m)
-    (case (unfold ControllerMessage m)
+    (case m
       [(OnHook) (goto Idle)]
       [(Seize new-peer)
-       (send-peer new-peer (Rejected))
+       (send (: new-peer address) (Rejected))
        (goto MakeCallToB peer)]
       [(Seized)
        (send lim (StartTone (Ring)))
@@ -276,9 +263,9 @@
 
   ;; the other phone is ringing
   (define-state (RingingASide [peer Peer]) (m)
-    (case (unfold ControllerMessage m)
+    (case m
       [(Seize new-peer)
-       (send-peer new-peer (Rejected))
+       (send (: new-peer address) (Rejected))
        (goto RingingASide peer)]
       [(Answered)
        (send lim (StopTone))
@@ -289,7 +276,7 @@
       [(Rejected) (goto RingingASide peer)]
       [(Cleared) (goto RingingASide peer)]
       [(OnHook)
-       (send-peer peer (Cleared))
+       (send (: peer address) (Cleared))
        (send lim (StopTone))
        (goto Idle)]
       ;; ignore other messages
@@ -301,9 +288,9 @@
 
   ;; this phone is ringing
   (define-state (RingingBSide [peer Peer]) (m)
-    (case (unfold ControllerMessage m)
+    (case m
       [(Seize new-peer)
-       (send-peer new-peer (Rejected))
+       (send (: new-peer address) (Rejected))
        (goto RingingBSide peer)]
       [(Cleared)
        (send lim (StopRing))
@@ -314,7 +301,7 @@
       [(Answered) (goto RingingBSide peer)]
       [(OffHook)
        (send lim (StopRing))
-       (send-peer peer (Answered))
+       (send (: peer address) (Answered))
        (goto Speech peer)]
       ;; ignore other messages
       [(OnHook) (goto RingingBSide peer)]
@@ -324,9 +311,9 @@
       [(GetMoreDigits) (goto RingingBSide peer)]))
 
   (define-state (Speech [peer Peer]) (m)
-    (case (unfold ControllerMessage m)
+    (case m
       [(Seize new-peer)
-       (send-peer new-peer (Rejected))
+       (send (: new-peer address) (Rejected))
        (goto Speech peer)]
       [(Cleared) (goto WaitOnHook (NoTone))]
       ;; ignore other peer messages
@@ -335,7 +322,7 @@
       [(Answered) (goto Speech peer)]
       [(OnHook)
        (send lim (Disconnect (: peer id)))
-       (send-peer peer (Cleared))
+       (send (: peer address) (Cleared))
        (goto Idle)]
       ;; ignore other messages
       [(OffHook) (goto Speech peer)]
@@ -345,9 +332,9 @@
       [(GetMoreDigits) (goto Speech peer)]))
 
   (define-state (WaitOnHook [have-tone? HaveTone?]) (m)
-    (case (unfold ControllerMessage m)
+    (case m
       [(Seize new-peer)
-       (send-peer new-peer (Rejected))
+       (send (: new-peer address) (Rejected))
        (goto WaitOnHook have-tone?)]
       ;; ignore other peer messages
       [(Seized) (goto WaitOnHook have-tone?)]
@@ -377,7 +364,7 @@
   `(specification (receptionists [controller ,desugared-controller-message-type])
                   (externals [lim ,desugared-lim-message-type]
                              [analyzer ,desugared-analyzer-message-type])
-     ([controller ,desugared-folded-peer-message-type])
+     ([controller ,desugared-seizable-peer-message])
      ([controller ,desugared-controller-message-type])
      (goto Idle)
 
@@ -429,7 +416,6 @@
    "../desugar.rkt"
    "../main.rkt")
 
-  (test-true "Peer message type" (csa-valid-type? desugared-folded-peer-message-type))
   (test-true "Controller message type" (csa-valid-type? desugared-controller-message-type))
 
   (test-true "POTS controller conforms to controller-POV spec"
