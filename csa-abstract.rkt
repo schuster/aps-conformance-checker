@@ -243,9 +243,6 @@
    '((variant A) (variant B)))
   (test-same-items? (term (messages-of-type/mf (Union))) null)
   (test-same-items?
-   (term (messages-of-type/mf (minfixpt Dummy Nat)))
-   (list '(folded (minfixpt Dummy Nat) (* Nat))))
-  (test-same-items?
    (term (messages-of-type/mf (Record [a Nat] [b Nat])))
    (list '(record [a (* Nat)] [b (* Nat)])))
   (test-same-items?
@@ -257,10 +254,13 @@
          '(record [x (variant A)] [y (variant D)])
          '(record [x (variant B)] [y (variant C)])
          '(record [x (variant B)] [y (variant D)])))
-  (define recursive-record-type `(minfixpt RecType (Record [a (Addr RecType)])))
+  (define recursive-record-address-type
+    `(minfixpt RecTypeAddr (Addr (Record [a RecTypeAddr]))))
+  (define recursive-record-type
+    `(Record [a ,recursive-record-address-type]))
   (test-same-items?
    (csa#-messages-of-type recursive-record-type)
-   (list `(folded ,recursive-record-type (record [a (,recursive-record-type (obs-ext 101))]))))
+   (list `(record [a (folded ,recursive-record-address-type (,recursive-record-type (obs-ext 101)))])))
   (test-same-items?
    (term (messages-of-type/mf (Union)))
    '())
@@ -1155,12 +1155,9 @@
                        (term (record [a (* Nat)] [b (variant C)] [c (* String)])))
   (check-exp-steps-to? (term (fold   (Union [A]) (variant A)))
                        (term (folded (Union [A]) (variant A))))
-  (check-exp-steps-to? (term (fold   ,recursive-record-type (variant Null)))
-                       (term (folded ,recursive-record-type (variant Null))))
-  (check-exp-steps-to? (term (fold   ,recursive-record-type (record [a (,recursive-record-type (obs-ext 1))])))
-                       (term (folded ,recursive-record-type (record [a (,recursive-record-type (obs-ext 1))]))))
-  (check-exp-steps-to? `(unfold ,recursive-record-type
-                                (folded ,recursive-record-type (record [a (,recursive-record-type (obs-ext 1))])))
+  (check-exp-steps-to? (term (record [a (fold   ,recursive-record-address-type (,recursive-record-type (obs-ext 1)))]))
+                       (term (record [a (folded ,recursive-record-address-type (,recursive-record-type (obs-ext 1)))])))
+  (check-exp-steps-to? `(record [a (unfold ,recursive-record-address-type (folded ,recursive-record-address-type (,recursive-record-type (obs-ext 1))))])
                        `(record [a (,recursive-record-type (obs-ext 1))]))
   (check-exp-steps-to-all? `(< (* Nat) (let () (* Nat)))
                            (list `(variant True) `(variant False)))
@@ -1841,8 +1838,8 @@
   [(type-subst/internal (minfixpt X_1 τ_1) X_2 any)
    (minfixpt X_fresh (type-subst/internal (type-subst/internal τ_1 X_1 X_fresh) X_2 any))
    (where X_fresh ,(variable-not-in (term ((minfixpt X_1 τ_1) X_2 any)) (term X_1)))]
-  [(type-subst/internal (Addr X) X any) (Addr any)]
-  [(type-subst/internal (Addr X_1) X_2 any) (Addr X_1)]
+  [(type-subst/internal X X any) any]
+  [(type-subst/internal X_1 X_2 any) X_1]
   [(type-subst/internal (Union [t τ ...] ...) X any)
    (Union [t (type-subst/internal τ X any) ...] ...)]
   [(type-subst/internal (Record [l τ_l] ...) X any)
@@ -1855,10 +1852,10 @@
 
 (module+ test
   (test-equal? "type-subst on non-matching minfixpt"
-    (term (type-subst (minfixpt SomeType (Record [a (Addr AnotherType)] [b (Addr SomeType)]))
+    (term (type-subst (minfixpt SomeType (Addr (Record [a AnotherType] [b SomeType])))
                       AnotherType
                       Nat))
-    (term (minfixpt SomeType1 (Record (a (Addr Nat)) (b (Addr SomeType1)))))))
+    (term (minfixpt SomeType1 (Addr (Record (a Nat) (b SomeType1)))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
@@ -2007,9 +2004,9 @@
                (term (abstract-e ((Union [A]) (addr 2)) ((addr 1))))
                (term ((Union [A]) (obs-ext 2))))
   (test-equal? "Abstraction okay on folded"
-    (term (abstract-e (folded ,recursive-record-type (record [a (,recursive-record-type (addr 1))]))
+    (term (abstract-e (folded ,recursive-record-address-type (,recursive-record-type (addr 1)))
                       ()))
-    `(folded ,recursive-record-type (record [a (,recursive-record-type (obs-ext 1))]))))
+    `(folded ,recursive-record-address-type (,recursive-record-type (obs-ext 1)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selecting the spawn flag to blur
@@ -2806,16 +2803,10 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Types
 
-(define-metafunction csa#
-  type-join : τ τ -> τ
-  [(type-join τ_1 τ_2) (type-join/internal τ_1 () τ_2 ())])
-
-;; The X -> τ mappings are the type environments for recursive type variables
-;;
 ;; NOTE: non-equality-based join for lists and hashes is not implemented
 (define-metafunction csa#
-  type-join/internal : τ ([X τ] ...) τ ([X τ] ...) -> τ
-  [(type-join/internal (Union [t_1 τ_1 ...] ...) any_1 (Union [t_2 τ_2 ...] ...) any_2)
+  type-join : τ τ -> τ
+  [(type-join (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))
    (Union [t_3 τ_3 ...] ...)
    (where ([t_3 τ_3 ...] ...)
           ,(let ()
@@ -2828,7 +2819,7 @@
                   [#f branch1]
                   [branch2
                    (define (join-components type1 type2)
-                     (term (type-join/internal ,type1 any_1 ,type2 any_2)))
+                     (term (type-join ,type1 ,type2)))
                    ;; NOTE: assumes that the branches have the same number of components
                    `[,tag ,@(map join-components (rest branch1) (rest branch2))]])))
              (define remaining-branch2-branches
@@ -2844,31 +2835,22 @@
                       (= (length all-new-branches) (length branches2)))
                  all-new-branches
                  (sort all-new-branches sexp<?))))]
-  [(type-join/internal (Record [l_1 τ_1] ...) any_1 (Record [l_2 τ_2] ...) any_2)
-   (Record [l_1 (type-join/internal τ_1 any_1 τ_2 any_2)] ...)]
-  [(type-join/internal (minfixpt X τ_1) (any_1 ...) (minfixpt X τ_2) (any_2 ...))
-   (minfixpt X (type-join/internal τ_1 ([X (minfixpt X τ_1)] any_1 ...)
-                                   τ_2 ([X (minfixpt X τ_2)] any_2 ...)))]
-  [(type-join/internal (minfixpt X_1 τ_1) (any_1 ...) (minfixpt X_2 τ_2) (any_2 ...))
-   (minfixpt X_fresh
-             (type-join/internal τ_1subst
-                                 ([X_fresh (minfixpt X_fresh τ_1subst)] any_1 ...)
-                                 τ_2subst
-                                 ([X_fresh (minfixpt X_fresh τ_2subst)])))
-   (where X_fresh ,(variable-not-in (term ((minfixpt X_1 τ_1) (minfixpt X_2 τ_2))) (term X_1)))
-   (where τ_1subst (type-subst/internal τ_1 X_1 X_fresh))
-   (where τ_2subst (type-subst/internal τ_2 X_2 X_fresh))]
-  [(type-join/internal (Addr X) _ (Addr X) _) (Addr X)]
-  [(type-join/internal (Addr X) any_1 (Addr τ_2) any_2)
-   (type-join/internal (Addr τ_1) any_1 (Addr τ_2) any_2)
-   (where τ_1 ,(second (assoc (term X) (term any_1))))]
-  [(type-join/internal (Addr τ_1) any_1 (Addr X) any_2)
-   ;; this clause should match
-   (type-join/internal (Addr τ_1) any_1 (Addr τ_2) any_2)
-   (where τ_2 ,(second (assoc (term X) (term any_2))))]
-  [(type-join/internal (Addr τ_1) any_1 (Addr τ_2) any_2)
-   (Addr (type-join/internal τ_1 any_1 τ_2 any_2))]
-  [(type-join/internal τ any_1 τ any_2) τ])
+  [(type-join (Record [l_1 τ_1] ...) (Record [l_2 τ_2] ...))
+   (Record [l_1 (type-join τ_1 τ_2)] ...)]
+  ;; If names for minfixpt are the same, don't rename them
+  [(type-join (minfixpt X τ_1) (minfixpt X τ_2))
+   (minfixpt X (type-join τ_1 τ_2))]
+  [(type-join (minfixpt X_1 τ_1) (minfixpt X_2 τ_2))
+   (minfixpt X_fresh (type-join τ_1subst τ_2subst))
+   (where X_fresh
+          ,(variable-not-in (term ((minfixpt X_1 τ_1) (minfixpt X_2 τ_2))) (term X_1)))
+   (where τ_1subst (type-subst τ_1 X_1 X_fresh))
+   (where τ_2subst (type-subst τ_2 X_2 X_fresh))]
+  [(type-join X X) X]
+  [(type-join (Addr τ_1) (Addr τ_2))
+   ;; addresses are contravariant, so have to do the meet instead
+   (Addr (type-meet τ_1 τ_2))]
+  [(type-join τ τ) τ])
 
 (module+ test
   (test-equal? "type-join 1" (term (type-join Nat Nat)) 'Nat)
@@ -2886,41 +2868,119 @@
     (term (type-join (Record [a (Union [A])]) (Record [a (Union [B])])))
     (term (Record [a (Union [A] [B])])))
 
+  (test-equal? "type-join on addresses"
+    (term (type-join (Addr (Union [A])) (Addr (Union [B]))))
+    (term (Addr (Union))))
+
   (test-equal? "type-join on minfixpts with the same names"
-    (term (type-join (minfixpt A (Union [M (Addr A)]))
-                     (minfixpt A (Union [N (Addr A)]))))
-    (term (minfixpt A (Union [M (Addr A)] [N (Addr A)]))))
+    (term (type-join (minfixpt A (Addr (Union [M A])))
+                     (minfixpt A (Addr (Union [N A])))))
+    (term (minfixpt A (Addr (Union)))))
 
   (test-equal? "type-join on minfixpts with different names"
-    (term (type-join (minfixpt A (Union [M (Addr A)]))
-                     (minfixpt B (Union [N (Addr B)]))))
-    (term (minfixpt A1 (Union [M (Addr A1)] [N (Addr A1)]))))
+    (term (type-join (minfixpt A (Addr (Union [M A])))
+                     (minfixpt B (Addr (Union [N B])))))
+    ;; TODO: I think this test is wrong
+    (term (minfixpt A1 (Addr (Union)))))
 
-  (test-equal? "type-join on minfixpts with different numbers of unfoldings"
-    (term (type-join (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)])))]))
-                     (minfixpt A (Union [M (Addr A)]))))
-    (term (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)])))]))))
+  (test-exn "type-join on minfixpts with different numbers of 'unfoldings'"
+    (lambda (exn) #t)
+    (lambda () (term (type-join (minfixpt A (Addr (Union [M (minfixpt A (Addr (Union [M A])))])))
+                                (minfixpt A (Addr (Union [M A])))))))
 
-    (test-equal? "type-join on minfixpts with different numbers of unfoldings, reverse ordrer"
-      (term (type-join (minfixpt A (Union [M (Addr A)]))
-                       (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)])))]))))
-    (term (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)])))]))))
-
-  (test-equal? "type-join on sub-typed minfixpts with different numbers of unfoldings"
-    (term (type-join (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)])))] [N Nat]))
-                     (minfixpt A (Union [M (Addr A)]))))
-    (term (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)])))] [N Nat]))))
-
-  (test-equal? "type-join on incomparable minfixpts with different numbers of unfoldings"
-    (term (type-join (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)])))] [N Nat]))
-                     (minfixpt A (Union [M (Addr A)] [O]))))
-    (term (minfixpt A (Union [M (Addr (minfixpt A (Union [M (Addr A)] [O])))] [N Nat] [O]))))
+  (test-equal? "type-join on one more minfixpt example"
+    (term (type-join (minfixpt B (Addr (Addr (Union     [Y B]))))
+                     (minfixpt A (Addr (Addr (Union [X] [Y A]))))))
+    `(minfixpt B1 (Addr (Addr (Union [X] [Y B1])))))
 
   (test-equal? "No sorting when we have same number of branches in result and original inputs"
     (term (type-join (Union [B] [A]) (Union [B] [A])))
     (term (Union [B] [A]))))
 
-;; TODO: ermove coercion altogether
+(define-metafunction csa#
+  type-meet : τ τ -> τ
+  [(type-meet (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))
+   (Union [t_3 τ_3 ...] ...)
+   (where ([t_3 τ_3 ...] ...)
+          ,(let ()
+             (define branches1 (term ([t_1 τ_1 ...] ...)))
+             (define branches2 (term ([t_2 τ_2 ...] ...)))
+             (define all-new-branches
+              (for/fold ([result-branches null])
+                        ([branch1 branches1])
+                (define tag (first branch1))
+                (match (findf (lambda (branch2) (equal? (first branch2) tag)) branches2)
+                  [#f result-branches]
+                  [branch2
+                   (define (meet-components type1 type2)
+                     (term (type-meet ,type1 ,type2)))
+                   ;; NOTE: assumes that the branches have the same number of components
+                   (append result-branches
+                           (list `[,tag ,@(map meet-components (rest branch1) (rest branch2))]))])))
+             ;; NOTE: We sort here to get the types into a canonical form and avoid repeated states,
+             ;; but only when the number of branches is different from the original number in each
+             ;; list (as a conservative heuristic to detect when the types might be the
+             ;; possibly-out-order types from the original program)
+             (if (and (= (length all-new-branches) (length branches1))
+                      (= (length all-new-branches) (length branches2)))
+                 all-new-branches
+                 (sort all-new-branches sexp<?))))]
+  [(type-meet (Record [l_1 τ_1] ...) (Record [l_2 τ_2] ...))
+   (Record [l_1 (type-meet τ_1 τ_2)] ...)]
+  ;; If names for minfixpt are the same, don't rename them
+  [(type-meet (minfixpt X τ_1) (minfixpt X τ_2))
+   (minfixpt X (type-meet τ_1 τ_2))]
+  [(type-meet (minfixpt X_1 τ_1) (minfixpt X_2 τ_2))
+   (minfixpt X_fresh (type-meet τ_1subst τ_2subst))
+   (where X_fresh
+          ,(variable-not-in (term ((minfixpt X_1 τ_1) (minfixpt X_2 τ_2))) (term X_1)))
+   (where τ_1subst (type-subst τ_1 X_1 X_fresh))
+   (where τ_2subst (type-subst τ_2 X_2 X_fresh))]
+  [(type-meet X X) X]
+  [(type-meet (Addr τ_1) (Addr τ_2))
+   (Addr (type-join τ_1 τ_2))]
+  [(type-meet τ τ) τ])
+
+(module+ test
+  (test-equal? "type-meet 1" (term (type-meet Nat Nat)) 'Nat)
+  (test-equal? "type-meet 2"
+               (term (type-meet (Union [A]) (Union [B])))
+               '(Union))
+  (test-equal? "type-meet 2, other direction"
+               (term (type-meet (Union [B]) (Union [A])))
+               '(Union))
+  (test-equal? "type-meet 3"
+               (term (type-meet (Union [A] [B]) (Union [B])))
+               '(Union [B]))
+
+  (test-equal? "type-meet for records"
+    (term (type-meet (Record [a (Union [A])]) (Record [a (Union [B])])))
+    (term (Record [a (Union)])))
+
+  (test-equal? "type-meet on addresses"
+    (term (type-meet (Addr (Union [A])) (Addr (Union [B]))))
+    (term (Addr (Union [A] [B]))))
+
+  (test-equal? "type-meet on minfixpts with the same names"
+    (term (type-meet (minfixpt A (Addr (Union [M A])))
+                     (minfixpt A (Addr (Union [N A])))))
+    (term (minfixpt A (Addr (Union [M A] [N A])))))
+
+  (test-equal? "type-meet on minfixpts with different names"
+    (term (type-meet (minfixpt A (Addr (Union [M A])))
+                     (minfixpt B (Addr (Union [N B])))))
+    (term (minfixpt A1 (Addr (Union [M A1] [N A1])))))
+
+  (test-exn "type-meet on minfixpts with different numbers of 'unfoldings'"
+    (lambda (exn) #t)
+    (lambda () (term (type-meet (minfixpt A (Addr (Union [M (minfixpt A (Addr (Union [M A])))])))
+                                (minfixpt A (Addr (Union [M A])))))))
+
+  (test-equal? "No sorting when we have same number of branches in result and original inputs"
+    (term (type-meet (Union [B] [A]) (Union [B] [A])))
+    (term (Union [B] [A]))))
+
+;; TODO: remove coercion altogether
 ;; Coerces the abstract value v# according to the type τ (just change the types of addresses in
 ;; v). The type system should always make this sound
 (define-metafunction csa#
@@ -2976,9 +3036,10 @@
     (term (record [foo (* (Addr (Union [A])))])))
   ;; NOTE: this may not be a strong enough test
   (test-equal? "coerce/mf folded"
-    (term (coerce/mf (folded ,recursive-record-type (record [a (,recursive-record-type (obs-ext 1))]))
-                     ,recursive-record-type))
-    (term (folded ,recursive-record-type (record [a (,recursive-record-type (obs-ext 1))]))))
+    (term (coerce/mf (folded (minfixpt X (Addr (Union [A] [B X])))
+                             ((Union [A] [B (minfixpt X (Addr (Union [A] [B X])))]) (obs-ext 1)))
+                     (minfixpt X (Addr (Union [B X])))))
+    (term (folded (minfixpt X (Addr (Union [B X]))) ((Union [B (minfixpt X (Addr (Union [B X])))]) (obs-ext 1)))))
   (test-equal? "coerce/mf list"
     (term (coerce/mf (list-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
                   (Listof (Addr (Union [A])))))
@@ -2991,49 +3052,52 @@
 ;; NOTE: this is really a conservative approximation of <= for types. For instance, we don't rename
 ;; variables in recursive types to check for alpha-equivalent recursive types
 (define (type<= type1 type2)
-  (judgment-holds (type<=/j ,type1 ,type2)))
+  (judgment-holds (type<=/j () ,type1 ,type2)))
 
 (define-judgment-form csa#
-  #:mode (type<=/j I I)
-  #:contract (type<=/j τ τ)
+  #:mode (type<=/j I I I)
+  #:contract (type<=/j ([X X] ...) τ τ) ; first part is the (X_1 <: X_2) assumptions
 
   [-------------------
-   (type<=/j Nat Nat)]
+   (type<=/j _ Nat Nat)]
 
   [-------------------
-   (type<=/j String String)]
+   (type<=/j _ String String)]
 
   [--------------
-   (type<=/j (Addr X) (Addr X))]
+   (type<=/j (_ ... (X_1 X_2) _ ...) X_1 X_2)]
 
-  [(type<=/j τ_1 τ_2)
-   ;; TODO: ideally this should allow the types to have different bound names and then rename each to
-   ;; have the same name and check those instead
-   --------------------------------------------
-   (type<=/j (minfixpt X τ_1) (minfixpt X τ_2))]
+  ;; implements the Amber rule
+  [(type<=/j (any ... (X_1 X_2)) τ_1 τ_2)
+   ;; TODO: shouldn't these constraints override previous ones, e.g. if one recursive type shadows
+   ;; another?
+   ----------------------------------------------------------
+   (type<=/j (any ...) (minfixpt X_1 τ_1) (minfixpt X_2 τ_2))]
 
   [;; every variant in type 1 must have >= type in type 2
-   (union-variant<=/j [t_1 τ_1 ...] (Union [t_2 τ_2 ...] ...)) ...
+   ;; (side-condition ,(printf "Union: ~s\n"  (term (any (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...)))))
+   (union-variant<=/j any [t_1 τ_1 ...] (Union [t_2 τ_2 ...] ...)) ...
    ---------------------------------------------------------------
-   (type<=/j (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))]
+   (type<=/j any (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))]
 
-  [(type<=/j τ_1 τ_2) ...
+  [(type<=/j any τ_1 τ_2) ...
    ---------------------------------------------------
-   (type<=/j (Record [l τ_1] ...) (Record [l τ_2] ...))]
+   (type<=/j any (Record [l τ_1] ...) (Record [l τ_2] ...))]
 
   [;; Address types are contravariant (they're "sinks")
-   (type<=/j τ_2 τ_1)
+   ;; (side-condition ,(printf "~s\n" (term (any (Addr τ_1) (Addr τ_2)))))
+   (type<=/j any τ_2 τ_1)
    ---------------------------------
-   (type<=/j (Addr τ_1) (Addr τ_2))]
+   (type<=/j any (Addr τ_1) (Addr τ_2))]
 
-  [(type<=/j τ_1 τ_2)
+  [(type<=/j any τ_1 τ_2)
    ---------------------------------
-   (type<=/j (Listof τ_1) (Listof τ_2))]
+   (type<=/j any (Listof τ_1) (Listof τ_2))]
 
-  [(type<=/j τ_k1 τ_k2)
-   (type<=/j τ_v1 τ_v2)
+  [(type<=/j any τ_k1 τ_k2)
+   (type<=/j any τ_v1 τ_v2)
    -------------------------------------------
-   (type<=/j (Hash τ_k1 τ_v1) (Hash τ_k2 τ_v2))])
+   (type<=/j any (Hash τ_k1 τ_v1) (Hash τ_k2 τ_v2))])
 
 (module+ test
   (test-true "type<= same type" (type<= 'Nat 'Nat))
@@ -3049,32 +3113,49 @@
   (test-false "type<= list 2" (type<= `(Listof ,union-ab) `(Listof ,union-a)))
   (test-true "type<= hash 1" (type<= `(Hash ,union-a ,union-a) `(Hash ,union-ab ,union-ab)))
   (test-false "type<= hash 2" (type<= `(Hash ,union-ab ,union-ab)  `(Hash ,union-a ,union-a)))
-
-  ;; TODO: need more complicated tests for recursive types, I think
-  )
+  (test-true "type<= alpha-equiv minfixpts"
+    (type<= `(minfixpt A (Addr (Addr A)))
+            `(minfixpt B (Addr (Addr B)))))
+  (test-true "type<= minfixpts with no recursive use"
+    (type<= `(minfixpt A (Addr (Union [X] [Y])))
+            `(minfixpt B (Addr (Union [X])))))
+  (test-true "type<= minfixpt 1"
+    (type<= `(minfixpt B (Addr (Addr (Union     [Y B]))))
+            `(minfixpt A (Addr (Addr (Union [X] [Y A]))))))
+  (test-false "type<= minfixpt 2"
+    (type<= `(minfixpt A (Addr (Addr (Union [X] [Y A]))))
+            `(minfixpt B (Addr (Addr (Union     [Y B])))))))
 
 ;; Holds if the variant [t_1 τ_1 ...] has a >= variant in the given union type
 (define-judgment-form csa#
-  #:mode (union-variant<=/j I I)
-  #:contract (union-variant<=/j [t_1 τ_1 ...] (Union [t_2 τ_2 ...] ...))
+  #:mode (union-variant<=/j I I I)
+  #:contract (union-variant<=/j ([X X] ...) [t_1 τ_1 ...] (Union [t_2 τ_2 ...] ...))
 
-  [(type<=/j τ_1 τ_2) ...
+  [(type<=/j any τ_1 τ_2) ...
    ------------------------------------------------------------------------
-   (union-variant<=/j [t_1 τ_1 ..._n] (Union _ ... [t_1 τ_2 ..._n] _ ...))])
+   (union-variant<=/j any [t_1 τ_1 ..._n] (Union _ ... [t_1 τ_2 ..._n] _ ...))])
 
 (module+ test
   (test-true "union-variant<= for union with that variant"
-    (judgment-holds (union-variant<=/j [A] (Union [A]))))
+    (judgment-holds (union-variant<=/j ()
+                                       [A]
+                                       (Union [A]))))
   (test-true "union-variant<= for bigger union"
-    (judgment-holds (union-variant<=/j [A] (Union [A] [B]))))
+    (judgment-holds (union-variant<=/j ()
+                                       [A]
+                                       (Union [A] [B]))))
   (test-false "union-variant<= for union without variant"
-    (judgment-holds (union-variant<=/j [A] (Union [B]))))
+    (judgment-holds (union-variant<=/j ()
+                                       [A]
+                                       (Union [B]))))
   (test-true "union-variant<= for union with bigger type"
-    (judgment-holds (union-variant<=/j [A (Union [C])]
-                                     (Union [A (Union [C] [D])] [B]))))
+    (judgment-holds (union-variant<=/j ()
+                                       [A (Union [C])]
+                                       (Union [A (Union [C] [D])] [B]))))
   (test-false "union-variant<= for union with smaller type"
-    (judgment-holds (union-variant<=/j [A (Union [C] [D])]
-                                     (Union [A (Union [C])] [B])))))
+    (judgment-holds (union-variant<=/j ()
+                                       [A (Union [C] [D])]
+                                       (Union [A (Union [C])] [B])))))
 
 ;; v# τ -> ρ#
 (define (internal-addr-types v type)
@@ -3123,7 +3204,12 @@
     null)
   (test-equal? "internal-addr-types 4"
     (internal-addr-types `(* String) `String)
-    null))
+    null)
+  (test-equal? "internal-addr-types 5: recursive"
+    (internal-addr-types `(folded (minfixpt X (Addr (Union [A X])))
+                                  ((Union [A (minfixpt X (Addr (Union [A X])))]) (init-addr 1)))
+                         `(minfixpt X (Addr (Union [A X]))))
+    (list `[(Union [A (minfixpt X (Addr (Union [A X])))]) (init-addr 1)])))
 
 ;; Merges the list of new receptionists into the old one, taking the join of types for duplicate
 ;; entries and adding new entries otherwise

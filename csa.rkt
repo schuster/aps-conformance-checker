@@ -102,8 +102,8 @@
   (n natural)
   (τ Nat
      String
-     (minfixpt X τ)
-     (Addr X)
+     (minfixpt X (Addr τ))
+     X
      (Union [t τ ...] ...)
      (Record [l τ] ...)
      (Addr τ)
