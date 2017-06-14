@@ -47,7 +47,6 @@
      (variant t e ...)
      (record [l e] ...)
      (: e l) ; record lookup
-     (! e [l e]) ; record (functional) update
      (fold τ e)
      (unfold τ e)
      (primop e ...)
@@ -308,7 +307,6 @@
    (case (subst e x v) (subst/case-clause [(t x_clause ...) e_clause] x v) ...)]
   [(subst (record [l e] ...) x v) (record [l (subst e x v)] ...)]
   [(subst (: e_1 l) x v) (: (subst e_1 x v) l)]
-  [(subst (! e_1 [l e_2]) x v) (! (subst e_1 x v) [l (subst e_2 x v)])]
   [(subst (fold τ e) x v) (fold τ (subst e x v))]
   [(subst (unfold τ e) x v) (unfold τ (subst e x v))]
   [(subst (record [l e] ...) x v) (record [l (subst e x v)] ...)]
@@ -379,8 +377,6 @@
                 (term (record [r1 2] [r2 y])))
   (check-equal? (term (subst (: rec field) rec (record [field 1])))
                 (term (: (record [field 1])  field)))
-  (check-equal? (term (subst (! rec [field 2]) rec (record [field 1])))
-                (term (! (record [field 1]) [field 2])))
   (check-equal?
    (term (subst-n/Q (define-state (S1 [a Nat]) (m) (+ a b)) [a 1] [b 2] [m 3]))
    (term (define-state (S1 [a Nat]) (m) (+ a 2))))

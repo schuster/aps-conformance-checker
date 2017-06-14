@@ -380,13 +380,15 @@
 (define-function (replicated-log-append [log ReplicatedLog]
                                         [entries-to-append (Listof Entry)]
                                         [to-take Nat])
-  (! log [entries (append (take (: log entries) to-take) entries-to-append)]))
+  (ReplicatedLog
+   (append (take (: log entries) to-take) entries-to-append)
+   (: log committed-index)))
 
 (define-function (replicated-log+ [replicated-log ReplicatedLog] [entry Entry])
   (replicated-log-append replicated-log (list entry) (length (: replicated-log entries))))
 
 (define-function (replicated-log-commit [replicated-log ReplicatedLog] [n Int])
-  (! replicated-log [committed-index n]))
+  (ReplicatedLog (: replicated-log entries) n))
 
 ;; Returns the log entries from from-index (exclusive) to to-index (inclusive) (these are *semantic*
 ;; indices)
@@ -523,7 +525,10 @@
        (candidate-at-least-as-up-to-date? log last-log-term last-log-index)))
 
 (define-function (with-vote [metadata StateMetadata] [term Nat] [candidate ,desugared-raft-message-address-type])
-  (! metadata [votes (hash-set (: metadata votes) term candidate)]))
+  (StateMetadata
+   (: metadata current-term)
+   (hash-set (: metadata votes) term candidate)
+   (: metadata last-used-timeout-id)))
 
 (define-function (initial-metadata)
   (StateMetadata 0 (hash) 0))
@@ -559,7 +564,7 @@
   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
         [next-id (+ 1 (: m last-used-timeout-id))])
     (send timer (SetTimer election-timer-name target next-id deadline false))
-    (! m [last-used-timeout-id next-id])))
+    (StateMetadata (: m current-term) (: m votes) next-id)))
 
 (define-function (reset-election-deadline/candidate [timer (Addr TimerMessage)]
                                            [target (Addr Nat)]
@@ -567,7 +572,7 @@
   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
         [next-id (+ 1 (: m last-used-timeout-id))])
     (send timer (SetTimer election-timer-name target next-id deadline false))
-    (! m [last-used-timeout-id next-id])))
+    (ElectionMeta (: m current-term) (: m votes-received) (: m votes) next-id)))
 
 (define-function (reset-election-deadline/leader [timer (Addr TimerMessage)]
                                         [target (Addr Nat)]
@@ -575,7 +580,7 @@
   (let ([deadline (+ election-timeout-min (random (- election-timeout-max election-timeout-min)))]
         [next-id (+ 1 (: m last-used-timeout-id))])
     (send timer (SetTimer election-timer-name target next-id deadline false))
-    (! m [last-used-timeout-id next-id])))
+    (LeaderMeta (: m current-term) next-id)))
 
 (define-function (cancel-election-deadline [timer (Addr TimerMessage)])
   (send timer (CancelTimer election-timer-name)))
@@ -589,7 +594,10 @@
 
 ;; ;; this effectively duplicates the logic of withVote, but it follows the akka-raft code
 (define-function (with-vote-for [m ElectionMeta] [term Nat] [candidate ,desugared-raft-message-address-type])
-  (! m [votes (hash-set (: m votes) term candidate)]))
+  (ElectionMeta (: m current-term)
+                (: m votes-received)
+                (hash-set (: m votes) term candidate)
+                (: m last-used-timeout-id)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Config helpers
@@ -600,7 +608,10 @@
     (if (not (= member self)) (cons member result) result)))
 
 (define-function (inc-vote [m ElectionMeta] [follower ,desugared-raft-message-address-type])
-  (! m [votes-received (hash-set (: m votes-received) follower true)]))
+  (ElectionMeta (: m current-term)
+                (hash-set (: m votes-received) follower true)
+                (: m votes)
+                (: m last-used-timeout-id)))
 
 (define-function (has-majority [m ElectionMeta] [config ClusterConfiguration])
   (let ([total-votes-received
@@ -792,7 +803,7 @@
        ;;   [else 0])
        (goto Follower recently-contacted-by-leader m replicated-log config)]
       [(not (replicated-log-consistent-update replicated-log prev-log-term prev-log-index))
-       (let ([meta-with-updated-term (! m [current-term term])])
+       (let ([meta-with-updated-term (StateMetadata term (: m votes) (: m last-used-timeout-id))])
          (send (unfold ,desugared-raft-message-address-type leader)
                (AppendRejected (: meta-with-updated-term current-term)
                                (replicated-log-last-index replicated-log)
@@ -806,7 +817,7 @@
       ;; [(is-heartbeat entries)
       ;;  (accept-heartbeat m replicated-log config recently-contacted-by-leader)]
       [else
-       (let* ([meta-with-updated-term (! m [current-term term])]
+       (let* ([meta-with-updated-term (StateMetadata term (: m votes) (: m last-used-timeout-id))]
               [append-result (append replicated-log prev-log-index entries meta-with-updated-term)])
          (send (unfold ,desugared-raft-message-address-type leader) (: append-result message))
          (let  ([replicated-log (commit-until-index (: append-result log) leader-commit-id false)])
@@ -953,11 +964,16 @@
          ;; NOTE: akka-raft did not update the term here, which I think is a bug
          (let ([metadata (reset-election-deadline/follower timer-manager self metadata)])
            (goto Follower recently-contacted-by-leader
-                 (! (with-vote metadata term candidate) [current-term term])
+                 (let ([meta-with-vote (with-vote metadata term candidate)])
+                   (StateMetadata term
+                                  (: meta-with-vote votes)
+                                  (: meta-with-vote last-used-timeout-id)))
                  replicated-log
                  config))]
         [else
-         (let ([metadata (! metadata [current-term (max term (: metadata current-term))])])
+         (let ([metadata (StateMetadata (max term (: metadata current-term))
+                                        (: metadata votes)
+                                        (: metadata last-used-timeout-id))])
            (send (unfold ,desugared-raft-message-address-type candidate)
                  (DeclineCandidate (: metadata current-term) (fold ,desugared-raft-message-address-type self)))
            (goto Follower recently-contacted-by-leader metadata replicated-log config))])]
@@ -1008,7 +1024,10 @@
          ;; going to Follower. Some test should probably break this
          (goto Candidate (with-vote-for m term candidate) replicated-log config)]
         [else
-         (let ([m (! m [current-term (max term (: m current-term))])])
+         (let ([m (ElectionMeta (max term (: m current-term))
+                                (: m votes-received)
+                                (: m votes)
+                                (: m last-used-timeout-id))])
            (send (unfold ,desugared-raft-message-address-type candidate)
                  (DeclineCandidate (: m current-term) (fold ,desugared-raft-message-address-type self)))
            (goto Candidate m replicated-log config))])]
@@ -1119,7 +1138,7 @@
          (stop-heartbeat)
          (step-down m replicated-log config)]
         [(> term (: m current-term))
-         (let ([m (! m [current-term term])])
+         (let ([m (LeaderMeta term (: m last-used-timeout-id))])
            (send (unfold ,desugared-raft-message-address-type candidate)
                  (DeclineCandidate term (fold ,desugared-raft-message-address-type self)))
            (step-down m replicated-log config))]

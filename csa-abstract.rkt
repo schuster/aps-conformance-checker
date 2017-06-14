@@ -92,7 +92,6 @@
       (variant t e# ...)
       (record [l e#] ...)
       (: e# l)
-      (! e# [l e#])
       (fold τ e#)
       (unfold τ e#)
       (primop e# ...)
@@ -132,8 +131,6 @@
       (variant t v# ... E# e# ...)
       (record [l v#] ... [l E#] [l e#] ...)
       (: E# l)
-      (! E# [l e#])
-      (! v# [l E#])
       (fold τ E#)
       (unfold τ E#)
       (primop v# ... E# e# ...)
@@ -673,27 +670,6 @@
               [field (value-result `(* ,(second field)) effects)])]
            [_ (one-stuck-result `(: ,v ,l) effects)]))
        (lambda (stuck) `(: ,stuck l)))]
-    [`(! ,rec [,l ,field-exp])
-     (eval-and-then* (list rec field-exp) effects
-       (lambda (vs effects)
-         (match-define (list v-rec v-field) vs)
-         (define (update-field f)
-           (if (equal? (first f) l)
-               `[,l ,v-field]
-               f))
-         (match v-rec
-           [`(record ,fields ...)
-            (match (findf (lambda (f) (equal? (first f) l)) fields)
-              [#f (one-stuck-result `(! ,v-rec [,l ,v-field]) effects)]
-              [field (value-result `(record ,@(map update-field fields)) effects)])]
-           [`(* (Record ,field-types ...))
-            (define fields
-              (for/list ([field-type field-types])
-                (match-define `[,name ,type] field-type)
-                `[,name (* ,type)]))
-            (value-result `(record ,@(map update-field fields)) effects)]
-           [_ (one-stuck-result `(! ,v-rec [,l ,v-field]) effects)]))
-       (lambda (stuck) `(! ,stuck l)))]
     ;; Recursive Types
     [`(fold ,type ,exp)
      (eval-and-then exp effects
@@ -1148,11 +1124,6 @@
                        `(* (Union [B])))
   (check-exp-steps-to? `(: (record [a (variant A)] [b (variant B)]) c)
                        `(: (record [a (variant A)] [b (variant B)]) c))
-  (check-exp-steps-to? `(! (record [a (variant A)] [b (variant B)]) [b (variant C)])
-                       `(record [a (variant A)] [b (variant C)]))
-  (check-exp-steps-to? (term (! (* (Record [a Nat] [b (Union [A] [B] [C])] [c String]))
-                                [b (variant C)]))
-                       (term (record [a (* Nat)] [b (variant C)] [c (* String)])))
   (check-exp-steps-to? (term (fold   (Union [A]) (variant A)))
                        (term (folded (Union [A]) (variant A))))
   (check-exp-steps-to? (term (record [a (fold   ,recursive-record-address-type (,recursive-record-type (obs-ext 1)))]))
@@ -1695,7 +1666,6 @@
     [`(record [,labels ,fields] ...)
      `(record ,@(map (lambda (l f) `(,l ,(do-subst f))) labels fields))]
     [`(: ,e ,l) `(: ,(do-subst e) ,l)]
-    [`(! ,e [,l ,e2]) `(! ,(do-subst e) [,l ,(do-subst e2)])]
     [(list (and kw (or 'fold 'unfold 'folded)) type args ...)
      `(,kw ,type ,@(map do-subst args))]
     [`(hash [,keys ,vals] ...)
@@ -1754,8 +1724,6 @@
   (check-equal? (csa#-subst-n '(send x y) (list `[y (* Nat)])) '(send x (* Nat)))
   (check-equal? (csa#-subst-n '(Nat (obs-ext 1)) (list `[x (* Nat)])) '(Nat (obs-ext 1)))
   (check-equal? (csa#-subst-n '(= x y) (list `[x (* Nat)])) '(= (* Nat) y))
-  (check-equal? (csa#-subst-n '(! (record [a x]) [a (* Nat)]) (list `[x (* Nat)]))
-                '(! (record [a (* Nat)]) [a (* Nat)]))
   (check-equal? (csa#-subst-n/case-clause `[(Cons p) (begin p x)] (list `[p (* Nat)]))
                 (term [(Cons p) (begin p x)]))
   (check-equal? (csa#-subst-n/case-clause `[(Cons p) (begin p x)] (list `[x (* Nat)]))
@@ -1940,8 +1908,6 @@
   [(abstract-e (record [l e] ...) (a ...))
    (record [l (abstract-e e (a ...))] ...)]
   [(abstract-e (: e l) (a ...)) (: (abstract-e e (a ...)) l)]
-  [(abstract-e (! e_1 [l e_2]) (a ...))
-   (! (abstract-e e_1 (a ...)) [l (abstract-e e_2 (a ...))])]
   [(abstract-e (folded τ e) (a ...))
    (folded τ (abstract-e e (a ...)))]
   [(abstract-e (fold τ e) (a ...))
