@@ -7,19 +7,31 @@
 
 (require "desugar.rkt")
 
+(define FullProcessorMessage
+  `(Union
+    [Temp Nat (Addr (Union [Ok] [Off]))]
+    [GetMean (Addr Nat)]
+    [Enable]
+    [Disable (Addr Nat)]
+    [Shutdown]))
+
+(define ProcessorMessage
+  `(Union
+    [Temp Nat (Addr (Union [Ok] [Off]))]
+    [GetMean (Addr Nat)]
+    [Enable]
+    [Disable (Addr Nat)]))
+
+(define ManagerMessage
+  `(Union
+    [NewProcessor (Addr (Addr ,ProcessorMessage))]
+    [ShutdownAll]))
+
 (define weather-program
  (desugar
-  `(program (receptionists [manager ManagerMessage]) (externals)
+  `(program (receptionists [manager ,ManagerMessage]) (externals)
 
-(define-type ProcessorMessage
-  (Union
-   [Temp Nat (Addr (Union [Ok] [Off]))]
-   [GetMean (Addr Nat)]
-   [Enable]
-   [Disable (Addr Nat)]
-   [Shutdown]))
-
-(define-actor ProcessorMessage (Processor)
+(define-actor ,FullProcessorMessage (Processor)
   ()
   (goto Enabled 0 0)
   (define-state (Enabled [total Nat] [count Nat]) (m)
@@ -48,12 +60,7 @@
       [(Shutdown) (goto Shutdown)]))
   (define-state (Shutdown) (m) (goto Shutdown)))
 
-(define-type ManagerMessage
-  (Union
-   [NewProcessor (Addr (Addr ProcessorMessage))]
-   [ShutdownAll]))
-
-(define-actor ManagerMessage (Manager)
+(define-actor ,ManagerMessage (Manager)
   ()
   (goto Managing (list))
   (define-state (Managing [processors (Listof (Addr ProcessorMessage))]) (m)
@@ -123,4 +130,40 @@
 
     ;; 10. Ask for mean, no response
     (async-channel-put proc (variant GetMean client))
-    (check-no-message client #:timeout 3)))
+    (check-no-message client #:timeout 3))
+
+  (define processor-spec-parts
+    `((goto Enabled)
+      (define-state (Enabled)
+        [(variant Temp * r) -> ([obligation r (variant Ok)]) (goto Enabled)]
+        [(variant GetMean r) -> ([obligation r *]) (goto Enabled)]
+        [(variant Enable) -> () (goto Enabled)]
+        [(variant Disable r) -> () (goto Disabled r)]
+        [unobs -> () (goto Shutdown)])
+      (define-state (Disabled redirect)
+        [(variant Temp * r) ->
+         ([obligation r (variant Off)]
+          [obligation redirect *])
+         (goto Disabled redirect)]
+        [(variant GetMean r) -> ([obligation r *]) (goto Disabled redirect)]
+        [(variant Enable) -> () (goto Enabled)]
+        [(variant Disable r) -> () (goto Disabled r)]
+        [unobs -> () (goto Shutdown)])
+      (define-state (Shutdown)
+        [(variant Temp * r) -> () (goto Shutdown)]
+        [(variant GetMean r) -> () (goto Shutdown)]
+        [(variant Enable) -> () (goto Shutdown)]
+        [(variant Disable r) -> () (goto Shutdown)])))
+
+  (define manager-spec
+    `(specification (receptionists [manager ,ManagerMessage]) (externals)
+       ([manager (Union [NewProcessor (Addr (Addr ,ProcessorMessage))])])
+       ([manager (Union [ShutdownAll])])
+       (goto Managing)
+       (define-state (Managing)
+         [(variant NewProcessor r) ->
+          ([obligation r (delayed-fork ,@processor-spec-parts)])
+          (goto Managing)])))
+
+  (test-true "Weather program conforms to spec"
+    (check-conformance weather-program manager-spec)))
