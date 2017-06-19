@@ -11,16 +11,16 @@
   `(Union
     [Temp Nat (Addr (Union [Ok] [NotOk]))]
     [GetMean (Addr Nat)]
-    [Enable]
-    [Disable (Addr Nat)]
+    [Enable (Addr Nat)]
+    [Disable]
     [Shutdown]))
 
 (define ProcessorMessage
   `(Union
     [Temp Nat (Addr (Union [Ok] [NotOk]))]
     [GetMean (Addr Nat)]
-    [Enable]
-    [Disable (Addr Nat)]))
+    [Enable (Addr Nat)]
+    [Disable]))
 
 (define ManagerMessage
   `(Union
@@ -33,32 +33,36 @@
 
 (define-actor ,FullProcessorMessage (Processor)
   ()
-  (goto On 0 0)
-  (define-state (On [sum Nat] [num-rdgs Nat]) (m)
-    (case m
-      [(Temp t r)
-       (send r (variant Ok))
-       (goto On (+ sum t) (+ num-rdgs 1))]
-      [(GetMean r)
-       (send r (/ sum num-rdgs))
-       (goto On sum num-rdgs)]
-      [(Enable) (goto On sum num-rdgs)]
-      [(Disable redir) (goto Off sum num-rdgs redir)]
-      [(Shutdown) (goto Done)]))
-  (define-state (Off [sum Nat] [num-rdgs Nat] [redir (Addr Nat)]) (m)
-    (case m
-      [(Temp t r)
-       (send r (variant NotOk))
-       (send redir t)
-       (goto Off sum num-rdgs redir)]
-      [(GetMean r)
-       (send r (/ sum num-rdgs))
-       (goto Off sum num-rdgs redir)]
-      [(Enable) (goto On sum num-rdgs)]
-      [(Disable new-redir)
-       (goto Off sum num-rdgs new-redir)]
-      [(Shutdown) (goto Done)]))
-  (define-state (Done) (m) (goto Done)))
+;; Initial state
+(goto Off 0 0)
+
+;; State definitions
+(define-state (Off [sum Nat] [num-rdgs Nat]) (m)
+  (case m
+    [(Temp t r)
+     (send r (variant NotOk))
+     (goto Off sum num-rdgs)]
+    [(GetMean r)
+     (send r (/ sum num-rdgs))
+     (goto Off sum num-rdgs)]
+    [(Enable redir) (goto On sum num-rdgs redir)]
+    [(Disable) (goto Off sum num-rdgs)]
+    [(Shutdown) (goto Done)]))
+
+(define-state (On [sum Nat] [num-rdgs Nat] [redir (Addr Nat)]) (m)
+  (case m
+    [(Temp t r)
+     (send r (variant Ok))
+     (send redir t)
+     (goto On (+ sum t) (+ num-rdgs 1) redir)]
+    [(GetMean r)
+     (send r (/ sum num-rdgs))
+     (goto On sum num-rdgs redir)]
+    [(Enable new-redir) (goto On sum num-rdgs new-redir)]
+    [(Disable) (goto Off sum num-rdgs)]
+    [(Shutdown) (goto Done)]))
+
+(define-state (Done) (m) (goto Done)))
 
 (define-actor ,ManagerMessage (Manager)
   ()
@@ -94,35 +98,38 @@
     (async-channel-put manager (variant NewProcessor client))
     (define proc (check-unicast-match client p #:result p))
 
-    ;; 2. Send it temp data, get OK
+    ;; 2. Turn it on, send it temp data, get OK, check redir
+    (define redir (make-async-channel))
+    (async-channel-put proc (variant Enable redir))
     (async-channel-put proc (variant Temp 90 client))
     (check-unicast client (variant Ok))
+    (check-unicast redir 90)
 
     ;; 3. Send it more temp data, get OK
     (async-channel-put proc (variant Temp 70 client))
     (check-unicast client (variant Ok))
+    (check-unicast redir 70)
 
     ;; 4. Get mean
     (async-channel-put proc (variant GetMean client))
     (check-unicast client 80)
 
     ;; 5. disable
-    (define redir (make-async-channel))
-    (async-channel-put proc (variant Disable redir))
+    (async-channel-put proc (variant Disable))
 
     ;; 6. send it more temp data, get NotOk
     (async-channel-put proc (variant Temp 102 client))
     (check-unicast client (variant NotOk))
-    (check-unicast redir 102)
 
     ;; 7. Get mean while disabled
     (async-channel-put proc (variant GetMean client))
     (check-unicast client 80)
 
     ;; 8. Enable, send more data, get OK
-    (async-channel-put proc (variant Enable))
+    (async-channel-put proc (variant Enable redir))
     (async-channel-put proc (variant Temp 50 client))
     (check-unicast client (variant Ok))
+    (check-unicast redir 50)
 
     ;; 9. Shutdown All
     (async-channel-put manager (variant ShutdownAll))
@@ -133,27 +140,27 @@
     (check-no-message client #:timeout 3))
 
   (define processor-spec-parts
-    `((goto On)
-      (define-state (On)
-        [(variant Temp * r) -> ([obligation r (variant Ok)]) (goto On)]
-        [(variant GetMean r) -> ([obligation r *]) (goto On)]
-        [(variant Enable) -> () (goto On)]
-        [(variant Disable r) -> () (goto Off r)]
+    `((goto Off)
+      (define-state (Off)
+        [(variant Temp * r) -> ([obligation r (variant NotOk)]) (goto Off)]
+        [(variant GetMean r) -> ([obligation r *]) (goto Off)]
+        [(variant Enable r) -> () (goto On r)]
+        [(variant Disable) -> () (goto Off)]
         [unobs -> () (goto Shutdown)])
-      (define-state (Off redir)
+      (define-state (On redir)
         [(variant Temp * r) ->
-         ([obligation r (variant NotOk)]
+         ([obligation r (variant Ok)]
           [obligation redir *])
-         (goto Off redir)]
-        [(variant GetMean r) -> ([obligation r *]) (goto Off redir)]
-        [(variant Enable) -> () (goto On)]
-        [(variant Disable r) -> () (goto Off r)]
+         (goto On redir)]
+        [(variant GetMean r) -> ([obligation r *]) (goto On redir)]
+        [(variant Enable r) -> () (goto On r)]
+        [(variant Disable) -> () (goto Off)]
         [unobs -> () (goto Shutdown)])
       (define-state (Shutdown)
         [(variant Temp * r) -> () (goto Shutdown)]
         [(variant GetMean r) -> () (goto Shutdown)]
-        [(variant Enable) -> () (goto Shutdown)]
-        [(variant Disable r) -> () (goto Shutdown)])))
+        [(variant Enable r) -> () (goto Shutdown)]
+        [(variant Disable) -> () (goto Shutdown)])))
 
   (define manager-spec
     `(specification (receptionists [manager ,ManagerMessage]) (externals)
