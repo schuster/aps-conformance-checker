@@ -11,8 +11,8 @@
   `(Union
     [Temp Nat (Addr (Union [Ok] [NotOk]))]
     [GetMean (Addr Nat)]
-    [Enable (Addr Nat)]
     [Disable]
+    [Enable (Addr Nat)]
     [Shutdown]))
 
 (define ProcessorMessage
@@ -45,8 +45,8 @@
     [(GetMean r)
      (send r (/ sum num-rdgs))
      (goto Off sum num-rdgs)]
-    [(Enable redir) (goto On sum num-rdgs redir)]
     [(Disable) (goto Off sum num-rdgs)]
+    [(Enable redir) (goto On sum num-rdgs redir)]
     [(Shutdown) (goto Done)]))
 
 (define-state (On [sum Nat] [num-rdgs Nat] [redir (Addr Nat)]) (m)
@@ -58,8 +58,8 @@
     [(GetMean r)
      (send r (/ sum num-rdgs))
      (goto On sum num-rdgs redir)]
-    [(Enable new-redir) (goto On sum num-rdgs new-redir)]
     [(Disable) (goto Off sum num-rdgs)]
+    [(Enable new-redir) (goto On sum num-rdgs new-redir)]
     [(Shutdown) (goto Done)]))
 
 (define-state (Done) (m) (goto Done)))
@@ -144,8 +144,8 @@
       (define-state (Off)
         [(variant Temp * r) -> ([obligation r (variant NotOk)]) (goto Off)]
         [(variant GetMean r) -> ([obligation r *]) (goto Off)]
-        [(variant Enable r) -> () (goto On r)]
         [(variant Disable) -> () (goto Off)]
+        [(variant Enable r) -> () (goto On r)]
         [unobs -> () (goto Shutdown)])
       (define-state (On redir)
         [(variant Temp * r) ->
@@ -153,14 +153,14 @@
           [obligation redir *])
          (goto On redir)]
         [(variant GetMean r) -> ([obligation r *]) (goto On redir)]
-        [(variant Enable r) -> () (goto On r)]
         [(variant Disable) -> () (goto Off)]
+        [(variant Enable r) -> () (goto On r)]
         [unobs -> () (goto Shutdown)])
       (define-state (Shutdown)
         [(variant Temp * r) -> () (goto Shutdown)]
         [(variant GetMean r) -> () (goto Shutdown)]
-        [(variant Enable r) -> () (goto Shutdown)]
-        [(variant Disable) -> () (goto Shutdown)])))
+        [(variant Disable) -> () (goto Shutdown)]
+        [(variant Enable r) -> () (goto Shutdown)])))
 
   (define manager-spec
     `(specification (receptionists [manager ,ManagerMessage]) (externals)
