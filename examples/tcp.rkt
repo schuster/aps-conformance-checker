@@ -29,7 +29,7 @@
     (Start Nat)))
 (define desugared-tcp-session-event
   `(Union
-    [ReceivedData (Listof Nat)]
+    [ReceivedData (List Nat)]
     [Closed]
     [ConfirmedClosed]
     [Aborted]
@@ -83,7 +83,7 @@
     [syn Syn?]
     [fin Fin?]
     [window Nat]
-    [payload (Listof Byte)])
+    [payload (List Byte)])
 
   (define-function (make-rst/global [received-packet TcpPacket])
     (TcpPacket (: received-packet destination-port)
@@ -121,10 +121,10 @@
   ;; The receive buffer buffers packets that have been received by a socket but are not yet ready to
   ;; be processed (because some other packet earlier in the stream is still missing).
 
-  (define-type ReceiveBuffer (Listof TcpPacket))
+  (define-type ReceiveBuffer (List TcpPacket))
 
   (define-record ReceiveBufferRetrieval
-    [retrieved (Listof TcpPacket)]
+    [retrieved (List TcpPacket)]
     [remaining ReceiveBuffer])
 
   ;; Returns a ReceiveBuffer
@@ -179,7 +179,7 @@
     [window Nat] ; window size in octets
     [send-next Nat]
     [maybe-fin MaybeFinSeq]
-    [buffer (Listof Byte)])
+    [buffer (List Byte)])
 
   ;; Returns the total number of octets to send stored in the buffer
   (define-function (send-buffer-length [s SendBuffer])
@@ -202,7 +202,7 @@
 
   ;; Adds the given octets to the send buffer and updates the send-next pointer
   (define-function (send-buffer-add-octets [s SendBuffer]
-                                           [data (Listof Byte)]
+                                           [data (List Byte)]
                                            [send-next Nat])
     (SendBuffer (: s retransmit-count)
                 (: s unacked-seq)
@@ -255,7 +255,7 @@
 ;; Some types for TCP
 
   (define-variant TcpSessionEvent
-    [ReceivedData [bytes (Listof Byte)]]
+    [ReceivedData [bytes (List Byte)]]
     [Closed]
     [ConfirmedClosed]
     [Aborted]
@@ -284,7 +284,7 @@
   (define-type TcpSessionCommand
     (Union
      (Register (Addr TcpSessionEvent))
-     (Write (Listof Byte) (Addr WriteResponse))
+     (Write (List Byte) (Addr WriteResponse))
      (Close (Addr (Union [CommandFailed] [Closed])))
      (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
      (Abort (Addr (Union [CommandFailed] [Aborted])))))
@@ -352,7 +352,7 @@
     ;; technically guarantee this, but any real implementation would order them.
     (OrderedTcpPacket [packet TcpPacket])
     (Register [handler (Addr TcpSessionEvent)])
-    (Write [data (Listof Byte)] [handler (Addr WriteResponse)])
+    (Write [data (List Byte)] [handler (Addr WriteResponse)])
     (Close [close-handler (Addr (Union [CommandFailed] [Closed]))])
     (ConfirmedClose [close-handler (Addr (Union [CommandFailed] [ConfirmedClosed]))])
     (Abort [close-handler (Addr (Union [CommandFailed] [Aborted]))])
@@ -430,7 +430,7 @@
                   ,DEFAULT-WINDOW-SIZE
                   (list)))
 
-     (define-function (make-fin-with-payload [seqno Nat] [ackno Nat] [payload (Listof Byte)])
+     (define-function (make-fin-with-payload [seqno Nat] [ackno Nat] [payload (List Byte)])
        (TcpPacket (: id local-port)
                   (: (: id remote-address) port)
                   seqno
@@ -442,7 +442,7 @@
                   ,DEFAULT-WINDOW-SIZE
                   payload))
 
-     (define-function (make-normal-packet [seq Nat] [ack Nat] [payload (Listof Byte)])
+     (define-function (make-normal-packet [seq Nat] [ack Nat] [payload (List Byte)])
        (TcpPacket (: id local-port)
                   (: (: id remote-address) port)
                   seq
@@ -589,7 +589,7 @@
      ;; Splits a byte string into a list of byte strings with each one no longer than the given
      ;; size. We assume that the given byte string is non-empty, and that the size is greater than
      ;; zero.
-     (define-function (segmentize [data (Listof Byte)] [max-segment-size Nat])
+     (define-function (segmentize [data (List Byte)] [max-segment-size Nat])
        (for/fold ([segments (list (list))])
                  ([b data])
          ;; get the last segment out of the list
@@ -607,7 +607,7 @@
 
      ;; Accepts new octets to send from the user, sends the ones it can, and returns the new send
      ;; buffer with the new octets
-     (define-function (accept-new-octets [octets (Listof Byte)]
+     (define-function (accept-new-octets [octets (List Byte)]
                                          [send-buffer SendBuffer]
                                          [rcv-nxt Nat]
                                          [timer Timer])
@@ -815,7 +815,7 @@
 
     ;; We're waiting for the user to register an actor to send received octets to
     (define-state (AwaitingRegistration [send-buffer SendBuffer]
-                                        [queued-packets (Listof TcpPacket)]
+                                        [queued-packets (List TcpPacket)]
                                         [rcv-nxt Nat]
                                         [receive-buffer ReceiveBuffer]
                                         [registration-timer (Addr TimerCommand)]
@@ -2037,7 +2037,7 @@
     [syn Nat]
     [fin Nat]
     [window Nat]
-    [payload (Listof Nat)]))
+    [payload (List Nat)]))
 
 (define desugared-tcp-output
   `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
@@ -2056,7 +2056,7 @@
 (define desugared-session-command
   `(Union
     (Register (Addr ,desugared-tcp-session-event))
-    (Write (Listof Nat) (Addr ,desugared-write-response))
+    (Write (List Nat) (Addr ,desugared-write-response))
     (Close (Addr (Union [CommandFailed] [Closed])))
     (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
     (Abort (Addr (Union [CommandFailed] [Aborted])))))

@@ -59,7 +59,7 @@
     (Start Nat)))
 (define desugared-tcp-session-event
   `(Union
-    [ReceivedData (Listof Nat)]
+    [ReceivedData (List Nat)]
     [Closed]
     [ConfirmedClosed]
     [Aborted]
@@ -112,7 +112,7 @@
     [syn Syn?]
     [fin Fin?]
     [window Nat]
-    [payload (Listof Byte)])
+    [payload (List Byte)])
 
   (define-function (packet-ack? [packet TcpPacket])
     (case (: packet ack-flag)
@@ -173,7 +173,7 @@
 ;; Some types for TCP
 
   (define-variant TcpSessionEvent
-    [ReceivedData [bytes (Listof Byte)]]
+    [ReceivedData [bytes (List Byte)]]
     [Closed]
     [ConfirmedClosed]
     [Aborted]
@@ -205,7 +205,7 @@
   (define-type TcpSessionCommand
     (Union
      (Register (Addr TcpSessionEvent))
-     (Write (Listof Byte) (Addr WriteResponse))
+     (Write (List Byte) (Addr WriteResponse))
      (Close (Addr (Union [CommandFailed] [Closed])))
      (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
      (Abort (Addr (Union [CommandFailed] [Aborted])))))
@@ -238,13 +238,13 @@
   (define-variant SendBufferCommand
     (SendSyn)
     (SendRst)
-    (SendText [data (Listof Byte)])
+    (SendText [data (List Byte)])
     (SendFin))
 
   (define-variant TcpSessionInput
     (OrderedTcpPacket [packet TcpPacket])
     (Register [handler (Addr TcpSessionEvent)])
-    (Write [data (Listof Byte)] [handler (Addr WriteResponse)])
+    (Write [data (List Byte)] [handler (Addr WriteResponse)])
     (Close [close-handler (Addr (Union [CommandFailed] [Closed]))])
     (ConfirmedClose [close-handler (Addr (Union [CommandFailed] [ConfirmedClosed]))])
     (Abort [close-handler (Addr (Union [CommandFailed] [Aborted]))])
@@ -1218,7 +1218,7 @@
     [syn (Union [Syn] [NoSyn])]
     [fin (Union [Fin] [NoFin])]
     [window Nat]
-    [payload (Listof Nat)]))
+    [payload (List Nat)]))
 
 (define desugared-tcp-output
   `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
@@ -1237,7 +1237,7 @@
 (define desugared-session-command
   `(Union
     (Register (Addr ,desugared-tcp-session-event))
-    (Write (Listof Nat) (Addr ,desugared-write-response))
+    (Write (List Nat) (Addr ,desugared-write-response))
     (Close (Addr (Union [CommandFailed] [Closed])))
     (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
     (Abort (Addr (Union [CommandFailed] [Aborted])))))
@@ -1246,7 +1246,7 @@
   `(Union
     (OrderedTcpPacket ,desugared-tcp-packet-type)
     (Register (Addr ,desugared-tcp-session-event))
-    (Write (Listof Nat) (Addr ,desugared-write-response))
+    (Write (List Nat) (Addr ,desugared-write-response))
     (Close (Addr (Union [CommandFailed] [Closed])))
     (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
     (Abort (Addr (Union [CommandFailed] [Aborted])))
@@ -1268,7 +1268,7 @@
   `(Union
     [SendSyn]
     [SendRst]
-    [SendText (Listof Nat)]
+    [SendText (List Nat)]
     [SendFin]))
 
 ;; patterns to be used in the spec
@@ -1301,7 +1301,7 @@
      ([session (Union (OrderedTcpPacket ,desugared-tcp-packet-type))])
      ([session (Union
                 (Register (Addr ,desugared-tcp-session-event))
-                (Write (Listof Nat) (Addr ,desugared-write-response))
+                (Write (List Nat) (Addr ,desugared-write-response))
                 (Close (Addr (Union [CommandFailed] [Closed])))
                 (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
                 (Abort (Addr (Union [CommandFailed] [Aborted])))

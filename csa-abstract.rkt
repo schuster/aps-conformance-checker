@@ -203,7 +203,7 @@
       (set! next-generated-address (add1 next-generated-address))
       ;; (printf "Generated address: ~s\n" (term (τ (obs-ext ,next-generated-address))))
       (term ((τ (obs-ext ,next-generated-address)))))]
-  [(messages-of-type/mf (Listof τ))
+  [(messages-of-type/mf (List τ))
    (,(normalize-collection (term (list-val v# ...))))
    (where (v# ...) (messages-of-type/mf τ))]
   [(messages-of-type/mf (Hash τ_1 τ_2))
@@ -267,7 +267,7 @@
      (variant B (* String) (variant C))
      (variant B (* String) (variant D))))
   (test-same-items?
-   (term (messages-of-type/mf (Listof Nat)))
+   (term (messages-of-type/mf (List Nat)))
    (list `(list-val (* Nat))))
   (test-same-items?
    (term (messages-of-type/mf (Hash Nat (Union [A] [B] [C]))))
@@ -744,13 +744,13 @@
            [`(cons ,v ,rest)
             (define existing-list-vals
              (match rest
-               [`(* (Listof ,type)) (list `(* ,type))]
+               [`(* (List ,type)) (list `(* ,type))]
                [`(list-val ,vs ...) vs]))
             (value-result (normalize-collection `(list-val ,@existing-list-vals ,v)) effects)]
            [`(list-as-variant ,l)
             (match l
-              [`(* (Listof ,type)) (value-result `(variant Empty)
-                                                 `(variant Cons (* ,type) (* (Listof ,type)))
+              [`(* (List ,type)) (value-result `(variant Empty)
+                                                 `(variant Cons (* ,type) (* (List ,type)))
                                                  effects)]
               [`(list-val ,items ...)
                (apply value-result
@@ -760,7 +760,7 @@
               [_ (error 'eval-machine/internal "Bad list for list-as-variant: ~s\n" l)])]
            [`(list-ref ,l ,_)
             (match l
-              [`(* (Listof ,type)) (value-result `(* ,type) effects)]
+              [`(* (List ,type)) (value-result `(* ,type) effects)]
               ;; NOTE: we can just return the empty list of results if there are no items in the list:
               ;; we assume that that won't happen, and that therefore we only reached this state
               ;; through over-abstraction
@@ -771,8 +771,8 @@
 
            [`(,(or 'take 'drop 'list-copy) ,v ,_ ...)
             (value-result v effects)]
-           [`(append (* (Listof ,type)) (* (Listof ,type2)))
-            (value-result `(* (Listof ,type)) effects)]
+           [`(append (* (List ,type)) (* (List ,type2)))
+            (value-result `(* (List ,type)) effects)]
            ;; at least one of the lists is precise, so convert the whole thing to a precise list
            ;; (so that we don't lose a precise address)
            [`(append ,v1 ,v2)
@@ -790,11 +790,11 @@
                               (list effects)))])]
            [`(hash-keys ,h)
             (match h
-              [`(* (Hash ,key-type ,_)) (value-result `(* (Listof ,key-type)) effects)]
+              [`(* (Hash ,key-type ,_)) (value-result `(* (List ,key-type)) effects)]
               [`(hash-val ,keys ,_) (value-result `(list-val ,@keys) effects)])]
            [`(hash-values ,h)
             (match h
-              [`(* (Hash ,_ ,value-type)) (value-result `(* (Listof ,value-type)) effects)]
+              [`(* (Hash ,_ ,value-type)) (value-result `(* (List ,value-type)) effects)]
               [`(hash-val ,_ ,values) (value-result `(list-val ,@values) effects)])]
            [`(hash-set ,h ,key ,val)
             (match h
@@ -875,7 +875,7 @@
              (define collection-members
                (match items-val
                  [`(list-val ,items ...) items]
-                 [`(* (Listof ,type)) (list `(* ,type))]))
+                 [`(* (List ,type)) (list `(* ,type))]))
              (define result-after-skipping (value-result result-val effects))
              (define final-results
                (for/fold ([full-result result-after-skipping])
@@ -1177,19 +1177,19 @@
    (term (cons (variant B) (list-val (variant B) (variant C))))
    (term (list-val (variant B) (variant C))))
   (check-exp-steps-to?
-   (term (cons (variant A) (* (Listof (Union [A] [B] [C])))))
+   (term (cons (variant A) (* (List (Union [A] [B] [C])))))
    (term (list-val (* (Union [A] [B] [C])) (variant A))))
   (check-exp-steps-to?
    (term (remove (variant A) (list-val (variant A) (variant B))))
    (term (list-val (variant A) (variant B))))
   (check-exp-steps-to?
-   (term (remove (variant A) (* (Listof (Union [A] [B])))))
-   (term (* (Listof (Union [A] [B])))))
+   (term (remove (variant A) (* (List (Union [A] [B])))))
+   (term (* (List (Union [A] [B])))))
   (check-exp-steps-to-all?
    `(list-ref (list-val) (* Nat))
    null)
   (check-exp-steps-to?
-   (term (list-ref (* (Listof Nat)) (* Nat)))
+   (term (list-ref (* (List Nat)) (* Nat)))
    (term (* Nat)))
   (check-exp-steps-to?
    (term (append (list-val (variant A) (variant B))
@@ -1222,19 +1222,19 @@
   (check-exp-steps-to? `(take (list-val (* Nat)) (* Nat))
                        `(list-val (* Nat)))
   (check-exp-steps-to?
-   (term (take (* (Listof (Union [A]))) (* Nat)))
-   (term (* (Listof (Union [A])))))
+   (term (take (* (List (Union [A]))) (* Nat)))
+   (term (* (List (Union [A])))))
   (check-exp-steps-to? `(drop (list-val (* Nat)) (* Nat))
                        `(list-val (* Nat)))
   (check-exp-steps-to?
-   (term (drop (* (Listof (Union [A]))) (* Nat)))
-   (term (* (Listof (Union [A])))))
+   (term (drop (* (List (Union [A]))) (* Nat)))
+   (term (* (List (Union [A])))))
   (check-exp-steps-to?
    (term (append (list-val (variant A) (variant B))
-                        (* (Listof (Union [A] [B] [C])))))
+                        (* (List (Union [A] [B] [C])))))
    (term (list-val (* (Union [A] [B] [C])) (variant A) (variant B))))
   (check-exp-steps-to?
-   (term (append (* (Listof (Union [A] [B] [C])))
+   (term (append (* (List (Union [A] [B] [C])))
                         (list-val (variant A) (variant B))))
    (term (list-val (* (Union [A] [B] [C])) (variant A) (variant B))))
 
@@ -1283,17 +1283,17 @@
                            (list (term (variant Empty))
                                  (term (variant Cons (variant A) (list-val (variant A) (variant B))))
                                  (term (variant Cons (variant B) (list-val (variant A) (variant B))))))
-  (check-exp-steps-to-all? (term (list-as-variant (* (Listof Nat))))
+  (check-exp-steps-to-all? (term (list-as-variant (* (List Nat))))
                            (list (term (variant Empty))
-                                 (term (variant Cons (* Nat) (* (Listof Nat))))))
+                                 (term (variant Cons (* Nat) (* (List Nat))))))
   (check-exp-steps-to? (term (hash-keys (hash-val ((variant A) (variant B)) ((* Nat)))))
                        (term (list-val (variant A) (variant B))))
   (check-exp-steps-to? (term (hash-keys (* (Hash Nat (Union [A] [B])))))
-                       (term (* (Listof Nat))))
+                       (term (* (List Nat))))
   (check-exp-steps-to? (term (hash-values (hash-val ((* Nat)) ((variant A) (variant B)))))
                        (term (list-val (variant A) (variant B))))
   (check-exp-steps-to? (term (hash-values (* (Hash Nat (Union [A] [B])))))
-                       (term (* (Listof (Union [A] [B])))))
+                       (term (* (List (Union [A] [B])))))
   (check-exp-steps-to? (term (sort-numbers-descending (list-val (* Nat))))
                        (term (list-val (* Nat))))
   (check-exp-steps-to-all? `(for/fold ([result (variant X)])
@@ -1340,7 +1340,7 @@
      (first
       (eval-machine
        `(for/fold ([dummy (* Nat)])
-                  ([item (* (Listof Nat))])
+                  ([item (* (List Nat))])
           (begin
             (spawn loc Nat (goto Foo (variant A)))
             (* Nat)))
@@ -1366,7 +1366,7 @@
      (first
       (eval-machine
        `(for/fold ([dummy (* Nat)])
-                  ([item (* (Listof Nat))])
+                  ([item (* (List Nat))])
           (send (Nat (init-addr 1)) item))
        empty-effects
        #f))
@@ -1431,7 +1431,7 @@
 (define (list-values v)
   (match v
     [`(list-val ,vs ...) vs]
-    [`(* (Listof ,type)) (list `(* ,type))]))
+    [`(* (List ,type)) (list `(* ,type))]))
 
 ;; Puts the given abstract collection value (a list or hash) and puts it into a canonical
 ;; form
@@ -1814,7 +1814,7 @@
    (Record [l (type-subst/internal τ_l X any)] ...)]
   [(type-subst/internal (Addr τ) X any)
    (Addr (type-subst/internal τ X any))]
-  [(type-subst/internal (Listof τ_e) X any) (Listof (type-subst/internal τ_e X any))]
+  [(type-subst/internal (List τ_e) X any) (List (type-subst/internal τ_e X any))]
   [(type-subst/internal (Hash τ_k τ_v) X any)
    (Hash (type-subst/internal τ_k X any) (type-subst/internal τ_v X any))])
 
@@ -2323,10 +2323,10 @@
   (define behavior2
     (term (((define-state (B) (r) (begin (send r (* Nat)) (goto B)))) (goto B))))
   (define behavior3
-    (term (((define-state (C [x (Listof Nat)]) (r) (begin (send r (* Nat)) (goto C x))))
+    (term (((define-state (C [x (List Nat)]) (r) (begin (send r (* Nat)) (goto C x))))
            (goto C (list-val)))))
   (define behavior3-greater
-    (term (((define-state (C [x (Listof Nat)]) (r) (begin (send r (* Nat)) (goto C x))))
+    (term (((define-state (C [x (List Nat)]) (r) (begin (send r (* Nat)) (goto C x))))
            (goto C (list-val (* Nat))))))
 
   (test-begin
@@ -2971,7 +2971,7 @@
   [(coerce/mf (folded _ v#) (minfixpt X τ))
    (folded (minfixpt X τ) (coerce/mf v# (type-subst τ X (minfixpt X τ))))]
   ;; lists, and hashes
-  [(coerce/mf (list-val v# ...) (Listof τ))
+  [(coerce/mf (list-val v# ...) (List τ))
    ,(normalize-collection (term (list-val (coerce/mf v# τ) ...)))]
   [(coerce/mf (hash-val (v#_keys ...) (v#_vals ...)) (Hash τ_key τ_val))
    ,(normalize-collection
@@ -3008,7 +3008,7 @@
     (term (folded (minfixpt X (Addr (Union [B X]))) ((Union [B (minfixpt X (Addr (Union [B X])))]) (obs-ext 1)))))
   (test-equal? "coerce/mf list"
     (term (coerce/mf (list-val (* (Addr (Union [A] [B]))) (* (Addr (Union [A]))))
-                  (Listof (Addr (Union [A])))))
+                  (List (Addr (Union [A])))))
     (term (list-val (* (Addr (Union [A]))))))
   (test-equal? "coerce/mf hash"
     (term (coerce/mf (hash-val ((* Nat)) ((* (Addr (Union [A] [B]))) (* (Addr (Union [A])))))
@@ -3058,7 +3058,7 @@
 
   [(type<=/j any τ_1 τ_2)
    ---------------------------------
-   (type<=/j any (Listof τ_1) (Listof τ_2))]
+   (type<=/j any (List τ_1) (List τ_2))]
 
   [(type<=/j any τ_k1 τ_k2)
    (type<=/j any τ_v1 τ_v2)
@@ -3075,8 +3075,8 @@
   (test-false "type<= address 2" (type<= '(Addr (Union [A])) '(Addr (Union [A] [B]))))
   (define union-a '(Union [A]))
   (define union-ab '(Union [A] [B]))
-  (test-true "type<= list 1" (type<= `(Listof ,union-a) `(Listof ,union-ab)))
-  (test-false "type<= list 2" (type<= `(Listof ,union-ab) `(Listof ,union-a)))
+  (test-true "type<= list 1" (type<= `(List ,union-a) `(List ,union-ab)))
+  (test-false "type<= list 2" (type<= `(List ,union-ab) `(List ,union-a)))
   (test-true "type<= hash 1" (type<= `(Hash ,union-a ,union-a) `(Hash ,union-ab ,union-ab)))
   (test-false "type<= hash 2" (type<= `(Hash ,union-ab ,union-ab)  `(Hash ,union-a ,union-a)))
   (test-true "type<= alpha-equiv minfixpts"

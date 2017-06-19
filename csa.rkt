@@ -106,7 +106,7 @@
      (Union [t τ ...] ...)
      (Record [l τ] ...)
      (Addr τ)
-     (Listof τ)
+     (List τ)
      (Hash τ τ))
   (X variable-not-otherwise-mentioned))
 

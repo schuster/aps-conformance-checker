@@ -153,7 +153,7 @@
         (Addr τ)
         (Record [x τ] ...)
         (Union [V τ ...] ...)
-        (Listof τ)
+        (List τ)
         (Hash τ1 τ2))
   (entry Prog))
 

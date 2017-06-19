@@ -46,7 +46,7 @@
         Nat
         Nat
         Nat
-        (Listof ,desugared-entry-type)
+        (List ,desugared-entry-type)
         Nat
         RaftMsgAddress
         (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
@@ -81,7 +81,7 @@
      Nat
      Nat
      Nat
-     (Listof ,desugared-entry-type)
+     (List ,desugared-entry-type)
      Nat
      ,desugared-raft-message-address-type
      (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
@@ -97,7 +97,7 @@
      ,desugared-raft-message-address-type)))
 
 (define cluster-config-variant
-  (term (Config (Record [members (Listof ,desugared-raft-message-address-type)]))))
+  (term (Config (Record [members (List ,desugared-raft-message-address-type)]))))
 
 (define unobserved-interface-type
   (term
@@ -128,7 +128,7 @@
      Nat
      Nat
      Nat
-     (Listof ,desugared-entry-type)
+     (List ,desugared-entry-type)
      Nat
      ,desugared-raft-message-address-type
      (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
@@ -221,7 +221,7 @@
 
 ;; Works like Scala's list slice (i.e. returns empty list instead of returning errors)
 ;; TODO: give an accurate type here
-(define-function (list-slice [v (Listof Nat)] [from-index Int] [to-index Int])
+(define-function (list-slice [v (List Nat)] [from-index Int] [to-index Int])
   (list-copy v
              (min from-index (length v))
              (min to-index   (length v))))
@@ -272,7 +272,7 @@
    [term Nat]
    [prev-log-term Nat]
    [prev-log-index Nat]
-   [entries (Listof Entry)]
+   [entries (List Entry)]
    [leader-commit-id Nat]
    [leader ,desugared-raft-message-address-type]
    [leader-client (Addr ClientMessage)])
@@ -290,7 +290,7 @@
    [member ,desugared-raft-message-address-type]))
 
 (define-record ClusterConfiguration
-  [members (Listof ,desugared-raft-message-address-type)]
+  [members (List ,desugared-raft-message-address-type)]
   ;; ignoring other config fields for now, since I'm not implementing configuration changes
   )
 
@@ -319,7 +319,7 @@
     Nat
     Nat
     Nat
-    (Listof ,desugared-entry-type)
+    (List ,desugared-entry-type)
     Nat
     ,desugared-raft-message-address-type
     (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
@@ -361,7 +361,7 @@
   (CancelTimer [timer-name String]))
 
 (define-record ReplicatedLog
-  [entries (Listof Entry)]
+  [entries (List Entry)]
   [committed-index Int])
 
 (define-record AppendResult
@@ -378,7 +378,7 @@
 
 ;; Takes the first *take* entries from the log and appends *entries* onto it, returning the new log
 (define-function (replicated-log-append [log ReplicatedLog]
-                                        [entries-to-append (Listof Entry)]
+                                        [entries-to-append (List Entry)]
                                         [to-take Nat])
   (ReplicatedLog
    (append (take (: log entries) to-take) entries-to-append)
@@ -623,7 +623,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; LogIndexMap
 
-(define-function (log-index-map-initialize [members (Listof ,desugared-raft-message-address-type)]
+(define-function (log-index-map-initialize [members (List ,desugared-raft-message-address-type)]
                                            [initialize-with Nat])
   (for/fold ([map (hash)])
             ([member members])
@@ -673,7 +673,7 @@
 (define-function (leader-is-lagging [append-entries-term Nat] [m StateMetadata])
   (< append-entries-term (: m current-term)))
 
-(define-function (is-heartbeat [append-entries-entries (Listof Entry)])
+(define-function (is-heartbeat [append-entries-entries (List Entry)])
   (= 0 (length append-entries-entries)))
 
 (define-function (AppendEntries-apply [term Nat]
@@ -739,7 +739,7 @@
   ;; appends the entries to the log and returns the success message to send
   (define-function (append [replicated-log ReplicatedLog]
                            [prev-log-index Nat]
-                           [entries (Listof Entry)]
+                           [entries (List Entry)]
                            [m StateMetadata])
     (cond
       [(is-heartbeat entries)
@@ -778,7 +778,7 @@
   (define-function (append-entries [term Nat]
                                    [prev-log-term Nat]
                                    [prev-log-index Nat]
-                                   [entries (Listof Entry)]
+                                   [entries (List Entry)]
                                    [leader-commit-id Nat]
                                    [leader ,desugared-raft-message-address-type]
                                    [m StateMetadata]

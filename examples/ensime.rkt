@@ -58,14 +58,14 @@
           (goto Always)])])))
 
 (define-variant ImportSuggestions
-  (ImportSuggestions [results (Listof String)]))
+  (ImportSuggestions [results (List String)]))
 
 (define-variant SymbolSearchResults
-  (SymbolSearchResults [results (Listof String)]))
+  (SymbolSearchResults [results (List String)]))
 
 (define-type IndexerInput
   (Union
-   [PublicSymbolSearchReq (Listof String) Nat (Addr ImportSuggestions)]
+   [PublicSymbolSearchReq (List String) Nat (Addr ImportSuggestions)]
    [TypeCompletionsReq String Nat (Addr SymbolSearchResults)]))
 
 (define-actor IndexerInput
@@ -126,7 +126,7 @@
 (define-type JavaAnalyzerInput
   (Union
    [DocUriAtPointReq File FileLocation (Addr MaybeDocSigPair)]
-   [CompletionsReq File Nat Nat Boolean Boolean (Addr (Listof String))]))
+   [CompletionsReq File Nat Nat Boolean Boolean (Addr (List String))]))
 
 (define-actor JavaAnalyzerInput
   (JavaAnalyzer)
@@ -157,7 +157,7 @@
 (define-type AnalyzerInput
   (Union
    [TypecheckAllReq (Addr VoidResponse)]
-   [CompletionsReq File Nat Nat Boolean Boolean (Addr (Listof String))]
+   [CompletionsReq File Nat Nat Boolean Boolean (Addr (List String))]
    [RefactorReq Nat RefactorType Boolean (Addr RefactorResult)]))
 
 (define-actor AnalyzerInput
@@ -192,7 +192,7 @@
 (define-variant ProjectInput
   (ConnectionInfoReq [sender (Addr ConnectionInfo)])
   (Resolve [doc-sig-pair String] [sender (Addr ResolveResult)])
-  (PublicSymbolSearchReq [keywords (Listof String)]
+  (PublicSymbolSearchReq [keywords (List String)]
                          [max-results Nat]
                          [sender (Addr ImportSuggestions)])
   (TypeCompletionsReq [query String] [max-results Nat] [sender (Addr SymbolSearchResults)])
@@ -206,7 +206,7 @@
                   [max-results Nat]
                   [case-sensitive? Boolean]
                   [reload? Boolean]
-                  [sender (Addr (Listof String))])
+                  [sender (Addr (List String))])
   (TypecheckAllReq [sender (Addr VoidResponse)])
   (RefactorReq [proc-id Nat]
                [type RefactorType]
@@ -446,10 +446,10 @@
     (StringResponse String)))
 
 (define desugared-import-suggestions
-  `(Union (ImportSuggestions (Listof String))))
+  `(Union (ImportSuggestions (List String))))
 
 (define desugared-symbol-search-results
-  `(Union (SymbolSearchResults (Listof String))))
+  `(Union (SymbolSearchResults (List String))))
 
 (define desugared-boolean-response
   `(Union
@@ -476,7 +476,7 @@
   `(Union
     (ConnectionInfoReq (Addr ,desugared-connection-info))
     (Resolve String (Addr ,desugared-resolve-result))
-    (PublicSymbolSearchReq (Listof String) Nat (Addr ,desugared-import-suggestions))
+    (PublicSymbolSearchReq (List String) Nat (Addr ,desugared-import-suggestions))
     (TypeCompletionsReq String Nat (Addr ,desugared-symbol-search-results))
     (DebugRunReq (Addr ,desugared-boolean-response))
     (DebugStopReq (Addr ,desugared-boolean-response))
@@ -487,7 +487,7 @@
                     Nat
                     ,desugared-boolean
                     ,desugared-boolean
-                    (Addr (Listof String)))
+                    (Addr (List String)))
     (TypecheckAllReq (Addr (Union (VoidResponse))))
     (RefactorReq Nat
                  (Union [InlineLocal] [Rename])

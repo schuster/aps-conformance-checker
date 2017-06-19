@@ -61,11 +61,11 @@
 
 (define-type TcpWriteOnlyCommand
   (Union
-   (Write (Listof Byte) (Addr TcpWriteResponse))))
+   (Write (List Byte) (Addr TcpWriteResponse))))
 
 (define-type TcpSessionEvent
   (Union
-   [ReceivedData (Listof Byte)]
+   [ReceivedData (List Byte)]
    [Closed]
    [ConfirmedClosed]
    [Aborted]
@@ -74,7 +74,7 @@
 
 (define-variant TcpSessionCommand
   (Register [handler (Addr TcpSessionEvent)])
-  (Write [data (Listof Byte)] [handler (Addr TcpWriteResponse)])
+  (Write [data (List Byte)] [handler (Addr TcpWriteResponse)])
   (Close [close-handler (Addr (Union [CommandFailed] [Closed]))])
   (ConfirmedClose [close-handler (Addr (Union [CommandFailed] [ConfirmedClosed]))])
   (Abort [close-handler (Addr (Union [CommandFailed] [Aborted]))]))
@@ -108,15 +108,15 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; HTTP types
 
-(define-type HttpRequest (Listof Byte))
-(define-type HttpResponse (Listof Byte))
+(define-type HttpRequest (List Byte))
+(define-type HttpResponse (List Byte))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Internal Types
 
 (define-variant HttpServerConnectionInput
   ;; handles all TCP messages, plus HttpRegister
-  [ReceivedData [bytes (Listof Byte)]]
+  [ReceivedData [bytes (List Byte)]]
   [Closed]
   [ConfirmedClosed]
   [Aborted]
@@ -242,8 +242,8 @@
    ;;
    ;; This fakes the idea of parsing an HTTP request from various received segments from the TCP
    ;; session.
-   (define-function (find-request-tail [data (Listof Byte)])
-     ;; returns (Union [FoundTail [prefix (Listof Byte)] [rest (Listof Byte)]] [TailNotFound])
+   (define-function (find-request-tail [data (List Byte)])
+     ;; returns (Union [FoundTail [prefix (List Byte)] [rest (List Byte)]] [TailNotFound])
      (let ([loop-result
             (for/fold ([result-so-far (variant LookingForTail (list))])
                       ([byte data])
@@ -279,7 +279,7 @@
       (send tcp-session (Close (spawn (close-session-EVICT ,desugared-sink-type ()) Sink)))
       (goto Closed)))
 
-  (define-state (Running [held-data (Listof Byte)] [handler (Addr IncomingRequest)]) (m)
+  (define-state (Running [held-data (List Byte)] [handler (Addr IncomingRequest)]) (m)
     (case m
       [(ReceivedData data)
        (case (find-request-tail data)
@@ -311,7 +311,7 @@
                 [app-listener (Addr HttpListenerEvent)]
                 [tcp (Addr TcpCommand)])
   ((define-function (unbind [tcp-listener (Addr TcpListenerCommand)]
-                            [unbind-commanders (Listof (Addr HttpUnbindResponse))])
+                            [unbind-commanders (List (Addr HttpUnbindResponse))])
      (send tcp-listener (Unbind self))
      (let ([unbind-timer (spawn (unbind-timer-EVICT ,desugared-TimerCommand ,timer-type-env)
                                 Timer (UnbindTimeout) self)])
@@ -359,7 +359,7 @@
        (goto BindingAborted bind-timer (list commander))]))
 
   (define-state (BindingAborted [bind-timer (Addr TimerCommand)]
-                                [commanders (Listof (Addr HttpUnbindResponse))]) (m)
+                                [commanders (List (Addr HttpUnbindResponse))]) (m)
     (case m
       ;; From TCP
       [(CommandFailed)
@@ -393,7 +393,7 @@
        (goto BindingAborted bind-timer (cons commander commanders))]))
 
   (define-state (Unbinding [unbind-timer (Addr TimerCommand)]
-                           [commanders (Listof (Addr HttpUnbindResponse))]) (m)
+                           [commanders (List (Addr HttpUnbindResponse))]) (m)
     (case m
       ;; From TCP
       [(CommandFailed)
@@ -867,7 +867,7 @@
   `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
 (define desugared-tcp-session-event
   `(Union
-    [ReceivedData (Listof Nat)]
+    [ReceivedData (List Nat)]
     [Closed]
     [ConfirmedClosed]
     [Aborted]
@@ -880,7 +880,7 @@
 (define desugared-tcp-session-command
   `(Union
     (Register (Addr ,desugared-tcp-session-event))
-    (Write (Listof Nat) (Addr ,desugared-tcp-write-response))
+    (Write (List Nat) (Addr ,desugared-tcp-write-response))
     (Close (Addr (Union [CommandFailed] [Closed])))
     (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
     (Abort (Addr (Union [CommandFailed] [Aborted])))))
@@ -904,7 +904,7 @@
 
 ;; HTTP types
 (define desugared-http-incoming-request
-  `(Record [request (Listof Nat)] [response-dest (Addr (Listof Nat))]))
+  `(Record [request (List Nat)] [response-dest (Addr (List Nat))]))
 (define desugared-http-connection-command
   `(Union
     [HttpRegister (Addr ,desugared-http-incoming-request)]))

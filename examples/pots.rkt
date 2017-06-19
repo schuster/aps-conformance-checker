@@ -49,7 +49,7 @@
 (define desugared-analyzer-message-type
   `(Union
     [AnalysisRequest
-     (Listof Nat)
+     (List Nat)
      (Addr (Union
             [Invalid]
             [Valid (Record [id Nat]
@@ -131,7 +131,7 @@
    (GetMoreDigits)))
 
 (define-variant AnalyzerMessage
-  (AnalysisRequest [digits (Listof Nat)] [response-dest (Addr AnalyzerResult)]))
+  (AnalysisRequest [digits (List Nat)] [response-dest (Addr AnalyzerResult)]))
 
 (define-variant HaveTone?
   (HaveTone)
@@ -190,7 +190,7 @@
       [(Valid a) (goto GettingFirstDigit)]
       [(GetMoreDigits) (goto GettingFirstDigit)]))
 
-  (define-state (GettingNumber [number (Listof Nat)]) (m)
+  (define-state (GettingNumber [number (List Nat)]) (m)
     (case m
       [(OnHook) (goto Idle)]
       [(Digit n)
@@ -211,7 +211,7 @@
       [(Valid a) (goto GettingNumber number)]
       [(GetMoreDigits) (goto GettingNumber number)]))
 
-  (define-state (WaitOnAnalysis [number (Listof Nat)]) (m)
+  (define-state (WaitOnAnalysis [number (List Nat)]) (m)
     (case m
       [(OnHook) (goto Idle)]
       [(Seize peer)

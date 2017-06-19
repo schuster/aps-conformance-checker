@@ -40,7 +40,7 @@
 ;; JobManager's Client-facing API
 
 (define-variant TaskDescription
-  (Map [data (Listof Nat)])
+  (Map [data (List Nat)])
   (Reduce [left-task-id Nat] [right-task-id Nat]))
 
 (define-record Task
@@ -49,7 +49,7 @@
 
 (define-record Job
   [id Nat]
-  [tasks (Listof Task)]
+  [tasks (List Task)]
   [final-task-id Nat])
 
 (define-variant JobResult
@@ -82,7 +82,7 @@
   [right MaybeReduceData])
 
 (define-variant ReadyTaskWork
-  (MapWork [initial-data (Listof String)])
+  (MapWork [initial-data (List String)])
   (ReduceWork [left (Hash String Nat)] [right (Hash String Nat)]))
 
 ;; A task with all of its required input data
@@ -94,7 +94,7 @@
 ;; "RequestNextInputSplit" (this index will be beyond the range of the list once the data is
 ;; exhausted)
 (define-record UsedPartition
-  [data (Listof Nat)]
+  [data (List Nat)]
   [next-send Nat])
 
 (define-record ManagedTaskManager
@@ -138,7 +138,7 @@
 
 (define-type InputSplitRequest
   (Union
-   [RequestNextInputSplit JobTaskId (Addr (Union [NextInputSplit (Listof String)]))]))
+   [RequestNextInputSplit JobTaskId (Addr (Union [NextInputSplit (List String)]))]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; TaskManager -> TaskRunner Communication
@@ -162,7 +162,7 @@
 (define-variant TaskRunnerInput
   (RunTask [task ReadyTask])
   (CancelRunnerTask [id JobTaskId])
-  (NextInputSplit [items (Listof String)]))
+  (NextInputSplit [items (List String)]))
 
 (define-variant TaskManagerInput
   (AcknowledgeRegistration)
@@ -176,7 +176,7 @@
 (define-variant JobManagerInputVariant
   (RegisterTaskManager [id Nat] [num-slots Nat] [address (Addr TaskManagerCommand)])
   (RequestNextInputSplit [id JobTaskId]
-                         [target (Addr (Union [NextInputSplit (Listof String)]))])
+                         [target (Addr (Union [NextInputSplit (List String)]))])
   (SubmitJob [job Job] [client (Addr JobResult)])
   (CancelJob [id Nat] [result-dest (Addr CancellationResult)])
   ;; these two are responses to SubmitTask
@@ -193,7 +193,7 @@
    (SubmitJob Job (Addr JobResult))
    (Acknowledge JobTaskId)
    (Failure JobTaskId)
-   (RequestNextInputSplit JobTaskId (Addr (Union [NextInputSplit (Listof String)])))
+   (RequestNextInputSplit JobTaskId (Addr (Union [NextInputSplit (List String)])))
    (UpdateTaskExecutionState JobTaskId ExecutionState)
    (TaskManagerTerminated TaskManagerId)
    (CancelJob Nat (Addr CancellationResult))))
@@ -220,7 +220,7 @@
   (TaskRunner [job-manager (Addr InputSplitRequest)] [task-manager (Addr TaskManagerNotification)])
   ((define-function (count-new-words [id JobTaskId]
                                      [word-count (Hash String Nat)]
-                                     [words (Listof String)])
+                                     [words (List String)])
      (let ([result-so-far
             (for/fold ([result word-count])
                       ([word words])
@@ -317,7 +317,7 @@
     (timeout 0
       (send job-manager (RegisterTaskManager my-id 2 self))
       (goto AwaitingRegistration (list))))
-  (define-state/timeout (AwaitingRegistration [idle-runners (Listof (Addr TaskRunnerInput))]) (m)
+  (define-state/timeout (AwaitingRegistration [idle-runners (List (Addr TaskRunnerInput))]) (m)
     (case m
       [(AcknowledgeRegistration) (goto Running idle-runners (list))]
       [(RegisterRunner runner) (goto AwaitingRegistration (cons runner idle-runners))]
@@ -335,8 +335,8 @@
       (send job-manager (RegisterTaskManager my-id 2 self))
       (goto AwaitingRegistration idle-runners)))
   ;; TODO: fix type on idle-runners
-  (define-state (Running [idle-runners (Listof (Addr TaskRunnerInput))]
-                         [busy-runners (Listof BusyRunner)]) (m)
+  (define-state (Running [idle-runners (List (Addr TaskRunnerInput))]
+                         [busy-runners (List BusyRunner)]) (m)
     (case m
       [(AcknowledgeRegistration) (goto Running idle-runners busy-runners)]
       [(RegisterRunner runner) (goto Running (cons runner idle-runners) busy-runners)]
@@ -391,9 +391,9 @@
    ;; Adds the given tasks for the given job to the waiting-tasks and ready-tasks lists as needed, as
    ;; well as the new data partitions
    (define-function (triage-submitted-tasks [job-id Nat]
-                                            [tasks (Listof Task)]
-                                            [waiting-tasks (Listof WatingReduceTask)]
-                                            [ready-tasks (Listof ReadyTask)]
+                                            [tasks (List Task)]
+                                            [waiting-tasks (List WatingReduceTask)]
+                                            [ready-tasks (List ReadyTask)]
                                             [partitions (Hash JobTaskId UsedPartition)])
      (for/fold ([all-tasks (record [need-data waiting-tasks]
                                    [ready ready-tasks]
@@ -436,7 +436,7 @@
    ;; Submits tasks from the ready tasks list for execution on task managers with available slots
    ;; until we run out of either slots or tasks
    (define-function (send-ready-tasks [task-managers (Hash Nat ManagedTaskManager)]
-                                      [ready-tasks (Listof ReadyTask)]
+                                      [ready-tasks (List ReadyTask)]
                                       [running-tasks (Hash JobTaskId RunningTaskExecution)])
      (for/fold ([state (record [task-managers task-managers]
                                [remaining-ready-tasks ready-tasks]
@@ -496,8 +496,8 @@
    ;; Puts the result data into the tasks for any data that's waiting for it
    (define-function (push-to-consumer [id JobTaskId]
                                       [task-result (Hash String Nat)]
-                                      [waiting-tasks (Listof WaitingTask)]
-                                      [ready-tasks (Listof ReadyTask)])
+                                      [waiting-tasks (List WaitingTask)]
+                                      [ready-tasks (List ReadyTask)])
      (for/fold ([result (record [waiting-tasks waiting-tasks] [ready-tasks ready-tasks])])
                ([waiting-task waiting-tasks])
        (let* ([waiting-tasks (remove waiting-task (: result waiting-tasks))]
@@ -536,8 +536,8 @@
                  [task-managers (Hash Nat ManagedTaskManager)]
                  [active-jobs (Hash Nat JobCompletionInfo)]
                  ;; Tasks that are waiting on their input tasks to complete
-                 [waiting-tasks (Listof WaitingReduceTask)]
-                 [ready-tasks (Listof ReadyTask)]
+                 [waiting-tasks (List WaitingReduceTask)]
+                 [ready-tasks (List ReadyTask)]
                  [running-tasks (Hash JobTaskId RunningTaskExecution)]
                  [partitions (Hash JobTaskId UsedPartition)]) (m)
     (case m
@@ -740,7 +740,7 @@
   (define-state (Done) (m) (goto Done)))
 
 (define-actor Nat
-  (TaskManagersCreator [manager-ids (Listof Nat)] [job-manager (Addr TaskManagerToJobManager)])
+  (TaskManagersCreator [manager-ids (List Nat)] [job-manager (Addr TaskManagerToJobManager)])
   ()
   (goto Init)
   (define-state/timeout (Init) (m)
@@ -762,7 +762,7 @@
 
 (define desugared-ready-task
   `(Record [id ,desugared-job-task-id]
-           [work (Union (MapWork (Listof String))
+           [work (Union (MapWork (List String))
                         (ReduceWork (Hash String Nat) (Hash String Nat)))]))
 
 (define desugared-submit-cancel-response
@@ -783,7 +783,7 @@
 
 (define desugared-tm-to-jm-type
   `(Union
-    [RequestNextInputSplit ,desugared-job-task-id (Addr (Union [NextInputSplit (Listof String)]))]
+    [RequestNextInputSplit ,desugared-job-task-id (Addr (Union [NextInputSplit (List String)]))]
     [RegisterTaskManager Nat Nat (Addr ,desugared-task-manager-command)]
     [UpdateTaskExecutionState ,desugared-job-task-id ,desugared-execution-state]))
 
@@ -796,9 +796,9 @@
 
 ;; client-level API
 (define desugared-task-description
-  `(Union [Map (Listof Nat)] [Reduce Nat Nat]))
+  `(Union [Map (List Nat)] [Reduce Nat Nat]))
 (define desugared-task `(Record [id Nat] [type ,desugared-task-description]))
-(define desugared-job `(Record [id Nat] [tasks (Listof ,desugared-task)] [final-task-id Nat]))
+(define desugared-job `(Record [id Nat] [tasks (List ,desugared-task)] [final-task-id Nat]))
 (define desugared-job-result
   `(Union [JobResultSuccess (Hash String Nat)] [JobResultFailure]))
 (define desugared-cancellation-result
@@ -814,7 +814,7 @@
     [Acknowledge ,desugared-job-task-id]
     [Failure ,desugared-job-task-id]
     [RequestNextInputSplit ,desugared-job-task-id
-                           (Addr (Union [NextInputSplit (Listof String)]))]
+                           (Addr (Union [NextInputSplit (List String)]))]
     [UpdateTaskExecutionState ,desugared-job-task-id ,desugared-execution-state]
     [TaskManagerTerminated Nat]
     [CancelJob Nat (Addr ,desugared-cancellation-result)]))

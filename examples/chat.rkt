@@ -22,7 +22,7 @@
     (Union
      (Speak String String)
      (Leave String)
-     (GetMembers (Addr (Listof String)))))
+     (GetMembers (Addr (List String)))))
 
   (define-variant RoomEvent
     (JoinedRoom [room (Addr RoomCommand)])
@@ -33,7 +33,7 @@
   (define-type ServerCommand
     (Union
      (JoinRoom String String (Addr RoomEvent))
-     (GetRoomList (Addr (Listof String)))))
+     (GetRoomList (Addr (List String)))))
 
   (define-variant LogInResponse
     (AuthenticationFailed)
@@ -44,13 +44,13 @@
 
   (define-variant ChatServerInput
     (JoinRoom [room-name String] [username String] [user (Addr RoomEvent)])
-    (GetRoomList [callback (Addr (Listof String))]))
+    (GetRoomList [callback (Addr (List String))]))
 
   (define-variant ChatRoomInput
     (UserJoining [name String] [address (Addr RoomEvent)])
     (Speak [name String] [message String])
     (Leave [name String])
-    (GetMembers [callback (Addr (Listof String))]))
+    (GetMembers [callback (Addr (List String))]))
 
   (define-actor AuthCommand
     (Authenticator [pw-table (Hash String String)] [server (Addr ServerCommand)])
@@ -272,7 +272,7 @@
   `(Union
     (Speak String String)
     (Leave String)
-    (GetMembers (Addr (Listof String)))))
+    (GetMembers (Addr (List String)))))
 
 (define desugared-room-event
   `(Union
@@ -284,7 +284,7 @@
 (define desugared-server-command
   `(Union
     (JoinRoom String String (Addr ,desugared-room-event))
-    (GetRoomList (Addr (Listof String)))))
+    (GetRoomList (Addr (List String)))))
 
 (define desugared-login-response
   `(Union (AuthenticationFailed)

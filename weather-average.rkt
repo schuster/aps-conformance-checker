@@ -67,7 +67,7 @@
 (define-actor ,ManagerMessage (Manager)
   ()
   (goto Managing (list))
-  (define-state (Managing [processors (Listof (Addr ProcessorMessage))]) (m)
+  (define-state (Managing [processors (List (Addr ProcessorMessage))]) (m)
     (case m
       [(NewProcessor r)
        (let ([p (spawn P Processor)])
