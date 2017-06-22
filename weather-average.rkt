@@ -174,10 +174,10 @@
        ([manager (Union [ShutdownAll])])
        (goto Managing)
        (define-state (Managing)
+         [(variant NewProcessor r) -> () (goto Managing)]
          [(variant NewProcessor r) ->
           ([obligation r (delayed-fork ,@processor-spec-parts)])
-          (goto Managing)]
-         [(variant NewProcessor r) -> () (goto Managing)])))
+          (goto Managing)])))
 
   (test-true "Weather program conforms to spec"
     (check-conformance weather-program manager-spec)))
