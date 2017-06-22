@@ -70,9 +70,12 @@
   (define-state (Managing [processors (List (Addr ProcessorMessage))]) (m)
     (case m
       [(NewProcessor r)
-       (let ([p (spawn P Processor)])
-         (send r p)
-         (goto Managing (cons p processors)))]
+       (case (< (length processors) 100)
+         [(True)
+          (let ([p (spawn P Processor)])
+            (send r p)
+            (goto Managing (cons p processors)))]
+         [(False) (goto Managing processors)])]
       [(ShutdownAll)
        (for/fold ([dummy-result (variant Shutdown)])
                  ([p processors])
@@ -170,7 +173,8 @@
        (define-state (Managing)
          [(variant NewProcessor r) ->
           ([obligation r (delayed-fork ,@processor-spec-parts)])
-          (goto Managing)])))
+          (goto Managing)]
+         [(variant NewProcessor r) -> () (goto Managing)])))
 
   (test-true "Weather program conforms to spec"
     (check-conformance weather-program manager-spec)))
