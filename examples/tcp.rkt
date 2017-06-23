@@ -1614,23 +1614,26 @@
                                              (add1 remote-iss))))
     (check-unicast-match connection-response (csa-variant Connected _ _)))
 
-  (test-case "Proper handshake/upper layer notification on passive open"
-    (define-values (packets-out tcp) (start-prog))
-    (define bind-status-dest (make-async-channel))
-    (define bind-handler (make-async-channel))
-    (send-command tcp (Bind server-port bind-status-dest bind-handler))
-    (check-unicast bind-status-dest (Bound))
-    (send-packet tcp remote-ip (make-syn client-port server-port remote-iss))
-    (define local-iss
-      (check-unicast-match packets-out
-        (OutPacket (== remote-ip) (tcp-syn-ack server-port client-port local-iss (add1 remote-iss)))
-        #:result local-iss))
-    (send-packet tcp remote-ip (make-normal-packet client-port
-                                                   server-port
-                                                   (add1 remote-iss)
-                                                   (add1 local-iss)
-                                                   (list)))
-    (check-unicast-match bind-handler (csa-variant Connected _ _)))
+  ;; NOTE: this test commented out because I removed passive opens when I found the state-space
+  ;; explosion was too large
+  ;;
+  ;; (test-case "Proper handshake/upper layer notification on passive open"
+  ;;   (define-values (packets-out tcp) (start-prog))
+  ;;   (define bind-status-dest (make-async-channel))
+  ;;   (define bind-handler (make-async-channel))
+  ;;   (send-command tcp (Bind server-port bind-status-dest bind-handler))
+  ;;   (check-unicast bind-status-dest (Bound))
+  ;;   (send-packet tcp remote-ip (make-syn client-port server-port remote-iss))
+  ;;   (define local-iss
+  ;;     (check-unicast-match packets-out
+  ;;       (OutPacket (== remote-ip) (tcp-syn-ack server-port client-port local-iss (add1 remote-iss)))
+  ;;       #:result local-iss))
+  ;;   (send-packet tcp remote-ip (make-normal-packet client-port
+  ;;                                                  server-port
+  ;;                                                  (add1 remote-iss)
+  ;;                                                  (add1 local-iss)
+  ;;                                                  (list)))
+  ;;   (check-unicast-match bind-handler (csa-variant Connected _ _)))
 
   (test-case "Proper handshake/upper layer notification on simultaneous open"
     ;; Overall sequence is:
