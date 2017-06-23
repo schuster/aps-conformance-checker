@@ -144,12 +144,14 @@
 
   (define processor-spec-parts
     `((goto Off)
+
       (define-state (Off)
         [(variant Temp * r) -> ([obligation r (variant NotOk)]) (goto Off)]
         [(variant GetMean r) -> ([obligation r *]) (goto Off)]
         [(variant Disable) -> () (goto Off)]
-        [(variant Enable r) -> () (goto On r)]
-        [unobs -> () (goto Shutdown)])
+        [(variant Enable redir) -> () (goto On redir)]
+        [unobs -> () (goto Done)])
+
       (define-state (On redir)
         [(variant Temp * r) ->
          ([obligation r (variant Ok)]
@@ -157,13 +159,14 @@
          (goto On redir)]
         [(variant GetMean r) -> ([obligation r *]) (goto On redir)]
         [(variant Disable) -> () (goto Off)]
-        [(variant Enable r) -> () (goto On r)]
-        [unobs -> () (goto Shutdown)])
-      (define-state (Shutdown)
-        [(variant Temp * r) -> () (goto Shutdown)]
-        [(variant GetMean r) -> () (goto Shutdown)]
-        [(variant Disable) -> () (goto Shutdown)]
-        [(variant Enable r) -> () (goto Shutdown)])))
+        [(variant Enable new-redir) -> () (goto On new-redir)]
+        [unobs -> () (goto Done)])
+
+      (define-state (Done)
+        [(variant Temp * r) -> () (goto Done)]
+        [(variant GetMean r) -> () (goto Done)]
+        [(variant Disable) -> () (goto Done)]
+        [(variant Enable redir) -> () (goto Done)])))
 
   (define manager-spec
     `(specification (receptionists [manager ,ManagerMessage]) (externals)
