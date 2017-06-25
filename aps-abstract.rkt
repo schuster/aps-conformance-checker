@@ -248,7 +248,7 @@
                          (term ())
                          (term ()))
                 #f
-                (term (timeout/empty-queue (init-addr 0))))
+                (term (timeout (init-addr 0))))
                (list
                 (list (make-s# (term ((define-state (A))))
                          (term (goto A))
@@ -713,10 +713,7 @@
   #:contract (match-trigger/j boolean trigger# ρ# pt ([x a#] ...))
 
   [-------------------------------------------------------
-   (match-trigger/j _ (timeout/empty-queue _) _ unobs ())]
-
-  [-----------------------------------------------------------
-   (match-trigger/j _ (timeout/non-empty-queue _) _ unobs ())]
+   (match-trigger/j _ (timeout _) _ unobs ())]
 
   [----------------------------------------------------------------------
    (match-trigger/j _ (internal-receive _ _ _) _ unobs ())]
@@ -730,11 +727,7 @@
 
 (module+ test
   (check-equal?
-   (match-trigger #f '(timeout/empty-queue (init-addr 0)) '((Nat (init-addr 0))) 'unobs)
-   null)
-
-  (check-equal?
-   (match-trigger #f '(timeout/non-empty-queue (init-addr 0)) '((Nat (init-addr 0))) 'unobs)
+   (match-trigger #f '(timeout (init-addr 0)) '((Nat (init-addr 0))) 'unobs)
    null)
 
   (check-equal?
@@ -1364,7 +1357,7 @@
     ;; REFACTOR: I'm using a fake trigger here, but attempt-transition probably shouldn't require a
     ;; trigger at all
     (match-define (list this-config forks)
-      (attempt-transition config trans #f `(timeout/empty-queue (init-addr 1))))
+      (attempt-transition config trans #f `(timeout (init-addr 1))))
     (define all-configs (cons this-config forks))
     (match-define (list earlier-configs observing-config later-configs)
       (find-with-rest (curryr config-observes-address? address) all-configs))

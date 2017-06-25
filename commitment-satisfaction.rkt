@@ -166,7 +166,7 @@
   (define o-node (sat-test-node 'O 1 (list 'V)))
 
   ;; aw stands for "Actor has Work to do"
-  (define sat-aw-trigger1 `(timeout/empty-queue (init-addr 1)))
+  (define sat-aw-trigger1 `(timeout (init-addr 1)))
   (define sat-aw-trigger2 `(internal-receive (init-addr 2) (* Nat) single))
   (define sat-aw-trigger3 `(internal-receive (init-addr 3) (* Nat) single))
   (define sat-aw-trigger4 `(internal-receive (init-addr 4) (* Nat) single))
