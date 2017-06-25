@@ -3090,4 +3090,44 @@
     (lambda ()
       (check-conformance/config
        (make-single-actor-config escape-actor)
-       (make-exclusive-spec obs-escape-spec2)))))
+       (make-exclusive-spec obs-escape-spec2))))
+
+  ;;;; Fairness for timeouts/externals
+
+  ;; The old fairness constraint said that if there were no internal messages for an actor, that
+  ;; actor's timeout would have to eventually run. However, that's not necessarily true: we could have
+  ;; an infinite stream of messages from the environment that prevent the timeout from
+  ;; running. Fairness just says that the actor is eventually run at some point if it has work to do.
+  ;;
+  ;; As an example, this actor will only send a response to its request if its timeout fires, and the
+  ;; spec says that it must respond to its first request. This test should fail because of the
+  ;; scenario described above.
+  (define send-after-timeout-actor
+    (term
+     (((Addr Nat) (addr 0))
+      (((define-state (WaitingForRequest) (m)
+          (goto AboutToSend m))
+        (define-state (AboutToSend [dest (Addr Nat)]) (m)
+          (goto AboutToSend dest)
+          [(timeout 5)
+           (begin
+             (send dest 1)
+             (goto Done))])
+        (define-state (Done) (m) (goto Done)))
+       (goto WaitingForRequest)))))
+
+  (define reply-to-first-request-spec
+    (term
+     (((define-state (FirstState)
+         [r -> ([obligation r *]) (goto Done)])
+       (define-state (Done)
+         [* -> () (goto Done)]))
+      (goto FirstState)
+      ((Addr Nat) (addr 0)))))
+
+  (test-valid-actor? send-after-timeout-actor)
+  (test-valid-instance? reply-to-first-request-spec)
+  (test-false "External messages can prevent timeout from firing"
+    (check-conformance/config
+     (make-single-actor-config send-after-timeout-actor)
+     (make-exclusive-spec reply-to-first-request-spec))))

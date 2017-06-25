@@ -12,7 +12,9 @@
  csa#-make-external-trigger
  csa#-abstract-config
  csa#-blur-config
- necessary-action?
+ internal-atomic-action?
+ trigger-address
+ internal-single-receive?
  csa#-address-type
  csa#-address-strip-type
  ;; required for widening
@@ -2731,40 +2733,48 @@
 (define (precise-internal-address? addr)
   (redex-match? csa# a#int-precise addr))
 
-;; A necessary action is an action that must eventually be run in a fair execution if it is
-;; continuously enabled. In CSA#, a timeout action is necessary if it's on an atomic actor that have
-;; no incoming messages (an "empty queue"), and an internal receive action is necessary if the message
-;; is a one-of. External receives are never necessary.
-(define (necessary-action? trigger)
-  (judgment-holds (necessary-action?/j ,trigger)))
-
-(define-judgment-form csa#
-  #:mode (necessary-action?/j I)
-  #:contract (necessary-action?/j trigger#)
-
-  [-----------------------------------------------------
-   (necessary-action?/j (timeout/empty-queue a#int-precise))]
-
-  [-----------------------------------------------------
-   (necessary-action?/j (internal-receive a#int v# single))])
+(define (internal-atomic-action? trigger)
+  (match trigger
+    [`(external-receive ,_ ,_) #f]
+    [`(internal-receive ,_ ,_ many) #f]
+    [_ (precise-internal-address? (trigger-address trigger))]))
 
 (module+ test
-  (test-true "necessary-action? 1"
-    (necessary-action? (term (timeout/empty-queue (init-addr 1)))))
-  (test-false "necessary-action? collective actor timeout"
-    (necessary-action? (term (timeout/empty-queue (blurred-spawn-addr 1)))))
-  (test-false "necessary-action? 2"
-    (necessary-action? (term (timeout/non-empty-queue (init-addr 1)))))
-  (test-true "necessary-action? atomic actor, single message"
-    (necessary-action? (term (internal-receive (init-addr 1) (* Nat) single))))
-  (test-false "necessary-action? atomic actor, many-of message"
-    (necessary-action? (term (internal-receive (init-addr 1) (* Nat) many))))
-  (test-true "necessary-action? collective actor, single message"
-    (necessary-action? (term (internal-receive (blurred-spawn-addr 1) (* Nat) single))))
-  (test-false "necessary-action? collecive actor, many-of message"
-    (necessary-action? (term (internal-receive (blurred-spawn-addr 1) (* Nat) many))))
-  (test-false "necessary-action? 4"
-    (necessary-action? (term (external-receive (init-addr 1) (* Nat))))))
+  (test-true "internal-atomic-action? 1"
+    (internal-atomic-action? (term (timeout/empty-queue (init-addr 1)))))
+  (test-false "internal-atomic-action? collective actor timeout"
+    (internal-atomic-action? (term (timeout/empty-queue (blurred-spawn-addr 1)))))
+  (test-true "internal-atomic-action? 2"
+    (internal-atomic-action? (term (timeout/non-empty-queue (init-addr 1)))))
+  (test-true "internal-atomic-action? atomic actor, single message"
+    (internal-atomic-action? (term (internal-receive (init-addr 1) (* Nat) single))))
+  (test-false "internal-atomic-action? atomic actor, many-of message"
+    (internal-atomic-action? (term (internal-receive (init-addr 1) (* Nat) many))))
+  (test-false "internal-atomic-action? collective actor, single message"
+    (internal-atomic-action? (term (internal-receive (blurred-spawn-addr 1) (* Nat) single))))
+  (test-false "internal-atomic-action? collecive actor, many-of message"
+    (internal-atomic-action? (term (internal-receive (blurred-spawn-addr 1) (* Nat) many))))
+  (test-false "internal-atomic-action? external receive"
+    (internal-atomic-action? (term (external-receive (init-addr 1) (* Nat))))))
+
+(define (internal-single-receive? trigger)
+  (match trigger
+    [`(internal-receive ,_ ,_ single) #t]
+    [_ #f]))
+
+(module+ test
+  (test-true "internal-single-receive? atomic/single"
+    (internal-single-receive? `(internal-receive (init-addr 1) (* Nat) single)))
+  (test-false "internal-single-receive? atomic/many"
+    (internal-single-receive? `(internal-receive (init-addr 1) (* Nat) many)))
+  (test-true "internal-single-receive? collective/single"
+    (internal-single-receive? `(internal-receive (blurred-spawn-addr 1 NEW) (* Nat) single)))
+  (test-false "internal-single-receive? collective/many"
+    (internal-single-receive? `(internal-receive (blurred-spawn-addr 1 NEW) (* Nat) many)))
+  (test-false "internal-single-receive? external-receive"
+    (internal-single-receive? `(external-receive (init-addr 1) (* Nat))))
+  (test-false "internal-single-receive? timeout)"
+    (internal-single-receive? `(timeout/empty-queue (init-addr 1)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Types

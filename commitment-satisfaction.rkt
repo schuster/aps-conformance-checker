@@ -89,7 +89,8 @@
   (define unsatisfied-config-commitments (mutable-set))
 
   (define outgoing (build-outgoing-dict incoming related-spec-steps))
-  (define enabled-necessary-actions (catalog-enabled-necessary-actions outgoing))
+  (define internally-enabled-actors (catalog-actors-with-work outgoing))
+  (define internal-single-receives (catalog-internal-single-receives outgoing))
 
   (define-values (satisfying-pairs unsatisfying-pairs)
     (for/fold ([satisfying-pairs (set)]
@@ -115,7 +116,8 @@
                                       incoming
                                       outgoing
                                       related-spec-steps
-                                      enabled-necessary-actions))
+                                      internally-enabled-actors
+                                      internal-single-receives))
               (set-union! satisfied-config-commitments   new-satisfied-config-commitments)
               (set-union! unsatisfied-config-commitments new-unsatisfied-config-commitments)
               (set-member? new-satisfied-config-commitments configs-commitment-pair)]))))
@@ -147,7 +149,7 @@
     (spec-step #t #f (letters->sat-list com-addr-number satisfied-commitment-letters)))
 
   ;; These are the structures used for most of the tests for commitment satisfaction
-  (define a-node (sat-test-node 'A 1 (list 'W 'X 'Y 'Z)))
+  (define a-node (sat-test-node 'A 1 (list 'V 'W 'X 'Y 'Z)))
   (define b-node (sat-test-node 'B 1 (list 'X 'Z)))
   (define c-node (sat-test-node 'C 1 (list 'X 'Z)))
   (define d-node (sat-test-node 'D 1 (list 'X 'Z)))
@@ -160,34 +162,47 @@
   (define k-node (sat-test-node 'K 4 (list 'X 'Z)))
   (define l-node (sat-test-node 'L 5 (list 'W 'Z)))
   (define m-node (sat-other-derivative-node 'M))
+  (define n-node (sat-test-node 'N 1 (list 'V)))
+  (define o-node (sat-test-node 'O 1 (list 'V)))
 
-  ;; en stands for "enabled necessary", others use 'ue' for enabled unnecessary
-  (define sat-en-trigger1 `(timeout/empty-queue (init-addr 1)))
-  (define sat-en-trigger2 `(internal-receive (init-addr 2) (* Nat) single))
-  (define sat-en-trigger3 `(internal-receive (init-addr 3) (* Nat) single))
-  (define sat-en-trigger4 `(internal-receive (init-addr 4) (* Nat) single))
+  ;; aw stands for "Actor has Work to do"
+  (define sat-aw-trigger1 `(timeout/empty-queue (init-addr 1)))
+  (define sat-aw-trigger2 `(internal-receive (init-addr 2) (* Nat) single))
+  (define sat-aw-trigger3 `(internal-receive (init-addr 3) (* Nat) single))
+  (define sat-aw-trigger4 `(internal-receive (init-addr 4) (* Nat) single))
 
-  (define sat-eu-trigger1 `(external-receive (init-addr 1) (* Nat)))
+  ;; im stands for "Internal Message"
+  (define sat-im-trigger1 `(internal-receive (init-addr 5) (variant A) single))
+  (define sat-im-trigger2 `(internal-receive (init-addr 5) (variant B) single))
 
-  (define ag-impl-step (sat-impl-step sat-en-trigger1))
-  (define ai-impl-step (sat-impl-step sat-en-trigger2))
-  (define akm-impl-step (sat-impl-step sat-en-trigger3))
-  (define al-impl-step (sat-impl-step sat-en-trigger4))
-  (define ba-impl-step (sat-impl-step sat-en-trigger1))
-  (define b-cd-impl-step (sat-impl-step sat-en-trigger2))
-  (define b-ef-impl-step (sat-impl-step sat-en-trigger3))
-  (define gh-impl-step (sat-impl-step sat-en-trigger1))
-  (define hg-impl-step (sat-impl-step sat-en-trigger1))
-  (define ia-impl-step (sat-impl-step sat-en-trigger2))
-  (define ij-impl-step (sat-impl-step sat-en-trigger1))
-  (define ja-impl-step (sat-impl-step sat-en-trigger2))
-  (define ji-impl-step (sat-impl-step sat-en-trigger1))
-  (define la-impl-step (sat-impl-step sat-eu-trigger1))
+  ;; er stands for "External Receive"
+  (define sat-er-trigger1 `(external-receive (init-addr 1) (* Nat)))
 
-  (define ag-spec-step (sat-spec-step 1 'X 'Y))
-  (define ai-spec-step (sat-spec-step 1 'W 'Y))
-  (define akm-spec-step (sat-spec-step 1 'W 'Y))
-  (define al-spec-step (sat-spec-step 1 'X 'Y))
+  (define ag-impl-step (sat-impl-step sat-aw-trigger1))
+  (define ai-impl-step (sat-impl-step sat-aw-trigger2))
+  (define akm-impl-step (sat-impl-step sat-aw-trigger3))
+  (define al-impl-step (sat-impl-step sat-aw-trigger4))
+  (define an-impl-step (sat-impl-step sat-im-trigger1))
+  (define ba-impl-step (sat-impl-step sat-aw-trigger1))
+  (define b-cd-impl-step (sat-impl-step sat-aw-trigger2))
+  (define b-ef-impl-step (sat-impl-step sat-aw-trigger3))
+  (define gh-impl-step (sat-impl-step sat-im-trigger1))
+  (define hg-impl-step (sat-impl-step sat-im-trigger1))
+  (define ia-impl-step (sat-impl-step sat-aw-trigger2))
+  (define ij-impl-step (sat-impl-step sat-aw-trigger1))
+  (define ja-impl-step (sat-impl-step sat-aw-trigger2))
+  (define ji-impl-step (sat-impl-step sat-aw-trigger1))
+  (define la-impl-step (sat-impl-step sat-er-trigger1))
+  (define na-impl-step (sat-impl-step sat-im-trigger2))
+  (define no-impl-step (sat-impl-step sat-im-trigger1))
+  (define oa-impl-step (sat-impl-step sat-im-trigger2))
+  (define on-impl-step (sat-impl-step sat-im-trigger1))
+
+  (define ag-spec-step (sat-spec-step 1 'V 'X 'Y))
+  (define ai-spec-step (sat-spec-step 1 'V 'W 'Y))
+  (define akm-spec-step (sat-spec-step 1 'V 'W 'Y))
+  (define al-spec-step (sat-spec-step 1 'V 'X 'Y))
+  (define an-spec-step (sat-spec-step 1 'W 'X 'Y 'Z))
   (define ba-spec-step (sat-spec-step 1))
   (define bc-spec-step (sat-spec-step 1))
   (define bd-spec-step (sat-alt-spec-step 1))
@@ -200,6 +215,10 @@
   (define ja-spec-step (sat-spec-step 3 'X))
   (define ji-spec-step (sat-spec-step 3))
   (define la-spec-step (sat-spec-step 5))
+  (define na-spec-step (sat-spec-step 1 'V))
+  (define no-spec-step (sat-spec-step 1))
+  (define oa-spec-step (sat-spec-step 1 'V))
+  (define on-spec-step (sat-spec-step 1))
 
   (define (make-com-sat-map old new)
     (list (list old new)))
@@ -209,7 +228,9 @@
      [a-node (mutable-set (list b-node ba-impl-step ba-spec-step (make-com-sat-map 1 1))
                           (list i-node ia-impl-step ia-spec-step (make-com-sat-map 3 1))
                           (list j-node ja-impl-step ja-spec-step (make-com-sat-map 3 1))
-                          (list l-node la-impl-step la-spec-step (make-com-sat-map 5 1)))]
+                          (list l-node la-impl-step la-spec-step (make-com-sat-map 5 1))
+                          (list n-node na-impl-step na-spec-step (make-com-sat-map 1 1))
+                          (list o-node oa-impl-step oa-spec-step (make-com-sat-map 1 1)))]
      [b-node (mutable-set)]
      [c-node (mutable-set (list b-node b-cd-impl-step bc-spec-step (make-com-sat-map 1 1)))]
      [d-node (mutable-set (list b-node b-cd-impl-step bd-spec-step (make-com-sat-map 1 1)))]
@@ -223,7 +244,10 @@
      [j-node (mutable-set (list i-node ij-impl-step ij-spec-step (make-com-sat-map 3 3)))]
      [k-node (mutable-set (list a-node akm-impl-step akm-spec-step (make-com-sat-map 1 4)))]
      [m-node (mutable-set (list a-node akm-impl-step akm-spec-step null))]
-     [l-node (mutable-set (list a-node al-impl-step al-spec-step (make-com-sat-map 1 5)))]))
+     [l-node (mutable-set (list a-node al-impl-step al-spec-step (make-com-sat-map 1 5)))]
+     [n-node (mutable-set (list a-node an-impl-step an-spec-step (make-com-sat-map 1 1))
+                          (list o-node on-impl-step on-spec-step (make-com-sat-map 1 1)))]
+     [o-node (mutable-set (list n-node no-impl-step no-spec-step (make-com-sat-map 1 1)))]))
 
   (define com-sat-related-steps
     (mutable-hash
@@ -231,6 +255,7 @@
      [(list a-node ai-impl-step) (mutable-set ai-spec-step)]
      [(list a-node akm-impl-step) (mutable-set akm-spec-step)]
      [(list a-node al-impl-step) (mutable-set al-spec-step)]
+     [(list a-node an-impl-step) (mutable-set an-spec-step)]
      [(list b-node ba-impl-step) (mutable-set ba-spec-step)]
      [(list b-node b-cd-impl-step) (mutable-set bc-spec-step bd-spec-step)]
      [(list b-node b-ef-impl-step) (mutable-set be-spec-step bf-spec-step)]
@@ -240,7 +265,11 @@
      [(list i-node ij-impl-step) (mutable-set ij-spec-step)]
      [(list j-node ja-impl-step) (mutable-set ja-spec-step)]
      [(list j-node ji-impl-step) (mutable-set ji-spec-step)]
-     [(list l-node la-impl-step) (mutable-set la-spec-step)]))
+     [(list l-node la-impl-step) (mutable-set la-spec-step)]
+     [(list n-node no-impl-step) (mutable-set no-spec-step)]
+     [(list n-node na-impl-step) (mutable-set na-spec-step)]
+     [(list o-node on-impl-step) (mutable-set on-spec-step)]
+     [(list o-node oa-impl-step) (mutable-set oa-spec-step)]))
 
   (define (single-match-step i-step s-step derivative addr-map)
     (full-step
@@ -260,7 +289,8 @@
         (mutable-set
          (mapped-derivative k-node (make-com-sat-map 1 4))
          (mapped-derivative m-node null)))
-       (single-match-step al-impl-step al-spec-step l-node (make-com-sat-map 1 5)))]
+       (single-match-step al-impl-step al-spec-step l-node (make-com-sat-map 1 5))
+       (single-match-step an-impl-step an-spec-step n-node (make-com-sat-map 1 1)))]
      [b-node
       (mutable-set
        (single-match-step ba-impl-step ba-spec-step a-node (make-com-sat-map 1 1))
@@ -297,7 +327,13 @@
      [k-node (mutable-set)]
      [l-node
       (mutable-set (single-match-step la-impl-step la-spec-step a-node (make-com-sat-map 5 1)))]
-     [m-node (mutable-set)]))
+     [m-node (mutable-set)]
+     [n-node
+      (mutable-set (single-match-step no-impl-step no-spec-step o-node (make-com-sat-map 1 1))
+                   (single-match-step na-impl-step na-spec-step a-node (make-com-sat-map 1 1)))]
+     [o-node
+      (mutable-set (single-match-step on-impl-step on-spec-step n-node (make-com-sat-map 1 1))
+                   (single-match-step oa-impl-step oa-spec-step a-node (make-com-sat-map 1 1)))]))
 
   (test-equal? "partition-by-satisfaction"
     (partition-by-satisfaction (set a-node
@@ -312,10 +348,14 @@
                                     j-node
                                     k-node
                                     l-node
-                                    m-node)
+                                    m-node
+                                    n-node
+                                    o-node)
                                com-sat-incoming
                                com-sat-related-steps)
-    (list (set m-node)
+    (list (set m-node
+               n-node
+               o-node)
           (set a-node
                b-node
                c-node
@@ -423,11 +463,11 @@
     (build-outgoing-dict com-sat-incoming com-sat-related-steps)
     com-sat-outgoing))
 
-;; OutgoingDict -> (Hash impl-config (Setof Trigger))
+;; OutgoingDict -> (Hash impl-config (Setof a#))
 ;;
-;; Returns a hash table that gives the enabled necessary actions for each implementation config in
-;; outgoing.
-(define (catalog-enabled-necessary-actions outgoing)
+;; Returns a hash table that gives the set of addresses for atomic actors in each config that
+;; definitely have some internal work to do (either a one-of message or a timeout)
+(define (catalog-actors-with-work outgoing)
   (for/fold ([the-hash (make-immutable-hash)])
             ([(config-pair full-steps) outgoing])
     (define all-actions
@@ -437,33 +477,90 @@
     (hash-set the-hash
               i
               (set-union (hash-ref the-hash i (set))
-                         (list->set (filter necessary-action? all-actions))))))
+                         (list->set (map trigger-address (filter internal-atomic-action? all-actions)))))))
 
 (module+ test
-  (define com-sat-en-actions
-    (immutable-hash ['A (set sat-en-trigger1 sat-en-trigger2 sat-en-trigger3 sat-en-trigger4)]
-                    ['B (set sat-en-trigger1 sat-en-trigger2 sat-en-trigger3)]
+  ;; TODO: update these; not sure what exactly they should do
+  (define com-sat-actors-with-work
+    (immutable-hash ['A (set `(init-addr 1) `(init-addr 2) `(init-addr 3) `(init-addr 4) `(init-addr 5))]
+                    ['B (set `(init-addr 1) `(init-addr 2) `(init-addr 3))]
                     ['C (set)]
                     ['D (set)]
                     ['E (set)]
                     ['F (set)]
-                    ['G (set sat-en-trigger1)]
-                    ['H (set sat-en-trigger1)]
-                    ['I (set sat-en-trigger1 sat-en-trigger2)]
-                    ['J (set sat-en-trigger1 sat-en-trigger2)]
+                    ['G (set `(init-addr 5))]
+                    ['H (set `(init-addr 5))]
+                    ['I (set `(init-addr 1) `(init-addr 2))]
+                    ['J (set `(init-addr 1) `(init-addr 2))]
                     ['K (set)]
                     ['L (set)]
-                    ['M (set)]))
-  (test-equal? "catalog-enabled-necessary-actions"
-    (catalog-enabled-necessary-actions com-sat-outgoing) com-sat-en-actions)
+                    ['M (set)]
+                    ['N (set `(init-addr 5))]
+                    ['O (set `(init-addr 5))]))
+  (test-equal? "catalog-actors-with-work"
+    (catalog-actors-with-work com-sat-outgoing) com-sat-actors-with-work)
 
-  (test-equal? "Necessary actions should take union of actions from all pairs with that impl config"
-    (catalog-enabled-necessary-actions
-     (immutable-hash [(config-pair 'A 'X) (set (full-step (impl-step sat-en-trigger1 #f null null #f)
+  (test-equal? "Internal atomic actions should take union of actions from all pairs with that impl config"
+    (catalog-actors-with-work
+     (immutable-hash [(config-pair 'A 'X) (set (full-step (impl-step sat-aw-trigger1 #f null null #f)
                                                           (spec-step null null null)
                                                           null))]
                      [(config-pair 'A 'Y) (set)]))
-    (immutable-hash ['A (set sat-en-trigger1)])))
+    (immutable-hash ['A (set `(init-addr 1))])))
+
+;; OutgoingDict -> (Hash impl-config (Setof int-rcv-trigger))
+;;
+;; Returns a hash table that gives the set of internal-receive triggers for each config where each
+;; trigger is for a one-of message.
+(define (catalog-internal-single-receives outgoing)
+  (for/fold ([the-hash (make-immutable-hash)])
+            ([(config-pair full-steps) outgoing])
+    (define all-actions
+      (for/list ([full-step full-steps])
+        (impl-step-trigger (full-step-impl-step full-step))))
+    (define i (config-pair-impl-config config-pair))
+    (hash-set the-hash
+              i
+              (set-union (hash-ref the-hash i (set))
+                         (list->set (filter internal-single-receive? all-actions))))))
+
+(module+ test
+  (define (make-nat-rcv-trigger addr-num) `(internal-receive (init-addr ,addr-num) (* Nat) single))
+  (define com-sat-internal-single-receives
+    (immutable-hash ['A (set sat-aw-trigger2 sat-aw-trigger3 sat-aw-trigger4 sat-im-trigger1)]
+                    ['B (set sat-aw-trigger2 sat-aw-trigger3)]
+                    ['C (set)]
+                    ['D (set)]
+                    ['E (set)]
+                    ['F (set)]
+                    ['G (set sat-im-trigger1)]
+                    ['H (set sat-im-trigger1)]
+                    ['I (set sat-aw-trigger2)]
+                    ['J (set sat-aw-trigger2)]
+                    ['K (set)]
+                    ['L (set)]
+                    ['M (set)]
+                    ['N (set sat-im-trigger1 sat-im-trigger2)]
+                    ['O (set sat-im-trigger1 sat-im-trigger2)]))
+  (test-equal? "catalog-internal-single-receives"
+    (catalog-internal-single-receives com-sat-outgoing)
+    com-sat-internal-single-receives)
+
+  (test-case "catalog-internal-single-receives atomic/blurred/single/many"
+    (define a-node (sat-test-node 'A 1 null))
+    (define (make-match-step trigger)
+      (single-match-step (sat-impl-step trigger) (sat-spec-step 1) a-node (make-com-sat-map 1 1)))
+    (check-equal?
+     (catalog-internal-single-receives
+      (mutable-hash
+       [a-node
+        (mutable-set
+         (make-match-step `(internal-receive (init-addr 1) (* Nat) single))
+         (make-match-step `(internal-receive (init-addr 1) (* Nat) many))
+         (make-match-step `(internal-receive (blurred-spawn-addr 1 NEW) (* Nat) single))
+         (make-match-step `(internal-receive (blurred-spawn-addr 1 NEW) (* Nat) many)))]))
+     (immutable-hash ['A (set `(internal-receive (init-addr 1) (* Nat) single)
+                              `(internal-receive (blurred-spawn-addr 1 NEW) (* Nat) single))]))))
 
 ;; Type:
 ;;
@@ -485,18 +582,17 @@
                               incoming
                               outgoing
                               related-spec-steps
-                              enabled-necessary-actions)
+                              internally-enabled-actors
+                              internal-single-receives)
 
   ;; The algorithm first builds the graph of all execution paths through the given configuration pair
   ;; in which every configuration has the commitment, and no edge (i.e. step) in the graph satisfies
   ;; it (this is a subgraph of the full execution graph). It then computes the strongly connected
-  ;; components of this graph and finds those that are fair (a fair SCC is an SCC in which for every
-  ;; enabled necessary action in each of its vertices, either there exists a vertex in the SCC where
-  ;; the action is disabled, or there is an edge between two vertices in the SCC that takes that
-  ;; action). Every fair SCC either represents a fair cycle or contains a quiescent configuration (or
-  ;; both). The configurations that can reach a vertex in a fair SCC, then, are those that have some
-  ;; fair execution that does not satisfy the given commitment; all other vertices in the graph do
-  ;; satisfy the commitment in every execution.
+  ;; components of this graph and finds those that are fair (see fair-scc? for definition of
+  ;; fairness). Every fair SCC either represents a fair cycle or contains a quiescent configuration
+  ;; (or both). The configurations that can reach a vertex in a fair SCC, then, are those that have
+  ;; some fair execution that does not satisfy the given commitment; all other vertices in the graph
+  ;; do satisfy the commitment in every execution.
 
   ;; 1. create the graph of unsatisfying steps from the given pair
   (define unsat-graph
@@ -505,7 +601,7 @@
   (define sccs (graph-find-sccs unsat-graph))
   (define fair-scc-vertices
     (for/fold ([fair-scc-vertices (set)])
-              ([scc sccs] #:when (fair-scc? scc enabled-necessary-actions))
+              ([scc sccs] #:when (fair-scc? scc internally-enabled-actors internal-single-receives))
       (set-union fair-scc-vertices scc)))
   ;; 3. Find all vertices that can reach a vertex in a fair SCC
   (define unsat-vertices-set (vertices-reaching unsat-graph fair-scc-vertices))
@@ -523,7 +619,8 @@
                           com-sat-incoming
                           com-sat-outgoing
                           com-sat-related-steps
-                          com-sat-en-actions)
+                          com-sat-actors-with-work
+                          com-sat-internal-single-receives)
     (list (set (make-config-commitment-pair a-node 1 'Y))
           (set)))
 
@@ -532,7 +629,8 @@
                           com-sat-incoming
                           com-sat-outgoing
                           com-sat-related-steps
-                          com-sat-en-actions)
+                          com-sat-actors-with-work
+                          com-sat-internal-single-receives)
     (list (set)
           (set (make-config-commitment-pair a-node 1 'Z)
                (make-config-commitment-pair b-node 1 'Z)
@@ -552,7 +650,8 @@
                           com-sat-incoming
                           com-sat-outgoing
                           com-sat-related-steps
-                          com-sat-en-actions)
+                          com-sat-actors-with-work
+                          com-sat-internal-single-receives)
     (list (set
            (make-config-commitment-pair i-node 3 'X)
            (make-config-commitment-pair j-node 3 'X))
@@ -567,7 +666,8 @@
                           com-sat-incoming
                           com-sat-outgoing
                           com-sat-related-steps
-                          com-sat-en-actions)
+                          com-sat-actors-with-work
+                          com-sat-internal-single-receives)
     (list (set)
           (set (make-config-commitment-pair a-node 1 'W)
                (make-config-commitment-pair g-node 2 'W)
@@ -580,10 +680,10 @@
 ;; (List config-pair (List address pattern)) IncomingDict OutgoingDict RelatedSpecStepsDict
 ;; -> Graph
 ;;
-;; Builds a graph whose vertices are pairs of configuation pairs and commitments such that there is an
-;; edge from v1 to v2 iff there is a step of v1's impl-config to v2's impl-config that does not
-;; satisfy the commitment in v1, and v2's commitment is the possibly renamed version of v1's
-;; commitment.
+;; Builds a graph whose vertices are pairs of configuation pairs and commitments such that vertices
+;; are in the either-way reachability graph of init-config and there is an edge from v1 to v2 iff
+;; there is a step of v1's impl-config to v2's impl-config that does not satisfy the commitment in v1,
+;; and v2's commitment is the possibly renamed version of v1's commitment.
 (define (build-unsatisfying-graph init-config-commitment-pair incoming outgoing related-spec-steps)
   (define G (make-graph))
   (define init-vertex (graph-add-vertex! G init-config-commitment-pair))
@@ -734,7 +834,23 @@
                               com-sat-incoming
                               com-sat-outgoing
                               com-sat-related-steps)
-    com-sat-z-on-a-graph))
+    com-sat-z-on-a-graph)
+
+  (define com-sat-v-on-a-graph
+    (graph-literal
+     (vertices [a (make-config-commitment-pair a-node 1 'V)]
+               [n (make-config-commitment-pair n-node 1 'V)]
+               [o (make-config-commitment-pair o-node 1 'V)])
+     (edges [(list an-impl-step an-spec-step) a n]
+            [(list no-impl-step no-spec-step) n o]
+            [(list on-impl-step on-spec-step) o n])))
+
+  (test-graph-equal? "build-unsatisfying-graph: A with pattern V"
+    (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'V)
+                              com-sat-incoming
+                              com-sat-outgoing
+                              com-sat-related-steps)
+    com-sat-v-on-a-graph))
 
 ;; mapped-derivative (List address pattern) -> (List config-pair (List address pattern))
 ;;
@@ -863,28 +979,53 @@
       (vertices-reaching reaching-test-graph (list g-vert))
       (set g-vert))))
 
-;; Returns #t if the given strongly-connected component of the given graph is fair; #f otherwise.  A
-;; fair SCC is an SCC in which for every enabled necessary action in each of its vertices, either
-;; there exists a vertex in the SCC where the action is disabled, or there is an edge between two
-;; vertices in the SCC that takes that action).
-(define (fair-scc? scc enabled-necessary-actions)
-  (define all-enabled-necessary-actions
-    (for/fold ([all-en-actions (set)])
+;; SCC (Hash i# (Setof a#)) (Hash i# (Setof int-rcv-trigger)) -> Boolean
+;;
+;; Returns #t if the given strongly-connected component of the given graph is fair; #f otherwise. A
+;; fair SCC is an SCC in which every atomic actor that has internal work to do eventually runs or has
+;; no work to do, and every internal message is eventually received or no longer present as a *single*
+;; message.
+(define (fair-scc? scc internally-enabled-actors internal-single-receives)
+  (define-values (all-actors-with-internal-work all-internal-single-receives)
+    (for/fold ([actors-with-work (set)]
+               [all-internal-single-receives (set)])
               ([vertex scc])
-      (set-union all-en-actions
-                 (list->set (hash-ref enabled-necessary-actions (vertex-impl-config vertex))))))
-  (for/and ([action all-enabled-necessary-actions])
-    ;; action is disabled or taken in some state
-    (or
-     ;; action is disabled in some vertex
-     (for/or ([v scc])
-       (not (set-member? (hash-ref enabled-necessary-actions (vertex-impl-config v)) action)))
-     ;; there exists an edge between two vertices of the SCC that takes the action
-     (for/or ([v scc])
-       (for/or ([out-edge (vertex-outgoing v)])
-         (define edge-impl-step (first (edge-value out-edge)))
-         (and (equal? (impl-step-trigger edge-impl-step) action)
-              (set-member? scc (edge-destination out-edge))))))))
+      (values
+       (set-union actors-with-work
+                  (list->set (hash-ref internally-enabled-actors (vertex-impl-config vertex))))
+       (set-union all-internal-single-receives
+                  (list->set (hash-ref internal-single-receives (vertex-impl-config vertex)))))))
+
+  ;; TODO: shouldn't I be doing some kind of rename on every edge to see if the actor has been
+  ;; renamed? I think it wouldn't break anything in my particular setup, but generally I think it
+  ;; should
+  (and
+   ;; internal actors all execute:
+   (for/and ([actor-address all-actors-with-internal-work])
+     ;; action is disabled or taken in some state
+     (or
+      ;; actor is disabled in some vertex
+      (for/or ([v scc])
+        (not (set-member? (hash-ref internally-enabled-actors (vertex-impl-config v)) actor-address)))
+      ;; there exists an edge between two vertices of the SCC that takes the action
+      (for/or ([v scc])
+        (for/or ([out-edge (vertex-outgoing v)])
+          (define edge-impl-step (first (edge-value out-edge)))
+          (and (equal? (trigger-address (impl-step-trigger edge-impl-step)) actor-address)
+               (set-member? scc (edge-destination out-edge)))))))
+   ;; internal single receives all received:
+   (for/and ([trigger all-internal-single-receives])
+     ;; receive is disabled or taken in some state
+     (or
+      ;; receive is disabled in some vertex
+      (for/or ([v scc])
+        (not (set-member? (hash-ref internal-single-receives (vertex-impl-config v)) trigger)))
+      ;; there exists an edge between two vertices of the SCC that takes the action
+      (for/or ([v scc])
+        (for/or ([out-edge (vertex-outgoing v)])
+          (define edge-impl-step (first (edge-value out-edge)))
+          (and (equal? (impl-step-trigger edge-impl-step) trigger)
+               (set-member? scc (edge-destination out-edge)))))))))
 
 (module+ test
   (define (make-com-sat-scc g . vals)
@@ -894,13 +1035,15 @@
     (fair-scc? (make-com-sat-scc com-sat-x-on-a-graph
                                  (make-config-commitment-pair i-node 3 'X)
                                  (make-config-commitment-pair j-node 3 'X))
-               com-sat-en-actions))
+               com-sat-actors-with-work
+               com-sat-internal-single-receives))
 
   (test-true "fair-scc? 2"
     (fair-scc? (make-com-sat-scc com-sat-w-on-a-graph
                                  (make-config-commitment-pair g-node 2 'W)
                                  (make-config-commitment-pair h-node 2 'W))
-               com-sat-en-actions))
+               com-sat-actors-with-work
+               com-sat-internal-single-receives))
 
   (test-true "fair-scc? 3"
     (fair-scc? (make-com-sat-scc com-sat-z-on-a-graph
@@ -908,7 +1051,20 @@
                                  (make-config-commitment-pair i-node 3 'Z)
                                  (make-config-commitment-pair j-node 3 'Z)
                                  (make-config-commitment-pair l-node 5 'Z))
-               com-sat-en-actions)))
+               com-sat-actors-with-work
+               com-sat-internal-single-receives))
+
+  (test-false "fair-scc? 4"
+    (fair-scc? (make-com-sat-scc
+                (graph-literal
+                 (vertices [n (make-config-commitment-pair n-node 1 'V)]
+                           [o (make-config-commitment-pair o-node 1 'V)])
+                 (edges [(list no-impl-step no-spec-step) n o]
+                        [(list on-impl-step on-spec-step) o n]))
+                (make-config-commitment-pair n-node 1 'V)
+                (make-config-commitment-pair o-node 1 'V))
+               com-sat-actors-with-work
+               com-sat-internal-single-receives)))
 
 ;; Small helper; returns the implementation configuration associated with the given vertex of an
 ;; unsat-graph
