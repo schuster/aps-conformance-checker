@@ -139,14 +139,14 @@
                    ([,(make-com-sat-ext-address commitment-address-number) ,@mult-patterns]))))
   (define (sat-other-derivative-node name)
     (config-pair name `(() () (goto A) () ())))
-  (define (sat-impl-step trigger) (impl-step trigger #f null null #f))
+  (define (sat-impl-step trigger) (impl-step trigger null null #f))
   (define (letters->sat-list addr sat-letters)
     (map (lambda (letter) `((obs-ext ,addr) (variant ,letter)))
          sat-letters))
   (define (sat-spec-step com-addr-number . satisfied-commitment-letters)
-    (spec-step #f #f (letters->sat-list com-addr-number satisfied-commitment-letters)))
+    (spec-step #f (letters->sat-list com-addr-number satisfied-commitment-letters)))
   (define (sat-alt-spec-step com-addr-number . satisfied-commitment-letters)
-    (spec-step #t #f (letters->sat-list com-addr-number satisfied-commitment-letters)))
+    (spec-step #t (letters->sat-list com-addr-number satisfied-commitment-letters)))
 
   ;; These are the structures used for most of the tests for commitment satisfaction
   (define a-node (sat-test-node 'A 1 (list 'V 'W 'X 'Y 'Z)))
@@ -373,8 +373,8 @@
     (define a-node (config-pair 'A `(() () (goto A) () ([(obs-ext 1) (many *)]))))
     (define a-node2 (config-pair 'A `(() () (goto A) () ([(obs-ext 1) (single *)]))))
     (define aa-impl-step
-      (impl-step `(internal-receive (init-addr 1) (* Nat) single) #f null null #f))
-    (define aa-spec-step (spec-step #f #f (list `((obs-ext 1) *))))
+      (impl-step `(internal-receive (init-addr 1) (* Nat) single) null null #f))
+    (define aa-spec-step (spec-step #f (list `((obs-ext 1) *))))
     (check-equal?
      (partition-by-satisfaction
       (set a-node)
@@ -502,8 +502,8 @@
 
   (test-equal? "Internal atomic actions should take union of actions from all pairs with that impl config"
     (catalog-actors-with-work
-     (immutable-hash [(config-pair 'A 'X) (set (full-step (impl-step sat-aw-trigger1 #f null null #f)
-                                                          (spec-step null null null)
+     (immutable-hash [(config-pair 'A 'X) (set (full-step (impl-step sat-aw-trigger1 null null #f)
+                                                          (spec-step null null)
                                                           null))]
                      [(config-pair 'A 'Y) (set)]))
     (immutable-hash ['A (set `(init-addr 1))])))

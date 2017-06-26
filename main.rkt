@@ -303,15 +303,16 @@
              ;; it to the unrelated-successors list, and move on to explore the next pair in our
              ;; worklist.
              (loop related-pairs (set-add unrelated-successors pair))]
-            [i-steps
+            [i-steps-with-obs/unobs
              ;; Find the matching s-steps
              (define found-unmatchable-step? #f)
-             (widen-printf "Finding matching s-steps for ~s i-steps\n" (length i-steps))
-             (for ([i-step i-steps])
+             (widen-printf "Finding matching s-steps for ~s i-steps\n" (length i-steps-with-obs/unobs))
+             (for ([i-step-with-obs/unobs i-steps-with-obs/unobs])
+               (match-define (list i-step obs? unobs?) i-step-with-obs/unobs)
                ;; Debugging:
                ;; (printf "Impl step: ~s\n" (debug-impl-step i-step))
 
-               (define matching-s-steps (matching-spec-steps s i-step))
+               (define matching-s-steps (matching-spec-steps s i-step obs? unobs?))
                ;; Debugging:
                ;; (printf "Matching spec steps: ~s\n" matching-s-steps)
 
@@ -341,13 +342,14 @@
 
                 ;; Debugging
                 ;; (displayln "Related pair")
-                (widen-printf "Widening/sbc-ing ~s impl steps\n" (length i-steps))
+                (widen-printf "Widening/sbc-ing ~s impl steps\n" (length i-steps-with-obs/unobs))
                 (define i-step-num 0)
-                (for ([i-step i-steps])
+                (for ([i-step-with-obs/unobs i-steps-with-obs/unobs])
+                  (match-define (list i-step obs? unobs?) i-step-with-obs/unobs)
                   (set! i-step-num (add1 i-step-num))
                   (for ([s-step (hash-ref related-spec-steps (list pair i-step))])
                     (define successor-pairs
-                      (for/list ([config (cons (spec-step-destination s-step) (spec-step-spawns s-step))])
+                      (for/list ([config (spec-step-destinations s-step)])
                         (config-pair (impl-step-destination i-step) config)))
 
                     ;; Debugging only
@@ -368,10 +370,10 @@
                                  ;; widened config pair takes a transition step)
                                  (not (seen? unwidened-sbc-pair)))
                             (widen-pair unwidened-sbc-pair
-                                        i-step
+                                        i-step-with-obs/unobs
                                         (stat-value STAT-visited-pairs-count)
                                         i-step-num
-                                        (length i-steps))
+                                        (length i-steps-with-obs/unobs))
                             (begin
                               (widen-printf "Not widening an already-seen config pair\n")
                               unwidened-sbc-pair)))
@@ -385,6 +387,8 @@
                 (log-related log-file pair)
                 (loop (set-add related-pairs pair) unrelated-successors)])])])])))
 
+;; i# s# -> (listof (i# Boolean Boolean))
+;;
 ;; Returns all implementation steps possible from the given impl-config/spec-config pair, or #f if
 ;; some step leads to an unverifiable configuration. The spec config is used to determine whether
 ;; sending a message to a given receptionist in the implementation config can be observed, unobserved,
@@ -398,35 +402,43 @@
     (define triggers (impl-triggers-from impl-config spec-config))
     (widen-printf "Finding impl steps from ~s triggers\n" (length triggers))
     (append*
-     (for/list ([trigger-with-obs triggers])
-       (widen-printf "Trigger: ~s\n" trigger-with-obs)
+     (for/list ([trigger-with-obs/unobs triggers])
+       (widen-printf "Trigger: ~s\n" trigger-with-obs/unobs)
        (flush-output)
-       (define effects (csa#-eval-trigger impl-config (first trigger-with-obs) abort))
+       (define effects (csa#-eval-trigger impl-config (first trigger-with-obs/unobs) abort))
        (for/list ([effect effects])
-         (apply-transition impl-config effect (second trigger-with-obs)))))))
+         (apply-transition impl-config
+                           effect
+                           (second trigger-with-obs/unobs)
+                           (third  trigger-with-obs/unobs)))))))
 
-;; i# csa#-transition-effect Boolean -> impl-step
-(define (apply-transition config effect observed?)
+;; i# csa#-transition-effect Boolean -> (list impl-step Boolean_obs Boolean_unobs)
+(define (apply-transition config effect observed? unobserved?)
   (define transition (csa#-apply-transition config effect))
-  (impl-step (csa#-transition-trigger transition)
-             observed?
-             (csa#-transition-outputs transition)
-             (csa#-transition-spawn-locs effect)
-             (csa#-transition-final-config transition)))
+  (list
+   (impl-step (csa#-transition-trigger transition)
+              (csa#-transition-outputs transition)
+              (csa#-transition-spawn-locs effect)
+              (csa#-transition-final-config transition))
+   observed?
+   unobserved?))
 
-;; i# s# -> (Listof (List trigger# Boolean))
+;; i# s# -> (Listof (List trigger# Boolean Boolean))
 ;;
-;; Returns all possible triggers from the given config pair, each paired with a boolean indicating
-;; whether the trigger is observed or not
+;; Returns a list of all possible triggers from the given config pair, where the booleans associated
+;; with each indicate whether the trigger can be observed, and the second whether it can be unobserved
 (define (impl-triggers-from impl-config spec-config)
-  (define obs-triggers
-    (map (curryr list #t)
-         (external-triggers-for-receptionists (aps#-config-obs-receptionists spec-config))))
-  (define unobs-triggers
-    (map (curryr list #f)
-         (append (csa#-enabled-internal-actions impl-config)
-                 (external-triggers-for-receptionists (aps#-config-unobs-receptionists spec-config)))))
-  (append obs-triggers unobs-triggers))
+  (define obs-receives
+    (external-triggers-for-receptionists (aps#-config-obs-receptionists spec-config)))
+  (define unobs-receives
+    (external-triggers-for-receptionists (aps#-config-unobs-receptionists spec-config)))
+  (define internal-triggers (csa#-enabled-internal-actions impl-config))
+  (append
+   (map (lambda (obs-receive) (list obs-receive #t (if (member obs-receive unobs-receives) #t #f)))
+        obs-receives)
+   (map (lambda (unobs-receive) (list unobs-receive #f #t))
+        (filter (lambda (unobs-receive) (not (member unobs-receive obs-receives))) unobs-receives))
+   (map (lambda (trigger) (list trigger #f #t)) internal-triggers)))
 
 ;; (Listof τa) -> (Listof trigger#)
 ;;
@@ -440,19 +452,18 @@
 
 ;; Returns a set of the possible spec steps (see the struct above) from the given spec config that
 ;; match the given implementation step
-(define (matching-spec-steps spec-config i-step)
+(define (matching-spec-steps spec-config i-step obs? unobs?)
   (define matched-stepped-configs (mutable-set))
   (for ([trigger-result (aps#-matching-steps spec-config
-                                             (impl-step-from-observer? i-step)
+                                             obs?
+                                             unobs?
                                              (impl-step-trigger i-step))])
-    (match-define (list config spawns1) trigger-result)
-    (match (aps#-resolve-outputs (cons config spawns1) (impl-step-outputs i-step))
+    (match (aps#-resolve-outputs trigger-result (impl-step-outputs i-step))
       [(list) (void)]
       [(list results ...)
        (for ([result results])
-         (match-define `[,(list stepped-spec-config all-spawns ...) ,satisfied-commitments] result)
-         (set-add! matched-stepped-configs
-                   (spec-step stepped-spec-config all-spawns satisfied-commitments)))]))
+         (match-define `[,stepped-configs ,satisfied-commitments] result)
+         (set-add! matched-stepped-configs (spec-step stepped-configs satisfied-commitments)))]))
   matched-stepped-configs)
 
 (module+ test
@@ -462,61 +473,66 @@
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(internal-receive (init-addr 0) (* Nat) single) #f null null #f))
-     (mutable-set (spec-step null-spec-config null null))))
+      (impl-step '(internal-receive (init-addr 0) (* Nat) single) null null #f)
+      #f #t)
+     (mutable-set (spec-step (list null-spec-config) null))))
   (test-case "Null transition not okay for observed input"
     (check-exn
      (lambda (exn) #t)
      (lambda ()
        (matching-spec-steps
         null-spec-config
-        (impl-step '(external-receive (init-addr 0) (* Nat)) #t null null #f)))))
+        (impl-step '(external-receive (init-addr 0) (* Nat)) null null #f)
+        #t #f))))
   (test-case "No match if trigger does not match"
     (check-exn
      (lambda (exn) #t)
      (lambda ()
        (matching-spec-steps
         (make-s# '((define-state (A) [x -> () (goto A)])) '(goto A) null null)
-        (impl-step '(external-receive (init-addr 0) (* Nat)) #t null null #f)))))
+        (impl-step '(external-receive (init-addr 0) (* Nat)) null null #f)
+        #t #f))))
   (test-case "Unobserved outputs don't need to match"
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(internal-receive (init-addr 0) (* Nat) single) #f (list '((obs-ext 1) (* Nat) single)) null  #f))
-     (mutable-set (spec-step null-spec-config null null))))
+      (impl-step '(internal-receive (init-addr 0) (* Nat) single) (list '((obs-ext 1) (* Nat) single)) null  #f)
+      #f #t)
+     (mutable-set (spec-step (list null-spec-config) null))))
   (test-case "No match if outputs do not match"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1))))
-      (impl-step '(internal-receive (init-addr 0) (* Nat) single) #f (list '((obs-ext 1) (* Nat) single)) null #f))
+      (impl-step '(internal-receive (init-addr 0) (* Nat) single) (list '((obs-ext 1) (* Nat) single)) null #f)
+      #f #t)
      (mutable-set)))
   (test-case "Output can be matched by previous commitment"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1) (single *))))
-      (impl-step '(internal-receive (init-addr 0) (* Nat) single) #f (list '((obs-ext 1) (* Nat) single)) null #f))
-     (mutable-set (spec-step (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1))))
-                             null
+      (impl-step '(internal-receive (init-addr 0) (* Nat) single) (list '((obs-ext 1) (* Nat) single)) null #f)
+      #f #t)
+     (mutable-set (spec-step (list (make-s# '((define-state (A))) '(goto A) null (list '((obs-ext 1)))))
                              (list `[(obs-ext 1) *])))))
   (test-case "Output can be matched by new commitment"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)])) '(goto A) null null)
-      (impl-step '(external-receive (init-addr 0) (Nat (obs-ext 1))) #t (list '((obs-ext 1) (* Nat) single)) null #f))
-     (mutable-set (spec-step (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)]))
-                                      '(goto A)
-                                      null
-                                      (list '((obs-ext 1))))
-                             null
+      (impl-step '(external-receive (init-addr 0) (Nat (obs-ext 1))) (list '((obs-ext 1) (* Nat) single)) null #f)
+      #t #f)
+     (mutable-set (spec-step (list (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)]))
+                                            '(goto A)
+                                            null
+                                            (list '((obs-ext 1)))))
                              (list `[(obs-ext 1) *])))))
   (test-case "Multiple copies of same commitment get merged"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1)) null (list '[(obs-ext 1) (single *)]))
-      (impl-step '(external-receive (init-addr 0) (* Nat)) #t null null #f))
+      (impl-step '(external-receive (init-addr 0) (* Nat)) null null #f)
+      #t #f)
      (mutable-set
-      (spec-step (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1)) null (list '[(obs-ext 1) (many *)]))
-                 null
+      (spec-step (list (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (obs-ext 1)) null (list '[(obs-ext 1) (many *)])))
                  null)))))
 
 ;; Given a hash table whose values are sets, add val to the set in dict corresponding to key (or
@@ -743,8 +759,8 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Widening
 
-;; config-pair -> config-pair
-(define (widen-pair the-pair previous-step pair-number i-step-number i-step-total)
+;; config-pair (#f or (list i-step Boolean Boolean) Num Num Num -> config-pair
+(define (widen-pair the-pair previous-step-with-obs/unobs pair-number i-step-number i-step-total)
   (widen-printf "Starting widen for pair ~s, i-step ~s of ~s\n" pair-number i-step-number i-step-total)
   (widen-printf "The impl config: ~s\n"
                 (impl-config-without-state-defs (config-pair-impl-config the-pair)))
@@ -787,15 +803,19 @@
     (let ([updated-triggers
            (filter
             (lambda (trigger)
-              (if previous-step (trigger-updated-by-step? (first trigger) previous-step #f) #t))
+              (if previous-step-with-obs/unobs
+                  (trigger-updated-by-step? (first trigger) (first previous-step-with-obs/unobs) #f)
+                  #t))
             (impl-triggers-from original-i original-s))])
       ;; previous trigger may not be valid in this state because of a new spec
-      (if (and previous-step (member previous-step updated-triggers))
-          ;; NOTE: after running this for an hour or so on the TCP example, it appears the "true" case
-          ;; here never fires. This makes sense: previuos step is a *transition* (which includes a
-          ;; trigger), but updated-triggers is just a list of triggers, so there's a type error here
-          (cons `[,(impl-step-trigger previous-step) ,(impl-step-from-observer? previous-step)]
-                updated-triggers)
+      (define previous-trigger-with-obs/unobs
+        (if previous-step-with-obs/unobs
+            `[,(impl-step-trigger (first previous-step-with-obs/unobs))
+              (second previous-step-with-obs/unobs)
+              (third previous-step-with-obs/unobs)]
+            #f))
+      (if (and previous-step-with-obs/unobs (member previous-trigger-with-obs/unobs updated-triggers))
+          (cons previous-trigger-with-obs/unobs updated-triggers)
           updated-triggers)))
   (define possible-transitions (apply queue (impl-transition-effects-from the-pair triggers-to-try)))
   (widen-printf "Starting widen with ~s transitions\n" (queue-length possible-transitions))
@@ -813,14 +833,14 @@
        (widen-printf "Finished widen. Final config: ~s\n"
                      (impl-config-without-state-defs (config-pair-impl-config widened-pair)))
        widened-pair]
-      [transition-result-with-obs
+      [transition-result-with-obs/unobs
        (stat-set! STAT-widen-loop-count (add1 (stat-value STAT-widen-loop-count)))
        (cond
-         [(set-member? processed-transitions transition-result-with-obs)
+         [(set-member? processed-transitions transition-result-with-obs/unobs)
           ;; Skip this transition if we already processed it
           (widen-printf "Skipping transition\n")
-          ;; (widen-printf "Trigger: ~s\n" (csa#-transition-effect-trigger (first transition-result-with-obs)))
-          ;; (widen-printf "Outputs: ~s\n" (csa#-transition-effect-sends (first transition-result-with-obs)))
+          ;; (widen-printf "Trigger: ~s\n" (csa#-transition-effect-trigger (first transition-result-with-obs/unobs)))
+          ;; (widen-printf "Outputs: ~s\n" (csa#-transition-effect-sends (first transition-result-with-obs/unobs)))
 
           (worklist-loop widened-pair)]
          [else
@@ -832,11 +852,11 @@
                         (- (stat-value STAT-widen-attempt-count) init-attempt-count)
                         (- (stat-value STAT-widen-use-count) init-use-count)
                         (queue-length possible-transitions))
-          (widen-printf "Trigger: ~s\n" (csa#-transition-effect-trigger (first transition-result-with-obs)))
-          (widen-printf "Outputs: ~s\n" (csa#-transition-effect-sends (first transition-result-with-obs)))
+          (widen-printf "Trigger: ~s\n" (csa#-transition-effect-trigger (first transition-result-with-obs/unobs)))
+          (widen-printf "Outputs: ~s\n" (csa#-transition-effect-sends (first transition-result-with-obs/unobs)))
 
-          (set-add! processed-transitions transition-result-with-obs)
-          (define transition-result (first transition-result-with-obs))
+          (set-add! processed-transitions transition-result-with-obs/unobs)
+          (match-define (list transition-result obs? unobs?) transition-result-with-obs/unobs)
           (define i (config-pair-impl-config widened-pair))
           (cond
             ;; To avoid running the apply-and-sbc process too many times (a major bottleneck of the
@@ -845,9 +865,9 @@
             [(csa#-transition-maybe-good-for-widen? i transition-result)
              (stat-set! STAT-widen-attempt-count (add1 (stat-value STAT-widen-attempt-count)))
              (define trigger (csa#-transition-effect-trigger transition-result))
-             (define observed? (second transition-result-with-obs))
-             (define new-i-step (apply-transition i transition-result observed?))
-             (match (first-spec-step-to-same-state (config-pair-spec-config widened-pair) new-i-step)
+             ;; can ignore the obs/unobs here; they're the same as the ones passed in
+             (match-define (list new-i-step _ _) (apply-transition i transition-result obs? unobs?))
+             (match (first-spec-step-to-same-state (config-pair-spec-config widened-pair) new-i-step obs? unobs?)
                [#f
                 (widen-printf "Transition has no spec transition to same state\n")
                 (worklist-loop widened-pair)]
@@ -863,13 +883,14 @@
                   (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
                 (cond
                   [(csa#-action-enabled? (config-pair-impl-config once-applied-pair) trigger)
-                   (define repeated-i-step
+                   (match-define (list repeated-i-step _ _) ; again, ignore obs/unobs
                      (apply-transition (config-pair-impl-config once-applied-pair)
                                        transition-result
-                                       observed?))
+                                       obs? unobs?))
                    (define repeated-s
                      (first-spec-step-to-same-state (config-pair-spec-config once-applied-pair)
-                                                    repeated-i-step))
+                                                    repeated-i-step
+                                                    obs? unobs?))
                    (define twice-applied-pair
                      (first
                       (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
@@ -977,21 +998,21 @@
                                  prev-i
                                  (impl-step-spawn-locs i-step)))
 
-;; config-pair (List-of trigger) -> (Listof (List csa#-transition-effect Boolean))
-(define (impl-transition-effects-from the-pair triggers)
+;; config-pair (List-of (list trigger Boolean Boolean)) -> (Listof (List csa#-transition-effect Boolean Boolean))
+(define (impl-transition-effects-from the-pair triggers-with-obs/unobs)
   (match-define (config-pair i s) the-pair)
   (let/cc return-continuation
     (define (abort) (return-continuation null))
-    (widen-printf "Widen: getting effects from ~s triggers\n" (length triggers))
+    (widen-printf "Widen: getting effects from ~s triggers\n" (length triggers-with-obs/unobs))
     (define trigger-count 0)
     (define final-results
      (append*
-      (for/list ([trigger-with-obs triggers])
+      (for/list ([trigger-with-obs/unobs triggers-with-obs/unobs])
+        (match-define (list trigger obs? unobs?) trigger-with-obs/unobs)
         (set! trigger-count (add1 trigger-count))
-        (define observed? (second trigger-with-obs))
-        (widen-printf "Eval trigger (~s of ~s): ~s\n" trigger-count (length triggers) trigger-with-obs)
+        (widen-printf "Eval trigger (~s of ~s): ~s\n" trigger-count (length triggers-with-obs/unobs) trigger)
         (flush-output)
-        (define results (map (curryr list observed?) (csa#-eval-trigger i (first trigger-with-obs) abort)))
+        (define results (map (curryr list obs? unobs?) (csa#-eval-trigger i trigger abort)))
         (widen-printf "Finished trigger, ~s transitions\n" (length results))
         results)))
     (widen-printf "Widen: Found ~s transitions\n" (length final-results))
@@ -1000,11 +1021,10 @@
 ;; Returns the first spec step from this spec config that both matches the i-step and ends up in a
 ;; configuration identical to the original one (with the exception of the unobserved interface, which
 ;; is allowed to get bigger in the abstract interpretation sense)
-(define (first-spec-step-to-same-state spec-config i-step)
+(define (first-spec-step-to-same-state spec-config i-step obs? unobs?)
   (define matching-configs-after-split
-    (for/list ([step (matching-spec-steps spec-config i-step)])
-      (spec-step-destination step)
-      (first (split-spec (spec-step-destination step)))))
+    (for/list ([step (matching-spec-steps spec-config i-step obs? unobs?)])
+      (first (split-spec (first (spec-step-destinations step))))))
   (findf (curry aps#-config<= spec-config) matching-configs-after-split))
 
 (module+ test
@@ -1025,13 +1045,13 @@
     (first-spec-step-to-same-state
      first-spec-step-test-config
      (impl-step `(external-receive (init-addr 1) (* Nat))
-                #f
                 null
                 null
                 ;; impl config
                 `(([(init-addr 1) (() (goto S))])
                   ()
-                  ())))
+                  ()))
+     #f #t)
     first-spec-step-test-config)
 
   (test-false "first-spec-step-to-same-state: no step"
@@ -1047,13 +1067,13 @@
           [* -> () (goto A)]))
        ())
      (impl-step `(external-receive (init-addr 1) (* Nat))
-                #t
                 null
                 null
                 ;; impl config
                 `(([(init-addr 1) (() (goto S))])
                   ()
-                  ())))))
+                  ()))
+     #t #f)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Pair-removal back-propagation
@@ -1144,13 +1164,13 @@
   (define bz-pair (config-pair 'B 'Z))
   (define cw-pair (config-pair 'C 'W))
 
-  (define aa-step (impl-step '(timeout (init-addr 0)) #f null null 'A))
-  (define xx-step (spec-step 'X null null))
-  (define ab-step (impl-step '(timeout (init-addr 0)) #f null null 'B))
-  (define xy-step (spec-step 'Y null null))
-  (define xz-step (spec-step 'Z null null))
-  (define bc-step (impl-step '(timeout (init-addr 0)) #f null null 'C))
-  (define yw-step (spec-step 'W null null))
+  (define aa-step (impl-step '(timeout (init-addr 0)) null null 'A))
+  (define xx-step (spec-step (list 'X) null))
+  (define ab-step (impl-step '(timeout (init-addr 0)) null null 'B))
+  (define xy-step (spec-step (list 'Y) null))
+  (define xz-step (spec-step (list 'Z) null))
+  (define bc-step (impl-step '(timeout (init-addr 0)) null null 'C))
+  (define yw-step (spec-step (list 'W) null))
 
   (test-equal? "Remove no pairs, because no list"
     (prune-unsupported
@@ -1242,8 +1262,7 @@
         (spec-config-without-state-defs (config-pair-spec-config pair))))
 
 (define (debug-impl-step step)
-  (list (impl-step-from-observer? step)
-        (impl-step-trigger step)
+  (list (impl-step-trigger step)
         (impl-step-outputs step)))
 
 (define (debug-transition-result result)

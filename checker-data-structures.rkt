@@ -32,10 +32,6 @@
 ;; trigger: A representation of the message-receive or timeout that kicked off this computation. Exact
 ;; representation matches the trigger# form in csa#.
 ;;
-;; from-observer?: A boolean indicating whether the trigger was caused by the "observer" portion of
-;; the environment, as described in the conformance semantics. Can be true only for steps with
-;; external-receive triggers.
-;;
 ;; outputs: A list of abstract address/abstract value/multiplicity tuples indicating the messages sent
 ;; to the environment during the computation.
 ;;
@@ -43,21 +39,19 @@
 ;; widening optimization)
 ;;
 ;; destination: The implementation configuration reached at the end of this transition step
-(struct impl-step (trigger from-observer? outputs spawn-locs destination) #:prefab)
+(struct impl-step (trigger outputs spawn-locs destination) #:prefab)
 
 ;; A possible (weak handler-level) transition step of a specification configuration, representing the
 ;; actions taken to match some (handler-level) implementation transition step. Weak transitions
 ;; correspond to the general idea of weak simulations; see the dissertation for details. Fields are as
 ;; follows:
 ;;
-;; destination: The specification configuration reached at the end of the weak transition.
-;;
-;; spawns: The list of specification configurations forked off by this transition step. A conforming
-;; implementation configuration must conform to all of these configs in addition to destination.
+;; destinations: The specification configurations reached at the end of the weak transition, including
+;; forks. A conforming implementation configuration must conform to all of these configs.
 ;;
 ;; satisfied-commitments: The list of output commitments (address/output-pattern pairs) that are
 ;; satisfied by taking this step.
-(struct spec-step (destination spawns satisfied-commitments) #:prefab)
+(struct spec-step (destinations satisfied-commitments) #:prefab)
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; "Type" Definitions

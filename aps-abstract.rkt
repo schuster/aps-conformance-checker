@@ -219,26 +219,54 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
 
-;; s# bool trigger -> ([s# (s#_spawn ...)] ...)
+;; s# bool trigger -> ([s# ...] ...)
 ;;
 ;; Returns all spec configs that can possibly be reached in one step by transitioning from the given
 ;; trigger, also returning spec configs spawned during that transition
-(define (aps#-matching-steps spec-config from-observer? trigger)
-  (define results
-   (remove-duplicates
-    (filter
-     values
-     (map (lambda (t) (attempt-transition spec-config t from-observer? trigger))
-          ;; Remove the free-output transitions: these would cause the checker to make many "bad
-          ;; guesses" about what conforms to what, and the outputs they use can always be used for
-          ;; other transitions.
-          (filter (negate (curryr free-transition? (aps#-config-current-state spec-config)))
-                  (config-current-transitions spec-config))))))
-  (when (null? results)
-    (error 'aps#-matching-steps
-           "The trigger ~s (from-observer: ~s) has no way to transition in spec config ~s"
-           trigger from-observer? (spec-config-without-state-defs spec-config)))
-  results)
+(define (aps#-matching-steps spec-config observed? unobserved? trigger)
+  ;; The semantics for specs says it has to take an obs step if the trigger is observed, and
+  ;; unobserved step if the trigger is unobserved, and both if it can be both observed and
+  ;; unobserved. So here we compute all ways to do an obs transition, all ways to do an unobs
+  ;; transition, then find all possible combinations of those different transitions.
+  (define available-transitions
+    ;; Remove the free-output transitions: these would cause the checker to make many "bad
+    ;; guesses" about what conforms to what, and the outputs they use can always be used for
+    ;; other transitions.
+    (filter (negate (curryr free-transition? (aps#-config-current-state spec-config)))
+            (config-current-transitions spec-config)))
+  (define (possible-transitions-for from-observer?)
+    (define results
+      (filter
+       values
+       (map (lambda (t) (attempt-transition spec-config t from-observer? trigger))
+            available-transitions)))
+    (when (null? results)
+      (error 'aps#-matching-steps
+             "The trigger ~s (from-observer: ~s) has no way to transition in spec config ~s"
+             trigger from-observer? (spec-config-without-state-defs spec-config)))
+    results)
+  (define obs-steps
+    (cond
+      [observed? (possible-transitions-for #t)]
+      [else
+       ;; if not observed, return a list containing a single "empty" transition so we can combine the
+       ;; unobs moves with something
+       (list null)]))
+  (define unobs-steps
+    (cond
+      [unobserved? (possible-transitions-for #f)]
+      [else
+       ;; if not unobserved, return a list containing a single "empty" transition so we can combine
+       ;; the obs moves with something
+       (list null)]))
+
+  (remove-duplicates
+   (for/fold ([all-steps null])
+             ([obs-step obs-steps])
+     (define this-step-with-unobs-steps
+       (for/list ([unobs-step unobs-steps])
+         (remove-duplicates (append obs-step unobs-step))))
+     (append all-steps this-step-with-unobs-steps))))
 
 (module+ test
   (test-equal? "Null step is possible"
@@ -247,14 +275,32 @@
                          (term (goto A))
                          (term ())
                          (term ()))
-                #f
+                #f #t
                 (term (timeout (init-addr 0))))
                (list
                 (list (make-s# (term ((define-state (A))))
                          (term (goto A))
                          (term ())
-                         (term ()))
-                      null)))
+                         (term ())))))
+
+  (test-case "Can do obs and unobs at same time"
+    (define (make-test-config current-state)
+      (make-s# (term ((define-state (A)
+                        [*     -> () (goto B)]
+                        [unobs -> () (goto C)])))
+               (term (goto ,current-state))
+               (term ())
+               (term ())))
+    (check-equal?
+     (list->set
+      (aps#-matching-steps (make-test-config 'A)
+                           #t #t
+                           (term (external-receive (init-addr 0) (* Nat)))))
+     (set
+      ;; Option 1: A and B
+      (list (make-test-config 'B) (make-test-config 'A))
+      ;; Option 2: A and C
+      (list (make-test-config 'B) (make-test-config 'C)))))
 
   (test-equal? "Multiple copies of output commitments are merged"
                (aps#-matching-steps
@@ -262,15 +308,14 @@
                          (term (goto A (obs-ext 0)))
                          null
                          (term (((obs-ext 0) (single *)))))
-                #t
+                #t #f
                 (term (external-receive (init-addr 0) (* Nat))))
                (list
                 (list
                  (make-s# (term ((define-state (A r) [* -> ((obligation r *)) (goto A r)])))
                           (term (goto A (obs-ext 0)))
                           null
-                          (term (((obs-ext 0) (many *)))))
-                 null)))
+                          (term (((obs-ext 0) (many *))))))))
 
   (test-exn "No match for a trigger leads to exception"
     (lambda (exn) #t)
@@ -280,7 +325,7 @@
                 (term (goto A (obs-ext 0)))
                 null
                 (term (((obs-ext 0)))))
-       #t
+       #t #f
        (term (external-receive (init-addr 0) (* Nat))))))
 
   (test-equal? "Spec observes address but neither saves it nor has obligations for it"
@@ -289,13 +334,12 @@
               `(goto A)
               null
               null)
-     #t
+     #t #f
      `(external-receive (init-addr 0) (Nat (obs-ext 1))))
     (list `[,(make-s# `((define-state (A) [r -> () (goto A)]))
                       `(goto A)
                       null
-                      `([(obs-ext 1)]))
-            ()]))
+                      `([(obs-ext 1)]))]))
 
   (test-equal? "Unobserved address not tracked in obligation map"
     (aps#-matching-steps
@@ -303,13 +347,12 @@
               `(goto A)
               null
               null)
-     #f
+     #f #t
      `(external-receive (init-addr 0) (Nat (obs-ext 1))))
     (list `[,(make-s# `((define-state (A) [r -> () (goto A)]))
                       `(goto A)
                       null
-                      null)
-            ()]))
+                      null)]))
 
   (test-equal? "Address matched by wildcard not tracked in obligation map"
     (aps#-matching-steps
@@ -317,15 +360,14 @@
               `(goto A)
               null
               null)
-     #t
+     #t #f
      `(external-receive (init-addr 0) (Nat (obs-ext 1))))
     (list `[,(make-s# `((define-state (A) [* -> () (goto A)]))
                       `(goto A)
                       null
-                      null)
-            ()])))
+                      null)])))
 
-;; s# spec-state-transition bool trigger -> [s# (s# ...)] or #f
+;; s# spec-state-transition bool trigger -> [s# ...] or #f
 ;;
 ;; Returns the config updated by running the given transition, if it can be taken from the given
 ;; trigger, along with all configs spawned in the transition, or #f if the transition is not possible
@@ -371,8 +413,7 @@
        ()
        (goto A)
        ((define-state (A) [r -> () (goto A)]))
-       ([(obs-ext 1)]))
-     `()))
+       ([(obs-ext 1)]))))
 
   (test-equal? "Address with commitments and added to state arg should be added exactly once to obligations"
     (attempt-transition
@@ -389,8 +430,7 @@
        ()
        (goto B (obs-ext 1))
        ((define-state (A) [r -> ([obligation r *]) (goto B r)]))
-       ([(obs-ext 1) [single *]]))
-     `()))
+       ([(obs-ext 1) [single *]]))))
 
   (test-case "Immediate fork pattern transition"
     (define fork-pattern `(fork (goto Z y) (define-state (Z y) [* -> () (goto Z y)])))
@@ -414,13 +454,12 @@
         ((define-state (A x) [y -> ([obligation x ,fork-pattern]) (goto B)])
          (define-state (B) [* -> () (goto B)]))
         ([(obs-ext 3) (many *)]))
-      (list
-       `(()
-         ([(Addr Nat) (init-addr 1)] [String (init-addr 2)])
-         (goto Z (obs-ext 2))
-         ((define-state (Z y) [* -> () (goto Z y)]))
-         ([(obs-ext 2)]
-          [(obs-ext 1) (single self)]))))))
+      `(()
+        ([(Addr Nat) (init-addr 1)] [String (init-addr 2)])
+        (goto Z (obs-ext 2))
+        ((define-state (Z y) [* -> () (goto Z y)]))
+        ([(obs-ext 2)]
+         [(obs-ext 1) (single self)])))))
 
   (test-case "Delayed fork pattern transition"
     (define fork-pattern `(delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)])))
@@ -446,8 +485,7 @@
          (define-state (B) [* -> () (goto B)]))
         ([(obs-ext 1) (single ,fork-pattern)]
          [(obs-ext 2)]
-         [(obs-ext 3) (many *)]))
-      null))))
+         [(obs-ext 3) (many *)]))))))
 
 ;; (f ...) ([x a#] ...) -> (f ...)
 ;;
@@ -564,7 +602,7 @@
     `[(delayed-fork (goto B) (define-state (B)) (define-state (C)))
       ()]))
 
-;; ς (ς ...) O# -> (s# (s# ...))
+;; ς (ς ...) O# -> (s# ...)
 ;;
 ;; As described in the dissertation, distributes the obligations in the obligation map to each
 ;; pre-configuration according to the external addresses "relevant" to each pre-config (determined by
@@ -590,20 +628,20 @@
                    forked-configs))))
   (match current-pre-config
     [`(,obs-receptionists ,unobs-receptionists ,goto ,state-defs ,_)
-     (list `(,obs-receptionists ,unobs-receptionists ,goto ,state-defs ,remaining-obligation-map)
+     (cons `(,obs-receptionists ,unobs-receptionists ,goto ,state-defs ,remaining-obligation-map)
            forked-configs)]))
 
 (module+ test
   (test-equal? "Degenerate dist case"
                (dist (term (() () (goto A) ((define-state (A))) ())) null null)
-               (list (term (() () (goto A) ((define-state (A))) ())) null))
+               (list (term (() () (goto A) ((define-state (A))) ()))))
 
   (test-equal? "Basic dist case"
     (dist (term (() () (goto A) ((define-state (A))) ()))
           (list `[() () (goto B (obs-ext 2)) ((define-state (B r))) ()])
           (term ([(obs-ext 1) (single *)] [(obs-ext 2) (single (record))])))
     (list (term (() () (goto A) ((define-state (A))) ([(obs-ext 1) (single *)])))
-          (list (term (() () (goto B (obs-ext 2)) ((define-state (B r))) ([(obs-ext 2) (single (record))]))))))
+          (term (() () (goto B (obs-ext 2)) ((define-state (B r))) ([(obs-ext 2) (single (record))])))))
 
   (test-equal? "Dist with extra relevant address"
     (dist (term (() () (goto A (obs-ext 1)) () ()))
@@ -611,14 +649,14 @@
           (term ([(obs-ext 1) (single *)]
                  [(obs-ext 2) (many *)])))
     (list (term (() () (goto A (obs-ext 1)) () ([(obs-ext 1) (single *)])))
-          (list (term (() () (goto B) () ([(obs-ext 2) (many *)]))))))
+          (term (() () (goto B) () ([(obs-ext 2) (many *)])))))
 
   (test-equal? "Dist an obligation with self pattern and that address in the fork's args"
     (dist (term (() () (goto A) () ()))
           (list (term (() () (goto B (obs-ext 1)) () ((obs-ext 1)))))
           (term ([(obs-ext 1) [single (variant X self)]])))
     (list (term (() () (goto A) () ()) )
-          (list (term (() () (goto B (obs-ext 1)) () ([(obs-ext 1) [single (variant X self)]])))))))
+          (term (() () (goto B (obs-ext 1)) () ([(obs-ext 1) [single (variant X self)]]))))))
 
 ;; O# (a# ...) -> (O#_old O#_new)
 ;;
@@ -991,12 +1029,12 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Commitment Satisfaction
 
-;; (s# ...) ((a#ext v# m) ...) ->  (Listof [(s# ...) ([a po] ...)])
+;; (s# ...) ((a#ext v# m) ...) -> (Listof (List (s# ...) ([a# po] ...)]))
 ;;
 ;; Given a list of all active spec configs (the current one plus any new forks), returns a list of
-;; tuples of the specification configs after having resolved all of the given outputs (removing output
-;; commitments as necessary) and a list of the satisfied commitments. The list represents all possible
-;; ways to match the outputs.
+;; ways to step the given configurations to match the given outputs. Each "way" is a list of stepped
+;; configurations and a list of obligations fulfilled as part of those steps (where the obligation may
+;; be fulfilled in any one step).
 (define (aps#-resolve-outputs spec-configs outputs)
   (unless (null?
            (filter (lambda (addr) (ormap (curryr config-observes-address? addr) spec-configs))
@@ -1004,42 +1042,20 @@
     (error 'aps#-resolve-outputs
            "Cannot check conformance for program that sends observed external addresses to environment. Violating outputs: ~s"
            outputs))
+  (aps#-resolve-outputs/internal spec-configs outputs))
 
+;; (Listof s# ...) ((a#ext v# m) ...) -> (Listof (List (s# ...) ([a# po] ...)])
+(define (aps#-resolve-outputs/internal spec-configs outputs)
   (match outputs
     [(list) (list `(,spec-configs ()))]
     [(list output remaining-outputs ...)
-     (define address (csa#-output-address output))
-     (define message (csa#-output-message output))
-     (define quantity (csa#-output-multiplicity output))
-     ;; TODO: compute the new receptionists with output-matching instead when I switch the addresses
-     ;; to not include types. Also do this in resolve-with-transitions, which has to do something
-     ;; similar
-     (define exposed-receptionists (internals-in message))
-     (match (find-with-rest (curryr config-observes-address? address) spec-configs)
-       [#f
-        ;; we can ignore outputs on unobserved addresses, but need to add any escaped internal
-        ;; addresses as part of the unobserved receptionists on all configs
-        (aps#-resolve-outputs
-         (map (curryr config-merge-unobs-addresses exposed-receptionists) spec-configs)
-         remaining-outputs)]
-       [(list earlier-configs config later-configs)
-        (define updated-unobserving-configs
-          (map (curryr config-merge-unobs-addresses exposed-receptionists)
-               (append earlier-configs later-configs)))
-        ;; for every possible way to match this particular output
-        (for/fold ([results null])
-                  ([resolve-result (resolve-output config address message quantity)])
-          (match-define (list resolved-configs fulfilled-pattern) resolve-result)
-          ;; for every possible way to match the remaining outputs
-          (for/fold ([results results])
-                    ([next-result (aps#-resolve-outputs
-                                   (append updated-unobserving-configs resolved-configs)
-                                   remaining-outputs)])
-            ;; add the result to our list of possible results
-            (match-define (list final-configs other-fulfillments) next-result)
-            (define new-resolve-outputs-result
-              `[,final-configs ,(cons `[,address ,fulfilled-pattern] other-fulfillments)])
-            (cons new-resolve-outputs-result results)))])]))
+     (append*
+      (for/list ([resolved-configs-and-fulfillments (resolve-output/many-configs spec-configs output)])
+        (match-define (list resolved-configs fulfillments) resolved-configs-and-fulfillments)
+        ;; returns a list of resolve-results
+        (for/list ([new-resolved-configs-and-fulfillments (aps#-resolve-outputs/internal resolved-configs remaining-outputs)])
+          (match-define (list new-configs new-fulfillments) new-resolved-configs-and-fulfillments)
+          (list new-configs (append fulfillments new-fulfillments)))))]))
 
 (module+ test
   (define (make-dummy-spec commitments)
@@ -1256,30 +1272,121 @@
     (aps#-resolve-outputs
      (list (make-dummy-spec (list `[(obs-ext 1)])))
      (list `[(* (Addr (Addr Nat))) (Nat (obs-ext 2)) single]))
-    (list `[,(list (make-dummy-spec (list `[(obs-ext 1)]))) ()])))
+    (list `[,(list (make-dummy-spec (list `[(obs-ext 1)]))) ()]))
 
-;; s# a# v# m -> ([(s# ...) po] ...)
+  (test-equal?
+      "Resolve against two configs that both observe (e.g. for when transition is both obs and unobs)"
+    (aps#-resolve-outputs
+     (list `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1) [single (record [a *]           [b (variant B)])]]))
+           `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1) [single (record [a (variant A)] [b *])]])))
+     (list `[(obs-ext 1) (record [a (variant A)] [b (variant B)]) single]))
+    (list `[,(list `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1)]))
+                   `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1)])))
+            ,(list `[(obs-ext 1) (record [a *]           [b (variant B)])]
+                   `[(obs-ext 1) (record [a (variant A)] [b *])])]))
+
+  (test-equal?
+      "Resolve against two configs that both observe, one has multiple possible patterns"
+    (list->set
+     (aps#-resolve-outputs
+      (list `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1) [single (record [a *]           [b (variant B)])]]))
+            `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1) [single (record [a (variant A)] [b *])]
+                                                      [single (record [a *]           [b *])]])))
+      (list `[(obs-ext 1) (record [a (variant A)] [b (variant B)]) single])))
+    (set `[,(list `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1)]))
+                   `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1) [single (record [a *] [b *])]])))
+            ,(list `[(obs-ext 1) (record [a *]           [b (variant B)])]
+                   `[(obs-ext 1) (record [a (variant A)] [b *])])]
+          `[,(list `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1)]))
+                   `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1) [single (record [a (variant A)] [b *])]])))
+            ,(list `[(obs-ext 1) (record [a *] [b (variant B)])]
+                   `[(obs-ext 1) (record [a *] [b *])])])))
+
+(define (resolve-output/many-configs configs output)
+  ;; (printf "resolve-output/many-configs ~s ~s\n" configs output)
+  (match configs
+    [(list) (list `[() ()])]
+    [(list config remaining-configs ...)
+     (define address (csa#-output-address output))
+     (define message (csa#-output-message output))
+     (define quantity (csa#-output-multiplicity output))
+     (append*
+      (for/list ([resolved-configs-and-fulfillments (resolve-output config address message quantity)])
+        (match-define (list resolved-configs fulfillments) resolved-configs-and-fulfillments)
+        ;; returns a list of resolve-results
+        (for/list ([remaining-resolve-result (resolve-output/many-configs remaining-configs output)])
+          (match-define (list remaining-resolved-configs new-fulfillments) remaining-resolve-result)
+          (list (append resolved-configs remaining-resolved-configs)
+                (append fulfillments new-fulfillments)))))]))
+
+(module+ test
+  (test-equal?
+      "resolve-output/many-configs: Addresses in unobserved messages are added to receptionists"
+    (resolve-output/many-configs
+     (list `(() () (goto S1) ((define-state (S1))) ())
+           `(() () (goto S2) ((define-state (S2))) ()))
+     `[(obs-ext 1) (variant A (Nat (init-addr 1)) (String (init-addr 2))) single])
+    (list `[,(list `(()
+                     ((Nat (init-addr 1))
+                      (String (init-addr 2)))
+                     (goto S1)
+                     ((define-state (S1)))
+                     ())
+                   `(()
+                     ((Nat (init-addr 1))
+                      (String (init-addr 2)))
+                     (goto S2)
+                     ((define-state (S2)))
+                     ()))
+            ()]))
+
+  (test-equal? "resolve-output/many-configs: Resolve against two configs that both observe (e.g. for when transition is both obs and unobs)"
+    (resolve-output/many-configs
+     (list `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1) [single (record [a *]           [b (variant B)])]]))
+           `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1) [single (record [a (variant A)] [b *])]])))
+     `[(obs-ext 1) (record [a (variant A)] [b (variant B)]) single])
+    (list `[,(list `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1)]))
+                   `(() () (goto S1) ((define-state (S1))) ([(obs-ext 1)])))
+            ,(list `[(obs-ext 1) (record [a *]           [b (variant B)])]
+                   `[(obs-ext 1) (record [a (variant A)] [b *])])])))
+
+;; s# a# v# m -> ([(s# ...) ([a po] ...)] ...)
 ;;
-;; Returns a set of tuples each containing a list of specification configs and a pattern such that the
-;; input configuration can take an output step with the given message to the given configurations and
-;; using the returned pattern to match the message.
+;; Returns a set of tuples each containing a list of specification configs and a set of obligations
+;; such that the input configuration can take an output step with the given message to the given
+;; configurations and fulfill the resturned obligations to match the message.
 (define (resolve-output config address message quantity)
-  (match quantity
-    ['single
-     (match (resolve-with-obligation config address message)
-       [(list)
-        ;; if we can't find a match with existing patterns, try the free-output patterns
-        (match (resolve-with-free-obl-patterns config address message)
-          [(list)
-           ;; if free-output patterns also don't match, try the other unobs-transition
-           ;; patterns as a last resort
-           (resolve-with-unobs-transition config address message)]
-          [results results])]
-       [results results])]
-    ['many
-     ;; have to use free-output patterns if output may have been sent more than once (e.g. in
-     ;; a loop)
-     (resolve-with-free-obl-patterns config address message)]))
+  (cond
+    [(config-observes-address? config address)
+     (define config-list-pattern-pairs
+      (match quantity
+        ['single
+         (match (resolve-with-obligation config address message)
+           [(list)
+            ;; if we can't find a match with existing patterns, try the free-output patterns
+            (match (resolve-with-free-obl-patterns config address message)
+              [(list)
+               ;; if free-output patterns also don't match, try the other unobs-transition
+               ;; patterns as a last resort
+               (resolve-with-unobs-transition config address message)]
+              [results results])]
+           [results results])]
+        ['many
+         ;; have to use free-output patterns if output may have been sent more than once (e.g. in
+         ;; a loop)
+         (resolve-with-free-obl-patterns config address message)]))
+     (for/list ([clpp config-list-pattern-pairs])
+       (match-define (list configs pattern) clpp)
+       (list configs `([,address ,pattern])))]
+    [else
+     ;; TODO: compute the new receptionists with output-matching instead when I switch the addresses
+     ;; to not include types. Also do this in resolve-with-transitions, which has to do something
+     ;; similar
+     ;;
+     ;; TODO: should I save the result of internals-in for performance?
+     (define exposed-receptionists (internals-in message))
+     (list `[,(list (config-merge-unobs-addresses config exposed-receptionists))
+             ()])]))
 
 (module+ test
   (test-equal? "resolve-output 1"
@@ -1288,7 +1395,15 @@
      `(obs-ext 1)
      `(* Nat)
      `single)
-    (list `[(,(make-dummy-spec `([(obs-ext 1)]))) *])))
+    (list `[(,(make-dummy-spec `([(obs-ext 1)]))) ([(obs-ext 1) *])]))
+  (test-equal? "resolve-output unobserved address"
+    (resolve-output
+     `(() () (goto A) ((define-state (A))) ())
+     `(obs-ext 1)
+     `(Nat (init-addr 1))
+     `single)
+    (list `[,(list `(() ([Nat (init-addr 1)]) (goto A) ((define-state (A))) ()))
+            ()])))
 
 ;; s# a# v# -> ([(s# ...) po] ...)
 (define (resolve-with-obligation config address message)
@@ -1313,7 +1428,7 @@
     (make-dummy-spec `([(obs-ext 1) [single *]]))
     `(obs-ext 1)
     `(* Nat))
-   (list `[(,(make-dummy-spec `([(obs-ext 1)]))) *])))
+   (list `[,(list (make-dummy-spec `([(obs-ext 1)]))) *])))
 
 ;; s# a# v# -> ([(s# ...) po] ...)
 (define (resolve-with-unobs-transition config address message)
@@ -1356,9 +1471,7 @@
             ([trans possible-transitions])
     ;; REFACTOR: I'm using a fake trigger here, but attempt-transition probably shouldn't require a
     ;; trigger at all
-    (match-define (list this-config forks)
-      (attempt-transition config trans #f `(timeout (init-addr 1))))
-    (define all-configs (cons this-config forks))
+    (define all-configs (attempt-transition config trans #f `(timeout (init-addr 1))))
     (match-define (list earlier-configs observing-config later-configs)
       (find-with-rest (curryr config-observes-address? address) all-configs))
     (define exposed-receptionists (internals-in message))
@@ -1412,8 +1525,7 @@
         ,goto
         ,state-defs
         ()]))
-  (match-define (list s1 (list s2s ...)) (dist updated-pre-config forked-pre-configs obligations))
-  (cons s1 s2s))
+  (dist updated-pre-config forked-pre-configs obligations))
 
 (module+ test
   (test-equal? "incorporate-output-match-results 1"
