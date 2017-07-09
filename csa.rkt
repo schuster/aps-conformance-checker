@@ -14,7 +14,6 @@
  csa-config-internal-addresses
  instantiate-prog
  instantiate-prog+bindings
- csa-address-strip-type
  csa-contains-address?)
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -55,8 +54,7 @@
      n
      (list e ...)
      (hash [e e] ...)
-     (for/fold ([x e]) ([x e]) e)
-     (coerce e τ)) ; only used internally; needed for eviction when actor closes over other addresses
+     (for/fold ([x e]) ([x e]) e))
   (Q (define-state (q [x τ] ...) (x) e)
      (define-state (q [x τ] ...) (x) e [(timeout e) e]))
   (primop
@@ -108,7 +106,8 @@
      (Addr τ)
      (List τ)
      (Hash τ τ))
-  (X variable-not-otherwise-mentioned))
+  (X variable-not-otherwise-mentioned)
+  (loc any))
 
 (define-extended-language csa-eval
   csa
@@ -117,20 +116,18 @@
   (b ((Q ...) e)) ; behavior
   (μ (m ...))
   (m (a <= v))
-  ((ρ χ) (τa ...))
+  ((ρ χ) ([τ a] ...))
   (e ....
      v)
   (v n
      (variant t v ...)
      (record [l v] ...)
      (folded τ v)
-     τa
+     a
      string
      (list v ...)
      (hash [v v] ...))
-  (a (addr natural))
-  (τa (τ a)) ; an address a able to carry messages of type τ
-  )
+  (a (addr loc natural)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Instantiation
@@ -153,50 +150,49 @@
   (term (instantiate-prog+bindings/mf ,prog)))
 
 (define-metafunction csa-eval
-  instantiate-prog+bindings/mf : P -> (i ([x τa] ...))
+  instantiate-prog+bindings/mf : P -> (i ([x a] ...))
   [(instantiate-prog+bindings/mf
-    (program (receptionists [x_receptionist _] ...)
+    (program (receptionists [x_receptionist τ_receptionist] ...)
              (externals     [x_external     τ_external] ...)
-             (actors        [x_internal (let ([x_let (coerce e_let τ)] ...) e)] ...)))
+             (actors        [x_internal (let ([x_let e_let] ...) e)] ...)))
    (i
-    ([x_internal τa_internal] ... [x_external τa_external] ...))
+    ([x_internal a_internal] ... [x_external a_external] ...))
 
    ;; 1. Generate addresses for internal and external actors
-   (where (τa_internal ...) (generate-fresh-addresses/mf ((spawn-type/mf e) ...) ()))
-   (where (τa_external ...) (generate-fresh-addresses/mf (τ_external ...) (τa_internal ...)))
+   (where (a_internal ...) ((addr (spawn-loc/mf e) 0) ...))
+   (where (a_external ...) (generate-externals/mf (τ_external ...)))
 
    ;; 2. Do substitutions into spawn to get a behavior
    ;; NOTE: assuming for now we can ignore the type coercion automatically put in place
    (where ((v_let ...) ...) (((subst-n e_let
-                                       [x_external τa_external] ...
-                                       [x_internal τa_internal] ...) ...) ...))
+                                       [x_external a_external] ...
+                                       [x_internal a_internal] ...) ...) ...))
    (where (b ...)
           ((spawn->behavior e
                             ([x_let v_let] ...
-                             [x_internal τa_internal] ...
-                             [x_external τa_external] ...)
-                            τa_internal) ...))
+                             [x_internal a_internal] ...
+                             [x_external a_external] ...)
+                            a_internal) ...))
 
    ;; 3. Construct the configuration
-   (where ((_ a_internal) ...) (τa_internal ...))
    (where i
           [; actors
            ((a_internal b) ...)
            ; message store
            ()
            ; receptionists
-           ((subst-n x_receptionist [x_internal τa_internal] ...) ...)
+           ([τ_receptionist (subst-n x_receptionist [x_internal a_internal] ...)] ...)
            ; externals
-           (τa_external ...)])])
+           ([τ_external a_external] ...)])])
 
 (define-metafunction csa-eval
-  spawn->behavior : e ([x v] ...) τa -> b
-  [(spawn->behavior e_spawn ([x_binding v_binding] ...) τa_self)
+  spawn->behavior : e ([x v] ...) a -> b
+  [(spawn->behavior e_spawn ([x_binding v_binding] ...) a_self)
    b
    ;; 1. Substitute all non-self bindings
    (where (spawn _ _ e_goto Q ...) (subst-n e_spawn [x_binding v_binding] ...))
    ;; 2. Substitute the self-binding
-   (where b (((subst-n/Q Q [self τa_self]) ...) (subst-n e_goto [self τa_self])))])
+   (where b (((subst-n/Q Q [self a_self]) ...) (subst-n e_goto [self a_self])))])
 
 (module+ test
   (test-case "Instantiate program"
@@ -214,43 +210,42 @@
         ;; actors
         (
          ;; a
-         ((addr 0) (() (goto S1)))
+         ((addr 1 0) (() (goto S1)))
          ;; b
-         ((addr 1) (() (goto S2)))
+         ((addr 2 0) (() (goto S2)))
          ;; c
-         ((addr 2) (() (goto S3)))
+         ((addr 3 0) (() (goto S3)))
          )
         ;; messages
         ()
         ;; receptionists
-        ((Nat (addr 0)) ((Record) (addr 1)))
+        ((Nat (addr 1 0))
+         ((Record) (addr 2 0)))
         ;; externals
-        ((String (addr 3)) ((Union) (addr 4))))
+        ((String (addr (env String) 0))
+         ((Union) (addr (env (Union)) 1))))
        ;; bindings
-       ([a (Nat (addr 0))]
-        [b ((Record) (addr 1))]
-        [c (Nat (addr 2))]
-        [d (String (addr 3))]
-        [e ((Union) (addr 4))])))))
+       ([a (addr 1 0)]
+        [b (addr 2 0)]
+        [c (addr 3 0)]
+        [d (addr (env String) 0)]
+        [e (addr (env (Union)) 1)])))))
 
-;; Returns a list containing one fresh address of the given type per given type τ, where the given
-;; list of addresses indicates the existing set of allocated addresses.
+;; Generates a distinct list of external addresses, one for each of the given types (in that order)
 (define-metafunction csa-eval
-  generate-fresh-addresses/mf : (τ ...) (τa ...) -> (τa ...)
-  [(generate-fresh-addresses/mf (τ ...) ((_ (addr natural)) ...))
-   ,(map (lambda (type index) `(,type (addr ,(+ (term natural_next) index))))
-         (term (τ ...))
-         (build-list (length (term (τ ...))) values))
-   (where natural_next ,(add1 (apply max -1 (term (natural ...)))))])
+  generate-externals/mf : (τ ...) -> (a ...)
+  [(generate-externals/mf (τ ...))
+   ,(map
+     (lambda (type index) (term (addr (env ,type) ,index)))
+     (term (τ ...))
+     (build-list (length (term (τ ...))) values))])
 
 (module+ test
-  (test-equal? "Fresh address generation"
-    (term (generate-fresh-addresses/mf (Nat (Record) Nat)
-                                       ((Nat (addr 1)) (Nat (addr 4)) (Nat (addr 2)))))
-    `((Nat (addr 5)) ((Record) (addr 6)) (Nat (addr 7))))
-  (test-equal? "Fresh address generation 2"
-    (term (generate-fresh-addresses/mf (Nat (Record) Nat) ()))
-    `((Nat (addr 0)) ((Record) (addr 1)) (Nat (addr 2)))))
+  (test-equal? "External address generation"
+    (term (generate-externals/mf (Nat (Record) Nat)))
+    `((addr (env Nat) 0)
+      (addr (env (Record)) 1)
+      (addr (env Nat) 2))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing helpers
@@ -267,7 +262,7 @@
   (term (make-empty-queues-config/mf ,receptionists ,internal-actors)))
 
 (define-metafunction csa-eval
-  make-empty-queues-config/mf : ((τa b) ...) ((τa b) ...) -> i
+  make-empty-queues-config/mf : (([τ a] b) ...) (([τ a] b) ...) -> i
   [(make-empty-queues-config/mf (((τ_rec a_rec) b_receptionist) ...)
                                 (((τ_int a_int) b_int) ...))
    (((a_rec b_receptionist) ... (a_int b_int) ...)
@@ -289,7 +284,7 @@
   [(subst x x v) v]
   [(subst x x_2 v) x]
   [(subst n x v) n]
-  [(subst τa x v) τa]
+  [(subst a x v) a]
   [(subst string x v) string]
   [(subst (spawn any_loc τ e Q ...) self v) (spawn any_loc τ e Q ...)]
   [(subst (spawn any_loc τ e Q ...) x v)
@@ -319,8 +314,7 @@
   [(subst (for/fold ([x_1 e_1]) ([x_2 e_2]) e_3) x_2 v)
    (for/fold ([x_1 (subst e_1 x_2 v)]) ([x_2 (subst e_2 x_2 v)]) e_3)]
   [(subst (for/fold ([x_1 e_1]) ([x_2 e_2]) e_3) x v)
-   (for/fold ([x_1 (subst e_1 x v)]) ([x_2 (subst e_2 x v)]) (subst e_3 x v))]
-  [(subst (coerce e τ) x v) (coerce (subst e x v) τ)])
+   (for/fold ([x_1 (subst e_1 x v)]) ([x_2 (subst e_2 x v)]) (subst e_3 x v))])
 
 (define-metafunction csa-eval
   subst/case-clause : [(t x ...) e] x v -> [(t x ...) e]
@@ -397,7 +391,7 @@
        (not (check-duplicates (csa-config-internal-addresses c)))))
 
 (define (csa-valid-receptionist-list? l)
-  (redex-match csa-eval (τa ...) l))
+  (redex-match csa-eval ([τ a] ...) l))
 
 ;; Returns true if the expression contains any address
 (define (csa-contains-address? e)
@@ -405,20 +399,20 @@
 
 (define-metafunction csa
   csa-contains-address?/mf : any -> boolean
-  [(csa-contains-address?/mf (addr _)) #t]
+  [(csa-contains-address?/mf (addr _ _)) #t]
   [(csa-contains-address?/mf (any ...))
    ,(ormap csa-contains-address? (term (any ...)))]
   [(csa-contains-address?/mf _) #f])
 
 (module+ test
   (test-true "csa-contains-address?"
-    (csa-contains-address? (term ((Nat (addr 1)) (Nat (addr 2))))))
+    (csa-contains-address? (term ((addr 1 1) (addr 2 2)))))
 
   (test-false "csa-contains-address?"
     (csa-contains-address? (term ((abc 1 Nat) (def 2 Nat)))))
 
   (test-true "csa-contains-address?"
-    (csa-contains-address? (term (((abc) (Nat (addr 1))) ())))))
+    (csa-contains-address? (term (((abc) (addr 0 11)) ())))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
@@ -429,28 +423,18 @@
 
 (module+ test
   (redex-let* csa-eval ([b_1 (term (() (goto A)))]
-                        [b_2 (term (() (goto B (Nat (addr 3)) (Nat (addr 4)))))]
-                        [α (term ([(addr 0) b_1]
-                                  [(addr 1) b_2]))]
+                        [b_2 (term (() (goto B (addr 3 3) (addr 4 4))))]
+                        [α (term ([(addr 0 0) b_1]
+                                  [(addr 1 1) b_2]))]
                         [i (term (α () () ()))])
     (check-equal? (csa-config-internal-addresses (term i))
-                  (term ((addr 0) (addr 1))))))
+                  (term ((addr 0 0) (addr 1 1))))))
 
 (define (csa-config-receptionists config)
   (third config))
 
 ;; Returns the type given in a spawn expression
 (define-metafunction csa-eval
-  spawn-type/mf : (spawn any_loc τ e Q ...) -> τ
-  [(spawn-type/mf (spawn _ τ _ ...))
-   τ])
-
-;; Returns just the address part of a typed address
-(define (csa-address-strip-type a)
-  (second a))
-
-(module+ test
-  (check-equal?
-   (redex-let csa-eval ([τa (term (Nat (addr 1)))])
-     (csa-address-strip-type (term τa)))
-   (term (addr 1))))
+  spawn-loc/mf : (spawn loc τ e Q ...) -> loc
+  [(spawn-loc/mf (spawn loc _ ...))
+   loc])
