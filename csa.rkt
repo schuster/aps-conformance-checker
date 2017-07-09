@@ -143,6 +143,8 @@
    i
    (where (i ([x a] ...)) (instantiate-prog+bindings/mf P))])
 
+;; P -> [i (Listof [x_rec [τ a]]) (Listof [x_ext [τ a]])
+;;
 ;; Instantiates the given program as a configuration by allocating fresh addresses and subsituting
 ;; them throughout the program as needed. Returns both the configuration and the set of bindings for
 ;; the allocated addresses.
@@ -150,13 +152,14 @@
   (term (instantiate-prog+bindings/mf ,prog)))
 
 (define-metafunction csa-eval
-  instantiate-prog+bindings/mf : P -> (i ([x a] ...))
+  instantiate-prog+bindings/mf : P -> (i ([x (τ a)] ...) ([x (τ a)] ...))
   [(instantiate-prog+bindings/mf
     (program (receptionists [x_receptionist τ_receptionist] ...)
              (externals     [x_external     τ_external] ...)
              (actors        [x_internal (let ([x_let e_let] ...) e)] ...)))
    (i
-    ([x_internal a_internal] ... [x_external a_external] ...))
+    ([x_receptionist (τ_receptionist a_receptionist)] ...)
+    ([x_external (τ_external a_external)] ...))
 
    ;; 1. Generate addresses for internal and external actors
    (where (a_internal ...) ((addr (spawn-loc/mf e) 0) ...))
@@ -175,13 +178,14 @@
                             a_internal) ...))
 
    ;; 3. Construct the configuration
+   (where (a_receptionist ...) ((subst-n x_receptionist [x_internal a_internal] ...) ...))
    (where i
           [; actors
            ((a_internal b) ...)
            ; message store
            ()
            ; receptionists
-           ([τ_receptionist (subst-n x_receptionist [x_internal a_internal] ...)] ...)
+           ([τ_receptionist a_receptionist] ...)
            ; externals
            ([τ_external a_external] ...)])])
 
@@ -225,11 +229,10 @@
         ((String (addr (env String) 0))
          ((Union) (addr (env (Union)) 1))))
        ;; bindings
-       ([a (addr 1 0)]
-        [b (addr 2 0)]
-        [c (addr 3 0)]
-        [d (addr (env String) 0)]
-        [e (addr (env (Union)) 1)])))))
+       ([a (Nat (addr 1 0))]
+        [b ((Record) (addr 2 0))])
+       ([d (String (addr (env String) 0))]
+        [e ((Union) (addr (env (Union)) 1))])))))
 
 ;; Generates a distinct list of external addresses, one for each of the given types (in that order)
 (define-metafunction csa-eval

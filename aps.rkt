@@ -149,36 +149,36 @@
   (term (aps-config-receptionists/mf ,config)))
 
 (define-metafunction aps-eval
-  aps-config-receptionists/mf : s -> (τa ...)
-  [(aps-config-receptionists/mf ((τa_1 ...) (τa_2 ...) _ ...))
-   (τa_1 ... τa_2 ...)])
+  aps-config-receptionists/mf : s -> ((τ a) ...)
+  [(aps-config-receptionists/mf ((any_1 ...) (any_2 ...) _ ...))
+   (any_1 ... any_2 ...)])
 
 (module+ test
   (test-case "config interface addresses 1"
-    (redex-let aps-eval ([s (term (((Nat (addr 1)))
-                                   ((Nat (addr 2))
-                                    (Nat (addr 3))
-                                    (Nat (addr 4)))
+    (redex-let aps-eval ([s (term (((Nat (addr 1 0)))
+                                   ((Nat (addr 2 0))
+                                    (Nat (addr 3 0))
+                                    (Nat (addr 4 0)))
                                    (goto A)
                                    ((define-state (A)))
                                    ()))])
       (check-equal? (aps-config-receptionists (term s))
-                    '((Nat (addr 1))
-                      (Nat (addr 2))
-                      (Nat (addr 3))
-                      (Nat (addr 4))))))
+                    '((Nat (addr 1 0))
+                      (Nat (addr 2 0))
+                      (Nat (addr 3 0))
+                      (Nat (addr 4 0))))))
   (test-case "config interface addresses 2"
     (redex-let aps-eval ([s (term (()
-                                   ((Nat (addr 2))
-                                    (Nat (addr 3))
-                                    (Nat (addr 4)))
+                                   ((Nat (addr 2 0))
+                                    (Nat (addr 3 0))
+                                    (Nat (addr 4 0)))
                                    (goto A)
                                    ((define-state (A)))
                                    ()))])
       (check-equal? (aps-config-receptionists (term s))
-                    '((Nat (addr 2))
-                      (Nat (addr 3))
-                      (Nat (addr 4)))))))
+                    '((Nat (addr 2 0))
+                      (Nat (addr 3 0))
+                      (Nat (addr 4 0)))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing Helpers
@@ -187,9 +187,13 @@
   (make-spec defs-state-and-addr null))
 
 (define (make-spec defs-state-and-addr unobs-receptionists)
-  (redex-let* aps-eval ([((Φ ...) (goto φ a_arg ...) τa_obs) defs-state-and-addr]
-                        [(τa_unobs ...) unobs-receptionists]
-                        [s (term ((τa_obs) (τa_unobs ...) (goto φ a_arg ...) (Φ ...) ([a_arg] ...)))])
+  (redex-let* aps-eval ([((Φ ...) (goto φ a_arg ...) (τ_obs a_obs)) defs-state-and-addr]
+                        [((τ_unobs a_unobs) ...) unobs-receptionists]
+                        [s (term (((τ_obs a_obs))
+                                  ((τ_unobs a_unobs) ...)
+                                  (goto φ a_arg ...)
+                                  (Φ ...)
+                                  ([a_arg] ...)))])
               (term s)))
 
 (define (make-unrevealed-exclusive-spec defs-and-state)
@@ -208,8 +212,9 @@
    (i s)
    ;; NOTE: the receptionists and externals for the spec should be subsets of those for the program,
    ;; and their declared types should match their program analogs
-   (where (i ([x τa] ...)) ,(instantiate-prog+bindings (term P)))
-   (where s (instantiate-spec/mf spec ([x τa] ...)))])
+   (where (i ([x_rec (τ_rec a_rec)] ...) ([x_ext (τ_ext a_ext)] ...))
+          ,(instantiate-prog+bindings (term P)))
+   (where s (instantiate-spec/mf spec ([x_rec (τ_rec a_rec)] ...) ([x_ext (τ_ext a_ext)] ...)))])
 
 (module+ test
   (test-case "Instantiate test"
@@ -233,18 +238,18 @@
         ;; actors
         (
          ;; a
-         ((addr 0) (() (goto S1)))
+         ((addr 1 0) (() (goto S1)))
          ;; b
-         ((addr 1) (() (goto S2)))
+         ((addr 2 0) (() (goto S2)))
          ;; c
-         ((addr 2) (() (goto S3)))
+         ((addr 3 0) (() (goto S3)))
          )
         ;; messages
         ()
         ;; receptionists
-        ((Nat (addr 0)) ((Record) (addr 1)))
+        ((Nat (addr 1 0)) ((Record) (addr 2 0)))
         ;; externals
-        ((String (addr 3)) ((Union) (addr 4))))
+        ((String (addr (env String) 0)) ((Union) (addr (env (Union)) 1))))
        ;; spec config
        (;; obs interface
         ()
@@ -257,32 +262,33 @@
         ;; output commitments
         ())))))
 
-;; Instantiates the given spec as a specification configuration, using the given bindings as allocated
-;; addresses.
+;; Instantiates the given spec as a specification configuration, using the given receptionist and
+;; external bindings as allocated addresses.
 (define-metafunction aps-eval
-  instantiate-spec/mf : spec ([x τa] ...) -> s
+  instantiate-spec/mf : spec ([x (τ a)] ...) ([x (τ a)] ...) -> s
   [(instantiate-spec/mf (specification (receptionists [x_rec _] ...)
                                        (externals [x_cont _] ...)
                                        ([x_obs τ_obs] ...)
                                        ([x_unobs τ_unobs] ...)
                                        (goto φ x_arg ...)
                                        Φ ...)
-                        ([x_binding (τ_binding a_binding)] ...))
+                        ([x_rec (τ_rec a_rec)] ...)
+                        ([x_ext (τ_ext a_ext)] ...))
    (; observed environment interface
-    (τa_obs ...)
+    ((τ_obs a_obs) ...)
     ;; unobserved environment interface
-    (τa_unobs ...)
+    ((τ_unobs a_unobs) ...)
     ;; current state
     (goto φ a_state-arg ...)
     ; states
-    ((subst-n/aps-eval/Φ Φ [x_binding a_binding] ...) ...)
+    ((subst-n/aps-eval/Φ Φ [x_ext a_ext] ...) ...)
     ;; output commitment map
     ([a_state-arg] ...))
-   (where (τa_obs ...)
-          (resolve-receptionists/mf ((x_obs τ_obs) ...) ([x_binding a_binding] ...)))
-   (where (τa_unobs ...)
-          (resolve-receptionists/mf ((x_unobs τ_unobs) ...) ([x_binding a_binding] ...)))
-   (where (a_state-arg ...) ((subst-n/aps-eval/u x_arg [x_binding a_binding] ...) ...))])
+   (where ((τ_obs a_obs) ...)
+          (resolve-receptionists/mf ((x_obs τ_obs) ...) ([x_rec a_rec] ...)))
+   (where ((τ_unobs a_unobs) ...)
+          (resolve-receptionists/mf ((x_unobs τ_unobs) ...) ([x_rec a_rec] ...)))
+   (where (a_state-arg ...) ((subst-n/aps-eval/u x_arg [x_ext a_ext] ...) ...))])
 
 (module+ test
   (test-case "instantiate spec"
@@ -294,24 +300,23 @@
       (check-true (redex-match? aps spec the-spec))
       (check-equal?
        (term (instantiate-spec/mf ,the-spec
-                                  ([a (Nat (addr 0))]
-                                   [b ((Record) (addr 1))]
-                                   [c (Nat (addr 2))]
-                                   [d (String (addr 3))]
-                                   [e ((Union) (addr 4))])))
+                                  ([a (Nat (addr 0 0))]
+                                   [b ((Record) (addr 1 0))])
+                                  ([d (String (addr (env String) 0))]
+                                   [e ((Union) (addr (env (Union)) 1))])))
        `(;; self-address
          ()
          ;; unobserved environment interface
          ()
          ;; current statep
-         (goto S1 (addr 3))
+         (goto S1 (addr (env String) 0))
          ;; state defs
          ()
          ;; obligation map
-         ([(addr 3)])))))
+         ([(addr (env String) 0)])))))
 
 (define-metafunction aps-eval
-  resolve-receptionists/mf : ([x τ] ...) ([x a] ...) -> (τa ...)
+  resolve-receptionists/mf : ([x τ] ...) ([x a] ...) -> ((τ a) ...)
   [(resolve-receptionists/mf () _) ()]
   [(resolve-receptionists/mf ([x τ] any_rest ...) any_subs)
    ((τ a) any_results ...)
