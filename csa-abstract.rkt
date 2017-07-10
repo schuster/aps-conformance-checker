@@ -286,7 +286,7 @@
 (struct csa#-transition-effect (trigger behavior sends spawns) #:transparent)
 
 (define (csa#-transition-spawn-locs transition)
-  (map spawn-address-location (map first (csa#-transition-effect-spawns transition))))
+  (map address-location (map first (csa#-transition-effect-spawns transition))))
 
 ;; Represents a single handler-level transition of an actor. Trigger is the event that caused the
 ;; handler to run, outputs is the list of outputs to the external world that happened during execution
@@ -344,7 +344,7 @@
    (for/list ([behavior (current-behaviors-for-address config addr)])
      (match (get-timeout-handler-exp behavior)
        [#f null]
-       [handler-exp (eval-handler (inject/H# handler-exp (csa#-config-externals config))
+       [handler-exp (eval-handler (inject/H# handler-exp)
                                   trigger
                                   (behavior-state-defs behavior)
                                   abort)]))))
@@ -2501,9 +2501,6 @@
 (define (state-def-by-name state-defs state-name)
   (findf (lambda (state-def) (equal? state-name (first (second state-def)))) state-defs))
 
-(define (spawn-address-location addr)
-  (error "not implemented"))
-
 (define (address-location addr)
   (match addr
     [`(addr ,loc ,_) loc]
@@ -3566,7 +3563,7 @@
   ;; 3. The trigger is an internal message that did not exist in the previous config
   (define trigger-addr (trigger-address trigger))
   (or (equal? trigger-addr (trigger-address prev-trigger))
-      (match (spawn-address-location trigger-addr)
+      (match (address-location trigger-addr)
         [#f #f]
         [loc (member loc spawn-locs)])
       (match trigger
@@ -3578,27 +3575,27 @@
         [_ #f])))
 
 (module+ test
-  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (init-addr 1) (* Nat) single)
-                                                  `(internal-receive (init-addr 1) (* String) single)
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (addr 1 0) (* Nat) single)
+                                                  `(internal-receive (addr 1 0) (* String) single)
                                                   #f
                                                   null))
-  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (spawn-addr 1 OLD) (* Nat) single)
-                                                  `(internal-receive (init-addr 1) (* String) single)
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (addr 1 0) (* Nat) single)
+                                                  `(internal-receive (addr INIT1 0) (* String) single)
                                                   #f
                                                   (list 1)))
-  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (blurred-spawn-addr 1) (* Nat) single)
-                                                  `(internal-receive (init-addr 1) (* String) single)
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (collective-addr 1) (* Nat) single)
+                                                  `(internal-receive (addr INIT1 0) (* String) single)
                                                   #f
                                                   (list 1)))
-  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (init-addr 1) (* Nat) single)
-                                                  `(internal-receive (init-addr 2) (* String) single)
-                                                  `(() () ([(init-addr 1) (* String) many]))
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (addr INIT1 0) (* Nat) single)
+                                                  `(internal-receive (addr INIT2 0) (* String) single)
+                                                  `(() () ([(addr INIT1 0) (* String) many]))
                                                   null))
-  (check-false (csa#-trigger-updated-by-step? `(internal-receive (spawn-addr 1 OLD) (* Nat) single)
-                                              `(internal-receive (init-addr 2) (* String) single)
-                                              `(() () ([(spawn-addr 1 OLD) (* Nat) many]
-                                                       [(blurred-spawn-addr 1) (* Nat) many]))
-                                              (list `[(spawn-addr 2 NEW) (() (goto S))]))))
+  (check-false (csa#-trigger-updated-by-step? `(internal-receive (addr 1 0) (* Nat) single)
+                                              `(internal-receive (addr INIT2 0) (* String) single)
+                                              `(() () ([(addr 1 0) (* Nat) many]
+                                                       [(addr 1) (* Nat) many]))
+                                              (list `[(addr 2 1) (() (goto S))]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Tests for use during widening
@@ -3656,22 +3653,22 @@
   (define spawn-behavior-change-test-config
     (redex-let csa# ([i#
                       (term
-                       (([(spawn-addr the-loc OLD)
+                       (([(addr the-loc 0)
                           (() (goto A))]
-                         [(spawn-addr second-loc OLD)
+                         [(addr second-loc 0)
                           (() (goto A))]
-                         [(spawn-addr third-loc OLD)
+                         [(addr third-loc 0)
                           (() (goto A))])
-                        ([(blurred-spawn-addr the-loc)
+                        ([(collective-addr the-loc)
                           ((() (goto A)))]
-                         [(blurred-spawn-addr second-loc)
+                         [(collective-addr second-loc)
                           ((() (goto B)))])
                         ()))])
       (term i#)))
 
   ;; (test-equal? "effect matches existing spawn behavior, no blurred version"
   ;;  (csa#-transition-effect-compare-spawn-behavior
-  ;;   (csa#-transition-effect '(timeout (init-addr 0))
+  ;;   (csa#-transition-effect '(timeout (addr 0 0))
   ;;                           '(() (goto B))
   ;;                           null
   ;;                           (list '((spawn-addr third-loc NEW) (() (goto A)))))
@@ -3683,9 +3680,9 @@
   ;;       (() (goto A))]
   ;;      [(spawn-addr third-loc OLD)
   ;;       (() (goto A))])
-  ;;     ([(blurred-spawn-addr the-loc)
+  ;;     ([(collective-addr the-loc)
   ;;       ((() (goto A)))]
-  ;;      [(blurred-spawn-addr second-loc)
+  ;;      [(collective-addr second-loc)
   ;;       ((() (goto B)))]
   ;;      [(spawn-addr third-loc)
   ;;       (() (goto A))])
@@ -3693,7 +3690,7 @@
   ;;  'gt)
   ;; (test-equal? "effect matches existing spawn behavior, blurred behavior also exists"
   ;;  (csa#-transition-effect-compare-spawn-behavior
-  ;;   (csa#-transition-effect '(timeout (init-addr 0))
+  ;;   (csa#-transition-effect '(timeout (addr 0 0))
   ;;                           '(() (goto B))
   ;;                           null
   ;;                           (list '((spawn-addr the-loc NEW) (() (goto A)))))
@@ -3705,15 +3702,15 @@
   ;;       (() (goto A))]
   ;;      [(spawn-addr third-loc OLD)
   ;;       (() (goto A))])
-  ;;     ([(blurred-spawn-addr the-loc)
+  ;;     ([(collective-addr the-loc)
   ;;       ((() (goto A)))]
-  ;;      [(blurred-spawn-addr second-loc)
+  ;;      [(collective-addr second-loc)
   ;;       ((() (goto B)))])
   ;;     ())))
   ;;  'eq)
   ;; (test-equal? "effect matches existing spawn behavior, blurred actor with other behavior exists"
   ;;  (csa#-transition-effect-compare-spawn-behavior
-  ;;   (csa#-transition-effect '(timeout (init-addr 0))
+  ;;   (csa#-transition-effect '(timeout (addr 0 0))
   ;;                           '(() (goto B))
   ;;                           null
   ;;                           (list '((spawn-addr second-loc NEW) (() (goto A)))))
@@ -3725,15 +3722,15 @@
   ;;       (() (goto A))]
   ;;      [(spawn-addr third-loc OLD)
   ;;       (() (goto A))])
-  ;;     ([(blurred-spawn-addr the-loc)
+  ;;     ([(collective-addr the-loc)
   ;;       ((() (goto A)))]
-  ;;      [(blurred-spawn-addr second-loc)
+  ;;      [(collective-addr second-loc)
   ;;       ((() (goto A)) (() (goto B)))])
   ;;     ())))
   ;;  'gt)
   ;; (test-equal? "effect changes existing spawn behavior"
   ;;  (csa#-transition-effect-compare-spawn-behavior
-  ;;   (csa#-transition-effect '(timeout (init-addr 0))
+  ;;   (csa#-transition-effect '(timeout (addr 0 0))
   ;;                           '(() (goto B))
   ;;                           null
   ;;                           (list '((spawn-addr the-loc NEW) (() (goto C)))))
@@ -3745,15 +3742,15 @@
   ;;       (() (goto A))]
   ;;      [(spawn-addr third-loc OLD)
   ;;       (() (goto A))])
-  ;;     ([(blurred-spawn-addr the-loc)
+  ;;     ([(collective-addr the-loc)
   ;;       ((() (goto A)))]
-  ;;      [(blurred-spawn-addr second-loc)
+  ;;      [(collective-addr second-loc)
   ;;       ((() (goto B)))])
   ;;     ())))
   ;;  'not-gteq)
   ;; (test-equal? "config has no actor for corresponding spawn"
   ;;  (csa#-transition-effect-compare-spawn-behavior
-  ;;   (csa#-transition-effect '(timeout (init-addr 0))
+  ;;   (csa#-transition-effect '(timeout (addr 0 0))
   ;;                           '(() (goto B))
   ;;                           null
   ;;                           (list '((spawn-addr other-loc NEW) (() (goto C)))))
@@ -3767,15 +3764,15 @@
   ;;       (() (goto A))]
   ;;      [(spawn-addr other-loc OLD)
   ;;       (() (goto C))])
-  ;;     ([(blurred-spawn-addr the-loc)
+  ;;     ([(collective-addr the-loc)
   ;;       ((() (goto A)))]
-  ;;      [(blurred-spawn-addr second-loc)
+  ;;      [(collective-addr second-loc)
   ;;       ((() (goto B)))])
   ;;     ())))
   ;;  'not-gteq)
   ;; (test-equal? "effect has no spawns"
   ;;  (csa#-transition-effect-compare-spawn-behavior
-  ;;   (csa#-transition-effect '(timeout (init-addr 0))
+  ;;   (csa#-transition-effect '(timeout (addr 0 0))
   ;;                           '(() (goto B))
   ;;                           null
   ;;                           null)
@@ -3787,9 +3784,9 @@
   ;;       (() (goto A))]
   ;;      [(spawn-addr third-loc OLD)
   ;;       (() (goto A))])
-  ;;     ([(blurred-spawn-addr the-loc)
+  ;;     ([(collective-addr the-loc)
   ;;       ((() (goto A)))]
-  ;;      [(blurred-spawn-addr second-loc)
+  ;;      [(collective-addr second-loc)
   ;;       ((() (goto B)))])
   ;;     ())))
   ;;  'eq)
@@ -3799,9 +3796,9 @@
 ;;   (test-equal? "actor-compare-behavior: new atomic behavior"
 ;;     (csa#-actor-compare-behavior
 ;;      behavior-test-config
-;;      (csa#-transition-effect `(timeout (init-addr 1)) '(() (goto D)) null null)
-;;      (term (([(init-addr 1) (() (goto D))])
-;;            ([(blurred-spawn-addr 2)
+;;      (csa#-transition-effect `(timeout (addr 1 0)) '(() (goto D)) null null)
+;;      (term (([(addr 1 0) (() (goto D))])
+;;            ([(collective-addr 2)
 ;;              ((() (goto B))
 ;;               (() (goto C)))])
 ;;            ())))
@@ -3809,50 +3806,50 @@
 ;;   (test-equal? "actor-compare-behavior: old atomic behavior"
 ;;     (csa#-actor-compare-behavior
 ;;      behavior-test-config
-;;      (csa#-transition-effect `(timeout (init-addr 1)) '(() (goto A)) null null)
+;;      (csa#-transition-effect `(timeout (addr 1 0)) '(() (goto A)) null null)
 ;;      behavior-test-config)
 ;;     'eq)
 ;;   (test-equal? "actor-compare-behavior: adding to vector in old atomic behavior"
 ;;     (csa#-actor-compare-behavior
-;;      (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
-;;             ([(blurred-spawn-addr 2)
+;;      (term (([(addr 1 0) (() (goto A (vector-val (variant A))))])
+;;             ([(collective-addr 2)
 ;;               ((() (goto B))
 ;;                (() (goto C)))])
 ;;             ()))
 ;;      (csa#-transition-effect
-;;       `(timeout (init-addr 1)) '(() (goto A (vector-val (variant B) (variant A)) )) null null)
-;;      (term (([(init-addr 1) (() (goto A (vector-val (variant B) (variant A))))])
-;;             ([(blurred-spawn-addr 2)
+;;       `(timeout (addr 1 0)) '(() (goto A (vector-val (variant B) (variant A)) )) null null)
+;;      (term (([(addr 1 0) (() (goto A (vector-val (variant B) (variant A))))])
+;;             ([(collective-addr 2)
 ;;               ((() (goto B))
 ;;                (() (goto C)))])
 ;;             ())))
 ;;     'gt)
 ;;   (test-equal? "actor-compare-behavior: same vector in old atomic behavior"
 ;;     (csa#-actor-compare-behavior
-;;      (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
-;;             ([(blurred-spawn-addr 2)
+;;      (term (([(addr 1 0) (() (goto A (vector-val (variant A))))])
+;;             ([(collective-addr 2)
 ;;               ((() (goto B))
 ;;                (() (goto C)))])
 ;;             ()))
 ;;      (csa#-transition-effect
-;;       `(timeout (init-addr 1)) '(() (goto A (vector-val (variant A)))) null null)
-;;      (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
-;;             ([(blurred-spawn-addr 2)
+;;       `(timeout (addr 1 0)) '(() (goto A (vector-val (variant A)))) null null)
+;;      (term (([(addr 1 0) (() (goto A (vector-val (variant A))))])
+;;             ([(collective-addr 2)
 ;;               ((() (goto B))
 ;;                (() (goto C)))])
 ;;             ())))
 ;;     'eq)
 ;;   (test-equal? "actor-compare-behavior: smaller vector in old atomic behavior"
 ;;     (csa#-actor-compare-behavior
-;;      (term (([(init-addr 1) (() (goto A (vector-val (variant A))))])
-;;             ([(blurred-spawn-addr 2)
+;;      (term (([(addr 1 0) (() (goto A (vector-val (variant A))))])
+;;             ([(collective-addr 2)
 ;;               ((() (goto B))
 ;;                (() (goto C)))])
 ;;             ()))
 ;;      (csa#-transition-effect
-;;       `(timeout (init-addr 1)) '(() (goto A (vector-val))) null null)
-;;      (term (([(init-addr 1) (() (goto A (vector-val)))])
-;;             ([(blurred-spawn-addr 2)
+;;       `(timeout (addr 1 0)) '(() (goto A (vector-val))) null null)
+;;      (term (([(addr 1 0) (() (goto A (vector-val)))])
+;;             ([(collective-addr 2)
 ;;               ((() (goto B))
 ;;                (() (goto C)))])
 ;;             ())))
@@ -3860,9 +3857,9 @@
 ;;   (test-equal? "actor-compare-behavior: new collective behavior"
 ;;     (csa#-actor-compare-behavior
 ;;      behavior-test-config
-;;      (csa#-transition-effect `(timeout (blurred-spawn-addr 2)) '(() (goto D)) null null)
-;;      (term (([(init-addr 1) (() (goto A))])
-;;             ([(blurred-spawn-addr 2)
+;;      (csa#-transition-effect `(timeout (collective-addr 2)) '(() (goto D)) null null)
+;;      (term (([(addr 1 0) (() (goto A))])
+;;             ([(collective-addr 2)
 ;;               ((() (goto B))
 ;;                (() (goto C))
 ;;                (() (goto D)))])
@@ -3871,7 +3868,7 @@
 ;;   (test-equal? "actor-compare-behavior: old collective behavior"
 ;;     (csa#-actor-compare-behavior
 ;;      behavior-test-config
-;;      (csa#-transition-effect `(timeout (blurred-spawn-addr 2)) '(() (goto B)) null null)
+;;      (csa#-transition-effect `(timeout (collective-addr 2)) '(() (goto B)) null null)
 ;;      behavior-test-config)
 ;;     'eq))
 
@@ -3976,13 +3973,13 @@
 ;;   ;;    (csa#-transition-effect #f #f (list m) null)))
 
 ;;   ;; (test-equal? "single message to init-addr"
-;;   ;;   (compare-one-message `((init-addr 3) (* Nat) single))
+;;   ;;   (compare-one-message `((addr 3 0) (* Nat) single))
 ;;   ;;   'gt)
 ;;   ;; (test-equal? "single message to OLD spawn-addr"
 ;;   ;;   (compare-one-message `((spawn-addr 1 OLD) (* Nat) single))
 ;;   ;;   'gt)
 ;;   ;; (test-equal? "single message to collective address"
-;;   ;;   (compare-one-message `((blurred-spawn-addr 3) (* Nat) single))
+;;   ;;   (compare-one-message `((collective-addr 3) (* Nat) single))
 ;;   ;;   'gt)
 ;;   ;; (test-equal? "to NEW: had zero, send one"
 ;;   ;;   (compare-one-message `((spawn-addr 0 NEW) (* Nat) single))
@@ -4198,16 +4195,12 @@
     'not-gteq)
 
   (test-equal? "compare-value addresses 1"
-    (compare-value `((* Nat) (init-addr 1))
-                   `((* Nat) (init-addr 2)))
-    'not-gteq)
-  (test-equal? "compare-value addresses 2"
-    (compare-value `((* String) (init-addr 1))
-                   `((* Nat) (init-addr 1)))
+    (compare-value `(addr 1 0)
+                   `(addr 2 0))
     'not-gteq)
   (test-equal? "compare-value addresses 3"
-    (compare-value `((* Nat) (init-addr 1))
-                   `((* Nat) (init-addr 1)))
+    (compare-value `(addr 1 0)
+                   `(addr 1 0))
     'eq))
 
 ;; comparison-result comparison-result -> comparison-result
@@ -4268,32 +4261,32 @@
 
 (module+ test
   (define enabled-action-test-config
-    (redex-let csa# ([i# `(([(init-addr 0)
+    (redex-let csa# ([i# `(([(addr 0 0)
                              (((define-state (A) (x) (goto A) ([timeout (* Nat)] (goto A))))
                               (goto A))]
-                            [(init-addr 1)
+                            [(addr 1 0)
                              (((define-state (A) (x) (goto A) ([timeout (* Nat)] (goto A)))
                                (define-state (B) (x) (goto B)))
                               (goto B))])
                            ()
-                           ([(init-addr 0) (* Nat) many]))])
+                           ([(addr 0 0) (* Nat) many]))])
       (term i#)))
 
   (test-not-false "Enabled internal receive"
     (csa#-action-enabled? enabled-action-test-config
-                          '(internal-receive (init-addr 0) (* Nat) single)))
+                          '(internal-receive (addr 0 0) (* Nat) single)))
   (test-false "Disabled internal receive"
     (csa#-action-enabled? enabled-action-test-config
-                          '(internal-receive (init-addr 1) (* Nat) single)))
+                          '(internal-receive (addr 1 0) (* Nat) single)))
   (test-not-false "External receives are always enabled"
     (csa#-action-enabled? enabled-action-test-config
-                          '(external-receive (init-addr 1) (* Nat))))
+                          '(external-receive (addr 1 0) (* Nat))))
   (test-not-false "Enabled timeout"
     (csa#-action-enabled? enabled-action-test-config
-                          '(timeout (init-addr 0))))
+                          '(timeout (addr 0 0))))
   (test-false "Disabled timeout"
     (csa#-action-enabled? enabled-action-test-config
-                          '(timeout (init-addr 1)))))
+                          '(timeout (addr 1 0)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debug helpers
