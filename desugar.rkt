@@ -787,8 +787,7 @@
             (- ad))
   (Exp (e)
        (- (spawn l a e ...))
-       (+ (spawn l τ e S ...)
-          (coerce e τ))))
+       (+ (spawn l τ e S ...))))
 
 (struct actor-record (type formals formal-types body state-defs))
 
@@ -824,7 +823,7 @@
           [(actor-record type formals formal-types body state-defs)
            ;; TODO: do I need to rename variables here at all?
            ;; `(spawn (goto S-Bad1))
-           `(let ([,formals (coerce ,e ,formal-types)] ...) (spawn ,l ,type ,body ,state-defs ...))
+           `(let ([,formals ,e] ...) (spawn ,l ,type ,body ,state-defs ...))
            ])
 
         ;; ,spawn-exp
@@ -891,7 +890,7 @@
                    (goto S1)))
          (actors [a (spawn 1 A 5)])))))
    `(program (receptionists) (externals)
-     (actors [a (let ([x (coerce 5 Nat)])
+     (actors [a (let ([x 5])
                      (spawn
                       1
                       Nat
@@ -915,14 +914,14 @@
                (goto S2))))
          (actors [a (spawn 2 B 5)])))))
    `(program (receptionists) (externals)
-     (actors [a (let ([y (coerce 5 Nat)])
+     (actors [a (let ([y 5])
                      (spawn
                       2
                       Nat
                       (goto S2)
                       (define-state (S2) (m)
                         (begin
-                          (let ([x (coerce 3 Nat)])
+                          (let ([x 3])
                             (spawn
                              1
                              Nat
