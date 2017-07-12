@@ -75,7 +75,6 @@
   ;; REFACTOR: make a general structure for abstract multisets: values with multiplicities attached
   (μ# ((a# v# m) ...)) ; message packets
   (m single many) ; m for "multiplicity"
-  (χ# ([τ a#] ...))
   (Q# (define-state (q [x τ] ...) (x) e#)
       (define-state (q [x τ] ...) (x) e# [(timeout e#) e#]))
   (v# a#
@@ -112,7 +111,7 @@
   (a#-atomic (addr loc natural))
   (a#-collective (collective-addr loc))
   ;; H# = handler machine state (exp + externals + outputs + spawns so far)
-  (H# (e# χ# [([a# v# m] ...) ((a# b#) ...)]))
+  (H# (e# [([a# v# m] ...) ((a# b#) ...)]))
   (E# hole
       (spawning a# τ E# Q# ...)
       (goto q v# ... E# e# ...)
