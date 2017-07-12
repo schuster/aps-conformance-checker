@@ -1835,8 +1835,8 @@
 
 ;; Abstracts the address a, where internal-addresses is the list of all addresses belonging to actors
 ;; in a's implementation configuration.
-(define (csa#-abstract-address a internal-addresses)
-  (term (abstract-e ,a ,internal-addresses)))
+(define (csa#-abstract-address a)
+  (term (abstract-e ,a)))
 
 (module+ test
   (check-equal? (term (abstract-e (record [f1 1] [f2 2]) ()))
