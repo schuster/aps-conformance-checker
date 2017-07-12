@@ -35,7 +35,7 @@
  csa#-output-message
  csa#-output-multiplicity
  csa#-blur-addresses ; needed for blurring in APS#
- internals-in
+ internal-addr-types
  externals-in
  csa#-sort-config-components
  csa#-addrs-to-evict
@@ -2919,41 +2919,16 @@
                                        [A (Union [C] [D])]
                                        (Union [A (Union [C])] [B])))))
 
-;; v# τ -> ρ#
+;; v# τ -> ([τ a#] ...)
 ;;
-;; Returns the type/address pairs for all address in the given value when the value is typechecked as
-;; the given type
+;; Returns the address environment inferred by type-checking v# as τ
 (define (internal-addr-types v type)
-  (define (get-types-and-merge-all v-type-pairs)
-    (for/fold ([results null])
-              ([vtp v-type-pairs])
-      (match-define (list v type) vtp)
-      (merge-receptionists results (internal-addr-types v type))))
+  (filter
+   (lambda (entry)
+     (match-define (list type addr) entry)
+     (internal-address? addr))
+   (addr-types v type)))
 
-  (match (list v type)
-    [(list _ `(Addr ,type))
-     (if (internal-address? v)
-         (list `[,type ,v])
-         null)]
-    [(list `(folded ,type ,v) `(minfixpt ,X ,fold-type))
-     (internal-addr-types v (term (type-subst ,fold-type ,X (minfixpt ,X ,fold-type))))]
-    [(list `(variant ,tag ,vs ...) `(Union ,cases ...))
-     (match-define `(,_ ,case-arg-types ...)
-       (first (filter (lambda (case) (equal? (first case) tag)) cases)))
-     (get-types-and-merge-all (map list vs case-arg-types))]
-    [(list `(record ,rec-fields ...) `(Record ,rec-field-types ...))
-     (get-types-and-merge-all (map list (map second rec-fields) (map second rec-field-types)))]
-    [(list `(list-val ,vs ...) `(List ,type))
-     (get-types-and-merge-all (map (lambda (v) (list v type)) vs))]
-    [(list `(hash-val ,vs1 ,vs2) `(Hash ,type1 ,type2))
-     (merge-receptionists
-      (get-types-and-merge-all (map (lambda (v) (list v type1)) vs1))
-      (get-types-and-merge-all (map (lambda (v) (list v type2)) vs2)))]
-    [(list `(* Nat) 'Nat) null]
-    [(list `(* String) 'String) null]
-    [_ (error 'internal-addr-types "Unknown val/type combo ~s ~s" v type)]))
-
-;; TODO: tests
 (module+ test
   (test-equal? "internal-addr-types 1"
     (internal-addr-types `(addr 1 0) `(Addr Nat))
@@ -2973,12 +2948,85 @@
     (internal-addr-types `(folded (minfixpt X (Addr (Union [A X])))
                                   (addr 1 0))
                          `(minfixpt X (Addr (Union [A X]))))
-    (list `[(Union [A (minfixpt X (Addr (Union [A X])))]) (addr 1 0)])))
+    (list `[(Union [A (minfixpt X (Addr (Union [A X])))]) (addr 1 0)]))
+  (test-case "internal-addr-types 6"
+    (check-same-items?
+     (internal-addr-types (term (record [a (addr 1 0)]
+                                        [b (addr (env Nat) 2)]
+                                        [c (addr 3 1)]
+                                        [d (list-val (addr 2 0)  (addr (env Nat) 3))]))
+                          (term (Record [a (Addr Nat)]
+                                        [b (Addr String)]
+                                        [c (Addr String)]
+                                        [d (List (Addr Nat))])))
+     (term ((Nat (addr 1 0))
+            (String (addr 3 1))
+            (Nat (addr 2 0)))))))
+
+;; v# τ -> ρ#
+;;
+;; Returns the type/address pairs for all address in the given value when the value is typechecked as
+;; the given type
+(define (addr-types v type)
+  (define (get-types-and-merge-all v-type-pairs)
+    (for/fold ([results null])
+              ([vtp v-type-pairs])
+      (match-define (list v type) vtp)
+      (merge-receptionists results (addr-types v type))))
+
+  (match (list v type)
+    [(list (? (lambda (v) (redex-match? csa# a# v))) `(Addr ,type))
+     (list `[,type ,v])]
+    [(list `(folded ,type ,v) `(minfixpt ,X ,fold-type))
+     (addr-types v (term (type-subst ,fold-type ,X (minfixpt ,X ,fold-type))))]
+    [(list `(variant ,tag ,vs ...) `(Union ,cases ...))
+     (match-define `(,_ ,case-arg-types ...)
+       (first (filter (lambda (case) (equal? (first case) tag)) cases)))
+     (get-types-and-merge-all (map list vs case-arg-types))]
+    [(list `(record ,rec-fields ...) `(Record ,rec-field-types ...))
+     (get-types-and-merge-all (map list (map second rec-fields) (map second rec-field-types)))]
+    [(list `(list-val ,vs ...) `(List ,type))
+     (get-types-and-merge-all (map (lambda (v) (list v type)) vs))]
+    [(list `(hash-val ,vs1 ,vs2) `(Hash ,type1 ,type2))
+     (merge-receptionists
+      (get-types-and-merge-all (map (lambda (v) (list v type1)) vs1))
+      (get-types-and-merge-all (map (lambda (v) (list v type2)) vs2)))]
+    [(list `(* Nat) 'Nat) null]
+    [(list `(* String) 'String) null]
+    [_ (error 'addr-types "Unknown val/type combo ~s ~s" v type)]))
+
+(module+ test
+  (test-equal? "addr-types 1"
+    (addr-types `(addr 1 1) `(Addr Nat))
+    (term ([Nat (addr 1 1)])))
+  (test-equal? "addr-types 2"
+    (addr-types `(variant A (* Nat) (addr 2 2)) `(Union [B] [A Nat (Addr String)]))
+    (term ([String (addr 2 2)])))
+  (test-equal? "addr-types: record"
+    (addr-types `(record [a (addr 1 2)] [b (* String)]) `(Record [a (Addr String)] [b String]))
+    (term ([String (addr 1 2)])))
+  (test-equal? "addr-types: join"
+    (addr-types `(record [a (addr 2 2)]         [b (addr 2 2)])
+                `                      (Record [a (Addr (Union [A]))] [b (Addr (Union [B]))]))
+    (term ([(Union [A] [B]) (addr 2 2)])))
+  (test-case "addr-types: fold"
+    (define type `(minfixpt SelfAddr (Addr (Union [A SelfAddr]))))
+    (check-equal?
+     (addr-types `(folded ,type (addr 1 1)) type)
+     (term ([(Union [A ,type]) (addr 1 1)]))))
+  (test-equal? "addr-types: list"
+    (addr-types `(list-val (addr 1 1) (addr 2 2)) `(List (Addr (Record))))
+    (term ([(Record) (addr 1 1)] [(Record) (addr 2 2)])))
+  (test-equal? "addr-types: hash"
+    (addr-types `(hash-val ((addr 0 0)) ((addr 1 1) (addr 2 2)))
+                `(Hash (Addr String) (Addr (Record))))
+    (term ([String (addr 0 0)] [(Record) (addr 1 1)] [(Record) (addr 2 2)]))))
 
 ;; ρ# ρ# -> ρ#
 ;;
 ;; Merges the list of new receptionists into the old one, taking the join of types for duplicate
 ;; entries and adding new entries otherwise
+;; TODO: rename this to join-receptionists
 (define (merge-receptionists old-recs new-recs)
   (for/fold ([old-recs old-recs])
             ([new-rec new-recs])
@@ -3020,81 +3068,6 @@
     [`(addr (env ,_) ,_) (list the-term)]
     [(list terms ...) (append* (map externals-in/internal the-term))]
     [_ null]))
-
-(module+ test
-  (check-same-items?
-   (externals-in (term ((addr (env Nat) 1)
-                        (addr (env Nat) 2)
-                        (addr (env Nat) 2)
-                        (collective-addr (env Nat))
-                      (foo bar (baz (addr 2 0) (obs-ext 3))))))
-   (term ((addr (env Nat) 1) (addr (env Nat) 2) (addr (env Nat) 2)))))
-
-;; TODO: uncomment these later
-;; Returns the list of all internal (typed) addresses in the given term
-;; (define (internals-in the-term type)
-;;   (remove-duplicates (term (internals-in/mf ,the-term ,type))))
-
-;; (define-metafunction csa#
-;;   internals-in/mf : any -> (τa# ...)
-;;   [(internals-in/mf (τ a#int)) ((τ a#int))]
-;;   [(internals-in/mf (any ...))
-;;    (any_addr ... ...)
-;;    (where ((any_addr ...) ...) ((internals-in/mf any) ...))]
-;;   [(internals-in/mf _) ()])
-
-;; (module+ test
-;;   (check-same-items?
-;;    (internals-in (term ((Nat (addr 1 0))
-;;                         (Nat (addr 1 0))
-;;                         (Nat (obs-ext 2))
-;;                         (Nat (spawn-addr 3 NEW))
-;;                       (foo bar (baz (Nat (addr 2 0)) (Nat (obs-ext 3)))))))
-;;    (term ((Nat (addr 1 0)) (Nat (spawn-addr 3 NEW)) (Nat (addr 2 0))))))
-
-;; Returns the tightest address environment that allows v# to type-check as τ, 
-;; (define-metafunction csa#
-;;   addr-types : v# τ -> ([a# τ#] ...)
-;;   [(addr-types a# (Addr τ)) ([a# τ])]
-;;   [(addr-types (variant t v# ..._n) (Union _ ... (t τ ..._n) _ ...))
-;;    ,(addr-env-union* (term ((addr-types v# τ) ...)))]
-;;   [(addr-types (record [l v#] ..._n) (Record [l τ] ..._n))
-;;    ,(addr-env-union* (term ((addr-types v# τ) ...)))]
-;;   [(addr-types (folded τ v#) (minfixpt X τ_2))
-;;    (addr-types v# (type-subst τ_2 X (minfixpt X τ_2)))]
-;;   [(addr-types (* _) _) ()]
-;;   [(addr-types (list-val v# ...) (Listof τ))
-;;    ,(addr-env-union* (term ((addr-types v# τ) ...)))]
-;;   [(addr-types (hash-val (v#_1 ...) (v#_2 ...)) (Hash τ_1 τ_2))
-;;    ,(addr-env-union
-;;      (addr-env-union* (term ((addr-types v#_1 τ_1) ...)))
-;;      (addr-env-union* (term ((addr-types v#_2 τ_2) ...))))])
-
-;; (module+ test
-;;   (test-equal? "addr-types 1"
-;;     (term (addr-types (addr 1 1) (Addr Nat)))
-;;     (term ([(addr 1 1) Nat])))
-;;   (test-equal? "addr-types 2"
-;;     (term (addr-types (variant A (* Nat) (addr 2 2)) (Union [B] [A Nat (Addr String)])))
-;;     (term ([(addr 2 2) String])))
-;;   (test-equal? "addr-types: record"
-;;     (term (addr-types (record [a (addr 1 2)] [b (* String)]) (Record [a (Addr String)] [b String])))
-;;     (term ([(addr 1 2) String])))
-;;   (test-equal? "addr-types: join"
-;;     (term (addr-types (record [a (addr 2 2)]         [b (addr 2 2)])
-;;                       (Record [a (Addr (Union [A]))] [b (Addr (Union [B]))])))
-;;     (term ([(addr 2 2) (Union [A] [B])])))
-;;   (test-case "addr-types: fold"
-;;     (define type `(minfixpt SelfAddr (Union [A (Addr SelfAddr)])))
-;;     (check-equal?
-;;      (term (addr-types (folded ,type (addr 1 1)) ,type))
-;;      (term ([(addr 1 1) ,type]))))
-;;   (test-equal? "addr-types: list"
-;;     (term (list-val (addr 1 1) (addr 2 2)) (Listof (Addr Record)))
-;;     (term ([(addr 1 1) (Record)] [(addr 2 2) (Record)])))
-;;   (test-equal? "addr-types: hash"
-;;     (term (hash-val ((addr 0 0)) ((addr 1 1) (addr 2 2))) (Hash (Addr String) (Addr Record)))
-;;     (term ([(addr 0 0) (String)] [(addr 1 1) (Record)] [(addr 2 2) (Record)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Eviction (see the Eviction section of aps-abstract.rkt for more info)
