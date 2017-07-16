@@ -26,12 +26,14 @@
  csa#-apply-transition
 
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
- csa#-spawn-address?
- csa#-spawn-address-flag
- csa#-flags-that-know-externals
+ ;; csa#-spawn-address?
+ ;; csa#-spawn-address-flag
+ csa#-ids-that-know-externals
 
  ;; Required by APS#
+ csa#-internal-address?
  csa#-output-address
+ csa#-output-type
  csa#-output-message
  csa#-output-multiplicity
  csa#-blur-addresses ; needed for blurring in APS#
@@ -45,6 +47,7 @@
  ;; Required by APS#; should go into a "common" language instead
  csa#
  csa#-abstract-address
+ type-subst
  type-join
  type<=
 
@@ -1836,7 +1839,7 @@
 ;; Abstracts the address a, where internal-addresses is the list of all addresses belonging to actors
 ;; in a's implementation configuration.
 (define (csa#-abstract-address a)
-  (term (abstract-e ,a)))
+  (term (abstract-e ,a ())))
 
 (module+ test
   (check-equal? (term (abstract-e (record [f1 1] [f2 2]) ()))
@@ -2033,7 +2036,7 @@
   (match some-term
     [(and addr `(addr ,loc ,_))
      (cond
-       [(internal-address? addr)
+       [(csa#-internal-address? addr)
         (if (member addr internals-to-blur)
             (term (collective-addr ,loc))
             addr)]
@@ -2438,6 +2441,10 @@
 
 (define csa#-output-address car)
 
+(define (csa#-output-type o)
+  (match (address-location (csa#-output-address o))
+    [`(env ,type) type]))
+
 (define csa#-output-message cadr)
 
 (define csa#-output-multiplicity caddr)
@@ -2569,7 +2576,7 @@
 ;; Returns true if the output is to an internal address, false otherwise
 (define (internal-output? output)
   (match-define `(,addr ,_ ,_) output)
-  (internal-address? addr))
+  (csa#-internal-address? addr))
 
 (module+ test
   (check-true (internal-output? (term ((addr 1 0) (* Nat) single))))
@@ -2580,14 +2587,14 @@
     [`(addr ,loc ,_) #t]
     [_ #f]))
 
-(define (internal-address? addr)
+(define (csa#-internal-address? addr)
   (match (address-location addr)
     [`(env ,_) #f]
     [_ #t]))
 
 (module+ test
-  (test-true "internal-address? true" (internal-address? `(addr foo 1)))
-  (test-false "internal-address? false" (internal-address? `(addr (env Nat) 2))))
+  (test-true "csa#-internal-address? true" (csa#-internal-address? `(addr foo 1)))
+  (test-false "csa#-internal-address? false" (csa#-internal-address? `(addr (env Nat) 2))))
 
 (define (internal-atomic-action? trigger)
   (match trigger
@@ -2925,7 +2932,7 @@
   (filter
    (lambda (entry)
      (match-define (list type addr) entry)
-     (internal-address? addr))
+     (csa#-internal-address? addr))
    (addr-types v type)))
 
 (module+ test
@@ -3379,7 +3386,7 @@
   (match some-term
     [`(addr ,loc ,id)
      (cond
-       [(internal-address? some-term)
+       [(csa#-internal-address? some-term)
         (if (= id 1) `(collective-addr ,loc) some-term)]
        [else ; external
         (match-define `(env ,type) loc)
