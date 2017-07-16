@@ -15,8 +15,6 @@
  internal-atomic-action?
  trigger-address
  internal-single-receive?
- csa#-address-type
- csa#-address-strip-type
  ;; required for widening
  csa#-transition-maybe-good-for-widen?
  (struct-out csa#-transition-effect)
@@ -26,8 +24,8 @@
  csa#-apply-transition
 
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
- ;; csa#-spawn-address?
- ;; csa#-spawn-address-flag
+ csa#-actor-with-opposite-id-exists?
+ csa#-address-id
  csa#-ids-that-know-externals
 
  ;; Required by APS#
@@ -1744,24 +1742,26 @@
 ;; longer a thing), but I haven't taken the time to confirm that
 ;;
 ;; NOTE: currently supports only no-messages, no-externals configs
-(define (csa#-abstract-config concrete-config internal-addresses)
-  (term (abstract-config/mf ,concrete-config ,internal-addresses)))
+(define (csa#-abstract-config concrete-config)
+  (term (abstract-config/mf ,concrete-config ())))
 
 (define-metafunction csa#
+  ;; NOTE: a_internal no longer used; keeping it here for now in case we ever need to thread it back
+  ;; through
   abstract-config/mf : i (a_internal ...) -> i#
   [(abstract-config/mf (((a b) ...) ; actors
-                 () ; messages-in-transit
-                 _ ; receptionists (ignored because the spec config manages these)
-                 _ ; externals (ignored because the spec config manages these)
-                 )
-                (a_internal ...))
+                        () ; messages-in-transit
+                        _ ; receptionists (ignored because the spec config manages these)
+                        _ ; externals (ignored because the spec config manages these)
+                        )
+                       (a_internal ...))
    (([a# b#] ...) () ())
    (where ([a# b#] ...) ((abstract-actor (a b) (a_internal ...)) ...))])
 
 (define-metafunction csa#
   abstract-actor : (a b) (a_internals ...) -> [a# b#]
   [(abstract-actor (a_this ((Q ...) e)) (a ...))
-   ((abstract-address a_this (a ...))
+   ((abstract-e a_this (a ...))
     (((abstract-Q Q (a ...)) ...)
      (abstract-e e (a ...))))])
 
@@ -1876,6 +1876,9 @@
 (define (csa#-address-with-opposite-id a)
   `(addr ,(address-location a) ,(if (= (csa#-address-id a) 0) 1 0)))
 
+(define (csa#-actor-with-opposite-id-exists? config address)
+  (csa#-config-actor-by-address config (csa#-address-with-opposite-id address)))
+
 ;; impl-config (Listof a#ext) -> (Listof spawn-id)
 ;;
 ;; Returns the list of all actor-address-ids such that at least one actor in the config whose address
@@ -1886,7 +1889,7 @@
   (define all-atomics-with-opposite-id-exists
     (filter
      (lambda (actor)
-       (csa#-config-actor-by-address (csa#-address-with-opposite-id (csa#-actor-address actor))))
+       (csa#-config-actor-by-address config (csa#-address-with-opposite-id (csa#-actor-address actor))))
      (csa#-config-actors config)))
   (define-values (old-spawns new-spawns)
     (partition
@@ -2410,16 +2413,6 @@
 (define (csa#-config-collective-actor-by-address config addr)
   (findf (lambda (a) (equal? (csa#-blurred-actor-address a) addr))
          (csa#-config-blurred-actors config)))
-
-;; τa# -> τ
-;;
-;; Returns the type for the given typed address
-(define (csa#-address-type ta)
-  (error "not implemented"))
-
-;; Returns the address portion of an abstract typed address
-(define (csa#-address-strip-type a)
-  (error "not implemented"))
 
 (define (csa#-actor-address a)
   (first a))

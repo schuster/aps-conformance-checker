@@ -11,10 +11,8 @@
  csa-valid-config?
  csa-valid-receptionist-list?
  csa-config-receptionists
- csa-config-internal-addresses
  instantiate-prog
- instantiate-prog+bindings
- csa-contains-address?)
+ instantiate-prog+bindings)
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -391,36 +389,15 @@
 
 (define (csa-valid-config? c)
   (and (redex-match csa-eval i c)
-       (not (check-duplicates (csa-config-internal-addresses c)))))
+       (not (check-duplicates (csa-config-actor-addresses c)))))
 
 (define (csa-valid-receptionist-list? l)
   (redex-match csa-eval ([τ a] ...) l))
 
-;; Returns true if the expression contains any address
-(define (csa-contains-address? e)
-  (term (csa-contains-address?/mf ,e)))
-
-(define-metafunction csa
-  csa-contains-address?/mf : any -> boolean
-  [(csa-contains-address?/mf (addr _ _)) #t]
-  [(csa-contains-address?/mf (any ...))
-   ,(ormap csa-contains-address? (term (any ...)))]
-  [(csa-contains-address?/mf _) #f])
-
-(module+ test
-  (test-true "csa-contains-address?"
-    (csa-contains-address? (term ((addr 1 1) (addr 2 2)))))
-
-  (test-false "csa-contains-address?"
-    (csa-contains-address? (term ((abc 1 Nat) (def 2 Nat)))))
-
-  (test-true "csa-contains-address?"
-    (csa-contains-address? (term (((abc) (addr 0 11)) ())))))
-
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
 
-(define (csa-config-internal-addresses config)
+(define (csa-config-actor-addresses config)
   (redex-let* csa-eval ([(((a _) ...) _ _ _) config])
     (term (a ...))))
 
@@ -430,7 +407,7 @@
                         [α (term ([(addr 0 0) b_1]
                                   [(addr 1 1) b_2]))]
                         [i (term (α () () ()))])
-    (check-equal? (csa-config-internal-addresses (term i))
+    (check-equal? (csa-config-actor-addresses (term i))
                   (term ((addr 0 0) (addr 1 1))))))
 
 (define (csa-config-receptionists config)
