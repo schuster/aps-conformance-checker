@@ -128,7 +128,7 @@
   (list satisfying-pairs unsatisfying-pairs))
 
 (module+ test
-  (define (make-com-sat-ext-address number) `(obs-ext ,number))
+  (define (make-com-sat-ext-address number) `(addr (env Nat) ,number))
   (define (sat-test-node name commitment-address-number commitment-patterns)
     (define mult-patterns (map (lambda (pat) `(single (variant ,pat))) commitment-patterns))
     (config-pair name
@@ -141,7 +141,7 @@
     (config-pair name `(() () (goto A) () ())))
   (define (sat-impl-step trigger) (impl-step trigger null null #f))
   (define (letters->sat-list addr sat-letters)
-    (map (lambda (letter) `((obs-ext ,addr) (variant ,letter)))
+    (map (lambda (letter) `((addr (env Nat) ,addr) (variant ,letter)))
          sat-letters))
   (define (sat-spec-step com-addr-number . satisfied-commitment-letters)
     (spec-step #f (letters->sat-list com-addr-number satisfied-commitment-letters)))
@@ -166,17 +166,17 @@
   (define o-node (sat-test-node 'O 1 (list 'V)))
 
   ;; aw stands for "Actor has Work to do"
-  (define sat-aw-trigger1 `(timeout (init-addr 1)))
-  (define sat-aw-trigger2 `(internal-receive (init-addr 2) (* Nat) single))
-  (define sat-aw-trigger3 `(internal-receive (init-addr 3) (* Nat) single))
-  (define sat-aw-trigger4 `(internal-receive (init-addr 4) (* Nat) single))
+  (define sat-aw-trigger1 `(timeout (addr 1 0)))
+  (define sat-aw-trigger2 `(internal-receive (addr 2 0) (* Nat) single))
+  (define sat-aw-trigger3 `(internal-receive (addr 3 0) (* Nat) single))
+  (define sat-aw-trigger4 `(internal-receive (addr 4 0) (* Nat) single))
 
   ;; im stands for "Internal Message"
-  (define sat-im-trigger1 `(internal-receive (init-addr 5) (variant A) single))
-  (define sat-im-trigger2 `(internal-receive (init-addr 5) (variant B) single))
+  (define sat-im-trigger1 `(internal-receive (addr 5 0) (variant A) single))
+  (define sat-im-trigger2 `(internal-receive (addr 5 0) (variant B) single))
 
   ;; er stands for "External Receive"
-  (define sat-er-trigger1 `(external-receive (init-addr 1) (* Nat)))
+  (define sat-er-trigger1 `(external-receive (addr 1 0) (* Nat)))
 
   (define ag-impl-step (sat-impl-step sat-aw-trigger1))
   (define ai-impl-step (sat-impl-step sat-aw-trigger2))
@@ -370,11 +370,11 @@
                l-node)))
 
   (test-case "partition-by-satisfaction: no satisfaction for many-of commitments"
-    (define a-node (config-pair 'A `(() () (goto A) () ([(obs-ext 1) (many *)]))))
-    (define a-node2 (config-pair 'A `(() () (goto A) () ([(obs-ext 1) (single *)]))))
+    (define a-node (config-pair 'A `(() () (goto A) () ([(addr (env Nat) 1) (many *)]))))
+    (define a-node2 (config-pair 'A `(() () (goto A) () ([(addr (env Nat) 1) (single *)]))))
     (define aa-impl-step
-      (impl-step `(internal-receive (init-addr 1) (* Nat) single) null null #f))
-    (define aa-spec-step (spec-step #f (list `((obs-ext 1) *))))
+      (impl-step `(internal-receive (addr 1 0) (* Nat) single) null null #f))
+    (define aa-spec-step (spec-step #f (list `((addr (env Nat) 1) *))))
     (check-equal?
      (partition-by-satisfaction
       (set a-node)
@@ -482,21 +482,21 @@
 (module+ test
   ;; TODO: update these; not sure what exactly they should do
   (define com-sat-actors-with-work
-    (immutable-hash ['A (set `(init-addr 1) `(init-addr 2) `(init-addr 3) `(init-addr 4) `(init-addr 5))]
-                    ['B (set `(init-addr 1) `(init-addr 2) `(init-addr 3))]
+    (immutable-hash ['A (set `(addr 1 0) `(addr 2 0) `(addr 3 0) `(addr 4 0) `(addr 5 0))]
+                    ['B (set `(addr 1 0) `(addr 2 0) `(addr 3 0))]
                     ['C (set)]
                     ['D (set)]
                     ['E (set)]
                     ['F (set)]
-                    ['G (set `(init-addr 5))]
-                    ['H (set `(init-addr 5))]
-                    ['I (set `(init-addr 1) `(init-addr 2))]
-                    ['J (set `(init-addr 1) `(init-addr 2))]
+                    ['G (set `(addr 5 0))]
+                    ['H (set `(addr 5 0))]
+                    ['I (set `(addr 1 0) `(addr 2 0))]
+                    ['J (set `(addr 1 0) `(addr 2 0))]
                     ['K (set)]
                     ['L (set)]
                     ['M (set)]
-                    ['N (set `(init-addr 5))]
-                    ['O (set `(init-addr 5))]))
+                    ['N (set `(addr 5 0))]
+                    ['O (set `(addr 5 0))]))
   (test-equal? "catalog-actors-with-work"
     (catalog-actors-with-work com-sat-outgoing) com-sat-actors-with-work)
 
@@ -506,7 +506,7 @@
                                                           (spec-step null null)
                                                           null))]
                      [(config-pair 'A 'Y) (set)]))
-    (immutable-hash ['A (set `(init-addr 1))])))
+    (immutable-hash ['A (set `(addr 1 0))])))
 
 ;; OutgoingDict -> (Hash impl-config (Setof int-rcv-trigger))
 ;;
@@ -525,7 +525,7 @@
                          (list->set (filter internal-single-receive? all-actions))))))
 
 (module+ test
-  (define (make-nat-rcv-trigger addr-num) `(internal-receive (init-addr ,addr-num) (* Nat) single))
+  (define (make-nat-rcv-trigger addr-num) `(internal-receive (addr ,addr-num 0) (* Nat) single))
   (define com-sat-internal-single-receives
     (immutable-hash ['A (set sat-aw-trigger2 sat-aw-trigger3 sat-aw-trigger4 sat-im-trigger1)]
                     ['B (set sat-aw-trigger2 sat-aw-trigger3)]
@@ -555,12 +555,12 @@
       (mutable-hash
        [a-node
         (mutable-set
-         (make-match-step `(internal-receive (init-addr 1) (* Nat) single))
-         (make-match-step `(internal-receive (init-addr 1) (* Nat) many))
-         (make-match-step `(internal-receive (blurred-spawn-addr 1 NEW) (* Nat) single))
-         (make-match-step `(internal-receive (blurred-spawn-addr 1 NEW) (* Nat) many)))]))
-     (immutable-hash ['A (set `(internal-receive (init-addr 1) (* Nat) single)
-                              `(internal-receive (blurred-spawn-addr 1 NEW) (* Nat) single))]))))
+         (make-match-step `(internal-receive (addr 1 0) (* Nat) single))
+         (make-match-step `(internal-receive (addr 1 0) (* Nat) many))
+         (make-match-step `(internal-receive (collective-addr 1) (* Nat) single))
+         (make-match-step `(internal-receive (collective-addr 1) (* Nat) many)))]))
+     (immutable-hash ['A (set `(internal-receive (addr 1 0) (* Nat) single)
+                              `(internal-receive (collective-addr 1) (* Nat) single))]))))
 
 ;; Type:
 ;;
@@ -877,8 +877,8 @@
                                    (mapped-derivative 'B (list `[2 3]))
                                    (mapped-derivative 'C (list `[1 4] `[5 2]))
                                    (mapped-derivative 'D (list `[6 1]`[3 2])))
-                             `((obs-ext 3) *))
-   (list 'D `((obs-ext 2) *))))
+                             `((addr (env Nat) 3) *))
+   (list 'D `((addr (env Nat) 2) *))))
 
 ;; Returns the vertex with the given value in the graph, or adds such a vertex if none exists and
 ;; returns it
