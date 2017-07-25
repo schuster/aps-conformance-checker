@@ -2667,13 +2667,13 @@
     ;; Third time through, send to that actor
     (term
      ((Nat (addr 0 0))
-      (((define-state (Always [static-output (Addr (Union [Ack Nat]))]
+      (((define-state (Always [static-output (Addr ,static-response-type)]
                               [saved-internal (Union [None]
-                                                     [First (Addr (Addr (Union [Ack Nat])))]
-                                                     [Second (Addr (Addr (Union [Ack Nat])))])]) (m)
+                                                     [First (Addr (Addr ,static-response-type))]
+                                                     [Second (Addr (Addr ,static-response-type))])]) (m)
           (let ([new-child
                  (spawn child-loc
-                        (Addr (Union [Ack Nat]))
+                        (Addr ,static-response-type)
                         (goto InternalAlways)
                         (define-state (InternalAlways) (m)
                           (begin
@@ -2702,13 +2702,13 @@
     ;; Third time through, send to that actor
     (term
      ((Nat (addr 0 0))
-      (((define-state (Always [static-output (Addr (Union [Ack Nat]))]
+      (((define-state (Always [static-output (Addr ,static-response-type)]
                               [saved-internal (Union [None]
-                                                     [First (Addr (Addr (Union [Ack Nat])))]
-                                                     [Second (Addr (Addr (Union [Ack Nat])))])]) (m)
+                                                     [First (Addr (Addr ,static-response-type))]
+                                                     [Second (Addr (Addr ,static-response-type))])]) (m)
           (let ([new-child
                  (spawn child-loc
-                        (Addr (Union [Ack Nat]))
+                        (Addr ,static-response-type)
                         (goto InternalAlways)
                         (define-state (InternalAlways) (m)
                           (begin
@@ -2728,14 +2728,14 @@
     (term
      (((define-state (Always r)
          [* -> () (goto Always r)]))
-      (goto Always ,untyped-static-response-address)
+      (goto Always ,static-response-address)
       (Nat (addr 0 0)))))
   (define send-whenever-spec
     (term
      (((define-state (Always r)
          [* -> () (goto Always r)]
          [unobs -> ([obligation r *]) (goto Always r)]))
-      (goto Always ,untyped-static-response-address)
+      (goto Always ,static-response-address)
       (Nat (addr 0 0)))))
 
   (test-valid-actor? send-to-blurred-internal-actor)
@@ -2784,7 +2784,7 @@
           (begin
             (spawn child-loc ,@child-behavior)
             (goto Always forwarding-server))))
-       (goto Always (,forwarding-type (addr 1 0)))))))
+       (goto Always (addr 1 0))))))
 
   (define timeout-forwarding-child
     (term
@@ -2846,10 +2846,10 @@
                            (goto Child2))
                          (define-state (Child2) (dummy)
                            (begin
-                             (send r 1)
+                             (send r (variant Ack 1))
                              (goto Child2)))))
             (goto Always r))))
-       (goto Always (Nat (addr 2 0)))))))
+       (goto Always ,static-response-address)))))
 
   (test-valid-actor? create-later-send-children-actor)
   (test-false "Child that sends response in second state does not match never-send"
@@ -2988,7 +2988,7 @@
              (((define-state (Start [target (Addr Nat)]) (m)
                  (case m
                    [(FromEnv)
-                    (let ([parent ((Union [FromEnv] [FromChild]) (addr 1 0))])
+                    (let ([parent (addr 1 0)])
                       (begin
                         (spawn child-loc
                                (Addr (Union [FromChild]))
@@ -3006,10 +3006,10 @@
                       (send target 1)
                       (goto ParentDone))]))
                (define-state (ParentDone) (m) (goto ParentDone)))
-              (goto Start (Nat (addr 2 0))))])
+              (goto Start (addr (env Nat) 2)))])
            ()
            (((Union [FromEnv]) (addr 1 0)))
-           ((Nat (addr 2 0))))))
+           ((Nat (addr (env Nat) 2))))))
   ;; Spec with no real transitions, but a commitment on address 2
   (define new-spawn-spec-config
     (term ((((Union [FromEnv]) (addr 1 0)))
@@ -3017,7 +3017,7 @@
            (goto Always)
            ((define-state (Always)
               [* -> () (goto Always)]))
-           (((addr 2 0) *)))))
+           (((addr (env Nat) 2) *)))))
   (check-true (redex-match? csa-eval i new-spawn-impl-config))
   (check-true (redex-match? aps-eval s new-spawn-spec-config))
   (test-false "Widen new-spawn counterexample"
