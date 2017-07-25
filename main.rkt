@@ -1371,12 +1371,13 @@
   ;;;; Send one message to a statically-known address per request
 
   (define (make-static-response-address type) (term (addr (env ,type) 2)))
-  (define static-response-address (make-static-response-address (term (Union (Ack Nat)))))
+  (define static-response-type (term (Union (Ack Nat))))
+  (define static-response-address (make-static-response-address static-response-type))
   (define nat-static-response-address (make-static-response-address (term Nat)))
   (define static-response-actor
     (term
      ((Nat (addr 0 0))
-      (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
+      (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
           (begin
            (send response-dest (variant Ack 0))
            (goto Always response-dest))))
@@ -1384,7 +1385,7 @@
   (define static-double-response-actor
     (term
      ((Nat (addr 0 0))
-      (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
+      (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
           (begin
            (send response-dest (variant Ack 0))
            (send response-dest (variant Ack 0))
@@ -2054,7 +2055,7 @@
   (define static-response-let-actor
     (term
      ((Nat (addr 0 0))
-      (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
+      (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
           (let ([new-r response-dest])
             (begin
               (send new-r (variant Ack 0))
@@ -2063,7 +2064,7 @@
   (define static-double-response-let-actor
     (term
      ((Nat (addr 0 0))
-      (((define-state (Always [response-dest (Addr (Union [Ack Nat]))]) (m)
+      (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
           (let ([new-r response-dest])
             (begin
               (send new-r (variant Ack 0))
@@ -2085,9 +2086,9 @@
   (define equal-actor-wrong1
     (term
      ((Nat (addr 0 0))
-      (((define-state (A [dest (Addr Nat)]) (m)
+      (((define-state (A [dest (Addr ,static-response-type)]) (m)
           (begin
-            (send dest 0)
+            (send dest (variant Ack 0))
             (case (= m 0)
               [(True) (goto A dest)]
               [(False) (goto B)])))
@@ -2096,9 +2097,9 @@
   (define equal-actor-wrong2
     (term
      ((Nat (addr 0 0))
-      (((define-state (A [dest (Addr Nat)]) (m)
+      (((define-state (A [dest (Addr ,static-response-type)]) (m)
           (begin
-            (send dest 0)
+            (send dest (variant Ack 0))
             (case (= m 0)
               [(True) (goto B)]
               [(False) (goto A dest)])))
@@ -2107,15 +2108,15 @@
     (define equal-actor
     (term
      ((Nat (addr 0 0))
-      (((define-state (A [dest (Addr Nat)]) (m)
+      (((define-state (A [dest (Addr ,static-response-type)]) (m)
           (begin
-            (send dest 0)
+            (send dest (variant Ack 0))
             (case (= m 0)
               [(True) (goto B dest)]
               [(False) (goto A dest)])))
-        (define-state (B [dest (Addr Nat)]) (m)
+        (define-state (B [dest (Addr ,static-response-type)]) (m)
           (begin
-            (send dest 0)
+            (send dest (variant Ack 0))
             (goto B dest))))
        (goto A ,static-response-address)))))
 
@@ -2153,7 +2154,7 @@
                       ([i (list 1 2 3)])
               (send r i))
             (goto A r))))
-       (goto A ,static-response-address)))))
+       (goto A ,nat-static-response-address)))))
   (define send-before-loop-actor
     (term
      (((Addr Nat) (addr 0 0))
@@ -2193,31 +2194,37 @@
   (test-valid-actor? send-inside-loop-actor)
   (test-valid-actor? send-after-loop-actor)
 
-  (check-true (check-conformance/config (make-single-actor-config loop-do-nothing-actor)
-                           (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
-  (check-true (check-conformance/config (make-single-actor-config loop-send-unobs-actor)
-                           (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
-  (check-true (check-conformance/config (make-single-actor-config send-before-loop-actor)
-                           (make-exclusive-spec request-response-spec)))
-  (check-false (check-conformance/config (make-single-actor-config send-inside-loop-actor)
-                           (make-exclusive-spec request-response-spec)))
-  (check-true (check-conformance/config (make-single-actor-config send-after-loop-actor)
-                           (make-exclusive-spec request-response-spec)))
+  (test-true "loop do nothing"
+    (check-conformance/config (make-single-actor-config loop-do-nothing-actor)
+                              (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
+  (test-true "loop send unobs"
+    (check-conformance/config (make-single-actor-config loop-send-unobs-actor)
+                              (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
+  (test-true "send before loop"
+    (check-conformance/config (make-single-actor-config send-before-loop-actor)
+                              (make-exclusive-spec request-response-spec)))
+  (test-false "send inside loop"
+    (check-conformance/config (make-single-actor-config send-inside-loop-actor)
+                              (make-exclusive-spec request-response-spec)))
+  (test-true "send after loop"
+    (check-conformance/config (make-single-actor-config send-after-loop-actor)
+                              (make-exclusive-spec request-response-spec)))
 
   ;;;; Timeouts
 
+  (define timeout-response-address (make-static-response-address `(Union [GotTimeout] [GotMessage])))
   (define timeout-spec
     (term
      (((define-state (A r)
          [* -> ([obligation r (variant GotMessage)]) (goto A r)]
          [unobs -> ([obligation r (variant GotTimeout)]) (goto A r)]))
-      (goto A ,untyped-static-response-address)
+      (goto A ,timeout-response-address)
       (Nat (addr 0 0)))))
   (define got-message-only-spec
     (term
      (((define-state (A r)
          [* -> ([obligation r (variant GotMessage)]) (goto A r)]))
-      (goto A ,untyped-static-response-address)
+      (goto A ,timeout-response-address)
       (Nat (addr 0 0)))))
   (define timeout-and-send-actor
     (term
@@ -2230,7 +2237,7 @@
            (begin
              (send r (variant GotTimeout))
              (goto A r))]))
-       (goto A ,(make-static-response-address `(Union (GotMessage) (GotTimeout))))))))
+       (goto A ,timeout-response-address)))))
   (define timeout-to-send-actor
     (term
      ((Nat (addr 0 0))
@@ -2244,7 +2251,7 @@
            (begin
              (send r (variant GotMessage))
              (goto A r))]))
-       (goto A ,(make-static-response-address `(Union (GotMessage) (GotTimeout))))))))
+       (goto A ,timeout-response-address)))))
   (define spawn-timeout-sender-actor
     (term
      ((Nat (addr 0 0))
@@ -2260,7 +2267,7 @@
                    (define-state (Done) (m)
                      (goto Done)))
             (goto A r))))
-       (goto A ,(make-static-response-address `(Union (GotMessage) (GotTimeout))))))))
+       (goto A ,timeout-response-address)))))
 
   (test-valid-instance? timeout-spec)
   (test-valid-instance? got-message-only-spec)
