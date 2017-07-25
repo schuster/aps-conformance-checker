@@ -1526,7 +1526,7 @@
             (send r (variant B))
             (goto Done))])
         (define-state (Done) (m) (goto Done)))
-       (goto Init (addr 1 0))))))
+       (goto Init (addr (env (Union [A] [B])) 0))))))
 
   (define overlapping-patterns-spec
     (term
@@ -1536,7 +1536,7 @@
             (goto NoMoreSends)])
        (define-state (NoMoreSends)
          [* -> () (goto NoMoreSends)]))
-      (goto Init (addr 1 0))
+      (goto Init (addr (env (Union [A] [B])) 0))
       (Nat (addr 0 0)))))
 
   ;; Non-deterministic/overlap pattern-matching is unsupported: we just pick for each output the first
