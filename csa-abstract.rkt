@@ -26,6 +26,7 @@
  ;; Required by conformance checker to select spawn-flag to blur; likely to change
  csa#-actor-with-opposite-id-exists?
  csa#-address-id
+ csa#-atomic-address?
  csa#-ids-that-know-externals
 
  ;; Required by APS#
@@ -422,7 +423,7 @@
 ;; (will only be a single behavior for precise addresses, one or more for blurred ones).
 (define (current-behaviors-for-address config address)
   (cond
-    [(atomic-address? address)
+    [(csa#-atomic-address? address)
      (list (actor-behavior (csa#-config-actor-by-address/fail config address)))]
     [else (blurred-actor-behaviors-by-address config address)]))
 
@@ -487,7 +488,7 @@
          (match-define (list maybe-duplicate-value-states stuck-states)
            (eval-machine init-exp
                          init-effects
-                         (not (atomic-address? (trigger-address trigger)))))
+                         (not (csa#-atomic-address? (trigger-address trigger)))))
          ;; OPTIMIZE: find out if there's a way to prevent the eval from generating duplicate states
          ;; in the first place (for loops probably make this hard). My hunch is there's no easy way to
          ;; do it.
@@ -1459,7 +1460,7 @@
   ;; 2. update the behavior
   (define new-behavior (csa#-transition-effect-behavior transition-effect))
   (define with-updated-behavior
-    (if (atomic-address? addr)
+    (if (csa#-atomic-address? addr)
         (update-behavior/precise with-trigger-message-removed addr new-behavior)
         (config-add-blurred-behaviors with-trigger-message-removed (list `[,addr ,new-behavior]))))
   ;; 3. add spawned actors
@@ -1530,7 +1531,7 @@
             ([actor new-actors])
     (match-define (list atomic-actors collective-actors messages) config)
     (match-define (list new-addr new-behavior) actor)
-    (if (atomic-address? new-addr)
+    (if (csa#-atomic-address? new-addr)
         (list (append atomic-actors (list (list new-addr new-behavior))) collective-actors messages)
         (list atomic-actors
               (add-blurred-behaviors collective-actors (list `[,new-addr ,new-behavior]))
@@ -2459,7 +2460,7 @@
 ;; Returns the behaviors of the actor for the indicated collective OR atomic address (or #f if the
 ;; actor does not exist)
 (define (csa#-behaviors-of config addr)
-  (if (atomic-address? addr)
+  (if (csa#-atomic-address? addr)
       (match (csa#-config-actor-by-address config addr)
         [#f #f]
         [actor (list (actor-behavior actor))])
@@ -2585,7 +2586,7 @@
   (check-true (internal-output? (term ((addr 1 0) (* Nat) single))))
   (check-false (internal-output? (term ((addr (env Nat) 2) (* Nat) single)))))
 
-(define (atomic-address? addr)
+(define (csa#-atomic-address? addr)
   (match addr
     [`(addr ,loc ,_) #t]
     [_ #f]))
@@ -2603,7 +2604,7 @@
   (match trigger
     [`(external-receive ,_ ,_) #f]
     [`(internal-receive ,_ ,_ many) #f]
-    [_ (atomic-address? (trigger-address trigger))]))
+    [_ (csa#-atomic-address? (trigger-address trigger))]))
 
 (module+ test
   (test-true "internal-atomic-action? 1"
@@ -3213,7 +3214,7 @@
 (define (csa#-evict i addr)
   (match-define (list remaining-actors remaining-blurred-actors evicted-behavior)
     (cond
-      [(atomic-address? addr)
+      [(csa#-atomic-address? addr)
        (match-define (list first-actors to-evict later-actors)
          (config-actor-and-rest-by-address i addr))
        (list (append first-actors later-actors)
@@ -3331,7 +3332,7 @@
      (for/and ([spawn (csa#-transition-effect-spawns transition-result)])
        (match-define `[,addr ,behavior] spawn)
        (cond
-         [(atomic-address? addr)
+         [(csa#-atomic-address? addr)
           (define loc (address-location addr))
           (if (or (evictable-location? loc)
                   (atomic-state-name-by-address original-i `(addr ,loc 0)))
@@ -3435,7 +3436,7 @@
   (match (csa#-behaviors-of config addr)
     [#f 'gt]
     [old-behaviors
-     (if (atomic-address? addr)
+     (if (csa#-atomic-address? addr)
          (compare-behavior behavior (first old-behaviors) #f)
          (let loop ([behaviors-to-check old-behaviors])
            (match behaviors-to-check

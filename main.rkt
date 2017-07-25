@@ -727,8 +727,8 @@
   ;; 1. if there are no observable spec receptionists but only actors with just one of the flags have
   ;; addresses from the output commitment set, blur the other flag
   ;;
-  ;; 2. if the address with opposite ID as the spec obs receptionist exists, return the opposite of
-  ;; the obs receptionist ID
+  ;; 2. if the observed receptionist is atomic and the address with opposite ID as the spec obs
+  ;; receptionist exists, return the opposite of the obs receptionist ID
   ;;
   ;; 3. otherwise, just return OLD by default
   (define (other-flag f)
@@ -741,7 +741,8 @@
        [(list flag) (other-flag flag)] ; use "other" flag if exactly one flag knows externals
        [_ 0])]
     [(list `[,obs-rec-type ,obs-rec-addr])
-     (if (csa#-actor-with-opposite-id-exists? impl-config obs-rec-addr)
+     (if (and (csa#-atomic-address? obs-rec-addr)
+              (csa#-actor-with-opposite-id-exists? impl-config obs-rec-addr))
          (other-flag (csa#-address-id obs-rec-addr))
          0)]))
 
