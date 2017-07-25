@@ -423,7 +423,7 @@
 (define (current-behaviors-for-address config address)
   (cond
     [(atomic-address? address)
-     (list (actor-behavior (csa#-config-actor-by-address config address)))]
+     (list (actor-behavior (csa#-config-actor-by-address/fail config address)))]
     [else (blurred-actor-behaviors-by-address config address)]))
 
 ;; just like apply-reduction-relation*, but with debug messages
@@ -2409,10 +2409,20 @@
   (findf (lambda (actor) (equal? (csa#-actor-address actor) addr))
          (csa#-config-actors config)))
 
+(define (csa#-config-actor-by-address/fail config addr)
+  (match (csa#-config-actor-by-address config addr)
+    [#f (error 'csa#-config-actor-by-address/fail "Configuration ~s does not have an atomic actor with address ~s" config addr)]
+    [actor actor]))
+
 ;; Returns the collective actor with the given address, or #f if it doesn't exist
 (define (csa#-config-collective-actor-by-address config addr)
   (findf (lambda (a) (equal? (csa#-blurred-actor-address a) addr))
          (csa#-config-blurred-actors config)))
+
+(define (csa#-config-collective-actor-by-address/fail config addr)
+  (match (csa#-config-collective-actor-by-address config addr)
+    [#f (error 'csa#-config-collective-actor-by-address/fail "Configuration ~s does not have a collective actor with address ~s" config addr)]
+    [actor actor]))
 
 (define (csa#-actor-address a)
   (first a))
@@ -2473,7 +2483,7 @@
 
 ;; Returns all behaviors assigned to the blurred actor with the given address in the given config
 (define (blurred-actor-behaviors-by-address config address)
-  (csa#-blurred-actor-behaviors (csa#-config-collective-actor-by-address config address)))
+  (csa#-blurred-actor-behaviors (csa#-config-collective-actor-by-address/fail config address)))
 
 (module+ test
   (test-case "Blurred actor behaviors by address"
