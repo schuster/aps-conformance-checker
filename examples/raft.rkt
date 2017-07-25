@@ -15,7 +15,7 @@
 (define desugared-client-response-type
   `(Union [LeaderIs
            (Union [NoLeader]
-                  [JustLeader (Union [ClientMessage (Addr ResponseType) String])])]
+                  [JustLeader (Addr (Union [ClientMessage (Addr ResponseType) String]))])]
           [CommitSuccess String]))
 
 (define desugared-entry-type
