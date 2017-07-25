@@ -40,7 +40,7 @@
 ;; JobManager's Client-facing API
 
 (define-variant TaskDescription
-  (Map [data (List Nat)])
+  (Map [data (List String)])
   (Reduce [left-task-id Nat] [right-task-id Nat]))
 
 (define-record Task
@@ -796,7 +796,7 @@
 
 ;; client-level API
 (define desugared-task-description
-  `(Union [Map (List Nat)] [Reduce Nat Nat]))
+  `(Union [Map (List String)] [Reduce Nat Nat]))
 (define desugared-task `(Record [id Nat] [type ,desugared-task-description]))
 (define desugared-job `(Record [id Nat] [tasks (List ,desugared-task)] [final-task-id Nat]))
 (define desugared-job-result
