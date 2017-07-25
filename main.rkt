@@ -1372,7 +1372,7 @@
 
   (define (make-static-response-address type) (term (addr (env ,type) 2)))
   (define static-response-address (make-static-response-address (term (Union (Ack Nat)))))
-  (define untyped-static-response-address #f) ; TODO: remove this
+  (define nat-static-response-address (make-static-response-address (term Nat)))
   (define static-response-actor
     (term
      ((Nat (addr 0 0))
@@ -1655,8 +1655,6 @@
             (goto NoAddr))]))
        (goto NoAddr)))))
 
-  (error "stop")
-
   (test-valid-instance? request-response-spec)
   (test-valid-instance? request-same-response-addr-spec)
   (test-valid-actor? request-response-actor)
@@ -1706,27 +1704,26 @@
                               (make-exclusive-spec request-response-spec)))
 
   (define (make-self-send-response-actor addr-number)
-    (let ([self-addr (term ((Union [FromEnv (Addr Nat)] [FromSelf (Addr Nat)]) (addr ,addr-number)))])
-      (term
-       (,self-addr
-        (((define-state (Always) (msg)
-            (case msg
-              [(FromEnv response-target)
-               (begin
-                 (send ,self-addr (variant FromSelf response-target))
-                 (goto Always))]
-              [(FromSelf response-target)
-               (begin
-                 (send response-target 0)
-                 (goto Always))])))
-         (goto Always))))))
+    (term
+     (((Union [FromEnv (Addr Nat)] [FromSelf (Addr Nat)]) (addr self-send-loc ,addr-number))
+      (((define-state (Always) (msg)
+          (case msg
+            [(FromEnv response-target)
+             (begin
+               (send (addr self-send-loc ,addr-number) (variant FromSelf response-target))
+               (goto Always))]
+            [(FromSelf response-target)
+             (begin
+               (send response-target 0)
+               (goto Always))])))
+       (goto Always)))))
 
   (define from-env-request-response-spec
     (term
      (((define-state (Always)
          [(variant FromEnv response-target) -> ([obligation response-target *]) (goto Always)]))
       (goto Always)
-      ((Union [FromEnv (Addr Nat)]) (addr 0 0)))))
+      ((Union [FromEnv (Addr Nat)]) (addr self-send-loc 0)))))
 
   (define from-env-wrapper
     (term
@@ -1735,7 +1732,7 @@
           (begin
             (send sender (variant FromEnv msg))
             (goto Always sender))))
-       (goto Always ((Union [FromEnv (Addr Nat)]) (addr 1 0)))))))
+       (goto Always (addr self-send-loc 0))))))
 
   (test-valid-actor? (make-self-send-response-actor 0))
   (test-valid-instance? from-env-request-response-spec)
@@ -1776,18 +1773,19 @@
 
   ;;;; Non-deterministic branching in spec
 
+  (define zero-nonzero-response-address (make-static-response-address `(Union [NonZero] [Zero])))
   (define zero-nonzero-spec
     (term
      (((define-state (S1 r)
          [* -> ([obligation r (variant Zero)])    (goto S1 r)]
          [* -> ([obligation r (variant NonZero)]) (goto S1 r)]))
-      (goto S1 ,untyped-static-response-address)
+      (goto S1 ,zero-nonzero-response-address)
       (Nat (addr 0 0)))))
   (define zero-spec
     (term
      (((define-state (S1 r)
          [* -> ([obligation r (variant Zero)]) (goto S1 r)]))
-      (goto S1 ,untyped-static-response-address)
+      (goto S1 ,zero-nonzero-response-address)
       (Nat (addr 0 0)))))
   (define primitive-branch-actor
     (term
@@ -1798,7 +1796,7 @@
               [(True) (send dest (variant NonZero))]
               [(False) (send dest (variant Zero))])
             (goto S1 dest))))
-       (goto S1 ,(make-static-response-address `(Union [NonZero] [Zero])))))))
+       (goto S1 ,zero-nonzero-response-address)))))
 
   (test-valid-instance? static-response-spec)
   (test-valid-instance? zero-nonzero-spec)
@@ -1818,7 +1816,7 @@
      (((define-state (Always r)
          [* -> ([obligation r *]) (goto Always r)]
          [* -> () (goto Always r)]))
-      (goto Always (addr 1 0))
+      (goto Always (addr (env Nat) 0))
       (Nat (addr 0 0)))))
 
   (test-valid-instance? optional-commitment-spec)
@@ -1831,7 +1829,7 @@
     (term
      (((define-state (Always response-dest)
          [* -> ([obligation response-dest *]) (goto Always response-dest)]))
-      (goto Always ,untyped-static-response-address)
+      (goto Always ,nat-static-response-address)
       (Nat (addr 0 0)))))
   (define div-by-one-actor
     (term
@@ -1840,7 +1838,7 @@
           (begin
             (send response-dest (/ n 1))
             (goto Always response-dest))))
-       (goto Always ,static-response-address)))))
+       (goto Always ,nat-static-response-address)))))
   (define div-by-zero-actor
     (term
      ((Nat (addr 0 0))
@@ -1848,7 +1846,7 @@
           (begin
             (send response-dest (/ n 0))
             (goto Always response-dest))))
-       (goto Always ,static-response-address)))))
+       (goto Always ,nat-static-response-address)))))
 
   (test-valid-instance? nat-to-nat-spec)
   (test-valid-actor? div-by-zero-actor)
@@ -1885,7 +1883,7 @@
      (((define-state (Always response-dest)
          [*     -> ([obligation response-dest *]) (goto Always response-dest)]
          [unobs -> ([obligation response-dest *]) (goto Always response-dest)]))
-      (goto Always ,untyped-static-response-address)
+      (goto Always ,static-response-address)
       (Nat (addr 0 0)))))
   (test-valid-instance? static-response-spec-with-unobs)
 
@@ -1902,7 +1900,7 @@
             (define-state (On r)
               [* -> () (goto On r)]
               [unobs -> ([obligation r (variant TurningOff)]) (goto Off r)]))
-           (goto Off ,untyped-static-response-address)
+           (goto Off ,obs-unobs-static-response-address)
            ((Union [FromObserver]) (addr 0 0)))))
   (define unobs-toggle-actor
     (term
