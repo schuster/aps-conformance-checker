@@ -2292,7 +2292,7 @@
   (define static-response-actor2
     (term
      ((Nat (addr 1 0))
-      (((define-state (Always2 [response-dest (Addr (Union [Ack Nat]))]) (m)
+      (((define-state (Always2 [response-dest (Addr ,static-response-type)]) (m)
              (begin
                (send response-dest (variant Ack 0))
                (goto Always2 response-dest))))
@@ -2300,17 +2300,17 @@
   (define other-static-response-actor
     (term
      ((Nat (addr 1 0))
-      (((define-state (Always2 [response-dest (Addr (Union [Ack Nat]))]) (m)
+      (((define-state (Always2 [response-dest (Addr ,static-response-type)]) (m)
              (begin
                (send response-dest (variant Ack 0))
                (goto Always2 response-dest))))
-       (goto Always2 ((Union [Ack Nat]) (addr 3 0)))))))
+       (goto Always2 (addr (env ,static-response-type) 3))))))
   (define static-response-with-extra-spec
     (term
      (((define-state (Always response-dest)
          [* -> ([obligation response-dest *]) (goto Always response-dest)]
          [unobs -> ([obligation response-dest *]) (goto Always response-dest)]))
-      (goto Always ,untyped-static-response-address)
+      (goto Always ,static-response-address)
       (Nat (addr 0 0)))))
 
   (test-valid-actor? static-response-actor2)
@@ -2338,7 +2338,7 @@
           (begin
             (send responder m)
             (goto A responder))))
-       (goto A ((Addr Nat) (addr 1 0)))))))
+       (goto A (addr 1 0))))))
 
   (define request-response-actor2
     (term
@@ -2359,13 +2359,14 @@
 
 
   ;;;; Self Reveal
+  (define self-reveal-response-addr `(addr (env (Addr (Addr Nat))) 0))
   (define self-reveal-spec
     (term
      (((define-state (Init r)
          [unobs -> ([obligation r self]) (goto Running)])
        (define-state (Running)
          [r -> ([obligation r *]) (goto Running)]))
-      (goto Init (addr 1 0)))))
+      (goto Init ,self-reveal-response-addr))))
 
   (define self-reveal-actor
     (term
@@ -2374,13 +2375,13 @@
           (goto Init r)
           [(timeout 5)
            (begin
-             (send r ((Addr Nat) (addr 0 0)))
+             (send r (addr 0 0))
              (goto Running))])
         (define-state (Running) (r)
           (begin
             (send r 1)
             (goto Running))))
-       (goto Init ((Addr (Addr Nat)) (addr 1 0)))))))
+       (goto Init ,self-reveal-response-addr)))))
 
   (define reveal-wrong-address-actor
     (term
@@ -2389,13 +2390,13 @@
           (goto Init r)
           [(timeout 5)
            (begin
-             (send r ((Addr Nat) (addr 2 0)))
+             (send r (addr 2 0))
              (goto Running))])
         (define-state (Running) (r)
           (begin
             (send r 1)
             (goto Running))))
-       (goto Init ((Addr (Addr Nat)) (addr 1 0)))))))
+       (goto Init ,self-reveal-response-addr)))))
   (define to-reveal-ignore-all-actor
     (term
      (((Addr Nat) (addr 2 0))
@@ -2409,14 +2410,14 @@
           (goto Init r)
           [(timeout 5)
            (begin
-             (send r ((Addr Nat) (addr 0 0)))
+             (send r (addr 0 0))
              (goto Running))])
         (define-state (Running) (r)
           (begin
             (send r 1)
             (send r 1)
             (goto Running))))
-       (goto Init ((Addr (Addr Nat)) (addr 1 0)))))))
+       (goto Init ,self-reveal-response-addr)))))
 
   (test-valid-actor? self-reveal-actor)
   (test-valid-actor? reveal-wrong-address-actor)
@@ -2506,6 +2507,8 @@
                (make-exclusive-spec echo-spawn-spec)))
 
   ;; Check that spec-fork addresses are added to unobs interface
+  (define unobs-fork-response-addr1 `(addr (env (Addr Nat)) 1))
+  (define unobs-fork-response-addr2 `(addr (env Nat) 2))
   (define unobs-fork-actor
     (term
      (((Addr Nat) (addr 0 0))
@@ -2522,7 +2525,7 @@
             (begin
               (send child-response new-child)
               (goto Always child-response never-use)))))
-       (goto Always ((Addr (Addr Nat)) (addr 1 0)) ((Addr Nat) (addr 2 0)))))))
+       (goto Always ,unobs-fork-response-addr1 ,unobs-fork-response-addr2)))))
 
   (define unobs-fork-spec
     (term
@@ -2532,7 +2535,7 @@
                                           (define-state (ChildAlways)
                                             [* -> () (goto ChildAlways)]))])
             (goto Always child-response never-use)]))
-      (goto Always (addr 1 0) (addr 2 0))
+      (goto Always ,unobs-fork-response-addr1 ,unobs-fork-response-addr2)
       (Nat (addr 0 0)))))
 
   (test-valid-actor? unobs-fork-actor)
@@ -2548,7 +2551,7 @@
      (((define-state (DoAnything)
          [* -> () (goto DoAnything)]))
       (goto DoAnything)
-      (Nat (addr 500)))))
+      (Nat (addr 500 0)))))
   (test-valid-instance? no-matching-address-spec)
 
   (test-false "Spec config address must have matching actor in implementation configuration"
