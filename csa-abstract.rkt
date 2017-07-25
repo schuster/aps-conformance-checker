@@ -83,7 +83,8 @@
       (variant t v# ...)
       (record [l v#] ...)
       (folded τ v#)
-      (* τ)
+      abs-nat
+      abs-string
       (list-val v# ...)
       (hash-val (v# ...) (v# ...)))
   (e# (spawn any_location τ e# Q# ...)
@@ -168,8 +169,8 @@
 ;; Returns an exhaustive list of abstract messages for the given type.
 (define-metafunction csa#
   messages-of-type/mf : τ -> (v# ...)
-  [(messages-of-type/mf Nat) ((* Nat))]
-  [(messages-of-type/mf String) ((* String))]
+  [(messages-of-type/mf Nat) (abs-nat)]
+  [(messages-of-type/mf String) (abs-string)]
   [(messages-of-type/mf (Union)) ()]
   [(messages-of-type/mf (Union [t_1 τ_1 ...] [t_rest τ_rest ...] ...))
    (v#_1 ... v#_rest ...)
@@ -225,7 +226,7 @@
 
   (test-same-items?
    (term (messages-of-type/mf Nat))
-   '((* Nat)))
+   '(abs-nat))
   (test-same-items? (term (messages-of-type/mf (Union [Begin]))) (list '(variant Begin)))
   (test-same-items?
    (term (messages-of-type/mf (Union [A] [B])))
@@ -233,7 +234,7 @@
   (test-same-items? (term (messages-of-type/mf (Union))) null)
   (test-same-items?
    (term (messages-of-type/mf (Record [a Nat] [b Nat])))
-   (list '(record [a (* Nat)] [b (* Nat)])))
+   (list '(record [a abs-nat] [b abs-nat])))
   (test-same-items?
    (csa#-messages-of-type `(Record [a (Addr Nat)] [b (Addr Nat)]))
    (list '(record [a (addr (env Nat) 102)] [b (addr (env Nat) 101)])))
@@ -257,14 +258,14 @@
   (test-same-items?
    (term (messages-of-type/mf (Union [A] [B String (Union [C] [D])])))
    '((variant A)
-     (variant B (* String) (variant C))
-     (variant B (* String) (variant D))))
+     (variant B abs-string (variant C))
+     (variant B abs-string (variant D))))
   (test-same-items?
    (term (messages-of-type/mf (List Nat)))
-   (list `(list-val (* Nat))))
+   (list `(list-val abs-nat)))
   (test-same-items?
    (term (messages-of-type/mf (Hash Nat (Union [A] [B] [C]))))
-   (list `(hash-val ((* Nat)) ((variant A) (variant B) [variant C]))))
+   (list `(hash-val (abs-nat) ((variant A) (variant B) [variant C]))))
   (test-case "Generated address number is re-used for each top-level generation"
     (check-equal? (third (first (csa#-messages-of-type `(Addr Nat))))
                   (third (first (csa#-messages-of-type `(Addr String)))))))
@@ -378,35 +379,35 @@
 
 (module+ test
   (check-equal?
-   (config-remove-packet `(() () ([(init-addr 1 0) (* Nat) single]
-                                  [(init-addr 2 0) (* Nat) single]
-                                  [(init-addr 1 0) (* String) single]))
-                         `((init-addr 1 0) (* Nat)))
-   `(() () ([(init-addr 2 0) (* Nat) single]
-            [(init-addr 1 0) (* String) single])))
+   (config-remove-packet `(() () ([(init-addr 1 0) abs-nat single]
+                                  [(init-addr 2 0) abs-nat single]
+                                  [(init-addr 1 0) abs-string single]))
+                         `((init-addr 1 0) abs-nat))
+   `(() () ([(init-addr 2 0) abs-nat single]
+            [(init-addr 1 0) abs-string single])))
   (check-equal?
-   (config-remove-packet `(() () ([(init-addr 1 0) (* Nat) single]
-                                  [(init-addr 2 0) (* Nat) single]
-                                  [(init-addr 1 0) (* String) single]))
-                         `((init-addr 2 0) (* Nat)))
-   `(() () ([(init-addr 1 0) (* Nat) single]
-            [(init-addr 1 0) (* String) single])))
+   (config-remove-packet `(() () ([(init-addr 1 0) abs-nat single]
+                                  [(init-addr 2 0) abs-nat single]
+                                  [(init-addr 1 0) abs-string single]))
+                         `((init-addr 2 0) abs-nat))
+   `(() () ([(init-addr 1 0) abs-nat single]
+            [(init-addr 1 0) abs-string single])))
   (check-equal?
-   (config-remove-packet `(() () ([(init-addr 1 0) (* Nat) single]
-                                  [(init-addr 2 0) (* Nat) many]
-                                  [(init-addr 1 0) (* String) single]))
-                         `((init-addr 2 0) (* Nat)))
-   `(() () ([(init-addr 1 0) (* Nat) single]
-            [(init-addr 2 0) (* Nat) many]
-            [(init-addr 1 0) (* String) single])))
+   (config-remove-packet `(() () ([(init-addr 1 0) abs-nat single]
+                                  [(init-addr 2 0) abs-nat many]
+                                  [(init-addr 1 0) abs-string single]))
+                         `((init-addr 2 0) abs-nat))
+   `(() () ([(init-addr 1 0) abs-nat single]
+            [(init-addr 2 0) abs-nat many]
+            [(init-addr 1 0) abs-string single])))
   (check-equal?
-   (config-remove-packet `(() () ([(init-addr 1 0) (* Nat) single]
-                                  [(init-addr 2 0) (* Nat) many]
-                                  [(init-addr 1 0) (* String) single]))
-                         `((init-addr 3 0) (* Nat)))
-   `(() () ([(init-addr 1 0) (* Nat) single]
-            [(init-addr 2 0) (* Nat) many]
-            [(init-addr 1 0) (* String) single]))))
+   (config-remove-packet `(() () ([(init-addr 1 0) abs-nat single]
+                                  [(init-addr 2 0) abs-nat many]
+                                  [(init-addr 1 0) abs-string single]))
+                         `((init-addr 3 0) abs-nat))
+   `(() () ([(init-addr 1 0) abs-nat single]
+            [(init-addr 2 0) abs-nat many]
+            [(init-addr 1 0) abs-string single]))))
 
 ;; b# -> e# or #f
 ;;
@@ -589,34 +590,14 @@
     [`(case ,e-variant ,clauses ...)
      (eval-and-then e-variant effects
        (lambda (v effects)
-         (match v
-           [`(variant ,_ ...)
-            ;; Find exactly one matching clause
-            (let loop ([clauses clauses])
-              (match clauses
-                [(list) (one-stuck-result `(case ,v) effects)]
-                [(list `(,pat ,body) other-clauses ...)
-                 (match (match-case-pattern v pat)
-                   [#f (loop other-clauses)]
-                   [bindings (eval-machine/internal (csa#-subst-n body bindings) effects)])]))]
-           [`(* (Union ,union-variants ...))
-            ;; Use *all* matching patterns for wildcard values
-            (define clause-results
-              (for/fold ([result empty-eval-result])
-                        ([union-variant union-variants])
-                (match-define `(,tag ,sub-types ...) union-variant)
-                (match (findf (lambda (clause) (equal? (first (case-clause-pattern clause)) tag))
-                              clauses)
-                  [#f result]
-                  [clause
-                   (define vals (for/list ([sub-type sub-types]) `(* ,sub-type)))
-                   (define bindings (map list (cdr (case-clause-pattern clause)) vals))
-                   (combine-eval-results
-                    result
-                    (eval-machine/internal (csa#-subst-n (case-clause-body clause) bindings) effects))])))
-            (if (and (empty? (first clause-results)) (empty? (second clause-results)))
-                (one-stuck-result `(case ,v ,@clauses))
-                clause-results)]))
+         ;; Find exactly one matching clause
+         (let loop ([clauses clauses])
+           (match clauses
+             [(list) (one-stuck-result `(case ,v) effects)]
+             [(list `(,pat ,body) other-clauses ...)
+              (match (match-case-pattern v pat)
+                [#f (loop other-clauses)]
+                [bindings (eval-machine/internal (csa#-subst-n body bindings) effects)])])))
        (lambda (stuck) `(case ,stuck ,@clauses)))]
     ;; Let
     [`(let ([,vars ,exps] ...) ,body)
@@ -637,27 +618,19 @@
             (match (findf (lambda (f) (equal? (first f) l)) fields)
               [#f (one-stuck-result `(: ,v ,l) effects)]
               [field (value-result (second field) effects)])]
-           [`(* (Record ,fields ...))
-            (match (findf (lambda (f) (equal? (first f) l)) fields)
-              [#f (one-stuck-result `(: ,v ,l) effects)]
-              [field (value-result `(* ,(second field)) effects)])]
            [_ (one-stuck-result `(: ,v ,l) effects)]))
        (lambda (stuck) `(: ,stuck l)))]
     ;; Recursive Types
     [`(fold ,type ,exp)
      (eval-and-then exp effects
        (lambda (v effects)
-         (match v
-           [`(* ,_) (value-result `(* ,type) effects)]
-           [_ (value-result `(folded ,type ,v) effects)]))
+         (value-result `(folded ,type ,v) effects))
        (lambda (stuck) `(fold ,type ,stuck)))]
     [`(unfold ,type ,e)
      (eval-and-then e effects
        (lambda (v effects)
          (match v
            [`(folded ,type ,val) (value-result val effects)]
-           [`(* (minfixpt ,name ,type))
-            (value-result (term (* (type-subst ,type ,name (minfixpt ,name ,type)))) effects)]
            [_ (error 'eval-machine/internal "Bad argument to unfold: ~s" v)]))
        (lambda (stuck) `(unfold ,type ,stuck)))]
     [`(folded ,_ ...) (value-result exp effects)]
@@ -666,41 +639,39 @@
      (eval-and-then* (list arg1 arg2) effects
        (lambda (vs effects)
          (match vs
-           [`((* Nat) (* Nat)) (value-result `(variant True) `(variant False) effects)]
+           [`(abs-nat abs-nat) (value-result `(variant True) `(variant False) effects)]
            [_ (error "Bad args to relative op: ~s\n" `(,op ,@vs))]))
        (lambda (stucks) `(,op ,@stucks)))]
     [`(,(and op (or '+ '- 'mult '/ 'arithmetic-shift)) ,arg1 ,arg2)
      (eval-and-then* (list arg1 arg2) effects
        (lambda (vs effects)
          (match vs
-           [`((* Nat) (* Nat)) (value-result `(* Nat) effects)]
+           [`(abs-nat abs-nat) (value-result `abs-nat effects)]
            [_ (error "Bad args to binary arithmetic op: ~s\n" `(,op ,@vs))]))
        (lambda (stucks) `(,op ,@stucks)))]
     [`(,(and op (or 'random 'ceiling)) ,arg)
      (eval-and-then arg effects
        (lambda (v effects)
          (match v
-           [`(* Nat) (value-result `(* Nat) effects)]
+           [`abs-nat (value-result `abs-nat effects)]
            [_ (error "Bad args to unary arithmetic op: ~s\n" `(,op ,v))]))
        (lambda (stuck) `(,op ,stuck)))]
     [`(and ,e1 ,e2)
      (eval-and-then* (list e1 e2) effects
        (lambda (vs effects)
          (match-define (list v1 v2) vs)
-         (value-result (term (csa#-and (canonicalize-boolean ,v1) (canonicalize-boolean ,v2)))
-                       effects))
+         (value-result (term (csa#-and ,v1 ,v2)) effects))
        (lambda (stucks) `(and ,@stucks)))]
     [`(or ,e1 ,e2)
      (eval-and-then* (list e1 e2) effects
        (lambda (vs effects)
          (match-define (list v1 v2) vs)
-         (value-result (term (csa#-or (canonicalize-boolean ,v1) (canonicalize-boolean ,v2)))
-                       effects))
+         (value-result (term (csa#-or ,v1 ,v2)) effects))
        (lambda (stucks) `(or ,@stucks)))]
     [`(not ,e)
      (eval-and-then e effects
        (lambda (v effects)
-         (value-result (term (csa#-not (canonicalize-boolean ,v))) effects))
+         (value-result (term (csa#-not ,v)) effects))
        (lambda (stuck) `(not ,stuck)))]
     [`(= ,e1 ,e2)
      (eval-and-then* (list e1 e2) effects
@@ -714,17 +685,10 @@
        (lambda (vs effects)
          (match (cons op vs)
            [`(list ,vs ...) (value-result (normalize-collection `(list-val ,@vs)) effects)]
-           [`(cons ,v ,rest)
-            (define existing-list-vals
-             (match rest
-               [`(* (List ,type)) (list `(* ,type))]
-               [`(list-val ,vs ...) vs]))
+           [`(cons ,v (list-val ,existing-list-vals ...))
             (value-result (normalize-collection `(list-val ,@existing-list-vals ,v)) effects)]
            [`(list-as-variant ,l)
             (match l
-              [`(* (List ,type)) (value-result `(variant Empty)
-                                                 `(variant Cons (* ,type) (* (List ,type)))
-                                                 effects)]
               [`(list-val ,items ...)
                (apply value-result
                       `(variant Empty)
@@ -733,52 +697,35 @@
               [_ (error 'eval-machine/internal "Bad list for list-as-variant: ~s\n" l)])]
            [`(list-ref ,l ,_)
             (match l
-              [`(* (List ,type)) (value-result `(* ,type) effects)]
               ;; NOTE: we can just return the empty list of results if there are no items in the list:
               ;; we assume that that won't happen, and that therefore we only reached this state
               ;; through over-abstraction
               [`(list-val ,items ...) (apply value-result (append items (list effects)))]
               [_ (error 'eval-machine/internal "Bad list for list-ref: ~s\n" l)])]
            [`(remove ,_ ,l) (value-result l effects)]
-           [`(length ,_) (value-result `(* Nat) effects)]
+           [`(length ,_) (value-result `abs-nat effects)]
 
            [`(,(or 'take 'drop 'list-copy) ,v ,_ ...)
             (value-result v effects)]
-           [`(append (* (List ,type)) (* (List ,type2)))
-            (value-result `(* (List ,type)) effects)]
            ;; at least one of the lists is precise, so convert the whole thing to a precise list
            ;; (so that we don't lose a precise address)
            [`(append ,v1 ,v2)
             (value-result
              (normalize-collection `(list-val ,@(list-values v1) ,@(list-values v2)))
              effects)]
-           [`(hash-ref ,h ,k)
-            (match h
-              [`(* (Hash ,key-type ,val-type))
-               (value-result `(variant Nothing) `(variant Just (* ,val-type)) effects)]
-              [`(hash-val ,_ ,vals)
-               (apply value-result
-                      `(variant Nothing)
-                      (append (for/list ([val vals]) `(variant Just ,val))
-                              (list effects)))])]
-           [`(hash-keys ,h)
-            (match h
-              [`(* (Hash ,key-type ,_)) (value-result `(* (List ,key-type)) effects)]
-              [`(hash-val ,keys ,_) (value-result `(list-val ,@keys) effects)])]
-           [`(hash-values ,h)
-            (match h
-              [`(* (Hash ,_ ,value-type)) (value-result `(* (List ,value-type)) effects)]
-              [`(hash-val ,_ ,values) (value-result `(list-val ,@values) effects)])]
-           [`(hash-set ,h ,key ,val)
-            (match h
-              [`(* (Hash ,key-type ,value-type))
-               (value-result
-                (normalize-collection `(hash-val ((* ,key-type) ,key) ((* ,value-type) ,val)))
-                effects)]
-              [`(hash-val ,keys ,vals)
-               (value-result
-                (normalize-collection `(hash-val ,(cons key keys) ,(cons val vals)))
-                effects)])]
+           [`(hash-ref (hash-val ,_ ,vals) ,k)
+            (apply value-result
+                   `(variant Nothing)
+                   (append (for/list ([val vals]) `(variant Just ,val))
+                           (list effects)))]
+           [`(hash-keys (hash-val ,keys ,_))
+            (value-result `(list-val ,@keys) effects)]
+           [`(hash-values (hash-val ,_ ,values))
+            (value-result `(list-val ,@values) effects)]
+           [`(hash-set (hash-val ,keys ,vals) ,key ,val)
+            (value-result
+             (normalize-collection `(hash-val ,(cons key keys) ,(cons val vals)))
+             effects)]
            [`(hash-remove ,h ,k) (value-result h effects)]
            [`(hash-has-key? ,h ,k)
             (value-result `(variant True) `(variant False) effects)]
@@ -845,10 +792,7 @@
              ;; above explain why). After evaluation complete, we set the loop-result to the full set
              ;; of resulting states.
              (hash-set! (loop-results) this-loop empty-eval-result)
-             (define collection-members
-               (match items-val
-                 [`(list-val ,items ...) items]
-                 [`(* (List ,type)) (list `(* ,type))]))
+             (match-define `(list-val ,collection-members ...) items-val)
              (define result-after-skipping (value-result result-val effects))
              (define final-results
                (for/fold ([full-result result-after-skipping])
@@ -910,14 +854,15 @@
        (lambda (vs effects)
          (apply printf template vs)
          (flush-output)
-         (value-result `(* Nat) effects))
+         (value-result `abs-nat effects))
        (lambda (stucks) `(printf ,@stucks)))]
     ;; Misc. Values
     [`(variant ,tag ,exps ...)
      (eval-and-then* exps effects
        (lambda (vs effects) (value-result `(variant ,tag ,@vs) effects))
        (lambda (stucks) `(variant ,tag ,@stucks)))]
-    [`(* ,type) (value-result exp effects)]
+    [`abs-nat (value-result `abs-nat effects)]
+    [`abs-string (value-result `abs-string effects)]
     [(or `(addr ,_ ,_) `(collective-addr ,_))
      (value-result exp effects)]
     [_ (error 'eval-machine/internal "Don't know how to evaluate ~s\n" exp)]))
@@ -955,12 +900,12 @@
                          (list (machine-state `(variant B (case (variant A))) empty-effects))))
 
   (test-equal? "Eval-and-then* returns proper stuck state result for later value"
-    (eval-and-then* (list `(* Nat) `(case (variant A))) empty-effects
+    (eval-and-then* (list `abs-nat `(case (variant A))) empty-effects
         (lambda (vs fx) (error "shouldn't do this"))
         (lambda (stucks) `(variant B ,@stucks)))
     (eval-machine-result
      null
-     (list (machine-state `(variant B (* Nat) (case (variant A))) empty-effects)))))
+     (list (machine-state `(variant B abs-nat (case (variant A))) empty-effects)))))
 
 ;; Exp
 ;; Effects
@@ -1058,30 +1003,23 @@
 
   (check-exp-steps-to? `(variant B) `(variant B))
   (check-exp-steps-to? `(begin (variant A) (variant B)) `(variant B))
-  (check-exp-steps-to? `(case (variant A (* Nat))
+  (check-exp-steps-to? `(case (variant A abs-nat)
                          [(A x) x]
                          [(B) (variant X)]
                          [(C) (variant Y)])
-                      `(* Nat))
-  (check-exp-steps-to-all? `(case (* (Union [A Nat] [B] [D]))
-                              [(A x) x]
-                              [(B) (variant X)]
-                              [(C) (variant Y)])
-                           (list `(* Nat) `(variant X)))
+                      `abs-nat)
   (check-exp-steps-to? `(let ([x (variant X)]
                               [y (variant Y)])
                           (variant A x y y))
                        `(variant A (variant X) (variant Y) (variant Y)))
-  (check-exp-steps-to? `(record [a (let () (variant A))] [b (* Nat)])
-                       `(record [a (variant A)] [b (* Nat)]))
+  (check-exp-steps-to? `(record [a (let () (variant A))] [b abs-nat])
+                       `(record [a (variant A)] [b abs-nat]))
   (check-exp-steps-to? `(record [a (let () (variant A))]
-                                [b (case (variant A) [(B) (* Nat)])]
-                                [c (let () (* Nat))])
-                       `(record [a (variant A)] [b (case (variant A))] [c (let () (* Nat))]))
+                                [b (case (variant A) [(B) abs-nat])]
+                                [c (let () abs-nat)])
+                       `(record [a (variant A)] [b (case (variant A))] [c (let () abs-nat)]))
   (check-exp-steps-to? `(: (record [a (variant A)] [b (variant B)]) b)
                        `(variant B))
-  (check-exp-steps-to? `(: (* (Record [a (Union [A])] [b (Union [B])])) b)
-                       `(* (Union [B])))
   (check-exp-steps-to? `(: (record [a (variant A)] [b (variant B)]) c)
                        `(: (record [a (variant A)] [b (variant B)]) c))
   (check-exp-steps-to? (term (fold   (Union [A]) (variant A)))
@@ -1090,26 +1028,22 @@
                        (term (record [a (folded ,recursive-record-address-type (addr (env ,recursive-record-type) 1))])))
   (check-exp-steps-to? `(record [a (unfold ,recursive-record-address-type (folded ,recursive-record-address-type (addr (env ,recursive-record-type) 1)))])
                        `(record [a (addr (env ,recursive-record-type) 1)]))
-  (check-exp-steps-to-all? `(< (* Nat) (let () (* Nat)))
+  (check-exp-steps-to-all? `(< abs-nat (let () abs-nat))
                            (list `(variant True) `(variant False)))
-  (check-exp-steps-to? `(+ (* Nat) (let () (* Nat)))
-                       `(* Nat))
-  (check-exp-steps-to? `(random (* Nat))
-                       `(* Nat))
+  (check-exp-steps-to? `(+ abs-nat (let () abs-nat))
+                       `abs-nat)
+  (check-exp-steps-to? `(random abs-nat)
+                       `abs-nat)
   (check-exp-steps-to? `(or (variant True) (variant False))
                        `(variant True))
-  (check-exp-steps-to? `(or (* (Union [True] [False])) (variant False))
-                       `(* (Union [True] [False])))
   (check-exp-steps-to? `(and (variant True) (variant False))
                        `(variant False))
   (check-exp-steps-to? `(not (variant True))
                        `(variant False))
-  (check-exp-steps-to? `(not (* (Union [True] [False])))
-                       `(* (Union [True] [False])))
   ;; Equality checks
-  (check-exp-steps-to-all? (term (= (* String) (* String)))
+  (check-exp-steps-to-all? (term (= abs-string abs-string))
                           (list (term (variant True)) (term (variant False))))
-  (check-exp-steps-to-all? (term (= (* Nat) (* Nat)))
+  (check-exp-steps-to-all? (term (= abs-nat abs-nat))
                           (list (term (variant True)) (term (variant False))))
   (check-exp-steps-to-all? (term (= (collective-addr (env 1)) (addr (env 1) 0)))
                           (list (term (variant True)) (term (variant False))))
@@ -1135,20 +1069,11 @@
    (term (cons (variant B) (list-val (variant B) (variant C))))
    (term (list-val (variant B) (variant C))))
   (check-exp-steps-to?
-   (term (cons (variant A) (* (List (Union [A] [B] [C])))))
-   (term (list-val (* (Union [A] [B] [C])) (variant A))))
-  (check-exp-steps-to?
    (term (remove (variant A) (list-val (variant A) (variant B))))
    (term (list-val (variant A) (variant B))))
-  (check-exp-steps-to?
-   (term (remove (variant A) (* (List (Union [A] [B])))))
-   (term (* (List (Union [A] [B])))))
   (check-exp-steps-to-all?
-   `(list-ref (list-val) (* Nat))
+   `(list-ref (list-val) abs-nat)
    null)
-  (check-exp-steps-to?
-   (term (list-ref (* (List Nat)) (* Nat)))
-   (term (* Nat)))
   (check-exp-steps-to?
    (term (append (list-val (variant A) (variant B))
                         (list-val (variant C) (variant D))))
@@ -1173,113 +1098,73 @@
    (term (append (list-val) (list-val (variant A))))
    (term (list-val (variant A))))
   (check-exp-steps-to-all?
-   `(list-ref (list-val) (* Nat))
+   `(list-ref (list-val) abs-nat)
    null)
-  (check-exp-steps-to? `(list-copy (list-val (* Nat)) (* Nat) (* Nat))
-                       `(list-val (* Nat)))
-  (check-exp-steps-to? `(take (list-val (* Nat)) (* Nat))
-                       `(list-val (* Nat)))
-  (check-exp-steps-to?
-   (term (take (* (List (Union [A]))) (* Nat)))
-   (term (* (List (Union [A])))))
-  (check-exp-steps-to? `(drop (list-val (* Nat)) (* Nat))
-                       `(list-val (* Nat)))
-  (check-exp-steps-to?
-   (term (drop (* (List (Union [A]))) (* Nat)))
-   (term (* (List (Union [A])))))
-  (check-exp-steps-to?
-   (term (append (list-val (variant A) (variant B))
-                        (* (List (Union [A] [B] [C])))))
-   (term (list-val (* (Union [A] [B] [C])) (variant A) (variant B))))
-  (check-exp-steps-to?
-   (term (append (* (List (Union [A] [B] [C])))
-                        (list-val (variant A) (variant B))))
-   (term (list-val (* (Union [A] [B] [C])) (variant A) (variant B))))
+  (check-exp-steps-to? `(list-copy (list-val abs-nat) abs-nat abs-nat)
+                       `(list-val abs-nat))
+  (check-exp-steps-to? `(take (list-val abs-nat) abs-nat)
+                       `(list-val abs-nat))
+  (check-exp-steps-to? `(drop (list-val abs-nat) abs-nat)
+                       `(list-val abs-nat))
 
   ;; hash
   (check-exp-steps-to?
-   (term (hash [(* Nat) (variant B)] [(* Nat) (variant A)]))
-   (term (hash-val ((* Nat)) ((variant A) (variant B)))))
+   (term (hash [abs-nat (variant B)] [abs-nat (variant A)]))
+   (term (hash-val (abs-nat) ((variant A) (variant B)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant A)))
-   (term (hash-val ((* Nat)) ((variant A) (variant B) (variant C)))))
+   (term (hash-set (hash-val (abs-nat) ((variant B) (variant C))) abs-nat (variant A)))
+   (term (hash-val (abs-nat) ((variant A) (variant B) (variant C)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val ((* Nat)) ((variant C) (variant B))) (* Nat) (variant A)))
-   (term (hash-val ((* Nat)) ((variant A) (variant B) (variant C)))))
+   (term (hash-set (hash-val (abs-nat) ((variant C) (variant B))) abs-nat (variant A)))
+   (term (hash-val (abs-nat) ((variant A) (variant B) (variant C)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val () ()) (* Nat) (variant A)))
-   (term (hash-val ((* Nat)) ((variant A)))))
+   (term (hash-set (hash-val () ()) abs-nat (variant A)))
+   (term (hash-val (abs-nat) ((variant A)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant D)))
-   (term (hash-val ((* Nat)) ((variant B) (variant C) (variant D)))))
+   (term (hash-set (hash-val (abs-nat) ((variant B) (variant C))) abs-nat (variant D)))
+   (term (hash-val (abs-nat) ((variant B) (variant C) (variant D)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val ((* Nat)) ((variant B) (variant C))) (* Nat) (variant B)))
-   (term (hash-val ((* Nat)) ((variant B) (variant C)))))
+   (term (hash-set (hash-val (abs-nat) ((variant B) (variant C))) abs-nat (variant B)))
+   (term (hash-val (abs-nat) ((variant B) (variant C)))))
   (check-exp-steps-to?
-   (term (hash-set (* (Hash Nat (Union [A] [B] [C]))) (* Nat) (variant B)))
-   (term (hash-val ((* Nat)) ((* (Union [A] [B] [C])) (variant B)))))
-  (check-exp-steps-to?
-   (term (hash-remove (hash-val ((* Nat)) ((variant B) (variant C))) (variant B)))
-   (term (hash-val ((* Nat)) ((variant B) (variant C)))))
-  (check-exp-steps-to-all? (term (hash-ref (* (Hash Nat Nat)) (* Nat)))
-                           (list '(variant Nothing)
-                                 '(variant Just (* Nat))))
-  (check-exp-steps-to-all? (term (hash-ref (* (Hash Nat Nat)) (* Nat)))
-                           (list (term (variant Nothing))
-                                 (term (variant Just (* Nat)))))
-  (check-exp-steps-to? (term (hash-ref (hash-val () ()) (* Nat)))
+   (term (hash-remove (hash-val (abs-nat) ((variant B) (variant C))) (variant B)))
+   (term (hash-val (abs-nat) ((variant B) (variant C)))))
+  (check-exp-steps-to? (term (hash-ref (hash-val () ()) abs-nat))
                        '(variant Nothing))
-  (check-exp-steps-to? (term (hash-remove (* (Hash Nat Nat)) (* Nat)))
-                       (term (* (Hash Nat Nat))))
-  (check-exp-steps-to-all? (term (hash-empty? (hash-val ((* Nat)) ((variant A) (variant B)))))
-                           (list (term (variant True))
-                                 (term (variant False))))
-  (check-exp-steps-to-all? (term (hash-empty? (* (Hash Nat Nat))))
+  (check-exp-steps-to-all? (term (hash-empty? (hash-val (abs-nat) ((variant A) (variant B)))))
                            (list (term (variant True))
                                  (term (variant False))))
   (check-exp-steps-to-all? (term (list-as-variant (list-val (variant A) (variant B))))
                            (list (term (variant Empty))
                                  (term (variant Cons (variant A) (list-val (variant A) (variant B))))
                                  (term (variant Cons (variant B) (list-val (variant A) (variant B))))))
-  (check-exp-steps-to-all? (term (list-as-variant (* (List Nat))))
-                           (list (term (variant Empty))
-                                 (term (variant Cons (* Nat) (* (List Nat))))))
-  (check-exp-steps-to? (term (hash-keys (hash-val ((variant A) (variant B)) ((* Nat)))))
+  (check-exp-steps-to? (term (hash-keys (hash-val ((variant A) (variant B)) (abs-nat))))
                        (term (list-val (variant A) (variant B))))
-  (check-exp-steps-to? (term (hash-keys (* (Hash Nat (Union [A] [B])))))
-                       (term (* (List Nat))))
-  (check-exp-steps-to? (term (hash-values (hash-val ((* Nat)) ((variant A) (variant B)))))
+  (check-exp-steps-to? (term (hash-values (hash-val (abs-nat) ((variant A) (variant B)))))
                        (term (list-val (variant A) (variant B))))
-  (check-exp-steps-to? (term (hash-values (* (Hash Nat (Union [A] [B])))))
-                       (term (* (List (Union [A] [B])))))
-  (check-exp-steps-to? (term (sort-numbers-descending (list-val (* Nat))))
-                       (term (list-val (* Nat))))
+  (check-exp-steps-to? (term (sort-numbers-descending (list-val abs-nat)))
+                       (term (list-val abs-nat)))
   (check-exp-steps-to-all? `(for/fold ([result (variant X)])
-                                      ([item (list (variant A) (variant B) (variant C))])
-                              (case (* (Union [True] [False]))
-                                [(True) item]
-                                [(False) result]))
-                           (list `(variant X) `(variant A) `(variant B)`(variant C)))
-  (check-exp-steps-to-all? `(for/fold ([result (variant X)])
-                                      ([item (list (* Nat))])
+                                      ([item (list abs-nat)])
                               (variant Y))
                            (list `(variant X) `(variant Y)))
   (test-case "Seeing the same loop twice in different contexts returns all results"
     (check-exp-steps-to-all?
-     `(let ([a (case (* (Union [A] [B])) [(A) (variant A)] [(B) (variant B)])])
+     `(let ([a (list-ref (list-val (variant A) (variant B)) abs-nat)])
         (begin
-          (for/fold ([dummy (* Nat)])
-                    ([item (list-val (* Nat))])
+          (for/fold ([dummy abs-nat])
+                    ([item (list-val abs-nat)])
             item)
           a))
      (list '(variant A) '(variant B))))
 
   (test-case "Loops do not return duplicate values"
-    (define terminal-exps (exp-reduce* `(for/fold ([result (variant X)])
-                                                  ([item (list (variant A) (variant B) (variant C))])
-                                          (case (* (Union [True] [False]))
-                                            [(True) item]
-                                            [(False) result]))))
+    (define terminal-exps
+      (exp-reduce* `(for/fold ([result (variant X)])
+                              ([item (list (variant A) (variant B) (variant C))])
+                      (case (list-ref (list-val (variant True) (variant False)) abs-nat)
+                        [(True) item]
+                        [(False) result]))))
     (check-equal? (length terminal-exps) (length (remove-duplicates terminal-exps))))
 
   (test-equal? "eval-machine test"
@@ -1298,16 +1183,16 @@
     (check-same-items?
      (first
       (eval-machine
-       `(for/fold ([dummy (* Nat)])
-                  ([item (* (List Nat))])
+       `(for/fold ([dummy abs-nat])
+                  ([item (list-val abs-nat)])
           (begin
             (spawn loc Nat (goto Foo (variant A)))
-            (* Nat)))
+            abs-nat))
        empty-effects
        #f))
      (list
-      (machine-state `(* Nat) `(() ()))
-      (machine-state `(* Nat) `(() ([(collective-addr loc) (() (goto Foo (variant A)))]))))))
+      (machine-state `abs-nat `(() ()))
+      (machine-state `abs-nat `(() ([(collective-addr loc) (() (goto Foo (variant A)))]))))))
 
   (test-case "eval-machine test 2"
    (check-exp-steps-to? `(goto S (begin (variant A)) (begin (variant B) (variant C)))
@@ -1316,24 +1201,24 @@
   (test-case "eval-machine test 3"
    (check-equal?
     (eval-machine
-     `(begin (send (addr 1 0) (* Nat)) (variant X))
+     `(begin (send (addr 1 0) abs-nat) (variant X))
      empty-effects
      #f)
-    (eval-machine-result (list (machine-state `(variant X) `(([(addr 1 0) (* Nat) single]) ())))
+    (eval-machine-result (list (machine-state `(variant X) `(([(addr 1 0) abs-nat single]) ())))
                          null)))
 
   (test-case "Send in loop is a many-of message"
     (check-same-items?
      (first
       (eval-machine
-       `(for/fold ([dummy (* Nat)])
-                  ([item (* (List Nat))])
+       `(for/fold ([dummy abs-nat])
+                  ([item (list-val abs-nat)])
           (send (addr 1 0) item))
        empty-effects
        #f))
      (list
-      (machine-state `(* Nat) `(() ()))
-      (machine-state `(* Nat) `(([(addr 1 0) (* Nat) many]) ())))))
+      (machine-state `abs-nat `(() ()))
+      (machine-state `abs-nat `(([(addr 1 0) abs-nat many]) ())))))
 
   ;; NOTE: these are the old tests for checking sorting of loop-sent messages, which I don't do
   ;; anymore. Keeping them around in case I change my mind
@@ -1386,13 +1271,12 @@
 
   ;; testing this because I had a problem with it before
   (test-equal? "Internal addresses in the transmissions do not change the evaluation"
-   (eval-machine `(begin (send (addr 1 0) (* Nat)) (goto A)) empty-effects #f)
-   (value-result `(goto A) `((((addr 1 0) (* Nat) single)) ()))))
+   (eval-machine `(begin (send (addr 1 0) abs-nat) (goto A)) empty-effects #f)
+   (value-result `(goto A) `((((addr 1 0) abs-nat single)) ()))))
 
 (define (list-values v)
   (match v
-    [`(list-val ,vs ...) vs]
-    [`(* (List ,type)) (list `(* ,type))]))
+    [`(list-val ,vs ...) vs]))
 
 ;; Puts the given abstract collection value (a list or hash) and puts it into a canonical
 ;; form
@@ -1423,23 +1307,23 @@
 
 (module+ test
   (test-equal? "Basic add-output test 1: already exists"
-    (add-output (list `[(addr 1 0) (* Nat) single]
-                      `[(addr 2 0) (* Nat) single]
-                      `[(addr 3 0) (* Nat) single])
-                `[(addr 2 0) (* Nat) single])
-    (list `[(addr 1 0) (* Nat) single]
-          `[(addr 2 0) (* Nat) many]
-          `[(addr 3 0) (* Nat) single]))
+    (add-output (list `[(addr 1 0) abs-nat single]
+                      `[(addr 2 0) abs-nat single]
+                      `[(addr 3 0) abs-nat single])
+                `[(addr 2 0) abs-nat single])
+    (list `[(addr 1 0) abs-nat single]
+          `[(addr 2 0) abs-nat many]
+          `[(addr 3 0) abs-nat single]))
   (test-equal? "Basic add-output test 2: does not exist"
-    (add-output (list `[(addr 1 0) (* Nat) single]
-                      `[(addr 2 0) (* Nat) single]
-                      `[(addr 3 0) (* Nat) single])
-                `[(addr 4 0) (* Nat) single])
-    (list `[(addr 1 0) (* Nat) single]
-          `[(addr 2 0) (* Nat) single]
-          `[(addr 3 0) (* Nat) single]
-          `[(addr 4 0) (* Nat) single]))
-  (test-equal? "Must include wildcard outputs for the purpose of escaped addresses"
+    (add-output (list `[(addr 1 0) abs-nat single]
+                      `[(addr 2 0) abs-nat single]
+                      `[(addr 3 0) abs-nat single])
+                `[(addr 4 0) abs-nat single])
+    (list `[(addr 1 0) abs-nat single]
+          `[(addr 2 0) abs-nat single]
+          `[(addr 3 0) abs-nat single]
+          `[(addr 4 0) abs-nat single]))
+  (test-equal? "Must include collective-address outputs for the purpose of escaped addresses"
     (add-output `() `[(collective-addr (env (Addr Nat))) (addr 2 0) single])
     `([(collective-addr (env (Addr Nat))) (addr 2 0) single])))
 
@@ -1493,27 +1377,27 @@
 
 (module+ test
   (test-equal? "merge-messages-into-config 1"
-   (merge-messages-into-config (term (() () ())) (list (term ((addr 0 0) (* Nat) single))))
-   (term (() () (((addr 0 0) (* Nat) single)))))
+   (merge-messages-into-config (term (() () ())) (list (term ((addr 0 0) abs-nat single))))
+   (term (() () (((addr 0 0) abs-nat single)))))
 
   (test-equal? "merge-messages-into-config 2"
-   (merge-messages-into-config (term (() () ())) (list (term ((addr 0 0) (* Nat) many))))
-   (term (() () (((addr 0 0) (* Nat) many)))))
+   (merge-messages-into-config (term (() () ())) (list (term ((addr 0 0) abs-nat many))))
+   (term (() () (((addr 0 0) abs-nat many)))))
 
   (test-equal? "merge-messages-into-config 3"
-   (merge-messages-into-config (term (() () (((addr 0 0) (* Nat) single))))
-                       (list (term ((addr 0 0) (* Nat) single))))
-   (term (() () (((addr 0 0) (* Nat) many)))))
+   (merge-messages-into-config (term (() () (((addr 0 0) abs-nat single))))
+                       (list (term ((addr 0 0) abs-nat single))))
+   (term (() () (((addr 0 0) abs-nat many)))))
 
   (test-equal? "merge-messages-into-config 4"
-   (merge-messages-into-config (term (() () (((addr 0 0) (* Nat) single))))
-                       (list (term ((addr 0 0) (* Nat) many))))
-   (term (() () (((addr 0 0) (* Nat) many)))))
+   (merge-messages-into-config (term (() () (((addr 0 0) abs-nat single))))
+                       (list (term ((addr 0 0) abs-nat many))))
+   (term (() () (((addr 0 0) abs-nat many)))))
 
   (test-equal? "merge-messages-into-config 5"
-   (merge-messages-into-config (term (() () (((addr 0 0) (* Nat) single))))
-                               (list (term ((addr 1 0) (* Nat) many))))
-   (term (() () (((addr 0 0) (* Nat) single) ((addr 1 0) (* Nat) many)))))
+   (merge-messages-into-config (term (() () (((addr 0 0) abs-nat single))))
+                               (list (term ((addr 1 0) abs-nat many))))
+   (term (() () (((addr 0 0) abs-nat single) ((addr 1 0) abs-nat many)))))
 
   (test-equal? "merge-messages-into-config 6"
    (merge-messages-into-config (term (()
@@ -1573,7 +1457,8 @@
      (match (findf (lambda (binding) (eq? (binding-var binding) exp)) bindings)
        [#f exp]
        [binding (binding-val binding)])]
-    [`(* ,type) exp]
+    [`abs-nat `abs-nat]
+    [`abs-string `abs-string]
     [`(addr ,_ ,_) exp]
     [`(collective-addr ,_) exp]
     [`(spawn ,loc ,type ,init ,states ...)
@@ -1630,74 +1515,74 @@
          ,(csa#-subst-n timeout-body (remove-bindings bindings state-args))])]))
 
 (module+ test
-  (check-equal? (csa#-subst-n '(begin x) (list `[x (* Nat)])) '(begin (* Nat)))
-  (check-equal? (csa#-subst-n '(send x y) (list `[y (* Nat)])) '(send x (* Nat)))
-  (check-equal? (csa#-subst-n '(addr (env Nat) 1) (list `[x (* Nat)])) '(addr (env Nat) 1))
-  (check-equal? (csa#-subst-n '(= x y) (list `[x (* Nat)])) '(= (* Nat) y))
-  (check-equal? (csa#-subst-n/case-clause `[(Cons p) (begin p x)] (list `[p (* Nat)]))
+  (check-equal? (csa#-subst-n '(begin x) (list `[x abs-nat])) '(begin abs-nat))
+  (check-equal? (csa#-subst-n '(send x y) (list `[y abs-nat])) '(send x abs-nat))
+  (check-equal? (csa#-subst-n '(addr (env Nat) 1) (list `[x abs-nat])) '(addr (env Nat) 1))
+  (check-equal? (csa#-subst-n '(= x y) (list `[x abs-nat])) '(= abs-nat y))
+  (check-equal? (csa#-subst-n/case-clause `[(Cons p) (begin p x)] (list `[p abs-nat]))
                 (term [(Cons p) (begin p x)]))
-  (check-equal? (csa#-subst-n/case-clause `[(Cons p) (begin p x)] (list `[x (* Nat)]))
-                (term [(Cons p) (begin p (* Nat))]))
-  (check-equal? (csa#-subst-n `(list (* Nat) x) (list `[x (* Nat)]))
-                (term (list (* Nat) (* Nat))))
-  (check-equal? (csa#-subst-n `(variant Foo (* Nat)) (list `[a (* Nat)]))
-                (term (variant Foo (* Nat))))
-  (check-equal? (csa#-subst-n `(addr 1 0) (list `[x (* Nat)]))
+  (check-equal? (csa#-subst-n/case-clause `[(Cons p) (begin p x)] (list `[x abs-nat]))
+                (term [(Cons p) (begin p abs-nat)]))
+  (check-equal? (csa#-subst-n `(list abs-nat x) (list `[x abs-nat]))
+                (term (list abs-nat abs-nat)))
+  (check-equal? (csa#-subst-n `(variant Foo abs-nat) (list `[a abs-nat]))
+                (term (variant Foo abs-nat)))
+  (check-equal? (csa#-subst-n `(addr 1 0) (list `[x abs-nat]))
                 `(addr 1 0))
   (test-equal? "spawn subst 1"
     (csa#-subst-n `(spawn loc
                           Nat
-                          (goto A self (* Nat))
+                          (goto A self abs-nat)
                           (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
                   (list `[self (addr 2 0)]))
     (term (spawn loc
                  Nat
-                 (goto A self (* Nat))
+                 (goto A self abs-nat)
                  (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))))
   (test-equal? "spawn subst 2"
     (csa#-subst-n `(spawn loc
                           Nat
-                          (goto A self (* Nat))
+                          (goto A self abs-nat)
                           (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
                   (list `[x (addr 2 0)]))
     (term (spawn loc
                  Nat
-                 (goto A self (* Nat))
+                 (goto A self abs-nat)
                  (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))))
   (test-equal? "spawn subst 3"
     (csa#-subst-n `(spawn loc
                           Nat
-                          (goto A self (* Nat))
+                          (goto A self abs-nat)
                           (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
                   (list `[y (addr 2 0)]))
     (term (spawn loc
                  Nat
-                 (goto A self (* Nat))
+                 (goto A self abs-nat)
                  (define-state (A [s Nat] [a Nat]) (x) (goto A x (addr 2 0) self)))))
 
   (test-equal? "shadowing works as expected"
-    (csa#-subst-n `(begin (let ([x (* Nat)]) x) x) (list (binding 'x '(* String))))
-    `(begin (let ([x (* Nat)]) x) (* String)))
+    (csa#-subst-n `(begin (let ([x abs-nat]) x) x) (list (binding 'x 'abs-string)))
+    `(begin (let ([x abs-nat]) x) abs-string))
 
     (test-equal? "let-binding test"
-      (csa#-subst-n `(let ([x (* Nat)] [y (* Nat)]) (begin a x y z))
-                    (list (binding 'x '(* String))
-                          (binding 'z '(* String))))
-      `(let ([x (* Nat)] [y (* Nat)]) (begin a x y (* String))))
+      (csa#-subst-n `(let ([x abs-nat] [y abs-nat]) (begin a x y z))
+                    (list (binding 'x 'abs-string)
+                          (binding 'z 'abs-string)))
+      `(let ([x abs-nat] [y abs-nat]) (begin a x y abs-string)))
 
   (test-equal? "state-def subst 1"
     (csa#-subst-n/Q# `(define-state (A [x Nat] [y String]) (m) (begin x y z (goto A x y)))
-                     (list `[z (* Nat)]))
-    `(define-state (A [x Nat] [y String]) (m) (begin x y (* Nat) (goto A x y))))
+                     (list `[z abs-nat]))
+    `(define-state (A [x Nat] [y String]) (m) (begin x y abs-nat (goto A x y))))
 
     (test-equal? "state-def subst with timeout"
       (csa#-subst-n/Q# `(define-state (A [x Nat] [y String]) (m)
                           (begin x y z (goto A x y))
                           [(timeout z) (begin z (goto A x y))])
-                     (list `[z (* Nat)]))
+                     (list `[z abs-nat]))
       `(define-state (A [x Nat] [y String]) (m)
-         (begin x y (* Nat) (goto A x y))
-         [(timeout (* Nat)) (begin (* Nat) (goto A x y))])))
+         (begin x y abs-nat (goto A x y))
+         [(timeout abs-nat) (begin abs-nat (goto A x y))])))
 
 ;; Substitutes the second type for X in the first type
 (define-metafunction csa#
@@ -1779,18 +1664,18 @@
 
 (module+ test
   (check-equal? (term (abstract-Q (define-state (S) (m) (goto S) [(timeout 5) (goto S)]) ()))
-                (term (define-state (S) (m) (goto S) [(timeout (* Nat)) (goto S)])))
+                (term (define-state (S) (m) (goto S) [(timeout abs-nat) (goto S)])))
   (check-equal? (term (abstract-Q (define-state (S) (m) (goto S)
                                     [(timeout (case x [(A) 1] [(B) 2])) (goto S)]) ()))
                 (term (define-state (S) (m) (goto S)
-                        [(timeout (case x [(A) (* Nat)] [(B) (* Nat)])) (goto S)]))))
+                        [(timeout (case x [(A) abs-nat] [(B) abs-nat])) (goto S)]))))
 
 ;; Abstracts the given expression to the given depth. The given address list is currently unused; may
 ;; be used for choosing collective addresses in the future.
 (define-metafunction csa#
   abstract-e : e (a ...) -> e#
-  [(abstract-e natural _) (* Nat)]
-  [(abstract-e string _) (* String)]
+  [(abstract-e natural _) abs-nat]
+  [(abstract-e string _) abs-string]
   [(abstract-e x _) x]
   [(abstract-e a _) a]
   [(abstract-e (goto q e ...) (a ...))
@@ -1844,25 +1729,25 @@
 
 (module+ test
   (check-equal? (term (abstract-e (record [f1 1] [f2 2]) ()))
-                (term (record [f1 (* Nat)] [f2 (* Nat)])))
+                (term (record [f1 abs-nat] [f2 abs-nat])))
   (check-not-false
    (redex-match? csa#
                  (variant Foo (addr 1 0) (addr (env Nat) 2))
                  (term (abstract-e (variant Foo (addr 1 0) (addr (env Nat) 2)) ()))))
   (check-equal? (term (abstract-e (list 1 2) ()))
-                (term (list-val (* Nat))))
+                (term (list-val abs-nat)))
   (check-equal? (term (abstract-e (list 1 (let () 1)) ()))
-                (term (list (* Nat) (let () (* Nat)))))
+                (term (list abs-nat (let () abs-nat))))
   (check-equal? (term (abstract-e (list (variant B) (variant A)) ()))
                 (term (list-val (variant A) (variant B))))
   (check-equal? (term (abstract-e (hash [1 (variant B)] [2 (variant A)]) ()))
-                (term (hash-val ((* Nat)) ((variant A) (variant B)))))
+                (term (hash-val (abs-nat) ((variant A) (variant B)))))
   (check-equal? (term (abstract-e (hash [1 2] [3 4]) ()))
-                (term (hash-val ((* Nat)) ((* Nat)))))
+                (term (hash-val (abs-nat) (abs-nat))))
   (check-equal? (term (abstract-e (hash) ()))
                 (term (hash-val () ())))
   (check-equal? (term (abstract-e (hash [1 (let ([x 1]) x)] [3 4]) ()))
-                (term (hash [(* Nat) (let ([x (* Nat)]) x)] [(* Nat) (* Nat)])))
+                (term (hash [abs-nat (let ([x abs-nat]) x)] [abs-nat abs-nat])))
   (test-equal? "Abstraction okay on folded"
     (term (abstract-e (folded ,recursive-record-address-type (addr 1 0)) ()))
     `(folded ,recursive-record-address-type (addr 1 0))))
@@ -2086,8 +1971,8 @@
                        ((addr 0 0)
                         (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
                             (begin
-                              (send (addr (env Nat) 1) (* Nat))
-                              (send (addr (env Nat) 2) (* Nat))
+                              (send (addr (env Nat) 1) abs-nat)
+                              (send (addr (env Nat) 2) abs-nat)
                               (goto A x y z))))
                          (goto A (addr (env Nat) 2) (addr (env Nat) 3) (addr (env Nat) 4)))))]
                   [i# (term (([a# b#]) () ()))])
@@ -2100,8 +1985,8 @@
                          ((addr 0 0)
                           (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
                               (begin
-                                (send (addr (env Nat) 1) (* Nat))
-                                (send (collective-addr (env Nat)) (* Nat))
+                                (send (addr (env Nat) 1) abs-nat)
+                                (send (collective-addr (env Nat)) abs-nat)
                                 (goto A x y z))))
                            (goto A (collective-addr (env Nat)) (addr (env Nat) 3) (collective-addr (env Nat))))))]
                  [i# (term (([a# b#]) () ()))])
@@ -2111,7 +1996,7 @@
   (test-equal? "blur test 3"
    (csa#-blur-addresses
     (redex-let csa#
-        ([e# (term (hash-val ((* Nat))
+        ([e# (term (hash-val (abs-nat)
                              ((addr (env Nat) 1)
                               (addr (env Nat) 2)
                               (addr (env Nat) 3)
@@ -2120,7 +2005,7 @@
     null
     '((addr (env Nat) 1) (addr (env Nat) 3)))
    ;; Some reordering happens as a result of normalize-collection
-   (term (hash-val ((* Nat)) ((addr (env Nat) 1) (addr (env Nat) 3) (collective-addr (env Nat))))))
+   (term (hash-val (abs-nat) ((addr (env Nat) 1) (addr (env Nat) 3) (collective-addr (env Nat))))))
 
   (test-equal? "blur test 4"
    (csa#-blur-addresses
@@ -2188,13 +2073,13 @@
   (define behavior1
     (term (((define-state (A) (x) (goto A))) (goto A))))
   (define behavior2
-    (term (((define-state (B) (r) (begin (send r (* Nat)) (goto B)))) (goto B))))
+    (term (((define-state (B) (r) (begin (send r abs-nat) (goto B)))) (goto B))))
   (define behavior3
-    (term (((define-state (C [x (List Nat)]) (r) (begin (send r (* Nat)) (goto C x))))
+    (term (((define-state (C [x (List Nat)]) (r) (begin (send r abs-nat) (goto C x))))
            (goto C (list-val)))))
   (define behavior3-greater
-    (term (((define-state (C [x (List Nat)]) (r) (begin (send r (* Nat)) (goto C x))))
-           (goto C (list-val (* Nat))))))
+    (term (((define-state (C [x (List Nat)]) (r) (begin (send r abs-nat) (goto C x))))
+           (goto C (list-val abs-nat)))))
 
   (test-begin
     (check-true (redex-match? csa# b# behavior1))
@@ -2281,8 +2166,8 @@
                                 (() (goto M))
                                 (() (goto A)))])
       ;; messages
-      ([(addr 2 0) (* Nat) single]
-       [(addr 1 0) (* Nat) single])))
+      ([(addr 2 0) abs-nat single]
+       [(addr 1 0) abs-nat single])))
   (check-true (redex-match? csa# i# sort-components-test-config))
   (check-equal?
    (csa#-sort-config-components sort-components-test-config)
@@ -2297,8 +2182,8 @@
                                (() (goto M))
                                (() (goto Z)))])
       ;; messages
-     ([(addr 1 0) (* Nat) single]
-      [(addr 2 0) (* Nat) single]))))
+     ([(addr 1 0) abs-nat single]
+      [(addr 2 0) abs-nat single]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Duplicate message merging
@@ -2325,13 +2210,13 @@
 
 (module+ test
   (test-equal? "Deduplicate-packets test"
-    (deduplicate-packets (list `[(addr 1 0) (* Nat) single]
-                               `[(addr 2 0) (* Nat) single]
-                               `[(addr 1 0) (* Nat) single]
-                               `[(addr 2 0) (* String) many]))
-    (list `[(addr 1 0) (* Nat) many]
-          `[(addr 2 0) (* Nat) single]
-          `[(addr 2 0) (* String) many])))
+    (deduplicate-packets (list `[(addr 1 0) abs-nat single]
+                               `[(addr 2 0) abs-nat single]
+                               `[(addr 1 0) abs-nat single]
+                               `[(addr 2 0) abs-string many]))
+    (list `[(addr 1 0) abs-nat many]
+          `[(addr 2 0) abs-nat single]
+          `[(addr 2 0) abs-string many])))
 
 (define (config-deduplicate-packets config)
   (match-define `[,atomics ,collectives ,packets] config)
@@ -2347,29 +2232,29 @@
 (module+ test
   (check-equal?
    (deduplicate-packets
-    (term (((addr (env Nat) 1) (* Nat) single)
-           ((addr (env Nat) 1) (* Nat) single))))
-   (term (((addr (env Nat) 1) (* Nat) many))))
+    (term (((addr (env Nat) 1) abs-nat single)
+           ((addr (env Nat) 1) abs-nat single))))
+   (term (((addr (env Nat) 1) abs-nat many))))
 
     (check-equal?
    (deduplicate-packets
-    (term (((addr (env Nat) 1) (* Nat) single)
-           ((addr (env Nat) 1) (* Nat) single)
-           ((addr (env Nat) 1) (* Nat) single))))
-   (term (((addr (env Nat) 1) (* Nat) many))))
+    (term (((addr (env Nat) 1) abs-nat single)
+           ((addr (env Nat) 1) abs-nat single)
+           ((addr (env Nat) 1) abs-nat single))))
+   (term (((addr (env Nat) 1) abs-nat many))))
 
   (check-equal?
    (deduplicate-packets
-    (term (((addr (env Nat) 1) (* Nat) single)
-           ((addr (env Nat) 2) (* Nat) single)
-           ((addr (env Nat) 3) (* Nat) many)
-           ((collective-addr (env Nat)) (* Nat) many)
-           ((addr (env Nat) 1) (* Nat) single)
-           ((collective-addr (env Nat)) (* Nat) single))))
-   (term (((addr (env Nat) 1) (* Nat) many)
-          ((addr (env Nat) 2) (* Nat) single)
-          ((addr (env Nat) 3) (* Nat) many)
-          ((collective-addr (env Nat)) (* Nat) many)))))
+    (term (((addr (env Nat) 1) abs-nat single)
+           ((addr (env Nat) 2) abs-nat single)
+           ((addr (env Nat) 3) abs-nat many)
+           ((collective-addr (env Nat)) abs-nat many)
+           ((addr (env Nat) 1) abs-nat single)
+           ((collective-addr (env Nat)) abs-nat single))))
+   (term (((addr (env Nat) 1) abs-nat many)
+          ((addr (env Nat) 2) abs-nat single)
+          ((addr (env Nat) 3) abs-nat many)
+          ((collective-addr (env Nat)) abs-nat many)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Constructors
@@ -2520,50 +2405,29 @@
 ;; Boolean Logic
 
 (define-metafunction csa#
-  canonicalize-boolean : v# -> v#
-  [(canonicalize-boolean (variant True)) (variant True)]
-  [(canonicalize-boolean (variant False)) (variant False)]
-  [(canonicalize-boolean (* (Union (True) (False)))) (* (Union (True) (False)))]
-  [(canonicalize-boolean (* (Union (False) (True)))) (* (Union (True) (False)))]
-  [(canonicalize-boolean (* (Union (True)))) (variant True)]
-  [(canonicalize-boolean (* (Union (False)))) (variant False)])
-
-(define-metafunction csa#
   csa#-and : v# v# -> v#
-  [(csa#-and (variant False) _) (variant False)]
-  [(csa#-and _ (variant False)) (variant False)]
   [(csa#-and (variant True) (variant True)) (variant True)]
-  [(csa#-and _ _) (* (Union (True) (False)))])
+  [(csa#-and _ _) (variant False)])
 
 (define-metafunction csa#
   csa#-or : v# v# -> v#
-  [(csa#-or (variant True) _) (variant True)]
-  [(csa#-or _ (variant True)) (variant True)]
   [(csa#-or (variant False) (variant False)) (variant False)]
-  [(csa#-or _ _) (* (Union (True) (False)))])
+  [(csa#-or _ _) (variant True)])
 
 (define-metafunction csa#
   csa#-not : v# -> v#
   [(csa#-not (variant True)) (variant False)]
-  [(csa#-not (variant False)) (variant True)]
-  [(csa#-not (* (Union (True) (False)))) (* (Union (True) (False)))])
+  [(csa#-not (variant False)) (variant True)])
 
 (module+ test
-  (define boolean-maybe (term (* (Union (True) (False)))))
-  (check-equal? (term (csa#-and (variant False) ,boolean-maybe)) (term (variant False)))
-  (check-equal? (term (csa#-and (variant True) ,boolean-maybe)) boolean-maybe)
   (check-equal? (term (csa#-and (variant True) (variant True))) (term (variant True)))
   (check-equal? (term (csa#-and (variant False) (variant False))) (term (variant False)))
 
-  (check-equal? (term (csa#-or (variant False) ,boolean-maybe)) boolean-maybe)
-  (check-equal? (term (csa#-or (variant True) ,boolean-maybe)) (term (variant True)))
   (check-equal? (term (csa#-or (variant True) (variant True))) (term (variant True)))
   (check-equal? (term (csa#-or (variant False) (variant False))) (term (variant False)))
 
   (check-equal? (term (csa#-not (variant False))) (term (variant True)))
-  (check-equal? (term (csa#-not (variant True))) (term (variant False)))
-  (check-equal? (term (csa#-not (canonicalize-boolean (* (Union (False) (True))))))
-                (term (* (Union (True) (False))))))
+  (check-equal? (term (csa#-not (variant True))) (term (variant False))))
 
 (define (trigger-address trigger)
   (term (trigger-address/mf ,trigger)))
@@ -2583,8 +2447,8 @@
   (csa#-internal-address? addr))
 
 (module+ test
-  (check-true (internal-output? (term ((addr 1 0) (* Nat) single))))
-  (check-false (internal-output? (term ((addr (env Nat) 2) (* Nat) single)))))
+  (check-true (internal-output? (term ((addr 1 0) abs-nat single))))
+  (check-false (internal-output? (term ((addr (env Nat) 2) abs-nat single)))))
 
 (define (csa#-atomic-address? addr)
   (match addr
@@ -2612,15 +2476,15 @@
   (test-false "internal-atomic-action? collective actor timeout"
     (internal-atomic-action? (term (timeout (collective-addr 1)))))
   (test-true "internal-atomic-action? atomic actor, single message"
-    (internal-atomic-action? (term (internal-receive (addr 1 0) (* Nat) single))))
+    (internal-atomic-action? (term (internal-receive (addr 1 0) abs-nat single))))
   (test-false "internal-atomic-action? atomic actor, many-of message"
-    (internal-atomic-action? (term (internal-receive (addr 1 0) (* Nat) many))))
+    (internal-atomic-action? (term (internal-receive (addr 1 0) abs-nat many))))
   (test-false "internal-atomic-action? collective actor, single message"
-    (internal-atomic-action? (term (internal-receive (collective-addr 1) (* Nat) single))))
+    (internal-atomic-action? (term (internal-receive (collective-addr 1) abs-nat single))))
   (test-false "internal-atomic-action? collecive actor, many-of message"
-    (internal-atomic-action? (term (internal-receive (collective-addr 1) (* Nat) many))))
+    (internal-atomic-action? (term (internal-receive (collective-addr 1) abs-nat many))))
   (test-false "internal-atomic-action? external receive"
-    (internal-atomic-action? (term (external-receive (addr 1 0) (* Nat))))))
+    (internal-atomic-action? (term (external-receive (addr 1 0) abs-nat)))))
 
 (define (internal-single-receive? trigger)
   (match trigger
@@ -2629,15 +2493,15 @@
 
 (module+ test
   (test-true "internal-single-receive? atomic/single"
-    (internal-single-receive? `(internal-receive (addr 1 0) (* Nat) single)))
+    (internal-single-receive? `(internal-receive (addr 1 0) abs-nat single)))
   (test-false "internal-single-receive? atomic/many"
-    (internal-single-receive? `(internal-receive (addr 1 0) (* Nat) many)))
+    (internal-single-receive? `(internal-receive (addr 1 0) abs-nat many)))
   (test-true "internal-single-receive? collective/single"
-    (internal-single-receive? `(internal-receive (collective-addr 1 NEW) (* Nat) single)))
+    (internal-single-receive? `(internal-receive (collective-addr 1 NEW) abs-nat single)))
   (test-false "internal-single-receive? collective/many"
-    (internal-single-receive? `(internal-receive (collective-addr 1 NEW) (* Nat) many)))
+    (internal-single-receive? `(internal-receive (collective-addr 1 NEW) abs-nat many)))
   (test-false "internal-single-receive? external-receive"
-    (internal-single-receive? `(external-receive (addr 1 0) (* Nat))))
+    (internal-single-receive? `(external-receive (addr 1 0) abs-nat)))
   (test-false "internal-single-receive? timeout)"
     (internal-single-receive? `(timeout (addr 1 0)))))
 
@@ -2949,10 +2813,10 @@
                          `(Record [a (Addr (Union [A]))] [b (Addr (Union [B]))]))
     (list `((Union [A] [B]) (addr 1 0))))
   (test-equal? "internal-addr-types 3"
-    (internal-addr-types `(* Nat) `Nat)
+    (internal-addr-types `abs-nat `Nat)
     null)
   (test-equal? "internal-addr-types 4"
-    (internal-addr-types `(* String) `String)
+    (internal-addr-types `abs-string `String)
     null)
   (test-equal? "internal-addr-types 5: recursive"
     (internal-addr-types `(folded (minfixpt X (Addr (Union [A X])))
@@ -3001,8 +2865,8 @@
      (merge-receptionists
       (get-types-and-merge-all (map (lambda (v) (list v type1)) vs1))
       (get-types-and-merge-all (map (lambda (v) (list v type2)) vs2)))]
-    [(list `(* Nat) 'Nat) null]
-    [(list `(* String) 'String) null]
+    [(list `abs-nat 'Nat) null]
+    [(list `abs-string 'String) null]
     [_ (error 'addr-types "Unknown val/type combo ~s ~s" v type)]))
 
 (module+ test
@@ -3010,10 +2874,10 @@
     (addr-types `(addr 1 1) `(Addr Nat))
     (term ([Nat (addr 1 1)])))
   (test-equal? "addr-types 2"
-    (addr-types `(variant A (* Nat) (addr 2 2)) `(Union [B] [A Nat (Addr String)]))
+    (addr-types `(variant A abs-nat (addr 2 2)) `(Union [B] [A Nat (Addr String)]))
     (term ([String (addr 2 2)])))
   (test-equal? "addr-types: record"
-    (addr-types `(record [a (addr 1 2)] [b (* String)]) `(Record [a (Addr String)] [b String]))
+    (addr-types `(record [a (addr 1 2)] [b abs-string]) `(Record [a (Addr String)] [b String]))
     (term ([String (addr 1 2)])))
   (test-equal? "addr-types: join"
     (addr-types `(record [a (addr 2 2)]         [b (addr 2 2)])
@@ -3365,7 +3229,7 @@
   (check-equal?
    (atomic-state-name-by-address
     `[([(addr 1 0) (() (goto A))]
-       [(addr 2 0) (() (goto B (* Nat)))])
+       [(addr 2 0) (() (goto B abs-nat))])
       ()
       ()]
     `(addr 2 0))
@@ -3419,17 +3283,17 @@
 
 (module+ test
   (check-not-false
-   (new-pseudo-send? `[() () ([(addr 1 0) (* Nat) single])]
-                     `[(addr 1 0) (* Nat) single]))
+   (new-pseudo-send? `[() () ([(addr 1 0) abs-nat single])]
+                     `[(addr 1 0) abs-nat single]))
   (check-false
-   (new-pseudo-send? `[() () ([(addr 1 0) (* Nat) many])]
-                     `[(addr 1 0) (* Nat) single]))
+   (new-pseudo-send? `[() () ([(addr 1 0) abs-nat many])]
+                     `[(addr 1 0) abs-nat single]))
   (check-not-false
-   (new-pseudo-send? `[() () ([(addr 1 0) (* Nat) many])]
-                     `[(addr 1 0) (* String) single]))
+   (new-pseudo-send? `[() () ([(addr 1 0) abs-nat many])]
+                     `[(addr 1 0) abs-string single]))
   (check-not-false
-   (new-pseudo-send? `[() () ([(addr 1 0) (* Nat) many])]
-                     `[(addr 2 0) (* Nat) single])))
+   (new-pseudo-send? `[() () ([(addr 1 0) abs-nat many])]
+                     `[(addr 2 0) abs-nat single])))
 
 ;; Is the behavior better than all existing ones for this address if we ignore state definitions?
 (define (compare-pseudo-behavior config addr behavior)
@@ -3471,7 +3335,7 @@
                               ()
                               ()]
                             `(addr 1 0)
-                            `(() (goto A (list-val (* Nat)))))
+                            `(() (goto A (list-val abs-nat))))
    'gt)
   (check-equal?
    (compare-pseudo-behavior `[([(addr 1 0) (() (goto A))])
@@ -3514,12 +3378,12 @@
                                  [() (goto B)])])
                               ()]
                             `(collective-addr 1)
-                            `(() (goto A (list-val (* Nat)))))
+                            `(() (goto A (list-val abs-nat))))
    'gt)
   (check-equal?
    (compare-pseudo-behavior `[()
                               ([(collective-addr 1)
-                                ([() (goto A (list-val (* Nat)))]
+                                ([() (goto A (list-val abs-nat))]
                                  [() (goto B)])])
                               ()]
                             `(collective-addr 1)
@@ -3558,26 +3422,26 @@
         [_ #f])))
 
 (module+ test
-  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (addr 1 0) (* Nat) single)
-                                                  `(internal-receive (addr 1 0) (* String) single)
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (addr 1 0) abs-nat single)
+                                                  `(internal-receive (addr 1 0) abs-string single)
                                                   #f
                                                   null))
-  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (addr 1 0) (* Nat) single)
-                                                  `(internal-receive (addr INIT1 0) (* String) single)
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (addr 1 0) abs-nat single)
+                                                  `(internal-receive (addr INIT1 0) abs-string single)
                                                   #f
                                                   (list 1)))
-  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (collective-addr 1) (* Nat) single)
-                                                  `(internal-receive (addr INIT1 0) (* String) single)
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (collective-addr 1) abs-nat single)
+                                                  `(internal-receive (addr INIT1 0) abs-string single)
                                                   #f
                                                   (list 1)))
-  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (addr INIT1 0) (* Nat) single)
-                                                  `(internal-receive (addr INIT2 0) (* String) single)
-                                                  `(() () ([(addr INIT1 0) (* String) many]))
+  (check-not-false (csa#-trigger-updated-by-step? `(internal-receive (addr INIT1 0) abs-nat single)
+                                                  `(internal-receive (addr INIT2 0) abs-string single)
+                                                  `(() () ([(addr INIT1 0) abs-string many]))
                                                   null))
-  (check-false (csa#-trigger-updated-by-step? `(internal-receive (addr 1 0) (* Nat) single)
-                                              `(internal-receive (addr INIT2 0) (* String) single)
-                                              `(() () ([(addr 1 0) (* Nat) many]
-                                                       [(addr 1) (* Nat) many]))
+  (check-false (csa#-trigger-updated-by-step? `(internal-receive (addr 1 0) abs-nat single)
+                                              `(internal-receive (addr INIT2 0) abs-string single)
+                                              `(() () ([(addr 1 0) abs-nat many]
+                                                       [(addr 1) abs-nat many]))
                                               (list `[(addr 2 1) (() (goto S))]))))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -3940,13 +3804,13 @@
 ;;             [(spawn-addr 1 OLD) (() (goto A))]
 ;;             [(spawn-addr 2 OLD) (() (goto A))])
 ;;            ()
-;;            ([(spawn-addr 1 OLD) (* Nat) single]
-;;             [(spawn-addr 2 OLD) (* Nat) many]))))
+;;            ([(spawn-addr 1 OLD) abs-nat single]
+;;             [(spawn-addr 2 OLD) abs-nat many]))))
 
 ;;   (test-equal? "Ensure that only internal messages are compared"
 ;;     (csa#-compare-new-messages
 ;;      new-message-test-config
-;;      (csa#-transition-effect #f #f (list `[(obs-ext 1) (* Nat) single]) null)
+;;      (csa#-transition-effect #f #f (list `[(obs-ext 1) abs-nat single]) null)
 ;;      new-message-test-config)
 ;;     'eq)
 
@@ -3956,34 +3820,34 @@
 ;;   ;;    (csa#-transition-effect #f #f (list m) null)))
 
 ;;   ;; (test-equal? "single message to init-addr"
-;;   ;;   (compare-one-message `((addr 3 0) (* Nat) single))
+;;   ;;   (compare-one-message `((addr 3 0) abs-nat single))
 ;;   ;;   'gt)
 ;;   ;; (test-equal? "single message to OLD spawn-addr"
-;;   ;;   (compare-one-message `((spawn-addr 1 OLD) (* Nat) single))
+;;   ;;   (compare-one-message `((spawn-addr 1 OLD) abs-nat single))
 ;;   ;;   'gt)
 ;;   ;; (test-equal? "single message to collective address"
-;;   ;;   (compare-one-message `((collective-addr 3) (* Nat) single))
+;;   ;;   (compare-one-message `((collective-addr 3) abs-nat single))
 ;;   ;;   'gt)
 ;;   ;; (test-equal? "to NEW: had zero, send one"
-;;   ;;   (compare-one-message `((spawn-addr 0 NEW) (* Nat) single))
+;;   ;;   (compare-one-message `((spawn-addr 0 NEW) abs-nat single))
 ;;   ;;   'not-gteq)
 ;;   ;; (test-equal? "to NEW: OLD doesn't exist, send one"
-;;   ;;   (compare-one-message `((spawn-addr 4 NEW) (* Nat) single))
+;;   ;;   (compare-one-message `((spawn-addr 4 NEW) abs-nat single))
 ;;   ;;   'gt)
 ;;   ;; (test-equal? "to NEW: had zero, send many"
-;;   ;;   (compare-one-message `((spawn-addr 0 NEW) (* Nat) many))
+;;   ;;   (compare-one-message `((spawn-addr 0 NEW) abs-nat many))
 ;;   ;;   'gt)
 ;;   ;; (test-equal? "to NEW: had one, send one"
-;;   ;;   (compare-one-message `((spawn-addr 1 NEW) (* Nat) single))
+;;   ;;   (compare-one-message `((spawn-addr 1 NEW) abs-nat single))
 ;;   ;;   'gt)
 ;;   ;; (test-equal? "to NEW: had one, send many"
-;;   ;;   (compare-one-message `((spawn-addr 1 NEW) (* Nat) many))
+;;   ;;   (compare-one-message `((spawn-addr 1 NEW) abs-nat many))
 ;;   ;;   'gt)
 ;;   ;; (test-equal? "to NEW: had many, send one"
-;;   ;;   (compare-one-message `((spawn-addr 2 NEW) (* Nat) single))
+;;   ;;   (compare-one-message `((spawn-addr 2 NEW) abs-nat single))
 ;;   ;;   'not-gteq)
 ;;   ;; (test-equal? "to NEW: had many, send many"
-;;   ;;   (compare-one-message `((spawn-addr 2 NEW) (* Nat) many))
+;;   ;;   (compare-one-message `((spawn-addr 2 NEW) abs-nat many))
 ;;   ;;   'gt)
 ;;   ;; (test-equal? "to NEW: had zero, send zero"
 ;;   ;;   (csa#-compare-new-messages
@@ -3992,22 +3856,22 @@
 ;;   ;;   'eq)
 ;;   ;; (test-equal? "to NEW: had one, send zero"
 ;;   ;;   (csa#-compare-new-messages
-;;   ;;    (term (() () ([(spawn-addr 1 OLD) (* Nat) single])))
+;;   ;;    (term (() () ([(spawn-addr 1 OLD) abs-nat single])))
 ;;   ;;    (csa#-transition-effect #f #f null (list `((spawn-addr 1 NEW) (() (goto A))))))
 ;;   ;;   'not-gteq)
 ;;   ;; (test-equal? "to NEW: had many, send zero"
 ;;   ;;   (csa#-compare-new-messages
-;;   ;;    (term (() () ([(spawn-addr 2 OLD) (* Nat) many])))
+;;   ;;    (term (() () ([(spawn-addr 2 OLD) abs-nat many])))
 ;;   ;;    (csa#-transition-effect #f #f null (list `((spawn-addr 2 NEW) (() (goto A))))))
 ;;   ;;   'not-gteq)
 ;;   ;; (test-equal? "had 1, NEW does not exist"
 ;;   ;;   (csa#-compare-new-messages
-;;   ;;    (term (() () ([(spawn-addr 1 OLD) (* Nat) single])))
+;;   ;;    (term (() () ([(spawn-addr 1 OLD) abs-nat single])))
 ;;   ;;    (csa#-transition-effect #f #f null null))
 ;;   ;;   'eq)
 ;;   ;; (test-equal? "had many, NEW does not exist"
 ;;   ;;   (csa#-compare-new-messages
-;;   ;;    (term (() () ([(spawn-addr 2 OLD) (* Nat) many])))
+;;   ;;    (term (() () ([(spawn-addr 2 OLD) abs-nat many])))
 ;;   ;;    (csa#-transition-effect #f #f null null))
 ;;   ;;   'eq)
 ;;   )
@@ -4044,13 +3908,13 @@
   (check-equal?
    (compare-behavior
     (term (((define-state (A) (m) (goto A)))         (goto A (list-val (variant B)))))
-    (term (((define-state (A) (m) (goto A (* Nat)))) (goto A (list-val (variant B)))))
+    (term (((define-state (A) (m) (goto A abs-nat))) (goto A (list-val (variant B)))))
     #t)
    'not-gteq)
   (check-equal?
    (compare-behavior
     (term (((define-state (A) (m) (goto A)))         (goto A (list-val (variant B)))))
-    (term (((define-state (A) (m) (goto A (* Nat)))) (goto A (list-val (variant B)))))
+    (term (((define-state (A) (m) (goto A abs-nat))) (goto A (list-val (variant B)))))
     #f)
    'eq))
 
@@ -4089,8 +3953,8 @@
 
 (module+ test
   (check-equal?
-   (compare-value (term (variant A (* Nat)))
-                  (term (variant B (* Nat))))
+   (compare-value (term (variant A abs-nat))
+                  (term (variant B abs-nat)))
    'not-gteq))
 
 (define (compare-value-sets vals1 vals2)
@@ -4106,42 +3970,42 @@
 
 (module+ test
   (test-equal? "compare-value record 1"
-    (compare-value `(record [a (list-val (* Nat))] [b (* Nat)])
-                   `(record [a (list-val)]         [b (* Nat)]))
+    (compare-value `(record [a (list-val abs-nat)] [b abs-nat])
+                   `(record [a (list-val)]         [b abs-nat]))
     'gt)
   (test-equal? "compare-value record 2"
-    (compare-value `(record [a (list-val (* Nat))] [b (* Nat)])
-                   `(record [a (list-val (* Nat))] [b (* Nat)]))
+    (compare-value `(record [a (list-val abs-nat)] [b abs-nat])
+                   `(record [a (list-val abs-nat)] [b abs-nat]))
     'eq)
   (test-equal? "compare-value record 3"
-    (compare-value `(record [a (list-val (variant A))] [b (* Nat)])
-                   `(record [a (list-val (variant B))] [b (* Nat)]))
+    (compare-value `(record [a (list-val (variant A))] [b abs-nat])
+                   `(record [a (list-val (variant B))] [b abs-nat]))
     'not-gteq)
 
   (test-equal? "compare-value variant 1"
-    (compare-value `(variant A (list-val (* Nat)) (* Nat))
-                   `(variant A (list-val) (* Nat)))
+    (compare-value `(variant A (list-val abs-nat) abs-nat)
+                   `(variant A (list-val) abs-nat))
     'gt)
   (test-equal? "compare-value variant 2"
-    (compare-value `(variant A (list-val (* Nat)) (* Nat))
-                   `(variant A (list-val (* Nat)) (* Nat)))
+    (compare-value `(variant A (list-val abs-nat) abs-nat)
+                   `(variant A (list-val abs-nat) abs-nat))
     'eq)
   (test-equal? "compare-value variant 3"
-    (compare-value `(variant A (list-val) (* Nat))
-                   `(variant A (list-val (* Nat)) (* Nat)))
+    (compare-value `(variant A (list-val) abs-nat)
+                   `(variant A (list-val abs-nat) abs-nat))
     'lt)
 
   (test-equal? "compare-value list-val 1"
-    (compare-value '(list-val (* Nat))
+    (compare-value '(list-val abs-nat)
                    '(list-val))
     'gt)
   (test-equal? "compare-value list-val 2"
-    (compare-value '(list-val (* Nat))
-                   '(list-val (* Nat)))
+    (compare-value '(list-val abs-nat)
+                   '(list-val abs-nat))
     'eq)
   (test-equal? "compare-value list-val 3"
     (compare-value '(list-val)
-                   '(list-val (* Nat)))
+                   '(list-val abs-nat))
     'lt)
   (test-equal? "compare-value list-val 4"
     (compare-value '(list-val (variant A))
@@ -4153,28 +4017,28 @@
                    '(hash-val () ()))
     'eq)
   (test-equal? "compare-value hash-val 2"
-    (compare-value '(hash-val ((* Nat)) ((variant A)))
+    (compare-value '(hash-val (abs-nat) ((variant A)))
                    '(hash-val () ()))
     'gt)
   (test-equal? "compare-value hash-val 3"
-    (compare-value '(hash-val ((* Nat)) ((variant A) (variant B)))
-                   '(hash-val ((* Nat)) ((variant A))))
+    (compare-value '(hash-val (abs-nat) ((variant A) (variant B)))
+                   '(hash-val (abs-nat) ((variant A))))
     'gt)
   (test-equal? "compare-value hash-val 4"
-    (compare-value '(hash-val ((variant A) (variant B)) ((* Nat)))
-                   '(hash-val ((variant A)) ((* Nat))))
+    (compare-value '(hash-val ((variant A) (variant B)) (abs-nat))
+                   '(hash-val ((variant A)) (abs-nat)))
     'gt)
   (test-equal? "compare-value hash-val 5"
-    (compare-value '(hash-val ((* Nat)) ((variant A)))
-                   '(hash-val ((* Nat)) ((variant A) (variant B))))
+    (compare-value '(hash-val (abs-nat) ((variant A)))
+                   '(hash-val (abs-nat) ((variant A) (variant B))))
     'lt)
   (test-equal? "compare-value hash-val 6"
-    (compare-value '(hash-val ((variant A)) ((* Nat)))
-                   '(hash-val ((variant A) (variant B)) ((* Nat))))
+    (compare-value '(hash-val ((variant A)) (abs-nat))
+                   '(hash-val ((variant A) (variant B)) (abs-nat)))
     'lt)
   (test-equal? "compare-value hash-val 7"
-    (compare-value '(hash-val ((variant A)) ((* Nat)))
-                   '(hash-val ((variant B)) ((* Nat))))
+    (compare-value '(hash-val ((variant A)) (abs-nat))
+                   '(hash-val ((variant B)) (abs-nat)))
     'not-gteq)
 
   (test-equal? "compare-value addresses 1"
@@ -4245,25 +4109,25 @@
 (module+ test
   (define enabled-action-test-config
     (redex-let csa# ([i# `(([(addr 0 0)
-                             (((define-state (A) (x) (goto A) ([timeout (* Nat)] (goto A))))
+                             (((define-state (A) (x) (goto A) ([timeout abs-nat] (goto A))))
                               (goto A))]
                             [(addr 1 0)
-                             (((define-state (A) (x) (goto A) ([timeout (* Nat)] (goto A)))
+                             (((define-state (A) (x) (goto A) ([timeout abs-nat] (goto A)))
                                (define-state (B) (x) (goto B)))
                               (goto B))])
                            ()
-                           ([(addr 0 0) (* Nat) many]))])
+                           ([(addr 0 0) abs-nat many]))])
       (term i#)))
 
   (test-not-false "Enabled internal receive"
     (csa#-action-enabled? enabled-action-test-config
-                          '(internal-receive (addr 0 0) (* Nat) single)))
+                          '(internal-receive (addr 0 0) abs-nat single)))
   (test-false "Disabled internal receive"
     (csa#-action-enabled? enabled-action-test-config
-                          '(internal-receive (addr 1 0) (* Nat) single)))
+                          '(internal-receive (addr 1 0) abs-nat single)))
   (test-not-false "External receives are always enabled"
     (csa#-action-enabled? enabled-action-test-config
-                          '(external-receive (addr 1 0) (* Nat))))
+                          '(external-receive (addr 1 0) abs-nat)))
   (test-not-false "Enabled timeout"
     (csa#-action-enabled? enabled-action-test-config
                           '(timeout (addr 0 0))))

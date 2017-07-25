@@ -472,7 +472,7 @@
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(internal-receive (addr 0 0) (* Nat) single) null null #f)
+      (impl-step '(internal-receive (addr 0 0) abs-nat single) null null #f)
       #f #t)
      (mutable-set (spec-step (list null-spec-config) null))))
   (test-case "Null transition not okay for observed input"
@@ -481,7 +481,7 @@
      (lambda ()
        (matching-spec-steps
         null-spec-config
-        (impl-step '(external-receive (addr 0 0) (* Nat)) null null #f)
+        (impl-step '(external-receive (addr 0 0) abs-nat) null null #f)
         #t #f))))
   (test-case "No match if trigger does not match"
     (check-exn
@@ -489,27 +489,27 @@
      (lambda ()
        (matching-spec-steps
         (make-s# '((define-state (A) [x -> () (goto A)])) '(goto A) null null)
-        (impl-step '(external-receive (addr 0 0) (* Nat)) null null #f)
+        (impl-step '(external-receive (addr 0 0) abs-nat) null null #f)
         #t #f))))
   (test-case "Unobserved outputs don't need to match"
     (check-equal?
      (matching-spec-steps
       null-spec-config
-      (impl-step '(internal-receive (addr 0 0) (* Nat) single) (list '((addr (env Nat) 1) (* Nat) single)) null  #f)
+      (impl-step '(internal-receive (addr 0 0) abs-nat single) (list '((addr (env Nat) 1) abs-nat single)) null  #f)
       #f #t)
      (mutable-set (spec-step (list null-spec-config) null))))
   (test-case "No match if outputs do not match"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A))) '(goto A) null (list '((addr (env Nat) 1))))
-      (impl-step '(internal-receive (addr 0 0) (* Nat) single) (list '((addr (env Nat) 1) (* Nat) single)) null #f)
+      (impl-step '(internal-receive (addr 0 0) abs-nat single) (list '((addr (env Nat) 1) abs-nat single)) null #f)
       #f #t)
      (mutable-set)))
   (test-case "Output can be matched by previous commitment"
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A))) '(goto A) null (list '((addr (env Nat) 1) (single *))))
-      (impl-step '(internal-receive (addr 0 0) (* Nat) single) (list '((addr (env Nat) 1) (* Nat) single)) null #f)
+      (impl-step '(internal-receive (addr 0 0) abs-nat single) (list '((addr (env Nat) 1) abs-nat single)) null #f)
       #f #t)
      (mutable-set (spec-step (list (make-s# '((define-state (A))) '(goto A) null (list '((addr (env Nat) 1)))))
                              (list `[(addr (env Nat) 1) *])))))
@@ -517,7 +517,7 @@
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)])) '(goto A) null null)
-      (impl-step '(external-receive (addr 0 0) (addr (env Nat) 1)) (list '((addr (env Nat) 1) (* Nat) single)) null #f)
+      (impl-step '(external-receive (addr 0 0) (addr (env Nat) 1)) (list '((addr (env Nat) 1) abs-nat single)) null #f)
       #t #f)
      (mutable-set (spec-step (list (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)]))
                                             '(goto A)
@@ -528,7 +528,7 @@
     (check-equal?
      (matching-spec-steps
       (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (addr (env Nat) 1)) null (list '[(addr (env Nat) 1) (single *)]))
-      (impl-step '(external-receive (addr 0 0) (* Nat)) null null #f)
+      (impl-step '(external-receive (addr 0 0) abs-nat) null null #f)
       #t #f)
      (mutable-set
       (spec-step (list (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (addr (env Nat) 1)) null (list '[(addr (env Nat) 1) (many *)])))
@@ -944,11 +944,11 @@
             (let ([child (spawn child-loc Nat (goto B)
                                 (define-state (B) (m) (goto B)))])
               (begin
-                (send child (* Nat))
+                (send child abs-nat)
                 (goto A)))))
          (goto A))])
       ()
-      ([(addr child-loc 0) (* Nat) single]))))
+      ([(addr child-loc 0) abs-nat single]))))
 
   (define expected-widened-config
     (term
@@ -960,7 +960,7 @@
             (let ([child (spawn child-loc Nat (goto B)
                                 (define-state (B) (m) (goto B)))])
               (begin
-                (send child (* Nat))
+                (send child abs-nat)
                 (goto A)))))
          (goto A))])
       (
@@ -974,8 +974,8 @@
         ))
       (
        ;; the messages
-       ((addr child-loc 0) (* Nat) single)
-       ((collective-addr child-loc) (* Nat) many)))))
+       ((addr child-loc 0) abs-nat single)
+       ((collective-addr child-loc) abs-nat many)))))
 
   (define widen-spec
     ;; Just a spec that observes only inputs and says nothing ever happens
@@ -1045,7 +1045,7 @@
   (test-equal? "first-spec-step-to-same-state"
     (first-spec-step-to-same-state
      first-spec-step-test-config
-     (impl-step `(external-receive (addr 1 0) (* Nat))
+     (impl-step `(external-receive (addr 1 0) abs-nat)
                 null
                 null
                 ;; impl config
@@ -1067,7 +1067,7 @@
         (define-state (B)
           [* -> () (goto A)]))
        ())
-     (impl-step `(external-receive (addr 1 0) (* Nat))
+     (impl-step `(external-receive (addr 1 0) abs-nat)
                 null
                 null
                 ;; impl config

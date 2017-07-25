@@ -167,16 +167,16 @@
 
   ;; aw stands for "Actor has Work to do"
   (define sat-aw-trigger1 `(timeout (addr 1 0)))
-  (define sat-aw-trigger2 `(internal-receive (addr 2 0) (* Nat) single))
-  (define sat-aw-trigger3 `(internal-receive (addr 3 0) (* Nat) single))
-  (define sat-aw-trigger4 `(internal-receive (addr 4 0) (* Nat) single))
+  (define sat-aw-trigger2 `(internal-receive (addr 2 0) abs-nat single))
+  (define sat-aw-trigger3 `(internal-receive (addr 3 0) abs-nat single))
+  (define sat-aw-trigger4 `(internal-receive (addr 4 0) abs-nat single))
 
   ;; im stands for "Internal Message"
   (define sat-im-trigger1 `(internal-receive (addr 5 0) (variant A) single))
   (define sat-im-trigger2 `(internal-receive (addr 5 0) (variant B) single))
 
   ;; er stands for "External Receive"
-  (define sat-er-trigger1 `(external-receive (addr 1 0) (* Nat)))
+  (define sat-er-trigger1 `(external-receive (addr 1 0) abs-nat))
 
   (define ag-impl-step (sat-impl-step sat-aw-trigger1))
   (define ai-impl-step (sat-impl-step sat-aw-trigger2))
@@ -373,7 +373,7 @@
     (define a-node (config-pair 'A `(() () (goto A) () ([(addr (env Nat) 1) (many *)]))))
     (define a-node2 (config-pair 'A `(() () (goto A) () ([(addr (env Nat) 1) (single *)]))))
     (define aa-impl-step
-      (impl-step `(internal-receive (addr 1 0) (* Nat) single) null null #f))
+      (impl-step `(internal-receive (addr 1 0) abs-nat single) null null #f))
     (define aa-spec-step (spec-step #f (list `((addr (env Nat) 1) *))))
     (check-equal?
      (partition-by-satisfaction
@@ -525,7 +525,7 @@
                          (list->set (filter internal-single-receive? all-actions))))))
 
 (module+ test
-  (define (make-nat-rcv-trigger addr-num) `(internal-receive (addr ,addr-num 0) (* Nat) single))
+  (define (make-nat-rcv-trigger addr-num) `(internal-receive (addr ,addr-num 0) abs-nat single))
   (define com-sat-internal-single-receives
     (immutable-hash ['A (set sat-aw-trigger2 sat-aw-trigger3 sat-aw-trigger4 sat-im-trigger1)]
                     ['B (set sat-aw-trigger2 sat-aw-trigger3)]
@@ -555,12 +555,12 @@
       (mutable-hash
        [a-node
         (mutable-set
-         (make-match-step `(internal-receive (addr 1 0) (* Nat) single))
-         (make-match-step `(internal-receive (addr 1 0) (* Nat) many))
-         (make-match-step `(internal-receive (collective-addr 1) (* Nat) single))
-         (make-match-step `(internal-receive (collective-addr 1) (* Nat) many)))]))
-     (immutable-hash ['A (set `(internal-receive (addr 1 0) (* Nat) single)
-                              `(internal-receive (collective-addr 1) (* Nat) single))]))))
+         (make-match-step `(internal-receive (addr 1 0) abs-nat single))
+         (make-match-step `(internal-receive (addr 1 0) abs-nat many))
+         (make-match-step `(internal-receive (collective-addr 1) abs-nat single))
+         (make-match-step `(internal-receive (collective-addr 1) abs-nat many)))]))
+     (immutable-hash ['A (set `(internal-receive (addr 1 0) abs-nat single)
+                              `(internal-receive (collective-addr 1) abs-nat single))]))))
 
 ;; Type:
 ;;

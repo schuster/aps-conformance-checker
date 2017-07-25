@@ -294,7 +294,7 @@
      (list->set
       (aps#-matching-steps (make-test-config 'A)
                            #t #t
-                           (term (external-receive (addr 0 0) (* Nat)))))
+                           (term (external-receive (addr 0 0) abs-nat))))
      (set
       ;; Option 1: A and B
       (list (make-test-config 'B) (make-test-config 'A))
@@ -308,7 +308,7 @@
                          null
                          (term (((addr (env Nat) 0) (single *)))))
                 #t #f
-                (term (external-receive (addr 0 0) (* Nat))))
+                (term (external-receive (addr 0 0) abs-nat)))
                (list
                 (list
                  (make-s# (term ((define-state (A r) [* -> ((obligation r *)) (goto A r)])))
@@ -325,7 +325,7 @@
                 null
                 (term (((addr (env Nat) 0)))))
        #t #f
-       (term (external-receive (addr 0 0) (* Nat))))))
+       (term (external-receive (addr 0 0) abs-nat)))))
 
   (test-equal? "Spec observes address but neither saves it nor has obligations for it"
     (aps#-matching-steps
@@ -768,24 +768,24 @@
    null)
 
   (check-equal?
-   (match-trigger #f '(external-receive (addr 0 0) (* Nat)) '((Nat (addr 0 0))) 'unobs)
+   (match-trigger #f '(external-receive (addr 0 0) abs-nat) '((Nat (addr 0 0))) 'unobs)
    null)
 
   (check-false
-   (match-trigger #t '(external-receive (addr 0 0) (* Nat)) '((Nat (addr 0 0))) 'unobs))
+   (match-trigger #t '(external-receive (addr 0 0) abs-nat) '((Nat (addr 0 0))) 'unobs))
 
   (check-equal?
    (match-trigger #t '(external-receive (addr 0 0) (addr (env Nat) 1)) '((Nat (addr 0 0))) 'x)
    (list '(x (addr (env Nat) 1))))
 
   (check-false
-   (match-trigger #f '(internal-receive (addr 0 0) (* Nat) single) '((Nat (addr 0 0))) 'x))
+   (match-trigger #f '(internal-receive (addr 0 0) abs-nat single) '((Nat (addr 0 0))) 'x))
 
   (check-false
-   (match-trigger #t '(external-receive (addr 0 0) (* Nat)) '((Nat (addr 0 0))) 'x))
+   (match-trigger #t '(external-receive (addr 0 0) abs-nat) '((Nat (addr 0 0))) 'x))
 
   (check-equal?
-   (match-trigger #f '(internal-receive (addr 0 0) (* Nat) single) '((Nat (addr 0 0))) 'unobs)
+   (match-trigger #f '(internal-receive (addr 0 0) abs-nat single) '((Nat (addr 0 0))) 'unobs)
    null)
 
   (check-false
@@ -814,10 +814,6 @@
    ---------------------------------------------
    (aps#-match/j (record [l v#] ..._n) (record [l p] ..._n) ([x a#_binding] ... ...))]
 
-  [(aps#-match/j (* τ) p ([x a#_binding] ...)) ...
-   ---------------------------------------------
-   (aps#-match/j (* (Record [l τ] ..._n)) (record [l p] ..._n) ([x a#_binding] ... ...))]
-
   ;; Just ignore folds in the values: in a real language, the programmer wouldn't see them and
   ;; therefore would not write patterns for them
   [(aps#-match/j v# p ([x a#_binding] ...))
@@ -825,23 +821,21 @@
    (aps#-match/j (folded _ v#) p ([x a#_binding] ...))])
 
 (module+ test
-  (check-true (judgment-holds (aps#-match/j (* Nat) * ())))
+  (check-true (judgment-holds (aps#-match/j abs-nat * ())))
   (check-true (judgment-holds (aps#-match/j (addr (env Nat) 1) x ([x (addr (env Nat) 1)]))))
   (check-false (judgment-holds (aps#-match/j (addr 0 1) x ([x (addr 0 1)]))))
-  (check-true (judgment-holds (aps#-match/j (variant A (* String)) (variant A *) ())))
+  (check-true (judgment-holds (aps#-match/j (variant A abs-string) (variant A *) ())))
   (check-true (judgment-holds (aps#-match/j (variant A (addr (env Nat) 1))
                                             (variant A x)
                                             ([x (addr (env Nat) 1)]))))
-  (check-false (judgment-holds (aps#-match/j (* (Union [A (Addr Nat)] [B])) (variant A *) ())))
   (check-true (judgment-holds (aps#-match/j (record [a (addr (env Nat) 1)])
                                             (record [a x])
                                             ([x (addr (env Nat) 1)]))))
-  (check-true (judgment-holds (aps#-match/j (* (Record [a (Addr Nat)])) (record [a *]) ())))
-  (check-true (judgment-holds (aps#-match/j (* Nat) * any)))
-  (check-false (judgment-holds (aps#-match/j (* Nat) x any)))
+  (check-true (judgment-holds (aps#-match/j abs-nat * any)))
+  (check-false (judgment-holds (aps#-match/j abs-nat x any)))
   (check-true (judgment-holds (aps#-match/j (folded Nat (addr (env Nat) 1)) x any)))
   ;; matches two ways, but should only return one result:
-  (check-equal? (judgment-holds (aps#-match/j (folded Nat (* Nat)) * any_bindings) any_bindings)
+  (check-equal? (judgment-holds (aps#-match/j (folded Nat abs-nat) * any_bindings) any_bindings)
                 (list '())))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -931,17 +925,6 @@
                        any_unobs-receptionists
                        any_forks)]
 
-  ;; TODO: remove this rule; wildcards shouldn't exist anymore
-  [(aps#-list-matches-po?/j (((* τ) τ po) ...) ρ#_obs any_obs-recs any_unobs-receptionists any_forks)
-   -----
-   (aps#-matches-po?/j (* (Record [l τ] ..._n))
-                       (Record [l τ] ..._n)
-                       ρ#_obs
-                       (record [l po] ..._n)
-                       any_obs-recs
-                       any_unobs-receptionists
-                       any_forks)]
-
   ;; Just ignore folds in the values: in a real language, the programmer wouldn't see them and
   ;; therefore would not write patterns for them
   [(aps#-matches-po?/j v# (type-subst τ X (minfixpt X τ)) ρ#_obs po any_obs-recs any_unobs-receptionists any_forks)
@@ -970,10 +953,10 @@
 
 (module+ test
   (check-equal?
-   (aps#-match-po '(* Nat) `Nat '() '*)
+   (aps#-match-po 'abs-nat `Nat '() '*)
    (list (list '() null null)))
   (check-equal?
-   (aps#-match-po '(* Nat) 'Nat '() '(record))
+   (aps#-match-po 'abs-nat 'Nat '() '(record))
    null)
   (check-equal?
    (aps#-match-po '(addr 0 0) `(Addr Nat) '() 'self)
@@ -985,16 +968,16 @@
    (aps#-match-po '(addr (env Nat) 0) `(Addr Nat) '() 'self)
    null)
   (check-equal?
-   (aps#-match-po '(variant A (* Nat) (addr 2 0)) `(Union [A Nat (Addr Nat)]) '() '(variant A * self))
+   (aps#-match-po '(variant A abs-nat (addr 2 0)) `(Union [A Nat (Addr Nat)]) '() '(variant A * self))
    (list (list '((Nat (addr 2 0))) '() '())))
   (check-equal?
-   (aps#-match-po '(variant A (* Nat) (addr 2 0)) `(Union [A Nat (Addr Nat)]) '() '(variant A * *))
+   (aps#-match-po '(variant A abs-nat (addr 2 0)) `(Union [A Nat (Addr Nat)]) '() '(variant A * *))
    (list (list '() '((Nat (addr 2 0))) '())))
   (check-equal?
-   (aps#-match-po '(variant A (* Nat) (addr 2 0)) `(Union [A Nat (Addr Nat)]) '((Nat (addr 2 0))) '(variant A * self))
+   (aps#-match-po '(variant A abs-nat (addr 2 0)) `(Union [A Nat (Addr Nat)]) '((Nat (addr 2 0))) '(variant A * self))
    (list (list '((Nat (addr 2 0))) '() '())))
   (test-equal? "Variant match with address/or pattern"
-   (aps#-match-po '(variant A (* Nat) (addr 2 0))
+   (aps#-match-po '(variant A abs-nat (addr 2 0))
                   `(Union [A Nat (Addr Nat)])
                   '((Nat (addr 2 0)))
                   '(or (variant A * self) (variant B)))
@@ -1009,7 +992,7 @@
    (aps#-match-po (term (variant C)) '(Union [A] [B] [C])'() (term (or (variant A) (variant B))))
    null)
   (test-equal? "Variant match with self"
-    (aps#-match-po '(variant A (* Nat) (addr 2 0))
+    (aps#-match-po '(variant A abs-nat (addr 2 0))
                    '(Union [A Nat (Addr Nat)])
                    '((Nat (addr 1 0)))
                    '(variant A * self))
@@ -1094,35 +1077,35 @@
   (test-equal? "resolve test 1"
     (aps#-resolve-outputs
      (list (make-dummy-spec `(((addr (env Nat) 1)))))
-     (term (((addr (env Nat) 1) (* Nat) single))))
+     (term (((addr (env Nat) 1) abs-nat single))))
     null)
   (test-equal? "resolve test 1: many"
     (aps#-resolve-outputs
      (list (make-dummy-spec `(((addr (env Nat) 1)))))
-     (term (((addr (env Nat) 1) (* Nat) many))))
+     (term (((addr (env Nat) 1) abs-nat many))))
     null)
   (test-equal? "resolve test 2"
     (aps#-resolve-outputs
      (list (make-dummy-spec `(((addr (env Nat) 1) (single *)))))
-     (term (((addr (env Nat) 1) (* Nat) single))))
+     (term (((addr (env Nat) 1) abs-nat single))))
     (list `[,(list (make-dummy-spec `(((addr (env Nat) 1)))))
             ([(addr (env Nat) 1) *])]))
   (test-equal? "resolve test 3"
     (aps#-resolve-outputs
      (list (make-dummy-spec `(((addr (env Nat) 1) (single *) (single (record))))))
-     (term (((addr (env Nat) 1) (* Nat) single))))
+     (term (((addr (env Nat) 1) abs-nat single))))
     (list `[,(list (make-dummy-spec `(((addr (env Nat) 1) (single (record))))))
             (((addr (env Nat) 1) *))]))
   (test-equal? "resolve test 4"
     (aps#-resolve-outputs
      (list (make-dummy-spec `(((addr (env Nat) 1) (many *) (single (record))))))
-     (term (((addr (env Nat) 1) (* Nat) single))))
+     (term (((addr (env Nat) 1) abs-nat single))))
     (list `[,(list (make-dummy-spec `(((addr (env Nat) 1) (many *) (single (record))))))
             (((addr (env Nat) 1) *))]))
   (test-equal? "resolve loop test"
     (aps#-resolve-outputs
      (list (make-dummy-spec `(((addr (env Nat) 1) (many *) (single (record))))))
-     (term ([(addr (env Nat) 1) (* Nat) many])))
+     (term ([(addr (env Nat) 1) abs-nat many])))
     null)
   (define free-output-spec
     (term
@@ -1274,7 +1257,7 @@
                      ()))
             ()]))
 
-  (test-equal? "Addresses in messages to wildcard addresses are added to receptionists"
+  (test-equal? "Addresses in messages to collective addresses are added to receptionists"
     (aps#-resolve-outputs
      (list `(() () (goto S1) ((define-state (S1))) ()))
      (list `[(collective-addr (env (Union [A (Addr Nat) (Addr String)])))
@@ -1418,7 +1401,7 @@
      (make-dummy-spec `([(addr (env Nat) 1) [single *]]))
      `(addr (env Nat) 1)
      `Nat
-     `(* Nat)
+     `abs-nat
      `single)
     (list `[(,(make-dummy-spec `([(addr (env Nat) 1)]))) ([(addr (env Nat) 1) *])]))
   (test-equal? "resolve-output unobserved address"
@@ -1454,7 +1437,7 @@
     (make-dummy-spec `([(addr (env  Nat) 1) [single *]]))
     `(addr (env Nat) 1)
     `Nat
-    `(* Nat))
+    `abs-nat)
    (list `[,(list (make-dummy-spec `([(addr (env Nat) 1)]))) *])))
 
 ;; s# a# v# -> ([(s# ...) po] ...)
