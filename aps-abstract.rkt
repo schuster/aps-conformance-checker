@@ -236,7 +236,11 @@
   (define (possible-transitions-for from-observer?)
     (define results
       (filter
-       values
+       (lambda (transitioned-configs)
+         (and transitioned-configs
+              ;; can run into infinite loop if we allow multiple observed addresses to have an
+              ;; obligation with "self" in the pattern, so we eliminate those transitions
+              (<= (length (addrs-with-self-obligations (first transitioned-configs))) 1)))
        (map (lambda (t) (attempt-transition spec-config t from-observer? trigger))
             available-transitions)))
     (when (null? results)
@@ -364,7 +368,34 @@
     (list `[,(make-s# `((define-state (A) [* -> () (goto A)]))
                       `(goto A)
                       null
-                      null)])))
+                      null)]))
+
+  (test-exn "Don't return transitions that would have addrs with multiple self obls"
+    (lambda (exn) #t)
+    (lambda ()
+      (aps#-matching-steps
+       (make-s# `((define-state (A) [r -> ([obligation r self]) (goto A)]))
+                `(goto A)
+                null
+                `([(addr (env Nat) 2) [single self]]))
+       #t #f
+       `(external-receive (addr 0 0) (addr (env Nat) 1))))))
+
+(define (addrs-with-self-obligations config)
+  (map aps#-commitment-entry-address
+       (filter
+        (lambda (obl-map-entry)
+          (ormap pattern-contains-self?
+                 (aps#-commitment-entry-patterns obl-map-entry)))
+        (aps#-config-commitment-map config))))
+
+(module+ test
+  (test-equal? "Addresses with self obligation"
+    (addrs-with-self-obligations
+     `(() () (goto A) () ([(addr 0 0) [single self]]
+                          [(addr 0 1) [single *]]
+                          [(addr 0 2) [single (record [a *] [b self])]])))
+    (list `(addr 0 0) `(addr 0 2))))
 
 ;; s# spec-state-transition bool trigger -> [s# ...] or #f
 ;;

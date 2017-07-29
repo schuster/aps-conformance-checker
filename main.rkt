@@ -3172,4 +3172,29 @@
   (test-false "External messages can prevent timeout from firing"
     (check-conformance/config
      (make-single-actor-config send-after-timeout-actor)
-     (make-exclusive-spec reply-to-first-request-spec))))
+     (make-exclusive-spec reply-to-first-request-spec)))
+
+  ;;;; New "self" obligation on every step, never fulfilled
+
+  (define never-respond-with-self-actor
+    (term
+     (((Addr (Addr Nat)) (addr 0 0))
+      (((define-state (Always) (r) (goto Always)))
+       (goto Always)))))
+
+  (define new-self-obligations-spec
+    (term
+     (((define-state (Always)
+         [r -> ([obligation r self]) (goto Always)]))
+      (goto Always)
+      ((Addr (Addr Nat)) (addr 0 0)))))
+
+  (test-valid-actor? never-respond-with-self-actor)
+  (test-valid-instance? new-self-obligations-spec)
+  (displayln "START")
+  (test-exn "New self obligation on every message, never fulfilled"
+    (lambda (exn) #t)
+    (lambda ()
+      (check-conformance/config
+       (make-single-actor-config never-respond-with-self-actor)
+       (make-exclusive-spec new-self-obligations-spec)))))
