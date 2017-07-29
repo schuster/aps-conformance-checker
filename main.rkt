@@ -1320,7 +1320,7 @@
     (flush-output log-file)))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Top-level tests
+;; Test Helpers
 
 (module+ test
   (define-simple-check (check-valid-actor? actual)
@@ -1345,8 +1345,12 @@
            #,(syntax/loc stx (check-valid-instance? the-term)))]
       [(_ the-term)
        #`(test-begin
-           #,(syntax/loc stx (check-valid-instance? the-term)))]))
+           #,(syntax/loc stx (check-valid-instance? the-term)))])))
 
+;; ---------------------------------------------------------------------------------------------------
+;; Top-level tests
+
+(module+ test
   ;;;; Ignore everything
 
   (define (make-ignore-all-config addr-type)
