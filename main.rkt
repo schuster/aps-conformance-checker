@@ -508,7 +508,7 @@
   (test-case "Output can be matched by previous commitment"
     (check-equal?
      (matching-spec-steps
-      (make-s# '((define-state (A))) '(goto A) null (list '((addr (env Nat) 1) (single *))))
+      (make-s# '((define-state (A))) '(goto A) null (list '((addr (env Nat) 1) *)))
       (impl-step '(internal-receive (addr 0 0) abs-nat single) (list '((addr (env Nat) 1) abs-nat single)) null #f)
       #f #t)
      (mutable-set (spec-step (list (make-s# '((define-state (A))) '(goto A) null (list '((addr (env Nat) 1)))))
@@ -524,15 +524,13 @@
                                             null
                                             (list '((addr (env Nat) 1)))))
                              (list `[(addr (env Nat) 1) *])))))
-  (test-case "Multiple copies of same commitment get merged"
+  (test-case "Can't duplicate commitments"
     (check-equal?
      (matching-spec-steps
-      (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (addr (env Nat) 1)) null (list '[(addr (env Nat) 1) (single *)]))
+      (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (addr (env Nat) 1)) null (list '[(addr (env Nat) 1) *]))
       (impl-step '(external-receive (addr 0 0) abs-nat) null null #f)
       #t #f)
-     (mutable-set
-      (spec-step (list (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (addr (env Nat) 1)) null (list '[(addr (env Nat) 1) (many *)])))
-                 null)))))
+     (mutable-set))))
 
 ;; Given a hash table whose values are sets, add val to the set in dict corresponding to key (or
 ;; create the hash-table entry with a set containing that val if no entry exists).
@@ -3191,13 +3189,10 @@
 
   (test-valid-actor? never-respond-with-self-actor)
   (test-valid-instance? new-self-obligations-spec)
-  (displayln "START")
-  (test-exn "New self obligation on every message, never fulfilled"
-    (lambda (exn) #t)
-    (lambda ()
-      (check-conformance/config
-       (make-single-actor-config never-respond-with-self-actor)
-       (make-exclusive-spec new-self-obligations-spec))))
+  (test-false "New self obligation on every message, never fulfilled"
+    (check-conformance/config
+     (make-single-actor-config never-respond-with-self-actor)
+     (make-exclusive-spec new-self-obligations-spec)))
 
   ;;;; "Free" forks inside for loops should not cause infinite loop
   (define forks-in-for-loop-actor

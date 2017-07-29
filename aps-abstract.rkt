@@ -6,8 +6,7 @@
  ;; Required by conformance checker
  aps#-config-obs-receptionists
  aps#-config-unobs-receptionists
- aps#-config-singleton-commitments
- aps#-config-many-of-commitments
+ aps#-config-commitments
  aps#-matching-steps
  aps#-resolve-outputs
  aps#-abstract-config
@@ -58,7 +57,7 @@
   (s# (ρ#_obs ρ#_unobs (goto φ u ...) (Φ ...) O#)) ; TODO: change u here to be a
   (ρ# ([τ a#] ...))
   (u .... a#_ext)
-  (O# ((a#_ext (m po) ...) ...))
+  (O# ([a#_ext po ...] ...))
   (match-fork (ρ#_obs (goto φ) (Φ ...))))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -66,8 +65,7 @@
 
 (define (aps#-abstract-config spec-config)
   ;; Doing a redex-let here just to add a codomain contract
-  (redex-let* aps# ([any_1 (term (aps#-abstract-config/mf ,spec-config))]
-                    [s# (abstract-obligations (term any_1))])
+  (redex-let* aps# ([s# (term (aps#-abstract-config/mf ,spec-config))])
              (term s#)))
 
 (define-metafunction aps#
@@ -84,28 +82,12 @@
                                 ()
                                 (goto A (addr (env Nat) 1))
                                 ((define-state (A x) (* -> () (goto A x))))
-                                (((addr (env Nat) 2) * * (record))))))
+                                (((addr (env Nat) 2) * (record))))))
    (term (((Nat (addr 0 0)))
           ()
           (goto A (addr (env Nat) 1))
           ((define-state (A x) (* -> () (goto A x))))
-          (((addr (env Nat) 2) [many *] [single (record)]))))))
-
-(define (abstract-obligations config)
-  (match-define (list obs unobs goto states obligation-map) config)
-  (define abstracted-obligations
-    (for/list ([entry obligation-map])
-      (let loop ([patterns (cdr entry)]
-                 [abstracted-patterns null])
-        (match patterns
-          [(list) (cons (first entry) (reverse abstracted-patterns))]
-          [(list this-pattern other-patterns ...)
-           (if (member this-pattern other-patterns)
-               (loop (filter (negate (curry equal? this-pattern)) other-patterns)
-                     (cons `(many ,this-pattern) abstracted-patterns))
-               (loop other-patterns
-                     (cons `(single ,this-pattern) abstracted-patterns)))]))))
-  (list obs unobs goto states abstracted-obligations))
+          (((addr (env Nat) 2) * (record)))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
@@ -234,20 +216,23 @@
     (filter (negate (curryr free-stable-transition? (aps#-config-current-state spec-config)))
             (config-current-transitions spec-config)))
   (define (possible-transitions-for from-observer?)
-    (define results
-      (filter
-       (lambda (transitioned-configs)
-         (and transitioned-configs
-              ;; can run into infinite loop if we allow multiple observed addresses to have an
-              ;; obligation with "self" in the pattern, so we eliminate those transitions
-              (<= (length (addrs-with-self-obligations (first transitioned-configs))) 1)))
+    (define raw-results
+      (filter values
        (map (lambda (t) (attempt-transition spec-config t from-observer? trigger))
             available-transitions)))
-    (when (null? results)
+    (when (null? raw-results)
       (error 'aps#-matching-steps
              "The trigger ~s (from-observer: ~s) has no way to transition in spec config ~s"
              trigger from-observer? (spec-config-without-state-defs spec-config)))
-    results)
+    (filter (lambda (transitioned-configs)
+              (and
+               ;; can run into infinite loop if we allow multiple observed addresses to have an
+               ;; obligation with "self" in the pattern, so we eliminate those transitions
+               (<= (length (addrs-with-self-obligations (first transitioned-configs))) 1)
+               ;; can also run into infinite loop if we allow multiple obligations, so we only use
+               ;; transitions that don't duplicate them
+               (andmap all-obligations-unique? transitioned-configs)))
+            raw-results))
   (define obs-steps
     (cond
       [observed? (possible-transitions-for #t)]
@@ -305,20 +290,15 @@
       ;; Option 2: A and C
       (list (make-test-config 'B) (make-test-config 'C)))))
 
-  (test-equal? "Multiple copies of output commitments are merged"
-               (aps#-matching-steps
-                (make-s# (term ((define-state (A r) [* -> ((obligation r *)) (goto A r)])))
-                         (term (goto A (addr (env Nat) 0)))
-                         null
-                         (term (((addr (env Nat) 0) (single *)))))
-                #t #f
-                (term (external-receive (addr 0 0) abs-nat)))
-               (list
-                (list
-                 (make-s# (term ((define-state (A r) [* -> ((obligation r *)) (goto A r)])))
-                          (term (goto A (addr (env Nat) 0)))
-                          null
-                          (term (((addr (env Nat) 0) (many *))))))))
+  (test-equal? "Don't allow multiple copies of obligations"
+    (aps#-matching-steps
+     (make-s# (term ((define-state (A r) [* -> ((obligation r *)) (goto A r)])))
+              (term (goto A (addr (env Nat) 0)))
+              null
+              (term (((addr (env Nat) 0) *))))
+     #t #f
+     (term (external-receive (addr 0 0) abs-nat)))
+    null)
 
   (test-exn "No match for a trigger leads to exception"
     (lambda (exn) #t)
@@ -370,16 +350,15 @@
                       null
                       null)]))
 
-  (test-exn "Don't return transitions that would have addrs with multiple self obls"
-    (lambda (exn) #t)
-    (lambda ()
-      (aps#-matching-steps
-       (make-s# `((define-state (A) [r -> ([obligation r self]) (goto A)]))
-                `(goto A)
-                null
-                `([(addr (env Nat) 2) [single self]]))
-       #t #f
-       `(external-receive (addr 0 0) (addr (env Nat) 1))))))
+  (test-equal? "Don't return transitions that would have addrs with multiple self obls"
+    (aps#-matching-steps
+     (make-s# `((define-state (A) [r -> ([obligation r self]) (goto A)]))
+              `(goto A)
+              null
+              `([(addr (env Nat) 2) self]))
+     #t #f
+     `(external-receive (addr 0 0) (addr (env Nat) 1)))
+    null))
 
 (define (addrs-with-self-obligations config)
   (map aps#-commitment-entry-address
@@ -392,10 +371,24 @@
 (module+ test
   (test-equal? "Addresses with self obligation"
     (addrs-with-self-obligations
-     `(() () (goto A) () ([(addr 0 0) [single self]]
-                          [(addr 0 1) [single *]]
-                          [(addr 0 2) [single (record [a *] [b self])]])))
+     `(() () (goto A) () ([(addr 0 0) self]
+                          [(addr 0 1) *]
+                          [(addr 0 2) (record [a *] [b self])])))
     (list `(addr 0 0) `(addr 0 2))))
+
+(define (all-obligations-unique? config)
+  (andmap
+   (lambda (entry)
+     (if (check-duplicates (aps#-commitment-entry-patterns entry))
+         #f
+         #t))
+   (aps#-config-commitment-map config)))
+
+(module+ test
+  (test-true "Does not have duplicate obligations"
+    (all-obligations-unique? `(() () (goto A) () ([(addr 0 0) * (variant A)]))))
+  (test-false "Has duplicate obligations"
+    (all-obligations-unique? `(() () (goto A) () ([(addr 0 0) (variant A) * (variant A) ])))))
 
 ;; s# spec-state-transition bool trigger -> [s# ...] or #f
 ;;
@@ -460,7 +453,7 @@
        ()
        (goto B (addr (env Nat) 1))
        ((define-state (A) [r -> ([obligation r *]) (goto B r)]))
-       ([(addr (env Nat) 1) [single *]]))))
+       ([(addr (env Nat) 1) *]))))
 
   (test-case "Immediate fork pattern transition"
     (define fork-pattern `(fork (goto Z y) (define-state (Z y) [* -> () (goto Z y)])))
@@ -473,7 +466,7 @@
          (define-state (B) [* -> () (goto B)]))
         ;; check for captured and uncaptured addresses, too
         ([(addr (env Nat) 1)]
-         [(addr (env Nat) 3) (many *)]))
+         [(addr (env Nat) 3) *]))
       `[y -> ([obligation (addr (env Nat) 1) ,fork-pattern]) (goto B)]
       #t
       `(external-receive (addr 1 0) (addr (env (Addr Nat)) 2)))
@@ -483,13 +476,13 @@
         (goto B)
         ((define-state (A x) [y -> ([obligation x ,fork-pattern]) (goto B)])
          (define-state (B) [* -> () (goto B)]))
-        ([(addr (env Nat) 3) (many *)]))
+        ([(addr (env Nat) 3) *]))
       `(()
         ([(Addr Nat) (addr 1 0)] [String (addr 2 0)])
         (goto Z (addr (env (Addr Nat)) 2))
         ((define-state (Z y) [* -> () (goto Z y)]))
         ([(addr (env (Addr Nat)) 2)]
-         [(addr (env Nat) 1) (single self)])))))
+         [(addr (env Nat) 1) self])))))
 
   (test-case "Delayed fork pattern transition"
     (define fork-pattern `(delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)])))
@@ -503,7 +496,7 @@
         ;; check for captured and uncaptured addresses, too
         ([(addr (env Nat) 1)]
          [(addr (env Nat) 2)]
-         [(addr (env Nat) 3) (many *)]))
+         [(addr (env Nat) 3) *]))
       `[* -> ([obligation (addr (env Nat) 1) ,fork-pattern]) (goto B)]
       #t
       `(external-receive (addr 1 0) (addr (env (Addr Nat)) 2)))
@@ -513,9 +506,9 @@
         (goto B)
         ((define-state (A x) [* -> ([obligation x ,fork-pattern]) (goto B)])
          (define-state (B) [* -> () (goto B)]))
-        ([(addr (env Nat) 1) (single ,fork-pattern)]
+        ([(addr (env Nat) 1) ,fork-pattern]
          [(addr (env Nat) 2)]
-         [(addr (env Nat) 3) (many *)]))))))
+         [(addr (env Nat) 3) *]))))))
 
 ;; (f ...) ([x a#] ...) -> (f ...)
 ;;
@@ -669,24 +662,24 @@
   (test-equal? "Basic dist case"
     (dist (term (() () (goto A) ((define-state (A))) ()))
           (list `[() () (goto B (addr (env Nat) 2)) ((define-state (B r))) ()])
-          (term ([(addr (env Nat) 1) (single *)] [(addr (env Nat) 2) (single (record))])))
-    (list (term (() () (goto A) ((define-state (A))) ([(addr (env Nat) 1) (single *)])))
-          (term (() () (goto B (addr (env Nat) 2)) ((define-state (B r))) ([(addr (env Nat) 2) (single (record))])))))
+          (term ([(addr (env Nat) 1) *] [(addr (env Nat) 2) (record)])))
+    (list (term (() () (goto A) ((define-state (A))) ([(addr (env Nat) 1) *])))
+          (term (() () (goto B (addr (env Nat) 2)) ((define-state (B r))) ([(addr (env Nat) 2) (record)])))))
 
   (test-equal? "Dist with extra relevant address"
     (dist (term (() () (goto A (addr (env Nat) 1)) () ()))
           (list (term (() () (goto B) () ((addr (env Nat) 2)))))
-          (term ([(addr (env Nat) 1) (single *)]
-                 [(addr (env Nat) 2) (many *)])))
-    (list (term (() () (goto A (addr (env Nat) 1)) () ([(addr (env Nat) 1) (single *)])))
-          (term (() () (goto B) () ([(addr (env Nat) 2) (many *)])))))
+          (term ([(addr (env Nat) 1) *]
+                 [(addr (env Nat) 2) *])))
+    (list (term (() () (goto A (addr (env Nat) 1)) () ([(addr (env Nat) 1) *])))
+          (term (() () (goto B) () ([(addr (env Nat) 2) *])))))
 
   (test-equal? "Dist an obligation with self pattern and that address in the fork's args"
     (dist (term (() () (goto A) () ()))
           (list (term (() () (goto B (addr (env Nat) 1)) () ((addr (env Nat) 1)))))
-          (term ([(addr (env Nat) 1) [single (variant X self)]])))
+          (term ([(addr (env Nat) 1) (variant X self)])))
     (list (term (() () (goto A) () ()) )
-          (term (() () (goto B (addr (env Nat) 1)) () ([(addr (env Nat) 1) [single (variant X self)]]))))))
+          (term (() () (goto B (addr (env Nat) 1)) () ([(addr (env Nat) 1) (variant X self)]))))))
 
 ;; O# (a# ...) -> (O#_old O#_new)
 ;;
@@ -706,7 +699,7 @@
    (where (O#_updated (any_pulled ...)) (O#-pull O#_current a#))])
 
 (define-metafunction aps#
-  O#-pull : O# a# -> (O# ([m po] ...))
+  O#-pull : O# a# -> (O# (po ...))
   [(O#-pull (any_1 ... (a# any_com ...) any_2 ...) a#)
    ((any_1 ... any_2 ...) (any_com ...))]
   [(O#-pull O# a#) (O# ())])
@@ -714,22 +707,22 @@
 (module+ test
   (check-equal?
    (fork-commitment-map
-    (term (((addr (env Nat) 1) (single *))
+    (term (((addr (env Nat) 1) *)
            ((addr (env Nat) 2))
            ((addr (env Nat) 3))
-           ((addr (env Nat) 4) (single (record)))))
+           ((addr (env Nat) 4) (record))))
     (term ((addr (env Nat) 1) (addr (env Nat) 3) (addr (env Nat) 5))))
    (list
     (term (((addr (env Nat) 2))
-           ((addr (env Nat) 4) (single (record)))))
-    (term (((addr (env Nat) 1) (single *))
+           ((addr (env Nat) 4) (record))))
+    (term (((addr (env Nat) 1) *)
            ((addr (env Nat) 3))
            ((addr (env Nat) 5))))))
 
   (test-equal? "fork-commitment-map: No duplicate entries when address list has duplicates"
-    (fork-commitment-map `([(addr (env Nat) 1) [single *]]) (list `(addr (env Nat) 1) `(addr (env Nat) 1)))
+    (fork-commitment-map `([(addr (env Nat) 1) *]) (list `(addr (env Nat) 1) `(addr (env Nat) 1)))
     `[()
-      ([(addr (env Nat) 1) [single *]])]))
+      ([(addr (env Nat) 1) *])]))
 
 ;; Adds all addresses matched in the substitution (i.e. the set of bindings) as keys in the output
 ;; commitment map
@@ -742,23 +735,19 @@
 (define-metafunction aps#
   add-commitments : O# [a# po] ... -> O#
   [(add-commitments O#) O#]
-  [(add-commitments (any_1 ... (a# any_2 ... (_ po)    any_3 ...) any_4 ...)
-                    [a# po] any_rest ...)
-   (add-commitments (any_1 ... (a# any_2 ... (many po) any_3 ...) any_4 ...)
-                    any_rest ...)]
   [(add-commitments (any_1 ... (a# any_coms ...)             any_2 ...) [a# po] any_rest ...)
-   (add-commitments (any_1 ... (a# any_coms ... (single po)) any_2 ...) any_rest ...)])
+   (add-commitments (any_1 ... (a# any_coms ... po) any_2 ...) any_rest ...)])
 
 (module+ test
   (test-equal? "add-commitments"
                (term (add-commitments
-                      ([(addr (env Nat) 1) [single *] [many (record)]]
+                      ([(addr (env Nat) 1) * (record)]
                        [(addr (env Nat) 2)])
                       [(addr (env Nat) 1) *]
                       [(addr (env Nat) 2) *]
                       [(addr (env Nat) 1) (variant A)]))
-               `([(addr (env Nat) 1) [many *] [many (record)] [single (variant A)]]
-                 [(addr (env Nat) 2) [single *]])))
+               `([(addr (env Nat) 1) * (record) * (variant A)]
+                 [(addr (env Nat) 2) *])))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Input pattern matching
@@ -1117,27 +1106,16 @@
     null)
   (test-equal? "resolve test 2"
     (aps#-resolve-outputs
-     (list (make-dummy-spec `(((addr (env Nat) 1) (single *)))))
+     (list (make-dummy-spec `(((addr (env Nat) 1) *))))
      (term (((addr (env Nat) 1) abs-nat single))))
     (list `[,(list (make-dummy-spec `(((addr (env Nat) 1)))))
             ([(addr (env Nat) 1) *])]))
   (test-equal? "resolve test 3"
     (aps#-resolve-outputs
-     (list (make-dummy-spec `(((addr (env Nat) 1) (single *) (single (record))))))
+     (list (make-dummy-spec `(((addr (env Nat) 1) * (record)))))
      (term (((addr (env Nat) 1) abs-nat single))))
-    (list `[,(list (make-dummy-spec `(((addr (env Nat) 1) (single (record))))))
+    (list `[,(list (make-dummy-spec `(((addr (env Nat) 1) (record)))))
             (((addr (env Nat) 1) *))]))
-  (test-equal? "resolve test 4"
-    (aps#-resolve-outputs
-     (list (make-dummy-spec `(((addr (env Nat) 1) (many *) (single (record))))))
-     (term (((addr (env Nat) 1) abs-nat single))))
-    (list `[,(list (make-dummy-spec `(((addr (env Nat) 1) (many *) (single (record))))))
-            (((addr (env Nat) 1) *))]))
-  (test-equal? "resolve loop test"
-    (aps#-resolve-outputs
-     (list (make-dummy-spec `(((addr (env Nat) 1) (many *) (single (record))))))
-     (term ([(addr (env Nat) 1) abs-nat many])))
-    null)
   (define free-output-spec
     (term
      (()
@@ -1182,7 +1160,7 @@
          ()
          (goto S1)
          ((define-state (S1)))
-         ([(addr (env (Addr Nat)) 1) (single (or * (delayed-fork (goto B))))]))))
+         ([(addr (env (Addr Nat)) 1) (or * (delayed-fork (goto B)))]))))
       (term ([(addr (env (Addr Nat)) 1) (addr 2 0) single]))))
     (set
      ;; result 1 (match against the fork)
@@ -1212,8 +1190,8 @@
 
   (test-equal? "Resolve against spawned spec"
     (aps#-resolve-outputs
-     (list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 1) [single (variant A *)]]))
-           `(() () (goto S2) ((define-state (S2))) ([(addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 2) [single (variant B *)]])))
+     (list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 1) (variant A *)]))
+           `(() () (goto S2) ((define-state (S2))) ([(addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 2) (variant B *)])))
      (list `[(addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 1) (variant A (addr 1 0)) single]
            `[(addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 2) (variant B (addr 2 0)) single]))
     (list `[,(list `(()
@@ -1233,7 +1211,7 @@
 
   (test-equal? "Resolve against self pattern, no existing obs receptionist"
     (aps#-resolve-outputs
-     (list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Addr Nat)) 1) [single self]])))
+     (list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Addr Nat)) 1) self])))
      (list `[(addr (env (Addr Nat)) 1) (addr 1 0) single]))
     (list `[,(list `(([Nat (addr 1 0)])
                      ()
@@ -1248,7 +1226,7 @@
              ()
              (goto S1)
              ((define-state (S1)))
-             ([(addr (env (Addr Nat)) 1) [single self]])))
+             ([(addr (env (Addr Nat)) 1) self])))
      (list `[(addr (env (Addr Nat)) 1) (addr 1 0) single]))
     (list `[,(list `(([Nat (addr 1 0)])
                      ()
@@ -1263,7 +1241,7 @@
              ()
              (goto S1)
              ((define-state (S1)))
-             ([(addr (env (Addr Nat)) 1) [single self]])))
+             ([(addr (env (Addr Nat)) 1) self])))
      (list `[(addr (env (Addr Nat)) 1) (addr 2 0) single]))
     null)
 
@@ -1318,8 +1296,8 @@
   (test-equal?
       "Resolve against two configs that both observe (e.g. for when transition is both obs and unobs)"
     (aps#-resolve-outputs
-     (list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) [single (record [a *]           [b (variant B)])]]))
-           `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) [single (record [a (variant A)] [b *])]])))
+     (list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a *]           [b (variant B)])]))
+           `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a (variant A)] [b *])])))
      (list `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a (variant A)] [b (variant B)]) single]))
     (list `[,(list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1)]))
                    `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1)])))
@@ -1330,16 +1308,16 @@
       "Resolve against two configs that both observe, one has multiple possible patterns"
     (list->set
      (aps#-resolve-outputs
-      (list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) [single (record [a *]           [b (variant B)])]]))
-            `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) [single (record [a (variant A)] [b *])]
-                                                      [single (record [a *]           [b *])]])))
+      (list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a *]           [b (variant B)])]))
+            `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a (variant A)] [b *])
+                                                      (record [a *]           [b *])])))
       (list `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a (variant A)] [b (variant B)]) single])))
     (set `[,(list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1)]))
-                   `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) [single (record [a *] [b *])]])))
+                   `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a *] [b *])])))
             ,(list `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a *]           [b (variant B)])]
                    `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a (variant A)] [b *])])]
           `[,(list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1)]))
-                   `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) [single (record [a (variant A)] [b *])]])))
+                   `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a (variant A)] [b *])])))
             ,(list `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a *] [b (variant B)])]
                    `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a *] [b *])])])))
 
@@ -1384,8 +1362,8 @@
 
   (test-equal? "resolve-output/many-configs: Resolve against two configs that both observe (e.g. for when transition is both obs and unobs)"
     (resolve-output/many-configs
-     (list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) [single (record [a *]           [b (variant B)])]]))
-           `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) [single (record [a (variant A)] [b *])]])))
+     (list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a *]           [b (variant B)])]))
+           `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a (variant A)] [b *])])))
      `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a (variant A)] [b (variant B)]) single])
     (list `[,(list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1)]))
                    `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1)])))
@@ -1435,7 +1413,7 @@
 (module+ test
   (test-equal? "resolve-output 1"
     (resolve-output
-     (make-dummy-spec `([(addr (env Nat) 1) [single *]]))
+     (make-dummy-spec `([(addr (env Nat) 1) *]))
      `(addr (env Nat) 1)
      `Nat
      `abs-nat
@@ -1454,8 +1432,7 @@
 ;; s# a# v# -> ([(s# ...) po] ...)
 (define (resolve-with-obligation config address type message)
   (define commitment-patterns
-    (map commitment-pattern
-         (commitments-for-address (aps#-config-commitment-map config) address)))
+    (commitments-for-address (aps#-config-commitment-map config) address))
   (match-define (list obs-recs unobs-recs goto state-defs obligations) config)
   (define success-results
     (filter values (find-matching-patterns message type obs-recs commitment-patterns)))
@@ -1471,7 +1448,7 @@
 (module+ test
  (test-equal? "resolve-with-obligation 1"
    (resolve-with-obligation
-    (make-dummy-spec `([(addr (env  Nat) 1) [single *]]))
+    (make-dummy-spec `([(addr (env  Nat) 1) *]))
     `(addr (env Nat) 1)
     `Nat
     `abs-nat)
@@ -1587,10 +1564,10 @@
     (list->set
      (incorporate-output-match-results
       `(() () (goto A) ((define-state (A))) ())
-      `([(addr (env Nat) 1) [single *]])
+      `([(addr (env Nat) 1) *])
       `[() () ([([Nat (addr 1 0)]) (goto B) ((define-state (B)))])]))
     (set
-     `(() ([Nat (addr 1 0)]) (goto A) ((define-state (A))) ([(addr (env Nat) 1) [single *]]))
+     `(() ([Nat (addr 1 0)]) (goto A) ((define-state (A))) ([(addr (env Nat) 1) *]))
      `(([Nat (addr 1 0)]) () (goto B) ((define-state (B))) ()))))
 
 (define (config-observes-address? config addr)
@@ -1603,41 +1580,36 @@
 
 (define-metafunction aps#
   remove-commitment-pattern/mf : O# a# po -> O#
-  [(remove-commitment-pattern/mf (any_1 ... (a# any_2 ... (single po) any_3 ...) any_4 ...)
+  [(remove-commitment-pattern/mf (any_1 ... (a# any_2 ... po any_3 ...) any_4 ...)
                                  a#
                                  po)
    (any_1 ... (a# any_2 ... any_3 ...) any_4 ...)]
-  [(remove-commitment-pattern/mf (any_1 ... (a# any_2 ... (many po) any_3 ...) any_4 ...)
-                                 a#
-                                 po)
-   (any_1 ... (a# any_2 ... (many po) any_3 ...) any_4 ...)]
   ;; we might call this metafunction with a free output pattern not in the obligation list, so if the
   ;; pattern doesn't exist just return the existing map
+  ;;
+  ;; NOTE: I think now that I've set the macro-step obligations to record only the *minimal* set of
+  ;; fulfilled obligations, this case wouldn't happen, but I'm leaving it in for now
   [(remove-commitment-pattern/mf any_obligations _ _) any_obligations])
 
 (module+ test
   (check-equal?
    (aps#-remove-commitment-pattern
-    (term (((addr (env Nat) 1) (single *)))) (term (addr (env Nat) 1)) (term *))
+    (term (((addr (env Nat) 1) *))) (term (addr (env Nat) 1)) (term *))
    (term (((addr (env Nat) 1)))))
   (check-equal?
    (aps#-remove-commitment-pattern
-    (term (((addr (env Nat) 1) (single *)))) (term (addr (env Nat) 1)) (term *))
+    (term (((addr (env Nat) 1) *))) (term (addr (env Nat) 1)) (term *))
    (term (((addr (env Nat) 1)))))
   (check-equal?
    (aps#-remove-commitment-pattern
-    (term (((addr (env Nat) 1) (many *)))) (term (addr (env Nat) 1)) (term *))
-    (term (((addr (env Nat) 1) (many *)))))
+    (term (((addr (env Nat) 1) * (record)))) (term (addr (env Nat) 1)) (term *))
+   (term (((addr (env Nat) 1) (record)))))
   (check-equal?
    (aps#-remove-commitment-pattern
-    (term (((addr (env Nat) 1) (single *) (single (record))))) (term (addr (env Nat) 1)) (term *))
-   (term (((addr (env Nat) 1) (single (record))))))
-  (check-equal?
-   (aps#-remove-commitment-pattern
-    (term (((addr (env Nat) 1) (single *) (single (record)) (many (record [a *]))) ((addr (env Nat) 2) (single *))))
+    (term (((addr (env Nat) 1) * (record) (record [a *])) ((addr (env Nat) 2) *)))
     (term (addr (env Nat) 1))
     (term *))
-   (term (((addr (env Nat) 1) (single (record)) (many (record [a *]))) ((addr (env Nat) 2) (single *))))))
+   (term (((addr (env Nat) 1) (record) (record [a *])) ((addr (env Nat) 2) *)))))
 
 (define (config-merge-unobs-addresses config new-addrs)
   `(,(aps#-config-obs-receptionists config)
@@ -1655,12 +1627,12 @@
   #:mode (aps#-commitment-map-has-commitment?/j I I I)
   #:contract (aps#-commitment-map-has-commitment?/j O# a# po)
   [-----
-   (aps#-commitment-map-has-commitment?/j (_ ... [a# _ ... (_ po) _ ...] _ ...) a# po)])
+   (aps#-commitment-map-has-commitment?/j (_ ... [a# _ ... po _ ...] _ ...) a# po)])
 
 (module+ test
   (define has-commitment-test-config
-    (term (() () (goto S1) () (((addr (env Nat) 1) (single *))
-                               ((addr (env Nat) 2) (single *) (single (record)))))))
+    (term (() () (goto S1) () (((addr (env Nat) 1) *)
+                               ((addr (env Nat) 2) * (record))))))
   (test-false "aps#-config-has-commitment? 1"
     (aps#-config-has-commitment? has-commitment-test-config (term (addr (env Nat) 3)) (term *)))
   (test-false "aps#-config-has-commitment? 2"
@@ -1774,54 +1746,28 @@
     '()))
 
 ;; Returns all singleton commitments in the config as a list of address/pattern pairs
-(define (aps#-config-singleton-commitments config)
-  (term (config-commitments-by-multiplicity/mf ,config single)))
-
-;; Returns all many-of commitments in the config as a list of address/pattern pairs
-(define (aps#-config-many-of-commitments config)
-  (term (config-commitments-by-multiplicity/mf ,config many)))
-
-(define-metafunction aps#
-  config-commitments-by-multiplicity/mf : s# m -> ([a# po] ...)
-  [(config-commitments-by-multiplicity/mf s# m_target)
-   ,(append*
-     (for/list ([address (term (a# ...))]
-                [pattern-list (term ((po_result ...) ...))])
-       (for/list ([pattern pattern-list]) (list address pattern))))
-   (where ((a# (m_any po) ...) ...) ,(aps#-config-commitment-map (term s#)))
-   (where (((_ po_result) ...) ...)
-          ,(map (lambda (com-list)
-                  (filter (lambda (com) (equal? (first com) (term m_target))) com-list))
-                (term (((m_any po) ...) ...))))])
+(define (aps#-config-commitments config)
+  (append*
+   (map (lambda (entry)
+          (define addr (aps#-commitment-entry-address entry))
+          (map (lambda (pat) `[,addr ,pat])  (aps#-commitment-entry-patterns entry)))
+        (aps#-config-commitment-map config))))
 
 (module+ test
-  (test-equal? "config-singleton-commitments"
-    (aps#-config-singleton-commitments
+  (test-equal? "config-commitments"
+    (aps#-config-commitments
      `(()
        ()
        (goto S1)
        ()
-       ([(addr (env Nat) 1) (single *) (many (record))]
+       ([(addr (env Nat) 1) * (record)]
         [(addr (env Nat) 2)]
-        [(addr (env Nat) 3) (single *) (single (variant A)) (single (record [a *]))])))
+        [(addr (env Nat) 3) * (variant A) (record [a *])])))
     (list `[(addr (env Nat) 1) *]
+          `[(addr (env Nat) 1) (record)]
           `[(addr (env Nat) 3) *]
           `[(addr (env Nat) 3) (variant A)]
-          `[(addr (env Nat) 3) (record [a *])]))
-
-  (test-equal? "config-many-of-commitments"
-    (aps#-config-many-of-commitments
-     `(()
-       ()
-       (goto S1)
-       ()
-       ([(addr (env Nat) 1) (single *) (many (record))]
-        [(addr (env Nat) 2)]
-        [(addr (env Nat) 3) (single *) (single (variant A)) (single (record [a *]))]
-        [(addr (env Nat) 4) (many *) (many (variant A)) (single (record [a *]))])))
-    (list `[(addr (env Nat) 1) (record)]
-          `[(addr (env Nat) 4) *]
-          `[(addr (env Nat) 4) (variant A)])))
+          `[(addr (env Nat) 3) (record [a *])])))
 
 (define (aps#-transition-trigger transition)
   (redex-let aps# ([(pt -> _ _) transition])
@@ -1838,12 +1784,12 @@
              (term a#)))
 
 (define (aps#-commitment-entry-patterns entry)
-  (redex-let aps# ([(_ (_ po) ...)  entry])
+  (redex-let aps# ([(_ po ...)  entry])
     (term (po ...))))
 
 (module+ test
   (test-case "aps#-commitment-entry-patterns"
-    (redex-let* aps# ([any_entry (term [(addr (env Nat) 1) [single *] [many (record)]])]
+    (redex-let* aps# ([any_entry (term [(addr (env Nat) 1) * (record)])]
                       [O# (term (any_entry))])
       (check-equal? (aps#-commitment-entry-patterns (term any_entry))
                     (list '* '(record))))))
@@ -1852,33 +1798,30 @@
   (term (commitments-for-address/mf ,commitment-map ,address)))
 
 (define-metafunction aps#
-  commitments-for-address/mf : O# a# -> ((m po) ...) or #f
-  [(commitments-for-address/mf (_ ... (a# (m po) ...) _ ...)
+  commitments-for-address/mf : O# a# -> (po ...) or #f
+  [(commitments-for-address/mf (_ ... (a# po ...) _ ...)
                                a#)
-   ((m po) ...)]
+   (po ...)]
   [(commitments-for-address/mf _ _) #f])
 
 (module+ test
   (define test-O#
-    (term (((addr (env Nat) 1) (single *) (many (record)))
-           ((addr (env Nat) 2) (single (variant True)) (single (variant False))))))
+    (term (((addr (env Nat) 1) * (record))
+           ((addr (env Nat) 2) (variant True) (variant False)))))
   (check-equal?
    (commitments-for-address
     test-O#
     (term (addr (env Nat) 1)))
-   (term ((single *) (many (record)))))
+   (term (* (record))))
   (check-equal?
    (commitments-for-address
     test-O#
     (term (addr (env Nat) 2)))
-   (term ((single (variant True)) (single (variant False)))))
+   (term ((variant True) (variant False))))
   (check-false
    (commitments-for-address
     test-O#
     (term (addr (env Nat) 3)))))
-
-(define (commitment-pattern commitment)
-  (redex-let aps# ([(m po) commitment]) (term po)))
 
 ;; "Relevant" external addresses are those in either the current state arguments or obligations of a
 ;; spec config
@@ -1954,38 +1897,38 @@
     (list (make-simple-spec-for-split-test '())))
 
   (test-equal? "split with one related commit"
-   (split-spec (make-simple-spec-for-split-test `(((addr (env Nat) 0) (single *)))))
-   (list (make-simple-spec-for-split-test `(((addr (env Nat) 0) (single *))))))
+   (split-spec (make-simple-spec-for-split-test `(((addr (env Nat) 0) *))))
+   (list (make-simple-spec-for-split-test `(((addr (env Nat) 0) *)))))
 
   (test-same-items? "split with unrelated commit"
-   (split-spec (make-simple-spec-for-split-test `(((addr (env Nat) 1) (single *)))))
+   (split-spec (make-simple-spec-for-split-test `(((addr (env Nat) 1) *))))
    (list (make-simple-spec-for-split-test `())
-         (aps#-make-no-transition-config `((Nat (addr 0 0))) `(((addr (env Nat) 1) (single *))))))
+         (aps#-make-no-transition-config `((Nat (addr 0 0))) `(((addr (env Nat) 1) *)))))
 
   (test-equal? "split a dummy state"
-    (split-spec (aps#-make-no-transition-config null `(((addr (env Nat) 1) (single *)))))
-    (list (aps#-make-no-transition-config null `(((addr (env Nat) 1) (single *))))))
+    (split-spec (aps#-make-no-transition-config null `(((addr (env Nat) 1) *))))
+    (list (aps#-make-no-transition-config null `(((addr (env Nat) 1) *)))))
 
   (test-equal? "split a spec with a 'self' commitment"
     (split-spec (term (()
                        ()
                        (goto A)
                        ()
-                       (((addr (env Nat) 1) (single self))))))
+                       (((addr (env Nat) 1) self)))))
     (list (term (()
                  ()
                  (goto A)
                  ()
-                 (((addr (env Nat) 1) (single self)))))))
+                 (((addr (env Nat) 1) self))))))
 
   (test-equal? "split spec with fork mentioning self pattern"
     (split-spec (term (()
                        ()
                        (goto A (addr (env Nat) 2))
                        ()
-                       (((addr (env Nat) 1) [single (fork (goto B)
-                                                   (define-state (B)
-                                                     [x -> ([obligation x self]) (goto B)]))])
+                       (((addr (env Nat) 1) (fork (goto B)
+                                                  (define-state (B)
+                                                    [x -> ([obligation x self]) (goto B)])))
                         ((addr (env Nat) 2))))))
     (list
      (term (()
@@ -1995,9 +1938,9 @@
             (((addr (env Nat) 2)))))
      (aps#-make-no-transition-config
       null
-      (list `((addr (env Nat) 1) [single (fork (goto B)
-                                        (define-state (B)
-                                          [x -> ([obligation x self]) (goto B)]))]))))))
+      (list `((addr (env Nat) 1) (fork (goto B)
+                                       (define-state (B)
+                                         [x -> ([obligation x self]) (goto B)]))))))))
 
 (define (pattern-contains-self? pat)
   (match pat
@@ -2040,13 +1983,13 @@
 (module+ test
   (test-equal? "aps#-make-no-transition-config"
     (aps#-make-no-transition-config (list `[Nat (addr 0 0)])
-                                    (list `[(addr (env Nat) 0) [* single]]
+                                    (list `[(addr (env Nat) 0) *]
                                           `[(addr (env Nat) 1)]))
     `(()
       ([Nat (addr 0 0)])
       (goto DummySpecFsmState (addr (env Nat) 0))
       ((define-state (DummySpecFsmState x)))
-      ([(addr (env Nat) 0) [* single]]
+      ([(addr (env Nat) 0) *]
        [(addr (env Nat) 1)]))))
 
 ;; Creates a spec config with a transition-less FSM and a commitment map with just the given
@@ -2059,19 +2002,19 @@
 (module+ test
   (check-equal?
    (aps#-config-from-commitment-entry
-    (term ((addr (env Nat) 0) (single *) (single (record [a *] [b *]))))
+    (term ((addr (env Nat) 0) * (record [a *] [b *])))
     '()
     null)
-   (aps#-make-no-transition-config '() '(((addr (env Nat) 0) (single *) (single (record [a *] [b *]))))))
+   (aps#-make-no-transition-config '() '(((addr (env Nat) 0) * (record [a *] [b *])))))
 
   (test-equal? "Commitment entry spec should also include old FSM address as unobs receptionist"
     (aps#-config-from-commitment-entry
-     (term ((addr (env Nat) 0) (single *) (single (record [a *] [b *]))))
+     (term ((addr (env Nat) 0) * (record [a *] [b *])))
      '((Nat (addr 0 0)))
      null)
     (aps#-make-no-transition-config
      '((Nat (addr 0 0)))
-     '(((addr (env Nat) 0) (single *) (single (record [a *] [b *]))))))
+     '(((addr (env Nat) 0) * (record [a *] [b *])))))
 
   (test-equal? "Merge obs address into unobs addrs"
     (aps#-config-from-commitment-entry (term ((addr (env Nat) 0)))
@@ -2096,7 +2039,7 @@
     (redex-let aps# ([s# (aps#-make-no-transition-config null (list `((addr (env Nat) 1))))])
       (check-true (aps#-completed-no-transition-config? (term s#)))))
   (test-case "completed-no-transition-config?: some commitments"
-    (redex-let aps# ([s# (aps#-make-no-transition-config null (list `((addr (env Nat) 1) (single *))))])
+    (redex-let aps# ([s# (aps#-make-no-transition-config null (list `((addr (env Nat) 1) *)))])
       (check-false (aps#-completed-no-transition-config? (term s#)))))
   (test-case "completed-no-transition-config?: spec with transitions, no commitments"
     (redex-let aps# ([s#
@@ -2280,9 +2223,9 @@
        ()
        (goto B (addr (env Nat) 99))
        ()
-       ([(addr (env Nat) 57) [single self]]
+       ([(addr (env Nat) 57) self]
         [(addr (env Nat) 99)]
-        [(addr (env Nat) 42) [single self]])])
+        [(addr (env Nat) 42) self])])
     `[,(make-single-actor-abstract-config
         (term ((addr 1 0)
                (() (goto A)))))
@@ -2291,8 +2234,8 @@
        (goto B (addr (env Nat) 0))
        ()
        ([(addr (env Nat) 0)]
-        [(addr (env Nat) 1) [single self]]
-        [(addr (env Nat) 2) [single self]])]
+        [(addr (env Nat) 1) self]
+        [(addr (env Nat) 2) self])]
       [[99 0]
        [42 1]
        [57 2]]]))

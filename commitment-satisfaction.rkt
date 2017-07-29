@@ -98,29 +98,26 @@
               ([pair simulation-pairs])
       (define spec-config (config-pair-spec-config pair))
       (define all-commitments-satisfied?
-        (and
-         ;; many-of abstract commitments can never be satisfied
-         (null? (aps#-config-many-of-commitments spec-config))
-         (for/and ([commitment (aps#-config-singleton-commitments spec-config)])
-           ;; Within a configuration pair, each commitment is checked individually. The checking
-           ;; process by necessity checks other commitments as well, so we add all of those
-           ;; results to satisfied-config-commitments/unsatisfied-config-commitments so we may
-           ;; reuse the results later rather than rebuilding and reanalyzing the graph every time.
-           (define configs-commitment-pair (list pair commitment))
-           (cond
-             [(set-member?   satisfied-config-commitments configs-commitment-pair) #t]
-             [(set-member? unsatisfied-config-commitments configs-commitment-pair) #f]
-             [else
-              (match-define (list new-satisfied-config-commitments new-unsatisfied-config-commitments)
-                (find-sat/unsat-pairs configs-commitment-pair
-                                      incoming
-                                      outgoing
-                                      related-spec-steps
-                                      internally-enabled-actors
-                                      internal-single-receives))
-              (set-union! satisfied-config-commitments   new-satisfied-config-commitments)
-              (set-union! unsatisfied-config-commitments new-unsatisfied-config-commitments)
-              (set-member? new-satisfied-config-commitments configs-commitment-pair)]))))
+        (for/and ([commitment (aps#-config-commitments spec-config)])
+          ;; Within a configuration pair, each commitment is checked individually. The checking
+          ;; process by necessity checks other commitments as well, so we add all of those
+          ;; results to satisfied-config-commitments/unsatisfied-config-commitments so we may
+          ;; reuse the results later rather than rebuilding and reanalyzing the graph every time.
+          (define configs-commitment-pair (list pair commitment))
+          (cond
+            [(set-member?   satisfied-config-commitments configs-commitment-pair) #t]
+            [(set-member? unsatisfied-config-commitments configs-commitment-pair) #f]
+            [else
+             (match-define (list new-satisfied-config-commitments new-unsatisfied-config-commitments)
+               (find-sat/unsat-pairs configs-commitment-pair
+                                     incoming
+                                     outgoing
+                                     related-spec-steps
+                                     internally-enabled-actors
+                                     internal-single-receives))
+             (set-union! satisfied-config-commitments   new-satisfied-config-commitments)
+             (set-union! unsatisfied-config-commitments new-unsatisfied-config-commitments)
+             (set-member? new-satisfied-config-commitments configs-commitment-pair)])))
      (if all-commitments-satisfied?
          (values (set-add satisfying-pairs pair) unsatisfying-pairs)
          (values satisfying-pairs (set-add unsatisfying-pairs pair)))))
@@ -130,7 +127,7 @@
 (module+ test
   (define (make-com-sat-ext-address number) `(addr (env Nat) ,number))
   (define (sat-test-node name commitment-address-number commitment-patterns)
-    (define mult-patterns (map (lambda (pat) `(single (variant ,pat))) commitment-patterns))
+    (define mult-patterns (map (lambda (pat) `(variant ,pat)) commitment-patterns))
     (config-pair name
                  `(()
                    ()
@@ -367,31 +364,7 @@
                i-node
                j-node
                k-node
-               l-node)))
-
-  (test-case "partition-by-satisfaction: no satisfaction for many-of commitments"
-    (define a-node (config-pair 'A `(() () (goto A) () ([(addr (env Nat) 1) (many *)]))))
-    (define a-node2 (config-pair 'A `(() () (goto A) () ([(addr (env Nat) 1) (single *)]))))
-    (define aa-impl-step
-      (impl-step `(internal-receive (addr 1 0) abs-nat single) null null #f))
-    (define aa-spec-step (spec-step #f (list `((addr (env Nat) 1) *))))
-    (check-equal?
-     (partition-by-satisfaction
-      (set a-node)
-      ;; incoming
-      (mutable-hash [a-node (mutable-set (list a-node aa-impl-step aa-spec-step `([1 1])))])
-      ;; related-spec-steps
-      (mutable-hash [(list a-node aa-impl-step) (mutable-set aa-spec-step)]))
-     (list (set) (set a-node)))
-    ;; if we change the many-of for a single-of, it should now conform
-    (check-equal?
-     (partition-by-satisfaction
-      (set a-node2)
-      ;; incoming
-      (mutable-hash [a-node2 (mutable-set (list a-node2 aa-impl-step aa-spec-step `([1 1])))])
-      ;; related-spec-steps
-      (mutable-hash [(list a-node2 aa-impl-step) (mutable-set aa-spec-step)]))
-     (list (set a-node2) (set)))))
+               l-node))))
 
 ;; Builds an OutgoingStepsDict from the given dictionaries
 (define (build-outgoing-dict incoming related-spec-steps)
