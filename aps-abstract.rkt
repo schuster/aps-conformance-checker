@@ -1153,7 +1153,7 @@
       ([(addr (env (Union [A] [B] [C] [D])) 1)] [(addr (env (Union [A] [B] [C] [D])) 2)]))))
   (test-equal? "resolve against free outputs"
     (aps#-resolve-outputs (list free-output-spec) (term ([(addr (env (Union [A] [B] [C] [D])) 1) (variant C) many])))
-    (list `[,(list free-output-spec) ([(addr (env (Union [A] [B] [C] [D])) 1) (variant C)])]))
+    (list `[,(list free-output-spec) ()]))
 
   (test-equal? "resolve with unobs transitions"
     (aps#-resolve-outputs
@@ -1400,26 +1400,32 @@
 (define (resolve-output config address type message quantity)
   (cond
     [(config-observes-address? config address)
-     (define config-list-pattern-pairs
-      (match quantity
-        ['single
-         (match (resolve-with-obligation config address type message)
-           [(list)
-            ;; if we can't find a match with existing patterns, try the free-output patterns
-            (match (resolve-with-free-obl-patterns config address type message)
-              [(list)
-               ;; if free-output patterns also don't match, try the other free-transition
-               ;; patterns as a last resort
-               (resolve-with-free-transition config address type message)]
-              [results results])]
-           [results results])]
-        ['many
-         ;; have to use free-output patterns if output may have been sent more than once (e.g. in
-         ;; a loop)
-         (resolve-with-free-obl-patterns config address type message)]))
-     (for/list ([clpp config-list-pattern-pairs])
-       (match-define (list configs pattern) clpp)
-       (list configs `([,address ,pattern])))]
+     (match quantity
+       ['single
+        (define config-list-pattern-pairs
+          (match (resolve-with-obligation config address type message)
+            [(list)
+             ;; if we can't find a match with existing patterns, try the free-output patterns
+             (match (resolve-with-free-obl-patterns config address type message)
+               [(list)
+                ;; if free-output patterns also don't match, try the other free-transition
+                ;; patterns as a last resort
+                (resolve-with-free-transition config address type message)]
+               [results results])]
+            [results results]))
+        (for/list ([clpp config-list-pattern-pairs])
+          (match-define (list configs pattern) clpp)
+          (list configs `([,address ,pattern])))]
+       ['many
+        ;; have to use free-output patterns if output may have been sent more than once (e.g. in
+        ;; a loop)
+        (map
+         (lambda (resolve-result)
+           (match-define `[,configs ,_] resolve-result)
+           ;; many-of outputs don't fulfill an obligation, because they *might* not
+           ;; happen. Macro-steps only records the minimal set of fulfillments
+           (list configs null))
+         (resolve-with-free-obl-patterns config address type message))])]
     [else
      ;; TODO: should I save the result of internal-addr-types for performance?
      (define exposed-receptionists (internal-addr-types message type))
