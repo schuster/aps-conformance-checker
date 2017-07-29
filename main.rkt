@@ -1036,7 +1036,7 @@
                         (goto A)
                         ((define-state (A)
                            [* -> () (goto A)]
-                           [unobs -> () (goto B)])
+                           [free -> () (goto B)])
                          (define-state (B)
                            [* -> () (goto A)]))
                         ())])
@@ -1063,7 +1063,7 @@
        (goto A)
        ((define-state (A)
           [* -> () (goto B)]
-          [unobs -> () (goto B)])
+          [free -> () (goto B)])
         (define-state (B)
           [* -> () (goto A)]))
        ())
@@ -1888,7 +1888,7 @@
     (term
      (((define-state (Always response-dest)
          [*     -> ([obligation response-dest *]) (goto Always response-dest)]
-         [unobs -> ([obligation response-dest *]) (goto Always response-dest)]))
+         [free -> ([obligation response-dest *]) (goto Always response-dest)]))
       (goto Always ,static-response-address)
       (Nat (addr 0 0)))))
   (test-valid-instance? static-response-spec-with-unobs)
@@ -1905,7 +1905,7 @@
               [* -> ([obligation r (variant TurningOn)]) (goto On r)])
             (define-state (On r)
               [* -> () (goto On r)]
-              [unobs -> ([obligation r (variant TurningOff)]) (goto Off r)]))
+              [free -> ([obligation r (variant TurningOff)]) (goto Off r)]))
            (goto Off ,obs-unobs-static-response-address)
            ((Union [FromObserver]) (addr 0 0)))))
   (define unobs-toggle-actor
@@ -2222,7 +2222,7 @@
     (term
      (((define-state (A r)
          [* -> ([obligation r (variant GotMessage)]) (goto A r)]
-         [unobs -> ([obligation r (variant GotTimeout)]) (goto A r)]))
+         [free -> ([obligation r (variant GotTimeout)]) (goto A r)]))
       (goto A ,timeout-response-address)
       (Nat (addr 0 0)))))
   (define got-message-only-spec
@@ -2314,7 +2314,7 @@
     (term
      (((define-state (Always response-dest)
          [* -> ([obligation response-dest *]) (goto Always response-dest)]
-         [unobs -> ([obligation response-dest *]) (goto Always response-dest)]))
+         [free -> ([obligation response-dest *]) (goto Always response-dest)]))
       (goto Always ,static-response-address)
       (Nat (addr 0 0)))))
 
@@ -2368,7 +2368,7 @@
   (define self-reveal-spec
     (term
      (((define-state (Init r)
-         [unobs -> ([obligation r self]) (goto Running)])
+         [free -> ([obligation r self]) (goto Running)])
        (define-state (Running)
          [r -> ([obligation r *]) (goto Running)]))
       (goto Init ,self-reveal-response-addr))))
@@ -2652,7 +2652,7 @@
      (((define-state (Always)
          [r -> ([fork (goto Init r)
                       (define-state (Init r)
-                        [unobs -> ([obligation r self]) (goto EchoResponse)])
+                        [free -> ([obligation r self]) (goto EchoResponse)])
                       (define-state (EchoResponse)
                         [er -> ([obligation er *]) (goto EchoResponse)])])
             (goto Always)]))
@@ -2739,7 +2739,7 @@
     (term
      (((define-state (Always r)
          [* -> () (goto Always r)]
-         [unobs -> ([obligation r *]) (goto Always r)]))
+         [free -> ([obligation r *]) (goto Always r)]))
       (goto Always ,static-response-address)
       (Nat (addr 0 0)))))
 
@@ -3224,7 +3224,7 @@
     (term
      (((define-state (Always r)
          [* -> () (goto Always r)]
-         [unobs -> ([obligation r (delayed-fork
+         [free -> ([obligation r (delayed-fork
                                    (goto A)
                                    (define-state (A)
                                      [r2 -> ([obligation r2 *]) (goto A)]))])

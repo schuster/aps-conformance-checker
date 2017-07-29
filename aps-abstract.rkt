@@ -213,7 +213,7 @@
         ((subst-n/aps#/f f (x a#) ...) ...)
         (goto φ_trans (subst-n/aps#/u u_trans (x a#) ...) ...)) ...
     ;; Note that we include the "null"/no-step transition
-    (unobs -> () (goto φ a# ...)))])
+    (free -> () (goto φ a# ...)))])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
@@ -231,7 +231,7 @@
     ;; Remove the free-output transitions: these would cause the checker to make many "bad
     ;; guesses" about what conforms to what, and the outputs they use can always be used for
     ;; other transitions.
-    (filter (negate (curryr free-transition? (aps#-config-current-state spec-config)))
+    (filter (negate (curryr free-stable-transition? (aps#-config-current-state spec-config)))
             (config-current-transitions spec-config)))
   (define (possible-transitions-for from-observer?)
     (define results
@@ -290,7 +290,7 @@
     (define (make-test-config current-state)
       (make-s# (term ((define-state (A)
                         [*     -> () (goto B)]
-                        [unobs -> () (goto C)])))
+                        [free -> () (goto C)])))
                (term (goto ,current-state))
                (term ())
                (term ())))
@@ -781,13 +781,13 @@
   #:contract (match-trigger/j boolean trigger# ρ# pt ([x a#] ...))
 
   [-------------------------------------------------------
-   (match-trigger/j _ (timeout _) _ unobs ())]
+   (match-trigger/j _ (timeout _) _ free ())]
 
   [----------------------------------------------------------------------
-   (match-trigger/j _ (internal-receive _ _ _) _ unobs ())]
+   (match-trigger/j _ (internal-receive _ _ _) _ free ())]
 
   [-----------------------------------------------------------------------
-   (match-trigger/j #f (external-receive _ _) _ unobs ())]
+   (match-trigger/j #f (external-receive _ _) _ free ())]
 
   [(aps#-match/j v# p any_bindings)
    ----------------------------------------------------------------
@@ -795,15 +795,15 @@
 
 (module+ test
   (check-equal?
-   (match-trigger #f '(timeout (addr 0 0)) '((Nat (addr 0 0))) 'unobs)
+   (match-trigger #f '(timeout (addr 0 0)) '((Nat (addr 0 0))) 'free)
    null)
 
   (check-equal?
-   (match-trigger #f '(external-receive (addr 0 0) abs-nat) '((Nat (addr 0 0))) 'unobs)
+   (match-trigger #f '(external-receive (addr 0 0) abs-nat) '((Nat (addr 0 0))) 'free)
    null)
 
   (check-false
-   (match-trigger #t '(external-receive (addr 0 0) abs-nat) '((Nat (addr 0 0))) 'unobs))
+   (match-trigger #t '(external-receive (addr 0 0) abs-nat) '((Nat (addr 0 0))) 'free))
 
   (check-equal?
    (match-trigger #t '(external-receive (addr 0 0) (addr (env Nat) 1)) '((Nat (addr 0 0))) 'x)
@@ -816,11 +816,11 @@
    (match-trigger #t '(external-receive (addr 0 0) abs-nat) '((Nat (addr 0 0))) 'x))
 
   (check-equal?
-   (match-trigger #f '(internal-receive (addr 0 0) abs-nat single) '((Nat (addr 0 0))) 'unobs)
+   (match-trigger #f '(internal-receive (addr 0 0) abs-nat single) '((Nat (addr 0 0))) 'free)
    null)
 
   (check-false
-   (match-trigger #t '(external-receive (addr 0 0) (variant A)) '(((Union [A]) (addr 0 0))) 'unobs))
+   (match-trigger #t '(external-receive (addr 0 0) (variant A)) '(((Union [A]) (addr 0 0))) 'free))
 
   (check-equal?
    (match-trigger #t '(external-receive (addr 0 0) (variant A)) '(((Union [A]) (addr 0 0))) '*)
@@ -1146,10 +1146,10 @@
       ((define-state (S1 a b)
          [x -> ([obligation x *]) (goto S1)]
          [x -> ([obligation b *]) (goto S1)]
-         [unobs -> ([obligation a (variant A)]) (goto S2)]
-         [unobs -> ([obligation a (variant B)]) (goto S1 a b)]
-         [unobs -> ([obligation a (variant C)]) (goto S1 a b)]
-         [unobs -> ([obligation b (variant D)]) (goto S1 a b)]))
+         [free -> ([obligation a (variant A)]) (goto S2)]
+         [free -> ([obligation a (variant B)]) (goto S1 a b)]
+         [free -> ([obligation a (variant C)]) (goto S1 a b)]
+         [free -> ([obligation b (variant D)]) (goto S1 a b)]))
       ([(addr (env (Union [A] [B] [C] [D])) 1)] [(addr (env (Union [A] [B] [C] [D])) 2)]))))
   (test-equal? "resolve against free outputs"
     (aps#-resolve-outputs (list free-output-spec) (term ([(addr (env (Union [A] [B] [C] [D])) 1) (variant C) many])))
@@ -1161,7 +1161,7 @@
              ()
              (goto A (addr (env (Union [A] [B] [C] [D])) 1))
              ((define-state (A x)
-                [unobs -> ([obligation x (variant C)]) (goto B)]))
+                [free -> ([obligation x (variant C)]) (goto B)]))
              ([(addr (env (Union [A] [B] [C] [D])) 1)])])
      (term ([(addr (env (Union [A] [B] [C] [D])) 1) (variant C) single])))
     (list `[,(list
@@ -1169,7 +1169,7 @@
                 ()
                 (goto B)
                 ((define-state (A x)
-                   [unobs -> ([obligation x (variant C)]) (goto B)]))
+                   [free -> ([obligation x (variant C)]) (goto B)]))
                 ([(addr (env (Union [A] [B] [C] [D])) 1)])])
             ([(addr (env (Union [A] [B] [C] [D])) 1) (variant C)])]))
 
@@ -1408,9 +1408,9 @@
             ;; if we can't find a match with existing patterns, try the free-output patterns
             (match (resolve-with-free-obl-patterns config address type message)
               [(list)
-               ;; if free-output patterns also don't match, try the other unobs-transition
+               ;; if free-output patterns also don't match, try the other free-transition
                ;; patterns as a last resort
-               (resolve-with-unobs-transition config address type message)]
+               (resolve-with-free-transition config address type message)]
               [results results])]
            [results results])]
         ['many
@@ -1472,21 +1472,21 @@
    (list `[,(list (make-dummy-spec `([(addr (env Nat) 1)]))) *])))
 
 ;; s# a# v# -> ([(s# ...) po] ...)
-(define (resolve-with-unobs-transition config address type message)
-  (define non-free-transitions
+(define (resolve-with-free-transition config address type message)
+  (define non-free-stable-transitions
     (filter
      (negate (curry transition-to-same-state? config))
-     (get-unobs-transitions-for-resolution config address)))
-  (resolve-with-transitions config address type message non-free-transitions))
+     (get-free-transitions-for-resolution config address)))
+  (resolve-with-transitions config address type message non-free-stable-transitions))
 
 (module+ test
-  (test-equal? "resolve-with-unobs-transition with fork"
-   (resolve-with-unobs-transition
+  (test-equal? "resolve-with-free-transition with fork"
+   (resolve-with-free-transition
     `[()
       ()
       (goto A (addr (env (Addr Nat)) 1))
       ((define-state (A x)
-         [unobs -> ([obligation x [fork (goto C) (define-state (C))]]) (goto B)]))
+         [free -> ([obligation x [fork (goto C) (define-state (C))]]) (goto B)]))
       ([(addr (env (Addr Nat)) 1)])]
     `(addr (env (Addr Nat)) 1)
     `(Addr Nat)
@@ -1500,7 +1500,7 @@
         ([Nat (addr 1 0)])
         (goto B)
         ((define-state (A x)
-           [unobs -> ([obligation x [fork (goto C) (define-state (C))]]) (goto B)]))
+           [free -> ([obligation x [fork (goto C) (define-state (C))]]) (goto B)]))
         ()])
       self])))
 
@@ -1532,11 +1532,11 @@
 ;; input configuration can take an output step with the given message to the given configurations and
 ;; using the returned free obligation pattern to match the message.
 (define (resolve-with-free-obl-patterns config address type message)
-  (define free-transitions
+  (define free-stable-transitions
     (filter
      (curry transition-to-same-state? config)
-     (get-unobs-transitions-for-resolution config address)))
-  (resolve-with-transitions config address type message free-transitions))
+     (get-free-transitions-for-resolution config address)))
+  (resolve-with-transitions config address type message free-stable-transitions))
 
 ;; s# O# [ρ#_o ρ#_u (match-fork ...)] -> (s# ...)
 (define (incorporate-output-match-results original-pre-config
@@ -1663,26 +1663,26 @@
     (aps#-config-has-commitment? has-commitment-test-config (term (addr (env Nat) 2)) (term (record)))))
 
 ;; Returns #t if this transition goes to the given state and has exactly one effect (an obligation)
-(define (free-transition? transition full-state)
+(define (free-stable-transition? transition full-state)
   (match transition
-    [`(unobs -> ([obligation ,_ ,_]) ,(== full-state)) #t]
+    [`(free -> ([obligation ,_ ,_]) ,(== full-state)) #t]
     [_ #f]))
 
 ;; s# a# -> ([pt -> (f ...) (goto φ u ...)])
 ;;
 ;; Returns the transitions (after subsitution with the current state arguments) with an unobs trigger
 ;; and a single effect: an obligation
-(define (get-unobs-transitions-for-resolution config target-addr)
+(define (get-free-transitions-for-resolution config target-addr)
   (filter
    (lambda (trans)
      (match trans
-       [`(unobs -> ([obligation ,obligation-addr ,_]) ,_)
+       [`(free -> ([obligation ,obligation-addr ,_]) ,_)
         (equal? obligation-addr target-addr)]
        [_ #f]))
    (config-current-transitions config)))
 
 (module+ test
-  (define unobs-transition-spec
+  (define free-transition-spec
     (term
      (()
       ()
@@ -1690,21 +1690,21 @@
       ((define-state (S1 a b)
          [x -> ([obligation x *]) (goto S1)]
          [x -> ([obligation b *]) (goto S1)]
-         [unobs -> ([obligation a (variant A)]) (goto S2 a b)]
-         [unobs -> ([obligation a (variant B)]) (goto S2 a a)]
-         [unobs -> ([obligation a (variant C)]) (goto S1 a b)]
-         [unobs -> ([obligation b (variant D)]) (goto S1 a b)]
-         [unobs -> ([obligation b (variant E)]) (goto S2 a b)]))
+         [free -> ([obligation a (variant A)]) (goto S2 a b)]
+         [free -> ([obligation a (variant B)]) (goto S2 a a)]
+         [free -> ([obligation a (variant C)]) (goto S1 a b)]
+         [free -> ([obligation b (variant D)]) (goto S1 a b)]
+         [free -> ([obligation b (variant E)]) (goto S2 a b)]))
       ([(addr (env Nat) 1)] [(addr (env Nat) 2)]))))
   (check-equal?
-   (get-unobs-transitions-for-resolution unobs-transition-spec `(addr (env Nat) 1))
-   `([unobs -> ([obligation (addr (env Nat) 1) (variant A)]) (goto S2 (addr (env Nat) 1) (addr (env Nat) 2))]
-     [unobs -> ([obligation (addr (env Nat) 1) (variant B)]) (goto S2 (addr (env Nat) 1) (addr (env Nat) 1))]
-     [unobs -> ([obligation (addr (env Nat) 1) (variant C)]) (goto S1 (addr (env Nat) 1) (addr (env Nat) 2))]))
+   (get-free-transitions-for-resolution free-transition-spec `(addr (env Nat) 1))
+   `([free -> ([obligation (addr (env Nat) 1) (variant A)]) (goto S2 (addr (env Nat) 1) (addr (env Nat) 2))]
+     [free -> ([obligation (addr (env Nat) 1) (variant B)]) (goto S2 (addr (env Nat) 1) (addr (env Nat) 1))]
+     [free -> ([obligation (addr (env Nat) 1) (variant C)]) (goto S1 (addr (env Nat) 1) (addr (env Nat) 2))]))
   (check-equal?
-   (get-unobs-transitions-for-resolution unobs-transition-spec `(addr (env Nat) 2))
-   `([unobs -> ([obligation (addr (env Nat) 2) (variant D)]) (goto S1 (addr (env Nat) 1) (addr (env Nat) 2))]
-     [unobs -> ([obligation (addr (env Nat) 2) (variant E)]) (goto S2 (addr (env Nat) 1) (addr (env Nat) 2))])))
+   (get-free-transitions-for-resolution free-transition-spec `(addr (env Nat) 2))
+   `([free -> ([obligation (addr (env Nat) 2) (variant D)]) (goto S1 (addr (env Nat) 1) (addr (env Nat) 2))]
+     [free -> ([obligation (addr (env Nat) 2) (variant E)]) (goto S2 (addr (env Nat) 1) (addr (env Nat) 2))])))
 
 (define (transition-to-same-state? config transition)
   (equal? (aps#-transition-goto transition) (aps#-config-current-state config)))
@@ -1712,11 +1712,11 @@
 (module+ test
   (let ([transition-test-config `[() () (goto A (addr (env Nat) 1)) () ()]])
     (test-true "transition-to-same-state? true"
-      (transition-to-same-state? transition-test-config `[unobs -> () (goto A (addr (env Nat) 1))]))
+      (transition-to-same-state? transition-test-config `[free -> () (goto A (addr (env Nat) 1))]))
     (test-false "transition-to-same-state? wrong state"
-      (transition-to-same-state? transition-test-config `[unobs -> () (goto B (addr (env Nat) 1))]))
+      (transition-to-same-state? transition-test-config `[free -> () (goto B (addr (env Nat) 1))]))
     (test-false "transition-to-same-state? wrong address"
-      (transition-to-same-state? transition-test-config `[unobs -> () (goto A (addr (env Nat) 2))]))))
+      (transition-to-same-state? transition-test-config `[free -> () (goto A (addr (env Nat) 2))]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
@@ -2006,7 +2006,7 @@
 (module+ test
   (test-false "pattern-contains-self?: self only in fork's state def"
     (pattern-contains-self?
-     `(fork (goto A) (define-state (A x) [unobs -> ([obligation x self]) (goto A x)]))))
+     `(fork (goto A) (define-state (A x) [free -> ([obligation x self]) (goto A x)]))))
   (test-true "pattern-contains-self?: true"
     (pattern-contains-self? `(record [a *] [b self])))
     (test-true "pattern-contains-self?: true 2"
@@ -2097,7 +2097,7 @@
                       `(()
                         ()
                         (goto A)
-                        ((define-state (A) [unobs -> () (goto A)]))
+                        ((define-state (A) [free -> () (goto A)]))
                         ())])
       (check-false (aps#-completed-no-transition-config? (term s#)))))
   (test-case "completed-no-transition-config?: observed interface"

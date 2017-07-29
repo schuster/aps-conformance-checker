@@ -496,8 +496,7 @@
 
 (define ensime-project-spec
   `(specification (receptionists [project ,desugared-project-input]) (externals)
-     ([project ,desugared-project-input])
-     ()
+     (obs-rec project ,desugared-project-input)
      (goto AwaitingConnectionInfoReq)
      (define-state (AwaitingConnectionInfoReq)
        [(variant ConnectionInfoReq s) -> ([obligation s (variant ConnectionInfo)]) (goto HandleRequests)]

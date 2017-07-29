@@ -302,9 +302,9 @@
       [(variant Speak * *) -> () (goto Running room-handler)]
       [(variant Leave *) -> () (goto Running room-handler)]
       [(variant GetMembers callback) -> ([obligation callback *]) (goto Running room-handler)]
-      [unobs -> ([obligation room-handler (variant MemberLeft *)]) (goto Running room-handler)]
-      [unobs -> ([obligation room-handler (variant MemberJoined *)]) (goto Running room-handler)]
-      [unobs -> ([obligation room-handler (variant Message * *)]) (goto Running room-handler)])))
+      [free -> ([obligation room-handler (variant MemberLeft *)]) (goto Running room-handler)]
+      [free -> ([obligation room-handler (variant MemberJoined *)]) (goto Running room-handler)]
+      [free -> ([obligation room-handler (variant Message * *)]) (goto Running room-handler)])))
 
 (define server-spec-behavior
   `((goto ServerAlways)
@@ -316,8 +316,7 @@
 
 (define chat-spec
   `(specification (receptionists [auth ,desugared-auth-command]) (externals)
-     ([auth ,desugared-auth-command])
-     ([auth ,desugared-auth-command])
+     (obs-rec auth ,desugared-auth-command ,desugared-auth-command)
      (goto AuthAlways)
      (define-state (AuthAlways)
        [(variant LogIn * * callback) ->

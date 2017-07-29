@@ -939,14 +939,14 @@
 (define connection-spec-behavior
   `((goto AwaitingRegistration)
     (define-state (AwaitingRegistration)
-      [unobs -> () (goto Closed)]
+      [free -> () (goto Closed)]
       [(variant HttpRegister handler) -> () (goto Running handler)])
     (define-state (Running handler)
-      [unobs ->
+      [free ->
              ([obligation handler (record [request *] [response-dest *])])
              (goto Running handler)]
       [(variant HttpRegister new-handler) -> () (goto Running handler)]
-      [unobs -> () (goto Closed)])
+      [free -> () (goto Closed)])
     (define-state (Closed)
       [(variant HttpRegister new-handler) -> () (goto Closed)])))
 
@@ -954,11 +954,10 @@
   `(specification (receptionists)
                   (externals [app-listener ,desugared-http-listener-event]
                              [tcp-session ,desugared-tcp-session-command])
-     ()
-     ()
+     no-obs-rec
      (goto Init app-listener)
      (define-state (Init app-listener)
-       [unobs ->
+       [free ->
               ([obligation app-listener
                            (variant HttpConnected * (delayed-fork ,@connection-spec-behavior))])
               (goto Done)])
@@ -967,7 +966,7 @@
 (define unbind-result-behavior
   `((goto SendUnbindResultAnytime unbind-commander)
     (define-state (SendUnbindResultAnytime unbind-commander)
-      [unobs ->
+      [free ->
              ([obligation unbind-commander (or (variant HttpUnbound)
                                                (variant HttpCommandFailed))])
              (goto SendUnbindResultAnytime unbind-commander)])))
@@ -975,7 +974,7 @@
 (define listener-spec-behavior
   `((goto Connected app-listener)
     (define-state (Connected app-listener)
-      [unobs ->
+      [free ->
              ([obligation app-listener
                           (variant HttpConnected * (delayed-fork ,@connection-spec-behavior))])
              (goto Connected app-listener)]
@@ -995,11 +994,10 @@
                   (externals [bind-commander ,desugared-http-bind-response]
                              [app-listener ,desugared-http-listener-event]
                              [tcp ,desugared-tcp-user-command])
-     ()
-     ()
+     no-obs-rec
      (goto Init bind-commander app-listener)
      (define-state (Init bind-commander app-listener)
-       [unobs ->
+       [free ->
               ([obligation bind-commander (or (variant HttpCommandFailed)
                                               (variant HttpBound (fork ,@listener-spec-behavior)))])
               (goto Done)])
@@ -1008,8 +1006,7 @@
 (define http-manager-spec
   `(specification (receptionists [manager ,desugared-http-manager-command])
                   (externals [tcp ,desugared-tcp-user-command])
-     ([manager ,desugared-http-manager-command])
-     ()
+     (obs-rec manager ,desugared-http-manager-command)
      (goto Running)
      (define-state (Running)
        [(variant HttpBind * commander app-listener) ->

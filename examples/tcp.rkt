@@ -2139,7 +2139,7 @@
       ;;
       ;; APS PROTOCOL BUG: to replicate, comment out this unobs transition (didn't realize at first
       ;; this was a possibility)
-      [unobs -> () (goto ClosedNoHandler)])
+      [free -> () (goto ClosedNoHandler)])
 
     (define-state (Connected app-handler)
       [(variant Register other-app-handler) -> () (goto Connected app-handler)]
@@ -2158,12 +2158,12 @@
         [obligation app-handler (variant Aborted)])
        (goto Closed app-handler)]
       ;; Possible unobserved events:
-      [unobs -> ([obligation app-handler (variant ReceivedData *)]) (goto Connected app-handler)]
-      [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)]
-      [unobs -> ([obligation app-handler (variant PeerClosed)]) (goto Closed app-handler)])
+      [free -> ([obligation app-handler (variant ReceivedData *)]) (goto Connected app-handler)]
+      [free -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)]
+      [free -> ([obligation app-handler (variant PeerClosed)]) (goto Closed app-handler)])
 
     (define-state (Closing app-handler close-handler)
-      [unobs ->
+      [free ->
        ([obligation close-handler (variant ConfirmedClosed)]
         [obligation app-handler (variant ConfirmedClosed)])
        (goto Closed app-handler)]
@@ -2183,14 +2183,14 @@
        ([obligation abort-handler (variant Aborted)]
         [obligation app-handler (variant Aborted)])
        (goto Closed app-handler)]
-      [unobs ->
+      [free ->
        ([obligation app-handler (variant ReceivedData *)])
        (goto Closing app-handler close-handler)]
       ;; NOTE: again, no response on close-handler. Again, intentional
-      [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])
+      [free -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])
 
     (define-state (ClosingNoHandler close-handler)
-      [unobs -> ([obligation close-handler (variant ConfirmedClosed)]) (goto ClosedNoHandler)]
+      [free -> ([obligation close-handler (variant ConfirmedClosed)]) (goto ClosedNoHandler)]
       [(variant Register app-handler) -> () (goto ClosingNoHandler close-handler)]
       [(variant Write * write-handler) ->
        ([obligation write-handler (variant CommandFailed)])
@@ -2206,7 +2206,7 @@
       ;; NOTE: again, no response on close-handler. Again, intentional
       ;;
       ;; APS PROTOCOL BUG: to replicate, comment out this unobs transition
-      [unobs -> () (goto ClosedNoHandler)])
+      [free -> () (goto ClosedNoHandler)])
 
     (define-state (ClosedNoHandler)
       [(variant Register app-handler) -> () (goto ClosedNoHandler)]
@@ -2251,8 +2251,8 @@
        (goto Closed app-handler)]
       ;; We might get some data while the other side is closing. Could probably split this into a
       ;; separate spec state, but I'm leaving it here for now
-      [unobs -> ([obligation app-handler (variant ReceivedData *)]) (goto Closed app-handler)]
-      [unobs -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])))
+      [free -> ([obligation app-handler (variant ReceivedData *)]) (goto Closed app-handler)]
+      [free -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])))
 
 (define session-spec
   `(specification
@@ -2260,8 +2260,7 @@
     (externals [session-packet-dest (Addr (Union [InTcpPacket ,desugared-tcp-packet-type]))]
                [packets-out ,desugared-tcp-output]
                [close-notifications (Union [SessionCloseNotification ,desugared-session-id])])
-    ([launcher (Addr ,desugared-connection-status)])
-    ()
+    (obs-rec launcher (Addr ,desugared-connection-status))
     (goto Init)
     (define-state (Init)
       [status-updates ->
@@ -2277,14 +2276,14 @@
 (define manager-spec
   `(specification (receptionists [tcp ,desugared-tcp-input])
                   (externals [packets-out ,desugared-tcp-output])
-     ([tcp  (Union [UserCommand ,desugared-user-command])])    ; obs interface
-     ([tcp (Union [InPacket Nat ,desugared-tcp-packet-type])])  ; unobs interface
+     (obs-rec tcp (Union [UserCommand ,desugared-user-command])
+                  (Union [InPacket Nat ,desugared-tcp-packet-type]))
      (goto Managing)
      (define-state (Managing)
        [(variant UserCommand (variant Connect * status-updates)) ->
         ([fork (goto MaybeSend status-updates)
                (define-state (MaybeSend status-updates)
-                 [unobs ->
+                 [free ->
                   ([obligation status-updates
                                (or (variant CommandFailed)
                                    (variant Connected * (delayed-fork ,@session-spec-behavior)))])
@@ -2305,7 +2304,7 @@
        ;;  ([obligation bind-status (or (variant CommandFailed) (variant Bound))]
        ;;   [fork (goto MaybeGetConnection bind-handler)
        ;;         (define-state (MaybeGetConnection bind-handler)
-       ;;           [unobs ->
+       ;;           [free ->
        ;;            ([obligation bind-handler (variant Connected * (fork ,@session-spec-behavior))])
        ;;            (goto MaybeGetConnection bind-handler)])])
        ;;  (goto Managing)]

@@ -29,22 +29,19 @@
   (spec
    (specification (receptionists [x_rec τ] ...)
                   (externals [x_ext τ] ...)
-                  ()
-                  ([x τ] ...)
-                  (goto φ x ...)
-                  Φ ...)
-   (specification (receptionists [x_rec τ] ...)
-                  (externals [x_ext τ] ...)
-                  ([x τ])
-                  ([x τ] ...)
+                  oc
                   (goto φ x ...)
                   Φ ...))
+  ;; observed receptionist clause
+  (oc (obs-rec x τ τ)
+      (obs-rec x τ)
+      no-obs-rec)
   (Φ (define-state (φ x ...) (pt -> (f ...) (goto φ x ...)) ...))
   ;; effects
   (f (obligation u po)
      (fork (goto φ u ...) Φ ...))
   ;; trigger patterns
-  (pt unobs
+  (pt free
      p)
   (u x) ; arguments
   ;; input patterns
@@ -225,8 +222,7 @@
                         [c (let () (spawn 3 Nat      (goto S3)))])))
     (define the-spec
       `(specification (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Union)])
-                      ()
-                      ()
+                      no-obs-rec
                       (goto S1)))
     (check-true (redex-match? csa-eval P the-prog))
     (check-true (redex-match? aps spec the-spec))
@@ -254,7 +250,8 @@
        (;; obs interface
         ()
         ;; unobserved environment interface
-        ()
+        ([Nat (addr 1 0)]
+         [(Record) (addr 2 0)])
         ;; current state
         (goto S1)
         ;; state defs
@@ -268,8 +265,7 @@
   instantiate-spec/mf : spec ([x (τ a)] ...) ([x (τ a)] ...) -> s
   [(instantiate-spec/mf (specification (receptionists [x_rec _] ...)
                                        (externals [x_cont _] ...)
-                                       ([x_obs τ_obs] ...)
-                                       ([x_unobs τ_unobs] ...)
+                                       oc
                                        (goto φ x_arg ...)
                                        Φ ...)
                         ([x_rec (τ_rec a_rec)] ...)
@@ -284,30 +280,28 @@
     ((subst-n/aps-eval/Φ Φ [x_ext a_ext] ...) ...)
     ;; output commitment map
     ([a_state-arg] ...))
-   (where ((τ_obs a_obs) ...)
-          (resolve-receptionists/mf ((x_obs τ_obs) ...) ([x_rec a_rec] ...)))
-   (where ((τ_unobs a_unobs) ...)
-          (resolve-receptionists/mf ((x_unobs τ_unobs) ...) ([x_rec a_rec] ...)))
+   (where [((τ_obs a_obs) ...) ((τ_unobs a_unobs) ...)]
+          (resolve-obs/unobs-receptionists/mf oc ([x_rec τ_rec a_rec] ...)))
    (where (a_state-arg ...) ((subst-n/aps-eval/u x_arg [x_ext a_ext] ...) ...))])
 
 (module+ test
   (test-case "instantiate spec"
       (define the-spec
       `(specification (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Union)])
-                      ()
-                      ()
+                      no-obs-rec
                       (goto S1 d)))
       (check-true (redex-match? aps spec the-spec))
       (check-equal?
        (term (instantiate-spec/mf ,the-spec
-                                  ([a (Nat (addr 0 0))]
-                                   [b ((Record) (addr 1 0))])
+                                  ([a (Nat (addr 1 0))]
+                                   [b ((Record) (addr 2 0))])
                                   ([d (String (addr (env String) 0))]
                                    [e ((Union) (addr (env (Union)) 1))])))
-       `(;; self-address
+       `(;; observed receptionists
          ()
-         ;; unobserved environment interface
-         ()
+         ;; unobserved receptionists
+         ([Nat (addr 1 0)]
+          [(Record) (addr 2 0)])
          ;; current statep
          (goto S1 (addr (env String) 0))
          ;; state defs
@@ -316,9 +310,48 @@
          ([(addr (env String) 0)])))))
 
 (define-metafunction aps-eval
-  resolve-receptionists/mf : ([x τ] ...) ([x a] ...) -> ((τ a) ...)
-  [(resolve-receptionists/mf () _) ()]
-  [(resolve-receptionists/mf ([x τ] any_rest ...) any_subs)
-   ((τ a) any_results ...)
-   (where (_ ... [x a] _ ...) any_subs)
-   (where (any_results ...) (resolve-receptionists/mf (any_rest ...) any_subs))])
+  resolve-obs/unobs-receptionists/mf : oc ([x τ a] ...) -> [([τ a] ...) ([τ a] ...)]
+  [(resolve-obs/unobs-receptionists/mf (obs-rec x τ_obs τ_unobs)
+                                       ([x_unobs1 τ_unobs1 a_unobs1] ...
+                                        [x _ a]
+                                        [x_unobs2 τ_unobs2 a_unobs2] ...))
+   [([τ_obs a])
+    ([τ_unobs1 a_unobs1] ... [τ_unobs a] [τ_unobs2 a_unobs2] ...)]]
+  [(resolve-obs/unobs-receptionists/mf (obs-rec x τ_obs)
+                                       ([x_unobs1 τ_unobs1 a_unobs1] ...
+                                        [x _ a]
+                                        [x_unobs2 τ_unobs2 a_unobs2] ...))
+   [([τ_obs a])
+    ([τ_unobs1 a_unobs1] ... [τ_unobs2 a_unobs2] ...)]]
+  [(resolve-obs/unobs-receptionists/mf no-obs-rec ([x τ a] ...))
+   [() ([τ a] ...)]])
+
+(module+ test
+  (test-equal? "resolve receptionists: obs and unobs"
+    (term (resolve-obs/unobs-receptionists/mf (obs-rec a (Union [A]) (Union [B]))
+                                              ([b (Union [C]) (addr 0 0)]
+                                               [a (Union [A] [B]) (addr 1 0)]
+                                               [c (Union [D]) (addr 2 0)])))
+    (term [([(Union [A]) (addr 1 0)])
+           ([(Union [C]) (addr 0 0)]
+            [(Union [B]) (addr 1 0)]
+            [(Union [D]) (addr 2 0)])]))
+
+  (test-equal? "resolve receptionists: just obs"
+    (term (resolve-obs/unobs-receptionists/mf (obs-rec a (Union [A]))
+                                              ([b (Union [C]) (addr 0 0)]
+                                               [a (Union [A]) (addr 1 0)]
+                                               [c (Union [D]) (addr 2 0)])))
+    (term [([(Union [A]) (addr 1 0)])
+           ([(Union [C]) (addr 0 0)]
+            [(Union [D]) (addr 2 0)])]))
+
+  (test-equal? "resolve receptionists: all unobs"
+    (term (resolve-obs/unobs-receptionists/mf no-obs-rec
+                                              ([b (Union [C]) (addr 0 0)]
+                                               [a (Union [A]) (addr 1 0)]
+                                               [c (Union [D]) (addr 2 0)])))
+    (term [()
+           ([(Union [C]) (addr 0 0)]
+            [(Union [A]) (addr 1 0)]
+            [(Union [D]) (addr 2 0)])])))

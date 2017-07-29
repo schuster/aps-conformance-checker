@@ -150,7 +150,7 @@
         [(variant GetMean r) -> ([obligation r *]) (goto Off)]
         [(variant Disable) -> () (goto Off)]
         [(variant Enable redir) -> () (goto On redir)]
-        [unobs -> () (goto Done)])
+        [free -> () (goto Done)])
 
       (define-state (On redir)
         [(variant Temp * r) ->
@@ -160,7 +160,7 @@
         [(variant GetMean r) -> ([obligation r *]) (goto On redir)]
         [(variant Disable) -> () (goto Off)]
         [(variant Enable new-redir) -> () (goto On new-redir)]
-        [unobs -> () (goto Done)])
+        [free -> () (goto Done)])
 
       (define-state (Done)
         [(variant Temp * r) -> () (goto Done)]
@@ -170,8 +170,8 @@
 
   (define manager-spec
     `(specification (receptionists [manager ,ManagerMessage]) (externals)
-       ([manager (Union [NewProcessor (Addr (Addr ,ProcessorMessage))])])
-       ([manager (Union [ShutdownAll])])
+       (obs-rec manager (Union [NewProcessor (Addr (Addr ,ProcessorMessage))])
+                        (Union [ShutdownAll]))
        (goto Managing)
        (define-state (Managing)
          [(variant NewProcessor r) -> () (goto Managing)]

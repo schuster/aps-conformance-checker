@@ -364,8 +364,7 @@
   `(specification (receptionists [controller ,desugared-controller-message-type])
                   (externals [lim ,desugared-lim-message-type]
                              [analyzer ,desugared-analyzer-message-type])
-     ([controller ,desugared-seizable-peer-message])
-     ([controller ,desugared-controller-message-type])
+     (obs-rec controller ,desugared-seizable-peer-message ,desugared-controller-message-type)
      (goto Idle)
 
      (define-state (Idle)
@@ -382,7 +381,7 @@
 
      (define-state (Ringing peer)
        ; can answer, can react to a Cleared, can respond to Seized
-       [unobs ->
+       [free ->
         ([obligation peer (variant Answered)])
         (goto InCall peer)]
        [(variant Seize (record [id *] [address other-peer])) ->
@@ -390,20 +389,20 @@
         (goto Ringing peer)]
        [(variant Cleared) -> () (goto Idle)]
        ;; An unobserved actor could *also* send us Cleared, which still causes us to go to Idle
-       [unobs -> () (goto Idle)]
+       [free -> () (goto Idle)]
        [(variant Seized) -> () (goto Ringing peer)]
        [(variant Rejected) -> () (goto Ringing peer)]
        [(variant Answered) -> () (goto Ringing peer)])
 
      (define-state (InCall peer)
-       [unobs -> ([obligation peer (variant Cleared)]) (goto Idle)]
+       [free -> ([obligation peer (variant Cleared)]) (goto Idle)]
        [(variant Seize (record [id *] [address other-peer])) ->
         ([obligation other-peer (variant Rejected)])
         (goto InCall peer)]
        [(variant Cleared) -> () (goto Idle)]
        ;; An unobserved actor could *also* send us Cleared, which still causes us to go to Idle,
        ;; without us sending a Cleared message back
-       [unobs -> () (goto Idle)]
+       [free -> () (goto Idle)]
        ;; ignore all others
        [(variant Seized) -> () (goto InCall peer)]
        [(variant Rejected) -> () (goto InCall peer)]

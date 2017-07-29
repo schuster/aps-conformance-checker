@@ -152,11 +152,10 @@
 (define raft-spec
   (term
    (specification (receptionists [raft-server ,full-raft-actor-type]) (externals)
-     ([raft-server ,desugared-raft-message-type]) ; obs interface
-     ([raft-server ,unobserved-interface-type]) ; unobs interface
+     (obs-rec raft-server ,desugared-raft-message-type ,unobserved-interface-type)
      (goto Init)
      (define-state (Init)
-       [unobs -> () (goto Running)]
+       [free -> () (goto Running)]
        [(variant RequestVote * candidate * *) -> () (goto Init)]
        [(variant RequestVote * candidate * *) -> () (goto Init)]
        [(variant VoteCandidate * *) -> () (goto Init)]

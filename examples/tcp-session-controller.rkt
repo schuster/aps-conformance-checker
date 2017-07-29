@@ -1298,15 +1298,15 @@
                              [status-updates ,desugared-connection-status]
                              [close-notifications
                               (Union [SessionCloseNotification ,desugared-session-id])])
-     ([session (Union (OrderedTcpPacket ,desugared-tcp-packet-type))])
-     ([session (Union
-                (Register (Addr ,desugared-tcp-session-event))
-                (Write (List Nat) (Addr ,desugared-write-response))
-                (Close (Addr (Union [CommandFailed] [Closed])))
-                (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
-                (Abort (Addr (Union [CommandFailed] [Aborted])))
-                (InternalAbort)
-                (TheFinSeq Nat))])
+     (obs-rec session (Union (OrderedTcpPacket ,desugared-tcp-packet-type))
+                      (Union
+                       (Register (Addr ,desugared-tcp-session-event))
+                       (Write (List Nat) (Addr ,desugared-write-response))
+                       (Close (Addr (Union [CommandFailed] [Closed])))
+                       (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+                       (Abort (Addr (Union [CommandFailed] [Aborted])))
+                       (InternalAbort)
+                       (TheFinSeq Nat)))
      (goto SynSent send-buffer)
      (define-state (SynSent send-buffer)
        ;; APS PROTOCOL BUG: to replicate, remove from ANY of the following states the clause that
@@ -1342,7 +1342,7 @@
         ()
         (goto SynSent send-buffer)]
        ;; some internal timeout or other event might occur that causes us to abort the connection
-       [unobs ->
+       [free ->
         ([obligation send-buffer (variant SendRst)])
         (goto Closed send-buffer)]
        )
@@ -1368,7 +1368,7 @@
         ()
         (goto SynReceived send-buffer)]
        ;; some internal timeout or other event might occur that causes us to abort the connection
-       [unobs ->
+       [free ->
         ([obligation send-buffer (variant SendRst)])
         (goto Closed send-buffer)])
 
@@ -1385,15 +1385,15 @@
         ()
         (goto Established send-buffer)]
        ;; might write some bytes to the socket
-       [unobs ->
+       [free ->
         ([obligation send-buffer (variant SendText *)])
         (goto Established send-buffer)]
        ;; might decide to close
-       [unobs ->
+       [free ->
         ([obligation send-buffer (variant SendFin)])
         (goto Closing send-buffer)]
        ;; some internal timeout or other event might occur that causes us to abort the connection
-       [unobs ->
+       [free ->
         ([obligation send-buffer (variant SendRst)])
         (goto Closed send-buffer)])
 
@@ -1415,9 +1415,9 @@
        [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) -> () (goto Closed send-buffer)]
        [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) -> () (goto Closing send-buffer)]
        ;; we may get a TimeWait timeout and close
-       [unobs -> () (goto Closed send-buffer)]
+       [free -> () (goto Closed send-buffer)]
        ;; some internal timeout or other event might occur that causes us to abort the connection
-       [unobs ->
+       [free ->
          ([obligation send-buffer (variant SendRst)])
          (goto Closed send-buffer)])
 

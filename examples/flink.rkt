@@ -1165,15 +1165,15 @@
       [(variant CancelTask * ack-dest) ->
        ([obligation ack-dest (variant Failure *)])
        (goto Unregistered job-manager)]
-      [unobs ->
+      [free ->
              ([obligation job-manager (variant RegisterTaskManager * * self)])
              (goto Unregistered job-manager)]
       ;; These two messages might still happen during Unregistered because the runners are
       ;; cancelled later
-      [unobs ->
+      [free ->
              ([obligation job-manager (variant UpdateTaskExecutionState * *)])
              (goto Unregistered job-manager)]
-      [unobs ->
+      [free ->
              ([obligation job-manager (variant RequestNextInputSplit * *)])
              (goto Unregistered job-manager)])
     (define-state (Registered job-manager)
@@ -1185,20 +1185,19 @@
       [(variant CancelTask * ack-dest) ->
        ([obligation ack-dest (or (variant Acknowledge *) (variant Failure *))])
        (goto Registered job-manager)]
-      [unobs ->
+      [free ->
              ([obligation job-manager (variant UpdateTaskExecutionState * *)])
              (goto Registered job-manager)]
-      [unobs ->
+      [free ->
              ([obligation job-manager (variant RequestNextInputSplit * *)])
              (goto Registered job-manager)])))
 
 (define task-manager-spec
   `(specification (receptionists) (externals [job-manager ,desugared-tm-to-jm-type])
-     ()
-     ()
+     no-obs-rec
      (goto Init job-manager)
      (define-state (Init job-manager)
-       [unobs ->
+       [free ->
               ([obligation job-manager
                            (variant RegisterTaskManager * * (fork ,@task-manager-spec-behavior))])
               (goto Done)])
@@ -1207,13 +1206,12 @@
 (define send-job-result-anytime-behavior
   `((goto SendAnytime dest)
     (define-state (SendAnytime dest)
-      [unobs -> ([obligation dest (variant JobResultSuccess *)]) (goto SendAnytime dest)]
-      [unobs -> ([obligation dest (variant JobResultFailure)]) (goto SendAnytime dest)])))
+      [free -> ([obligation dest (variant JobResultSuccess *)]) (goto SendAnytime dest)]
+      [free -> ([obligation dest (variant JobResultFailure)]) (goto SendAnytime dest)])))
 
 (define job-manager-client-pov-spec
   `(specification (receptionists [job-manager ,desugared-job-manager-command]) (externals)
-     ([job-manager ,desugared-job-manager-command])
-     ([job-manager (Union [TaskManagerTerminated Nat])])
+     (obs-rec job-manager ,desugared-job-manager-command (Union [TaskManagerTerminated Nat]))
      (goto Running)
      (define-state (Running)
        [(variant CancelJob * dest) ->
@@ -1227,15 +1225,15 @@
 (define registered-tm-behavior
   `((goto SendAck tm)
     (define-state (SendAck tm)
-      [unobs -> ([obligation tm (variant AcknowledgeRegistration)]) (goto SubmitOrCancelAnytime tm)])
+      [free -> ([obligation tm (variant AcknowledgeRegistration)]) (goto SubmitOrCancelAnytime tm)])
     (define-state (SubmitOrCancelAnytime tm)
-      [unobs -> ([obligation tm (variant SubmitTask * *)]) (goto SubmitOrCancelAnytime tm)]
-      [unobs -> ([obligation tm (variant CancelTask * *)]) (goto SubmitOrCancelAnytime tm)])))
+      [free -> ([obligation tm (variant SubmitTask * *)]) (goto SubmitOrCancelAnytime tm)]
+      [free -> ([obligation tm (variant CancelTask * *)]) (goto SubmitOrCancelAnytime tm)])))
 
 (define job-manager-tm-pov-spec
   `(specification (receptionists [job-manager ,desugared-job-manager-input]) (externals)
-     ([job-manager ,desugared-tm-to-jm-type])
-     ([job-manager (Union ,@(cdr desugared-job-manager-command) [TaskManagerTerminated Nat])])
+     (obs-rec job-manager ,desugared-tm-to-jm-type
+                          (Union ,@(cdr desugared-job-manager-command) [TaskManagerTerminated Nat]))
      (goto Running)
      (define-state (Running)
        [(variant RequestNextInputSplit * dest) ->
