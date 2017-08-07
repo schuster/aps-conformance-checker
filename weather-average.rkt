@@ -9,29 +9,29 @@
 
 (define FullProcessorMessage
   `(Union
-    [Temp Nat (Addr (Union [Ok] [NotOk]))]
-    [GetMean (Addr Nat)]
+    [AddReading Nat (Addr (Union [Ok] [NotOk]))]
+    [GetMean]
     [Disable]
-    [Enable (Addr Nat)]
+    [Enable]
     [Shutdown]))
 
 (define ProcessorMessage
   `(Union
-    [Temp Nat (Addr (Union [Ok] [NotOk]))]
-    [GetMean (Addr Nat)]
-    [Enable (Addr Nat)]
+    [AddReading Nat (Addr (Union [Ok] [NotOk]))]
+    [GetMean]
+    [Enable]
     [Disable]))
 
 (define ManagerMessage
   `(Union
-    [NewProcessor (Addr (Addr ,ProcessorMessage))]
+    [NewProcessor (Addr (Addr ,ProcessorMessage)) (Addr Nat)]
     [ShutdownAll]))
 
 (define weather-program
  (desugar
   `(program (receptionists [manager ,ManagerMessage]) (externals)
 
-(define-actor ,FullProcessorMessage (Processor)
+(define-actor ,FullProcessorMessage (Processor [mdest (Addr Nat)])
   ()
 ;; Initial state
 (goto Off 0 0)
@@ -39,27 +39,26 @@
 ;; State definitions
 (define-state (Off [sum Nat] [num-rdgs Nat]) (m)
   (case m
-    [(Temp t r)
-     (send r (variant NotOk))
+    [(AddReading temp resp)
+     (send resp (variant NotOk))
      (goto Off sum num-rdgs)]
-    [(GetMean r)
-     (send r (/ sum num-rdgs))
+    [(GetMean)
+     (send mdest (/ sum num-rdgs))
      (goto Off sum num-rdgs)]
     [(Disable) (goto Off sum num-rdgs)]
-    [(Enable redir) (goto On sum num-rdgs redir)]
+    [(Enable) (goto On sum num-rdgs)]
     [(Shutdown) (goto Done)]))
 
-(define-state (On [sum Nat] [num-rdgs Nat] [redir (Addr Nat)]) (m)
+(define-state (On [sum Nat] [num-rdgs Nat]) (m)
   (case m
-    [(Temp t r)
-     (send r (variant Ok))
-     (send redir t)
-     (goto On (+ sum t) (+ num-rdgs 1) redir)]
-    [(GetMean r)
-     (send r (/ sum num-rdgs))
-     (goto On sum num-rdgs redir)]
+    [(AddReading temp resp)
+     (send resp (variant Ok))
+     (goto On (+ sum temp) (+ num-rdgs 1))]
+    [(GetMean)
+     (send mdest (/ sum num-rdgs))
+     (goto On sum num-rdgs)]
     [(Disable) (goto Off sum num-rdgs)]
-    [(Enable new-redir) (goto On sum num-rdgs new-redir)]
+    [(Enable) (goto On sum num-rdgs)]
     [(Shutdown) (goto Done)]))
 
 (define-state (Done) (m) (goto Done)))
@@ -69,11 +68,11 @@
   (goto Managing (list))
   (define-state (Managing [processors (List (Addr ProcessorMessage))]) (m)
     (case m
-      [(NewProcessor r)
+      [(NewProcessor resp mdest)
        (case (< (length processors) 100)
          [(True)
-          (let ([p (spawn P Processor)])
-            (send r p)
+          (let ([p (spawn P Processor mdest)])
+            (send resp p)
             (goto Managing (cons p processors)))]
          [(False) (goto Managing processors)])]
       [(ShutdownAll)
@@ -98,85 +97,79 @@
     (define manager (csa-run weather-program))
     ;; 1. Get a new processor
     (define client (make-async-channel))
-    (async-channel-put manager (variant NewProcessor client))
+    (define mdest (make-async-channel))
+    (async-channel-put manager (variant NewProcessor client mdest))
     (define proc (check-unicast-match client p #:result p))
 
-    ;; 2. Turn it on, send it temp data, get OK, check redir
-    (define redir (make-async-channel))
-    (async-channel-put proc (variant Enable redir))
-    (async-channel-put proc (variant Temp 90 client))
+    ;; 2. Turn it on, send it temp data, get OK
+    (async-channel-put proc (variant Enable))
+    (async-channel-put proc (variant AddReading 90 client))
     (check-unicast client (variant Ok))
-    (check-unicast redir 90)
 
     ;; 3. Send it more temp data, get OK
-    (async-channel-put proc (variant Temp 70 client))
+    (async-channel-put proc (variant AddReading 70 client))
     (check-unicast client (variant Ok))
-    (check-unicast redir 70)
 
     ;; 4. Get mean
-    (async-channel-put proc (variant GetMean client))
-    (check-unicast client 80)
+    (async-channel-put proc (variant GetMean))
+    (check-unicast mdest 80)
 
     ;; 5. disable
     (async-channel-put proc (variant Disable))
 
     ;; 6. send it more temp data, get NotOk
-    (async-channel-put proc (variant Temp 102 client))
+    (async-channel-put proc (variant AddReading 102 client))
     (check-unicast client (variant NotOk))
 
     ;; 7. Get mean while disabled
-    (async-channel-put proc (variant GetMean client))
-    (check-unicast client 80)
+    (async-channel-put proc (variant GetMean))
+    (check-unicast mdest 80)
 
     ;; 8. Enable, send more data, get OK
-    (async-channel-put proc (variant Enable redir))
-    (async-channel-put proc (variant Temp 50 client))
+    (async-channel-put proc (variant Enable))
+    (async-channel-put proc (variant AddReading 50 client))
     (check-unicast client (variant Ok))
-    (check-unicast redir 50)
 
     ;; 9. Shutdown All
     (async-channel-put manager (variant ShutdownAll))
     (sleep 1)
 
     ;; 10. Ask for mean, no response
-    (async-channel-put proc (variant GetMean client))
-    (check-no-message client #:timeout 3))
+    (async-channel-put proc (variant GetMean))
+    (check-no-message mdest #:timeout 3))
 
   (define processor-spec-parts
-    `((goto Off)
+    `((goto Off mdest)
 
-      (define-state (Off)
-        [(variant Temp * r) -> ([obligation r (variant NotOk)]) (goto Off)]
-        [(variant GetMean r) -> ([obligation r *]) (goto Off)]
-        [(variant Disable) -> () (goto Off)]
-        [(variant Enable redir) -> () (goto On redir)]
+      (define-state (Off mdest)
+        [(variant AddReading * resp) -> ([obligation resp (variant NotOk)]) (goto Off mdest)]
+        [(variant GetMean) -> ([obligation mdest *]) (goto Off mdest)]
+        [(variant Disable) -> () (goto Off mdest)]
+        [(variant Enable) -> () (goto On mdest)]
         [free -> () (goto Done)])
 
-      (define-state (On redir)
-        [(variant Temp * r) ->
-         ([obligation r (variant Ok)]
-          [obligation redir *])
-         (goto On redir)]
-        [(variant GetMean r) -> ([obligation r *]) (goto On redir)]
-        [(variant Disable) -> () (goto Off)]
-        [(variant Enable new-redir) -> () (goto On new-redir)]
+      (define-state (On mdest)
+        [(variant AddReading * resp) -> ([obligation resp (variant Ok)]) (goto On mdest)]
+        [(variant GetMean) -> ([obligation mdest *]) (goto On mdest)]
+        [(variant Disable) -> () (goto Off mdest)]
+        [(variant Enable) -> () (goto On mdest)]
         [free -> () (goto Done)])
 
       (define-state (Done)
-        [(variant Temp * r) -> () (goto Done)]
-        [(variant GetMean r) -> () (goto Done)]
+        [(variant AddReading * resp) -> () (goto Done)]
+        [(variant GetMean) -> () (goto Done)]
         [(variant Disable) -> () (goto Done)]
-        [(variant Enable redir) -> () (goto Done)])))
+        [(variant Enable) -> () (goto Done)])))
 
   (define manager-spec
     `(specification (receptionists [manager ,ManagerMessage]) (externals)
-       (obs-rec manager (Union [NewProcessor (Addr (Addr ,ProcessorMessage))])
+       (obs-rec manager (Union [NewProcessor (Addr (Addr ,ProcessorMessage)) (Addr Nat)])
                         (Union [ShutdownAll]))
        (goto Managing)
        (define-state (Managing)
-         [(variant NewProcessor r) -> () (goto Managing)]
-         [(variant NewProcessor r) ->
-          ([obligation r (delayed-fork ,@processor-spec-parts)])
+         [(variant NewProcessor resp mdest) -> () (goto Managing)]
+         [(variant NewProcessor resp mdest) ->
+          ([obligation resp (fork ,@processor-spec-parts)])
           (goto Managing)])))
 
   (test-true "Weather program conforms to spec"
