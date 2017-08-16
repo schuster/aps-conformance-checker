@@ -113,7 +113,6 @@
        (if e1 e2 e3)
        (cond [e1 e2 e2* ...] ... [else-kw e3 e3* ...])
        (random e)
-       (ceiling e)
        (list e ...)
        (cons e1 e2)
        (list-as-variant e)

@@ -70,7 +70,6 @@
    or
    not
    random
-   ceiling
    cons
    list-as-variant
    list-ref

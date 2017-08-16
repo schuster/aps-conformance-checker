@@ -649,7 +649,7 @@
            [`(abs-nat abs-nat) (value-result `abs-nat effects)]
            [_ (error "Bad args to binary arithmetic op: ~s\n" `(,op ,@vs))]))
        (lambda (stucks) `(,op ,@stucks)))]
-    [`(,(and op (or 'random 'ceiling)) ,arg)
+    [`(,(and op (or 'random)) ,arg)
      (eval-and-then arg effects
        (lambda (v effects)
          (match v
