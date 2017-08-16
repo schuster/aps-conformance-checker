@@ -7,39 +7,46 @@
 
 (require "desugar.rkt")
 
-(define FullProcessorMessage
+(define ProcUserAPI
   `(Union
-    [AddReading Nat (Addr (Union [Ok] [NotOk]))]
-    [GetMean]
-    [Disable]
-    [Enable]
-    [Shutdown]))
-
-(define ProcessorMessage
-  `(Union
-    [AddReading Nat (Addr (Union [Ok] [NotOk]))]
+    [AddRdg Nat (Addr (Union [Ok] [NotOk]))]
     [GetMean]
     [Enable]
     [Disable]))
 
 (define ManagerMessage
   `(Union
-    [NewProcessor (Addr (Addr ,ProcessorMessage)) (Addr Nat)]
+    [MakeProc (Addr (Addr ,ProcUserAPI)) (Addr Nat)]
     [ShutdownAll]))
+
+(define ManagerUserAPI
+  `(Union [MakeProc (Addr (Addr ,ProcUserAPI)) (Addr Nat)]))
+
+(define ManagerSysAPI
+  `(Union [ShutdownAll]))
 
 (define weather-program
  (desugar
   `(program (receptionists [manager ,ManagerMessage]) (externals)
 
-(define-actor ,FullProcessorMessage (Processor [mdest (Addr Nat)])
-  ()
+(define-actor
+;; Processor's declared type
+(Union [AddRdg Nat (Addr (Union [Ok] [NotOk]))]
+       [GetMean]
+       [Disable]
+       [Enable]
+       [Shutdown])
+
+(Processor [mdest (Addr Nat)])
+()
+
 ;; Initial state
 (goto Off 0 0)
 
 ;; State definitions
 (define-state (Off [sum Nat] [num-rdgs Nat]) (m)
   (case m
-    [(AddReading temp resp)
+    [(AddRdg temp resp)
      (send resp (variant NotOk))
      (goto Off sum num-rdgs)]
     [(GetMean)
@@ -51,7 +58,7 @@
 
 (define-state (On [sum Nat] [num-rdgs Nat]) (m)
   (case m
-    [(AddReading temp resp)
+    [(AddRdg temp resp)
      (send resp (variant Ok))
      (goto On (+ sum temp) (+ num-rdgs 1))]
     [(GetMean)
@@ -61,14 +68,17 @@
     [(Enable) (goto On sum num-rdgs)]
     [(Shutdown) (goto Done)]))
 
-(define-state (Done) (m) (goto Done)))
+(define-state (Done) (m) (goto Done))
+)
+
+(define-type ProcAddr (Addr (Union [Shutdown])))
 
 (define-actor ,ManagerMessage (Manager)
   ()
   (goto Managing (list))
-  (define-state (Managing [processors (List (Addr ProcessorMessage))]) (m)
+  (define-state (Managing [processors (List ProcAddr)]) (m)
     (case m
-      [(NewProcessor resp mdest)
+      [(MakeProc resp mdest)
        (case (< (length processors) 100)
          [(True)
           (let ([p (spawn P Processor mdest)])
@@ -98,16 +108,16 @@
     ;; 1. Get a new processor
     (define client (make-async-channel))
     (define mdest (make-async-channel))
-    (async-channel-put manager (variant NewProcessor client mdest))
+    (async-channel-put manager (variant MakeProc client mdest))
     (define proc (check-unicast-match client p #:result p))
 
     ;; 2. Turn it on, send it temp data, get OK
     (async-channel-put proc (variant Enable))
-    (async-channel-put proc (variant AddReading 90 client))
+    (async-channel-put proc (variant AddRdg 90 client))
     (check-unicast client (variant Ok))
 
     ;; 3. Send it more temp data, get OK
-    (async-channel-put proc (variant AddReading 70 client))
+    (async-channel-put proc (variant AddRdg 70 client))
     (check-unicast client (variant Ok))
 
     ;; 4. Get mean
@@ -118,7 +128,7 @@
     (async-channel-put proc (variant Disable))
 
     ;; 6. send it more temp data, get NotOk
-    (async-channel-put proc (variant AddReading 102 client))
+    (async-channel-put proc (variant AddRdg 102 client))
     (check-unicast client (variant NotOk))
 
     ;; 7. Get mean while disabled
@@ -127,7 +137,7 @@
 
     ;; 8. Enable, send more data, get OK
     (async-channel-put proc (variant Enable))
-    (async-channel-put proc (variant AddReading 50 client))
+    (async-channel-put proc (variant AddRdg 50 client))
     (check-unicast client (variant Ok))
 
     ;; 9. Shutdown All
@@ -142,33 +152,32 @@
     `((goto Off mdest)
 
       (define-state (Off mdest)
-        [(variant AddReading * resp) -> ([obligation resp (variant NotOk)]) (goto Off mdest)]
+        [(variant AddRdg * resp) -> ([obligation resp (variant NotOk)]) (goto Off mdest)]
         [(variant GetMean) -> ([obligation mdest *]) (goto Off mdest)]
         [(variant Disable) -> () (goto Off mdest)]
         [(variant Enable) -> () (goto On mdest)]
         [free -> () (goto Done)])
 
       (define-state (On mdest)
-        [(variant AddReading * resp) -> ([obligation resp (variant Ok)]) (goto On mdest)]
+        [(variant AddRdg * resp) -> ([obligation resp (variant Ok)]) (goto On mdest)]
         [(variant GetMean) -> ([obligation mdest *]) (goto On mdest)]
         [(variant Disable) -> () (goto Off mdest)]
         [(variant Enable) -> () (goto On mdest)]
         [free -> () (goto Done)])
 
       (define-state (Done)
-        [(variant AddReading * resp) -> () (goto Done)]
+        [(variant AddRdg * resp) -> () (goto Done)]
         [(variant GetMean) -> () (goto Done)]
         [(variant Disable) -> () (goto Done)]
         [(variant Enable) -> () (goto Done)])))
 
   (define manager-spec
     `(specification (receptionists [manager ,ManagerMessage]) (externals)
-       (obs-rec manager (Union [NewProcessor (Addr (Addr ,ProcessorMessage)) (Addr Nat)])
-                        (Union [ShutdownAll]))
+       (obs-rec manager ,ManagerUserAPI ,ManagerSysAPI)
        (goto Managing)
        (define-state (Managing)
-         [(variant NewProcessor resp mdest) -> () (goto Managing)]
-         [(variant NewProcessor resp mdest) ->
+         [(variant MakeProc resp mdest) -> () (goto Managing)]
+         [(variant MakeProc resp mdest) ->
           ([obligation resp (fork ,@processor-spec-parts)])
           (goto Managing)])))
 
