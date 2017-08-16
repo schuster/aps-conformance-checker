@@ -659,6 +659,26 @@
       [(> old-value value) (hash-set map member value)]
       [else map])))
 
+;; Helper for sort-numbers-descending
+(define-function (insert-sorted-descending [sorted-nums (List Nat)] [num Nat])
+  (let ([others-inserted-result
+         (for/fold ([result (record [inserted? false] [accumulated (list)])])
+                   ([sorted-num sorted-nums])
+           (if (and (> num sorted-num) (not (: result inserted?)))
+               (record [inserted? true]
+                       [accumulated (append (: result accumulated) (list num sorted-num))])
+               (record [inserted? (: result inserted?)]
+                       [accumulated (append (: result accumulated) (list sorted-num))])))])
+    (if (: others-inserted-result inserted?)
+        (: others-inserted-result accumulated)
+        (append (: others-inserted-result accumulated) (list num)))))
+
+;; Simple insertion sort
+(define-function (sort-numbers-descending [nums (List Nat)])
+  (for/fold ([sorted-so-far (list)])
+            ([num nums])
+    (insert-sorted-descending sorted-so-far num)))
+
 ;; ;; NOTE: because the akka-raft version of this is completely wrong, I'm writing my own
 ;; ;; Returns the greatest index that a majority of entries in the map agree on
 (define-function (log-index-map-consensus-for-index [map (Hash ,desugared-raft-message-address-type Nat)]

@@ -131,7 +131,6 @@
        (hash-remove e1 e2)
        (hash-has-key? e1 e2)
        (hash-empty? e1)
-       (sort-numbers-descending e)
        (printf e1 e* ...)
        (print-len e)
        (for/fold ([x1 e1]) ([x2 e2]) e3 e* ...)
