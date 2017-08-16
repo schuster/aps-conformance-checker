@@ -216,16 +216,6 @@
   (Just [val Nat])) ; TODO: come up with an accurate type
 
 ;; ---------------------------------------------------------------------------------------------------
-;; List helpers
-
-;; Works like Scala's list slice (i.e. returns empty list instead of returning errors)
-;; TODO: give an accurate type here
-(define-function (list-slice [v (List Nat)] [from-index Int] [to-index Int])
-  (list-copy v
-             (min from-index (length v))
-             (min to-index   (length v))))
-
-;; ---------------------------------------------------------------------------------------------------
 
 ;; Client message contains a command (string) to print when applying to the state machine, and a
 ;; channel to send to to confirm the application
@@ -251,6 +241,7 @@
 (define-record Entry
   [command String]
   [term Nat]
+  ;; NOTE: indices start at 1 so that a committed index of 0 means nothing has been committed
   [index Nat]
   [client (Addr ClientResponse)])
 
@@ -367,6 +358,17 @@
   [message RaftMessage]
   [log ReplicatedLog])
 
+;; ---------------------------------------------------------------------------------------------------
+;; List helpers
+
+;; Works like Scala's list slice (i.e. returns empty list instead of returning errors)
+;;
+;; from-index is inclusive, to-index is exclusive
+(define-function (list-slice [v (List Entry)] [from-index Int] [to-index Int])
+  (list-copy v
+             (min from-index (length v))
+             (min to-index   (length v))))
+
     ;;;; Program-level Functions
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -396,9 +398,12 @@
                                          [to-index Int])
   ;; NOTE: this naive conversion from semantic to implementation indices won't work under log
   ;; compaction
-  (let ([list-from-index (- from-index 1)]
-        [list-to-index   (- to-index   1)])
-      (list-slice (: replicated-log entries) (+ 1 list-from-index) (+ 1 list-to-index))))
+  ;;
+  ;; NOTE: have to be careful here because CSA cannot represent negative numbers; subtraction instead
+  ;; goes down to 0
+  (let ([inclusive-impl-from-index from-index]
+        [exclusive-impl-to-index   to-index])
+      (list-slice (: replicated-log entries) inclusive-impl-from-index exclusive-impl-to-index)))
 
 (define-function (replicated-log-last-index [replicated-log ReplicatedLog])
   (let ([entries (: replicated-log entries)])
@@ -458,8 +463,9 @@
           (if (= (length (: replicated-log entries)) 0)
               1
               (: (list-ref (: replicated-log entries) 0) index))]
-         [semantic->impl-offset (- first-impl-index first-semantic-index)]
-         [from-including-impl (+ from-including semantic->impl-offset)]
+         ;; CSA can't represent negative numbers, so we have to reverse the direction of the offset
+         [impl->semantic-offset (- first-semantic-index first-impl-index)]
+         [from-including-impl (- from-including impl->semantic-offset)]
          [to-send (list-slice (: replicated-log entries)
                                 from-including-impl
                                 (+ from-including-impl how-many))])
@@ -664,7 +670,7 @@
              [(Nothing) indices-so-far] ; NOTE: this should never happen
              [(Just index) (cons index indices-so-far)]))])
     (list-ref (sort-numbers-descending all-indices)
-              (- (ceiling (/ (length (: config members)) 2)) 1))))
+              (/ (length (: config members)) 2))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Misc.
@@ -1222,7 +1228,7 @@
 (actors [raft-server (spawn 1 RaftActor timer-manager application)])))))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; Testing code
+;; Conformance check
 
 (module+ test
   (require
