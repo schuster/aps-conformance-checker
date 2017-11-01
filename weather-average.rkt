@@ -152,14 +152,18 @@
     `((goto Off mdest)
 
       (define-state (Off mdest)
-        [(variant AddRdg * resp) -> ([obligation resp (variant NotOk)]) (goto Off mdest)]
+        [(variant AddRdg * resp) ->
+          ([obligation resp (variant NotOk)])
+          (goto Off mdest)]
         [(variant GetMean) -> ([obligation mdest *]) (goto Off mdest)]
         [(variant Disable) -> () (goto Off mdest)]
         [(variant Enable) -> () (goto On mdest)]
         [free -> () (goto Done)])
 
       (define-state (On mdest)
-        [(variant AddRdg * resp) -> ([obligation resp (variant Ok)]) (goto On mdest)]
+        [(variant AddRdg * resp) ->
+          ([obligation resp (variant Ok)])
+          (goto On mdest)]
         [(variant GetMean) -> ([obligation mdest *]) (goto On mdest)]
         [(variant Disable) -> () (goto Off mdest)]
         [(variant Enable) -> () (goto On mdest)]
@@ -169,7 +173,8 @@
         [(variant AddRdg * resp) -> () (goto Done)]
         [(variant GetMean) -> () (goto Done)]
         [(variant Disable) -> () (goto Done)]
-        [(variant Enable) -> () (goto Done)])))
+        [(variant Enable) -> () (goto Done)])
+      ))
 
   (define manager-spec
     `(specification (receptionists [manager ,ManagerMessage]) (externals)
