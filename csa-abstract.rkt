@@ -119,8 +119,8 @@
   (a#-atomic (addr loc natural))
   (a#-collective (collective-addr loc))
   (mk# mk collective-marker)
-  ;; H# = handler machine state (exp + outputs + spawns so far)
-  (H# (e# [([(marked a# mk# ...) v# m] ...) ((a# b#) ...)]))
+  ;; H# = handler machine state (exp + outputs + spawns so far + least unused marker)
+  (H# (e# [([(marked a# mk# ...) v# m] ...) ((a# b#) ...) mk]))
   (E# hole
       (spawning a# τ E# Q# ...)
       (goto q v# ... E# e# ...)
@@ -143,8 +143,8 @@
       (for/fold ([x v#]) ([x E#]) e#)
       (loop-context E#))
   (trigger# (timeout a#)
-            (internal-receive (marked a# mk# ...) v# m)
-            (external-receive (marked a# mk# ...) v#)))
+            (internal-receive (marked a#)    v# m)
+            (external-receive (marked a# mk) v#)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Test Data
@@ -270,23 +270,25 @@
        variants-with-markers-so-far))])
 
 (module+ test
-  (test-same-items?
+  (test-same-items? "messages-of-type 1"
    (term (messages-of-type/mf Nat 0))
    '([abs-nat 0]))
-  (test-same-items? (term (messages-of-type/mf (Union [Begin]) 0)) (list '[(variant Begin) 0]))
-  (test-same-items?
+  (test-same-items? "messages-of-type 2"
+    (term (messages-of-type/mf (Union [Begin]) 0)) (list '[(variant Begin) 0]))
+  (test-same-items? "messages-of-type 3"
    (term (messages-of-type/mf (Union [A] [B]) 0))
    '([(variant A) 0] [(variant B) 0]))
-  (test-same-items? (term (messages-of-type/mf (Union) 0)) null)
-  (test-same-items?
+  (test-same-items? "messages-of-type 4"
+    (term (messages-of-type/mf (Union) 0)) null)
+  (test-same-items? "messages-of-type 5"
    (term (messages-of-type/mf (Record [a Nat] [b Nat]) 0))
    (list '[(record [a abs-nat] [b abs-nat]) 0]))
-  (test-same-items?
+  (test-same-items? "messages-of-type 6"
    (csa#-messages-of-type `(Record [a (Addr Nat)] [b (Addr Nat)]) 0)
    (list '[(record [a (marked (collective-addr (env Nat)) 0)]
                    [b (marked (collective-addr (env Nat)) 1)])
            2]))
-  (test-same-items?
+  (test-same-items? "messages-of-type 7"
    (term (messages-of-type/mf (Record [x (Union [A] [B])] [y (Union [C] [D])]) 0))
    (list '[(record [x (variant A)] [y (variant C)]) 0]
          '[(record [x (variant A)] [y (variant D)]) 0]
@@ -296,23 +298,23 @@
     `(minfixpt RecTypeAddr (Addr (Record [a RecTypeAddr]))))
   (define recursive-record-type
     `(Record [a ,recursive-record-address-type]))
-  (test-same-items?
+  (test-same-items? "messages-of-type 8"
    (csa#-messages-of-type recursive-record-type 0)
    (list `[(record [a (folded ,recursive-record-address-type
                               (marked (collective-addr (env ,recursive-record-type)) 0))])
            1]))
-  (test-same-items?
+  (test-same-items? "messages-of-type 9"
    (term (messages-of-type/mf (Union) 0))
    '())
-  (test-same-items?
+  (test-same-items? "messages-of-type 10"
    (term (messages-of-type/mf (Union [A] [B String (Union [C] [D])]) 0))
    '([(variant A) 0]
      [(variant B abs-string (variant C)) 0]
      [(variant B abs-string (variant D)) 0]))
-  (test-same-items?
+  (test-same-items? "messages-of-type 11"
    (term (messages-of-type/mf (List Nat) 0))
    (list `[(list-val abs-nat) 0]))
-  (test-same-items?
+  (test-same-items? "messages-of-type 12"
    (term (messages-of-type/mf (Hash Nat (Union [A] [B] [C])) 0))
    (list `[(hash-val (abs-nat) ((variant A) (variant B) [variant C])) 0])))
 
@@ -328,10 +330,12 @@
 ;;
 ;; behavior: b#
 ;;
-;; sends: (Listof [a# v# m])
+;; sends: (Listof [(marked a# mk...) v# m])
 ;;
 ;; spawns: (Listof [a# b#])
-(struct csa#-transition-effect (trigger behavior sends spawns) #:transparent)
+;;
+;; unused-marker: mk
+(struct csa#-transition-effect (trigger behavior sends spawns unused-marker) #:transparent)
 
 (define (csa#-transition-spawn-locs transition)
   (map address-location (map first (csa#-transition-effect-spawns transition))))
@@ -343,7 +347,7 @@
 ;; This is the result of applying a csa#-transition-effect
 (struct csa#-transition
   (trigger ; follows trigger# above
-   outputs ; list of abstract-addr/abstract-message/multiplicity 3-tuples
+   outputs ; list of marked-abstract-addr/abstract-message/multiplicity 3-tuples
    final-config) ; an abstract implementation configuration
   #:transparent)
 
@@ -352,7 +356,7 @@
   (define internal-message-triggers
     (for/list ([packet-entry (csa#-config-message-packets config)])
       (match-define `[,address ,message ,multiplicity] packet-entry)
-      (term (internal-receive ,address ,message ,multiplicity))))
+      (term (internal-receive (marked ,address) ,message ,multiplicity))))
   (define atomic-actor-timeouts
     (for/fold ([timeout-triggers null])
               ([actor (csa#-config-actors config)])
@@ -370,8 +374,8 @@
           timeout-triggers)))
   (append internal-message-triggers atomic-actor-timeouts collective-actor-timeouts))
 
-(define (csa#-make-external-trigger address message)
-  (term (external-receive ,address ,message)))
+(define (csa#-make-external-trigger marked-address message)
+  (term (external-receive ,marked-address ,message)))
 
 (define trigger-eval-cache (make-hash))
 (define trigger-eval-cache-lookup-count 0)
@@ -382,9 +386,9 @@
   (match trigger
     [`(timeout ,addr)
      (eval-timeout config addr trigger abort)]
-    [`(internal-receive ,addr ,message ,mult)
+    [`(internal-receive (marked ,addr) ,message ,mult)
      (eval-message config addr message trigger abort)]
-    [`(external-receive ,addr ,message)
+    [`(external-receive (marked ,addr ,_) ,message)
      (eval-message config addr message trigger abort)]))
 
 (define (eval-timeout config addr trigger abort)
@@ -556,34 +560,37 @@
     (for/list ([machine-state final-machine-states])
       ;; REFACTOR: rename outputs to something like "transmissions", because some of them stay
       ;; internal to the configuration
-      (match-define (list final-exp (list outputs spawns)) machine-state)
+      (match-define (list final-exp (list outputs spawns unused-marker)) machine-state)
       (redex-let csa# ([(in-hole E# (goto q v#_param ...)) final-exp])
         (csa#-transition-effect
          trigger
          (term (,state-defs (goto q v#_param ...)))
          outputs
-         spawns)))))
+         spawns
+         unused-marker)))))
 
 (module+ test
   (test-equal? "Atomic actor spawns atomic actors"
-    (eval-handler `((begin (spawn 1 Nat (goto S1)) (goto S2)) (() ()))
+    (eval-handler `((begin (spawn 1 Nat (goto S1)) (goto S2)) (() () ,INIT-HANDLER-MARKER))
                   `(timeout (addr 1 0))
                   null
                   #f)
     (list (csa#-transition-effect `(timeout (addr 1 0))
                                   `(() (goto S2))
                                   null
-                                  (list `[(addr 1 1) (() (goto S1))]))))
+                                  (list `[(addr 1 1) (() (goto S1))])
+                                  INIT-HANDLER-MARKER)))
 
   (test-equal? "Collective actor spawns collective actors"
-    (eval-handler `((begin (spawn 2 Nat (goto S1)) (goto S2)) (() ()))
+    (eval-handler `((begin (spawn 2 Nat (goto S1)) (goto S2)) (() () ,INIT-HANDLER-MARKER))
                   `(timeout (collective-addr 1))
                   null
                   #f)
     (list (csa#-transition-effect `(timeout (collective-addr 1))
                                   `(() (goto S2))
                                   null
-                                  (list `[(collective-addr 2) (() (goto S1))])))))
+                                  (list `[(collective-addr 2) (() (goto S1))])
+                                  INIT-HANDLER-MARKER))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Interpreter
@@ -598,8 +605,8 @@
 ;; combination of a state monad and some kind of non-determinism monad), but I don't know enough about
 ;; monads to do that right now.
 
-;; A MachineState is (Tuple Exp (Tuple Transmissions Spawns)), where Transmissions and Spawns are
-;; as in H#
+;; A MachineState is (Tuple Exp (Tuple Transmissions Spawns Marker)), where Transmissions, Spawns, and
+;; Marker are as in H#
 ;;
 ;; A ValueState is a MachineState where the Exp is a Value
 ;;
@@ -866,10 +873,15 @@
        (lambda (vs effects)
          (match-define (list v-addr v-message) vs)
          (define quantity (if (in-loop-context?) 'many 'single))
-         (match-define `(,sends ,spawns) effects)
-         (value-result v-message
-                       `(,(add-output sends (term [,v-addr ,v-message ,quantity]))
-                         ,spawns)))
+         (match-define `(,sends ,spawns ,unused-marker) effects)
+         (match-define `[,maybe-marked-message ,new-unused-marker]
+           (if (internal-output? `[,v-addr ,v-message ,quantity])
+               `[,v-message ,unused-marker]
+               (mark v-message unused-marker)))
+         (value-result maybe-marked-message
+                       `(,(add-output sends (term [,v-addr ,maybe-marked-message ,quantity]))
+                         ,spawns
+                         ,new-unused-marker)))
        (lambda (stucks) `(send ,@stucks)))]
     ;; Spawns
     [`(spawn ,loc ,type ,init-exp ,raw-state-defs ...)
@@ -877,15 +889,17 @@
        (if (or (in-collective-handler?) (in-loop-context?))
            `(collective-addr ,loc)
            `(addr ,loc 1)))
+     (define marked-address `(marked ,address))
      (define state-defs
        (for/list ([def raw-state-defs])
-         (csa#-subst-n/Q# def (list `[self ,address]))))
-     (eval-and-then (csa#-subst-n init-exp (list `[self ,address])) effects
+         (csa#-subst-n/Q# def (list `[self ,marked-address]))))
+     (eval-and-then (csa#-subst-n init-exp (list `[self ,marked-address])) effects
        (lambda (goto-val effects)
-         (match-define (list sends spawns) effects)
-         (value-result address
+         (match-define (list sends spawns marker) effects)
+         (value-result marked-address
                        (list sends
-                             (add-spawn spawns `[,address (,state-defs ,goto-val)]))))
+                             (add-spawn spawns `[,address (,state-defs ,goto-val)])
+                             marker)))
        (lambda (stuck) `(spawn ,loc ,type ,stuck ,@raw-state-defs)))]
     ;; Goto
     [`(goto ,state-name ,args ...)
@@ -908,8 +922,7 @@
        (lambda (stucks) `(variant ,tag ,@stucks)))]
     [`abs-nat (value-result `abs-nat effects)]
     [`abs-string (value-result `abs-string effects)]
-    [(or `(addr ,_ ,_) `(collective-addr ,_))
-     (value-result exp effects)]
+    [`(marked ,_ ,_ ...) (value-result exp effects)]
     [_ (error 'eval-machine/internal "Don't know how to evaluate ~s\n" exp)]))
 
 ;; (Listof Exp)
@@ -983,7 +996,10 @@
 
 (define empty-eval-result `(() ()))
 
-(define empty-effects `(() ()))
+;; NOTE: using 200 as the initial unused marker, which should be large enough to account for all
+;; markers on config and any received message (after assimilation and canonicalization)
+(define INIT-HANDLER-MARKER 200)
+(define empty-effects `(() () ,INIT-HANDLER-MARKER))
 
 ;; Combines two eval results into one by appending their lists together
 (define (combine-eval-results r1 r2)
@@ -1046,51 +1062,73 @@
                           terminal-exps
                           expected-exp-results))))
 
-  (check-exp-steps-to? `(variant B) `(variant B))
-  (check-exp-steps-to? `(begin (variant A) (variant B)) `(variant B))
-  (check-exp-steps-to? `(case (variant A abs-nat)
+  (define-syntax (test-exp-steps-to? stx)
+    (syntax-parse stx
+      [(_ name actual expected)
+       #`(test-case name #,(syntax/loc stx (check-exp-steps-to? actual expected)))]))
+
+  (test-exp-steps-to? "exp-steps-to variant 1" `(variant B) `(variant B))
+  (test-exp-steps-to? "exp-steps-to begin" `(begin (variant A) (variant B)) `(variant B))
+  (test-exp-steps-to? "exp-steps-to case"
+                      `(case (variant A abs-nat)
                          [(A x) x]
                          [(B) (variant X)]
                          [(C) (variant Y)])
                       `abs-nat)
-  (check-exp-steps-to? `(let ([x (variant X)]
-                              [y (variant Y)])
-                          (variant A x y y))
-                       `(variant A (variant X) (variant Y) (variant Y)))
-  (check-exp-steps-to? `(record [a (let () (variant A))] [b abs-nat])
-                       `(record [a (variant A)] [b abs-nat]))
-  (check-exp-steps-to? `(record [a (let () (variant A))]
-                                [b (case (variant A) [(B) abs-nat])]
-                                [c (let () abs-nat)])
-                       `(record [a (variant A)] [b (case (variant A))] [c (let () abs-nat)]))
-  (check-exp-steps-to? `(: (record [a (variant A)] [b (variant B)]) b)
-                       `(variant B))
-  (check-exp-steps-to? `(: (record [a (variant A)] [b (variant B)]) c)
-                       `(: (record [a (variant A)] [b (variant B)]) c))
-  (check-exp-steps-to? (term (fold   (Union [A]) (variant A)))
-                       (term (folded (Union [A]) (variant A))))
-  (check-exp-steps-to? (term (record [a (fold   ,recursive-record-address-type (addr (env ,recursive-record-type) 1))]))
-                       (term (record [a (folded ,recursive-record-address-type (addr (env ,recursive-record-type) 1))])))
-  (check-exp-steps-to? `(record [a (unfold ,recursive-record-address-type (folded ,recursive-record-address-type (addr (env ,recursive-record-type) 1)))])
-                       `(record [a (addr (env ,recursive-record-type) 1)]))
+  (test-exp-steps-to? "exp-steps-to let"
+                      `(let ([x (variant X)]
+                             [y (variant Y)])
+                         (variant A x y y))
+                      `(variant A (variant X) (variant Y) (variant Y)))
+  (test-exp-steps-to? "exp-steps-to record"
+                      `(record [a (let () (variant A))] [b abs-nat])
+                      `(record [a (variant A)] [b abs-nat]))
+  (test-exp-steps-to? "exp-steps-to other record"
+                      `(record [a (let () (variant A))]
+                               [b (case (variant A) [(B) abs-nat])]
+                               [c (let () abs-nat)])
+                      `(record [a (variant A)] [b (case (variant A))] [c (let () abs-nat)]))
+  (test-exp-steps-to? "exp-steps-to record field"
+                      `(: (record [a (variant A)] [b (variant B)]) b)
+                      `(variant B))
+  (test-exp-steps-to? "exp-steps-to other record field"
+                      `(: (record [a (variant A)] [b (variant B)]) c)
+                      `(: (record [a (variant A)] [b (variant B)]) c))
+  (test-exp-steps-to? "exp-steps-to marked address"
+                      `(marked (addr 1 1))
+                      `(marked (addr 1 1)))
+  (test-exp-steps-to? "exp-steps-to fold"
+                      (term (fold   (Union [A]) (variant A)))
+                      (term (folded (Union [A]) (variant A))))
+  (test-exp-steps-to? "exp-steps-to record fold"
+                      (term (record [a (fold   ,recursive-record-address-type (marked (addr (env ,recursive-record-type) 1)))]))
+                      (term (record [a (folded ,recursive-record-address-type (marked (addr (env ,recursive-record-type) 1)))])))
+  (test-exp-steps-to? "exp-steps-to another record fold"
+                      `(record [a (unfold ,recursive-record-address-type (folded ,recursive-record-address-type (marked (addr (env ,recursive-record-type) 1))))])
+                      `(record [a (marked (addr (env ,recursive-record-type) 1))]))
   (check-exp-steps-to-all? `(< abs-nat (let () abs-nat))
                            (list `(variant True) `(variant False)))
-  (check-exp-steps-to? `(+ abs-nat (let () abs-nat))
-                       `abs-nat)
-  (check-exp-steps-to? `(random abs-nat)
-                       `abs-nat)
-  (check-exp-steps-to? `(or (variant True) (variant False))
-                       `(variant True))
-  (check-exp-steps-to? `(and (variant True) (variant False))
-                       `(variant False))
-  (check-exp-steps-to? `(not (variant True))
+  (test-exp-steps-to? "exp-steps-to plus"
+                      `(+ abs-nat (let () abs-nat))
+                      `abs-nat)
+  (test-exp-steps-to? "exp-steps-to random"
+                      `(random abs-nat)
+                      `abs-nat)
+  (test-exp-steps-to? "exp-steps-to or"
+                      `(or (variant True) (variant False))
+                      `(variant True))
+  (test-exp-steps-to? "exp-steps-to and"
+                      `(and (variant True) (variant False))
+                      `(variant False))
+  (test-exp-steps-to? "exp-steps-to not"
+                       `(not (variant True))
                        `(variant False))
   ;; Equality checks
   (check-exp-steps-to-all? (term (= abs-string abs-string))
                           (list (term (variant True)) (term (variant False))))
   (check-exp-steps-to-all? (term (= abs-nat abs-nat))
                           (list (term (variant True)) (term (variant False))))
-  (check-exp-steps-to-all? (term (= (collective-addr (env 1)) (addr (env 1) 0)))
+  (check-exp-steps-to-all? (term (= (marked (collective-addr (env 1))) (marked (addr (env 1) 0))))
                           (list (term (variant True)) (term (variant False))))
 
   ;; Tests for sorting when adding to lists and hashes
@@ -1217,10 +1255,12 @@
              (define-state (Foo) (m) (goto Foo)))
      empty-effects
      #f)
-    (value-result `(addr loc 1)
-                  `(() ([(addr loc 1)
-                         (((define-state (Foo) (m) (goto Foo)))
-                          (goto Foo (addr loc 1)))]))))
+    (value-result `(marked (addr loc 1))
+                  `(()
+                    ([(addr loc 1)
+                      (((define-state (Foo) (m) (goto Foo)))
+                       (goto Foo (marked (addr loc 1))))])
+                    ,INIT-HANDLER-MARKER)))
 
   (test-case "Spawn in loop is a collective actor"
     (check-same-items?
@@ -1234,8 +1274,10 @@
        empty-effects
        #f))
      (list
-      (machine-state `abs-nat `(() ()))
-      (machine-state `abs-nat `(() ([(collective-addr loc) (() (goto Foo (variant A)))]))))))
+      (machine-state `abs-nat `(() () ,INIT-HANDLER-MARKER))
+      (machine-state
+       `abs-nat
+       `(() ([(collective-addr loc) (() (goto Foo (variant A)))]) ,INIT-HANDLER-MARKER)))))
 
   (test-case "eval-machine test 2"
    (check-exp-steps-to? `(goto S (begin (variant A)) (begin (variant B) (variant C)))
@@ -1244,11 +1286,12 @@
   (test-case "eval-machine test 3"
    (check-equal?
     (eval-machine
-     `(begin (send (addr 1 0) abs-nat) (variant X))
+     `(begin (send (marked (addr 1 0)) abs-nat) (variant X))
      empty-effects
      #f)
-    (eval-machine-result (list (machine-state `(variant X) `(([(addr 1 0) abs-nat single]) ())))
-                         null)))
+    (eval-machine-result
+     (list (machine-state `(variant X) `(([(marked (addr 1 0)) abs-nat single]) () ,INIT-HANDLER-MARKER)))
+     null)))
 
   (test-case "Send in loop is a many-of message"
     (check-same-items?
@@ -1256,12 +1299,12 @@
       (eval-machine
        `(for/fold ([dummy abs-nat])
                   ([item (list-val abs-nat)])
-          (send (addr 1 0) item))
+          (send (marked (addr 1 0)) item))
        empty-effects
        #f))
      (list
-      (machine-state `abs-nat `(() ()))
-      (machine-state `abs-nat `(([(addr 1 0) abs-nat many]) ())))))
+      (machine-state `abs-nat `(() () ,INIT-HANDLER-MARKER))
+      (machine-state `abs-nat `(([(marked (addr 1 0)) abs-nat many]) () ,INIT-HANDLER-MARKER)))))
 
   ;; NOTE: these are the old tests for checking sorting of loop-sent messages, which I don't do
   ;; anymore. Keeping them around in case I change my mind
@@ -1314,8 +1357,9 @@
 
   ;; testing this because I had a problem with it before
   (test-equal? "Internal addresses in the transmissions do not change the evaluation"
-   (eval-machine `(begin (send (addr 1 0) abs-nat) (goto A)) empty-effects #f)
-   (value-result `(goto A) `((((addr 1 0) abs-nat single)) ()))))
+    (eval-machine `(begin (send (marked (addr 1 0)) abs-nat) (goto A)) empty-effects #f)
+    (value-result `(goto A)
+                  `((((marked (addr 1 0)) abs-nat single)) () ,INIT-HANDLER-MARKER))))
 
 (define (list-values v)
   (match v
@@ -1659,6 +1703,38 @@
                       AnotherType
                       Nat))
     (term (minfixpt SomeType1 (Addr (Record (a Nat) (b SomeType1)))))))
+
+;; ---------------------------------------------------------------------------------------------------
+;; Marking
+
+;; any mk -> [any mk]
+;;
+;; Marks given AST with fresh markers, given that mk is the least unused marker. Additionally returns
+;; the new unused least marker.
+(define (mark ast unused-marker)
+  (match ast
+    [(list 'marked addr markers ...)
+     `[(marked ,addr ,@markers ,unused-marker)
+       ,(add1 unused-marker)]]
+    [`(,ast1 ,ast-others ...)
+     (match-define `[,m-ast1 ,mk1] (mark ast1 unused-marker))
+     (match-define `[,m-rest ,mk-final] (mark ast-others mk1))
+     `[(,m-ast1 ,@m-rest) ,mk-final]]
+    [`() `[() ,unused-marker]]
+    [_ `[,ast ,unused-marker]]))
+
+(module+ test
+  (test-equal? "mark 1"
+    (mark (term ((marked (collective-addr (env Nat)) 0)
+                 (marked (addr (env Nat) 1) 1)
+                 abs-nat
+                 (begin abs-string (marked (addr (env Nat) 1)))))
+          2)
+    (term [((marked (collective-addr (env Nat)) 0 2)
+            (marked (addr (env Nat) 1) 1 3)
+            abs-nat
+            (begin abs-string (marked (addr (env Nat) 1) 4)))
+           5])))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
@@ -2485,8 +2561,9 @@
 ;; Predicates
 
 ;; Returns true if the output is to an internal address, false otherwise
+;; TODO: this should probably use marked addresses instead
 (define (internal-output? output)
-  (match-define `(,addr ,_ ,_) output)
+  (match-define `((marked ,addr ,_ ...) ,_ ,_) output)
   (csa#-internal-address? addr))
 
 (module+ test
@@ -3281,7 +3358,8 @@
 ;; Rename addresses in everything but the state definitions of the transition so that any
 ;; obs-ext > 100 is blurred, and any NEW spawn address is converted to a collective-addr.
 (define (pseudo-blur-transition-result transition-result)
-  (match-define (csa#-transition-effect trigger `(,state-defs ,goto-exp) sends spawns)
+  ;; TODO: figure out what to do with unused-marker
+  (match-define (csa#-transition-effect trigger `(,state-defs ,goto-exp) sends spawns unused-marker)
     transition-result)
   (define new-sends
     (for/list ([send sends])

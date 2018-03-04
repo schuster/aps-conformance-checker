@@ -446,6 +446,8 @@
   (append*
    (for/list ([typed-addr typed-addrs])
      (match-define `[,type ,addr] typed-addr)
+     ;; TODO: feed this a really big marker for "unused", like 100, so the marker in the message
+     ;; doesn't depend on what markers are currently in the configuration
      (for/list ([message (csa#-messages-of-type type)])
        (csa#-make-external-trigger addr message)))))
 
