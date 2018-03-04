@@ -110,7 +110,7 @@
   (α ((a b) ...))
   (b ((Q ...) e)) ; behavior
   (μ (m ...))
-  (m (a <= v))
+  (m (a <= v)) ; NOTE: technically these are marked addresses, but in the model checker internal messages never have markers
   ;; TODO: remove the externals list; use types on addresses instead
   ((ρ χ) ([τ (marked a mk ...)] ...)) ; TODO: this should probably be just one marker...
   (e ....
