@@ -9,7 +9,6 @@
  csa-valid-program?
  csa-valid-type?
  csa-valid-config?
- csa-valid-receptionist-list?
  csa-config-receptionists
  instantiate-prog
  instantiate-prog+bindings)
@@ -107,23 +106,26 @@
 
 (define-extended-language csa-eval
   csa
-  (i (α μ ρ χ))
+  (i (α μ mk ρ χ)) ; configuration; marker is the least unused marker
   (α ((a b) ...))
   (b ((Q ...) e)) ; behavior
   (μ (m ...))
   (m (a <= v))
-  ((ρ χ) ([τ a] ...))
+  ;; TODO: remove the externals list; use types on addresses instead
+  ((ρ χ) ([τ (marked a mk ...)] ...)) ; TODO: this should probably be just one marker...
   (e ....
      v)
   (v n
      (variant t v ...)
      (record [l v] ...)
      (folded τ v)
-     a
+     mk-a
      string
      (list v ...)
      (hash [v v] ...))
-  (a (addr loc natural)))
+  (a (addr loc natural))
+  (mk natural)
+  (mk-a (marked a mk ...)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Instantiation
@@ -139,60 +141,65 @@
    i
    (where (i ([x a] ...)) (instantiate-prog+bindings/mf P))])
 
-;; P -> [i (Listof [x_rec [τ a]]) (Listof [x_ext [τ a]])
+;; P -> [i (Listof [x_rec mk]) (Listof [x_ext mk])
 ;;
-;; Instantiates the given program as a configuration by allocating fresh addresses and subsituting
-;; them throughout the program as needed. Returns both the configuration and the set of bindings for
-;; the allocated addresses.
+;; Instantiates the given program as a configuration by allocating fresh addresses and markers and
+;; subsituting them throughout the program as needed. Returns both the configuration and the set of
+;; markers for the allocated addresses.
 (define (instantiate-prog+bindings prog)
   (term (instantiate-prog+bindings/mf ,prog)))
 
 (define-metafunction csa-eval
-  instantiate-prog+bindings/mf : P -> (i ([x (τ a)] ...) ([x (τ a)] ...))
+  instantiate-prog+bindings/mf : P -> (i ([x mk] ...) ([x mk] ...))
   [(instantiate-prog+bindings/mf
     (program (receptionists [x_receptionist τ_receptionist] ...)
              (externals     [x_external     τ_external] ...)
              (actors        [x_internal (let ([x_let e_let] ...) e)] ...)))
-   (i
-    ([x_receptionist (τ_receptionist a_receptionist)] ...)
-    ([x_external (τ_external a_external)] ...))
+   (i ([x_receptionist mk_rec] ...) ([x_external mk_ext] ...))
 
    ;; 1. Generate addresses for internal and external actors
    (where (a_internal ...) ((addr (spawn-loc/mf e) 0) ...))
    (where (a_external ...) (generate-externals/mf (τ_external ...)))
 
-   ;; 2. Do substitutions into spawn to get a behavior
+   ;; 2. Mark the receptionists and externals
+   (where ((marked a_receptionist) ...) ((subst-n x_receptionist [x_internal (marked a_internal)] ...) ...))
+   (where [((marked a_receptionist mk_rec) ...) mk_1] (mark* (a_receptionist ...) 0))
+   (where [((marked a_external mk_ext) ...) mk_unused] (mark* (a_external ...) mk_1))
+
+   ;; 3. Do substitutions into spawn to get a behavior
    ;; NOTE: assuming for now we can ignore the type coercion automatically put in place
    (where ((v_let ...) ...) (((subst-n e_let
-                                       [x_external a_external] ...
-                                       [x_internal a_internal] ...) ...) ...))
+                                       [x_external (marked a_external mk_ext)] ...
+                                       [x_internal (marked a_internal)] ...) ...) ...))
    (where (b ...)
           ((spawn->behavior e
                             ([x_let v_let] ...
-                             [x_internal a_internal] ...
-                             [x_external a_external] ...)
-                            a_internal) ...))
+                             [x_internal (marked a_internal)] ...
+                             [x_external (marked a_external mk_ext)] ...)
+                            (marked a_internal)) ...))
 
-   ;; 3. Construct the configuration
-   (where (a_receptionist ...) ((subst-n x_receptionist [x_internal a_internal] ...) ...))
+   ;; 4. Construct the configuration
    (where i
           [; actors
            ((a_internal b) ...)
            ; message store
            ()
+           ; least unused marker
+           mk_unused
            ; receptionists
-           ([τ_receptionist a_receptionist] ...)
+           ([τ_receptionist (marked a_receptionist mk_rec)] ...)
            ; externals
-           ([τ_external a_external] ...)])])
+           ;; TODO: remove this
+           ([τ_external (marked a_external mk_ext)] ...)])])
 
 (define-metafunction csa-eval
-  spawn->behavior : e ([x v] ...) a -> b
-  [(spawn->behavior e_spawn ([x_binding v_binding] ...) a_self)
+  spawn->behavior : e ([x v] ...) v -> b
+  [(spawn->behavior e_spawn ([x_binding v_binding] ...) v_self)
    b
    ;; 1. Substitute all non-self bindings
    (where (spawn _ _ e_goto Q ...) (subst-n e_spawn [x_binding v_binding] ...))
    ;; 2. Substitute the self-binding
-   (where b (((subst-n/Q Q [self a_self]) ...) (subst-n e_goto [self a_self])))])
+   (where b (((subst-n/Q Q [self v_self]) ...) (subst-n e_goto [self v_self])))])
 
 (module+ test
   (test-case "Instantiate program"
@@ -218,17 +225,17 @@
          )
         ;; messages
         ()
+        ;; unused marker
+        4
         ;; receptionists
-        ((Nat (addr 1 0))
-         ((Record) (addr 2 0)))
+        ((Nat (marked (addr 1 0) 0))
+         ((Record) (marked (addr 2 0) 1)))
         ;; externals
-        ((String (addr (env String) 0))
-         ((Union) (addr (env (Union)) 1))))
+        ((String (marked (addr (env String) 0) 2))
+         ((Union) (marked (addr (env (Union)) 1) 3))))
        ;; bindings
-       ([a (Nat (addr 1 0))]
-        [b ((Record) (addr 2 0))])
-       ([d (String (addr (env String) 0))]
-        [e ((Union) (addr (env (Union)) 1))])))))
+       ([a 0] [b 1])
+       ([d 2] [e 3])))))
 
 ;; Generates a distinct list of external addresses, one for each of the given types (in that order)
 (define-metafunction csa-eval
@@ -248,6 +255,8 @@
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing helpers
+
+;; TODO: these need tests once I figure out how to change their interface for markers
 
 (define (make-single-actor-config actor)
   (term (make-single-actor-config/mf ,actor)))
@@ -283,7 +292,7 @@
   [(subst x x v) v]
   [(subst x x_2 v) x]
   [(subst n x v) n]
-  [(subst a x v) a]
+  [(subst (marked a mk ...) x v) (marked a mk ...)]
   [(subst string x v) string]
   [(subst (spawn any_loc τ e Q ...) self v) (spawn any_loc τ e Q ...)]
   [(subst (spawn any_loc τ e Q ...) x v)
@@ -389,24 +398,22 @@
   (and (redex-match csa-eval i c)
        (not (check-duplicates (csa-config-actor-addresses c)))))
 
-(define (csa-valid-receptionist-list? l)
-  (redex-match csa-eval ([τ a] ...) l))
-
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
 
 (define (csa-config-actor-addresses config)
-  (redex-let* csa-eval ([(((a _) ...) _ _ _) config])
+  (redex-let* csa-eval ([(((a _) ...) _ _ _ _) config])
     (term (a ...))))
 
 (module+ test
-  (redex-let* csa-eval ([b_1 (term (() (goto A)))]
-                        [b_2 (term (() (goto B (addr 3 3) (addr 4 4))))]
-                        [α (term ([(addr 0 0) b_1]
-                                  [(addr 1 1) b_2]))]
-                        [i (term (α () () ()))])
-    (check-equal? (csa-config-actor-addresses (term i))
-                  (term ((addr 0 0) (addr 1 1))))))
+  (test-case "csa-config-actor-addresses"
+   (redex-let* csa-eval ([b_1 (term (() (goto A)))]
+                         [b_2 (term (() (goto B (marked (addr 3 3)) (marked (addr 4 4)))))]
+                         [α (term ([(addr 0 0) b_1]
+                                   [(addr 1 1) b_2]))]
+                         [i (term (α () 0 () ()))])
+     (check-equal? (csa-config-actor-addresses (term i))
+                   (term ((addr 0 0) (addr 1 1)))))))
 
 (define (csa-config-receptionists config)
   (third config))
@@ -416,3 +423,21 @@
   spawn-loc/mf : (spawn loc τ e Q ...) -> loc
   [(spawn-loc/mf (spawn loc _ ...))
    loc])
+
+;; ---------------------------------------------------------------------------------------------------
+;; Marking
+
+;; Marks the given list of addresses, where the given marker is the least unused marker. Returns the
+;; marked addresses and new least unused marker.
+(define-metafunction csa-eval
+  mark* : (a ...) mk -> [((marked a mk) ...) mk]
+  [(mark* () mk) (() mk)]
+  [(mark* (a a_rest ...) mk)
+   [((marked a mk) v ...) mk_final]
+   (where [(v ...) mk_final] (mark* (a_rest ...) ,(add1 (term mk))))])
+
+(module+ test
+  (check-equal? (term (mark* [(addr 0 1) (addr 0 2)] 0))
+                (term [((marked (addr 0 1) 0)
+                        (marked (addr 0 2) 1))
+                       2])))
