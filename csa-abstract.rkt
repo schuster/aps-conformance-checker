@@ -157,166 +157,119 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Message generation
 
+;; NOTE: using a really big marker for the intiial "unused" (100), so the marker in the message
+;; doesn't depend on what markers are currently in the configuration. This should avoid
+;; unnecessary duplicate configs
+(define INIT-MESSAGE-MARKER 100)
+
 ;; Returns the exhaustive list of externals-only message representatives for the given type and unused
 ;; marker
-(define (csa#-messages-of-type type unused-marker)
+(define (csa#-messages-of-type type)
   ;; reset the generated address, so that we don't keep finding different numbers for different types
   ;; (or even the same type, if metafunction caching ever goes away here)
-  (parameterize ([caching-enabled? #f]) ; TODO: can I get rid of this caching now that I use unused-marker?
-    (term (messages-of-type/mf ,type ,unused-marker))))
+  ;;
+  ;; TODO: can I get re-enable caching now that I don't use a global for the generated addresses?
+  (parameterize ([caching-enabled? #f])
+    (map (lambda (v) (first (mark v INIT-MESSAGE-MARKER))) (term (messages-of-type/mf ,type)))))
 
+;; Generates all *unmarked* messages of the given type
 (define-metafunction csa#
-  messages-of-type/mf : τ mk -> ([v# mk] ...)
-  [(messages-of-type/mf Nat mk) ([abs-nat mk])]
-  [(messages-of-type/mf String mk) ([abs-string mk])]
-  [(messages-of-type/mf (Union) mk) ()]
-  [(messages-of-type/mf (Union [t_1 τ_1 ...] [t_rest τ_rest ...] ...) mk)
-   ([v#_1 mk_1] ... [v#_rest mk_rest] ...)
-   (where ([v#_1 mk_1] ...) (generate-variants t_1 τ_1 ... mk))
-   (where ([v#_rest mk_rest] ...)
-          (messages-of-type/mf (Union [t_rest τ_rest ...] ...) mk))]
-  [(messages-of-type/mf (minfixpt X τ) mk)
-   ([(folded (minfixpt X τ) v#) mk_f] ...)
-   (where ([v# mk_f] ...)
-          (messages-of-type/mf (type-subst τ X (minfixpt X τ)) mk))]
-  [(messages-of-type/mf (Record [l_rest τ_rest] ... [l_1 τ_1]) mk)
-   ,(for/fold ([records-with-markers-so-far null])
-              ([sub-record-and-marker (term (messages-of-type/mf (Record [l_rest τ_rest] ...) mk))])
-      (match-define (list sub-record marker) sub-record-and-marker)
+  messages-of-type/mf : τ -> (v# ...)
+  [(messages-of-type/mf Nat) (abs-nat)]
+  [(messages-of-type/mf String) (abs-string)]
+  [(messages-of-type/mf (Union)) ()]
+  [(messages-of-type/mf (Union [t_1 τ_1 ...] [t_rest τ_rest ...] ...))
+   (v#_1 ... v#_rest ...)
+   (where (v#_1  ...) (generate-variants t_1 τ_1 ...))
+   (where (v#_rest ...)
+          (messages-of-type/mf (Union [t_rest τ_rest ...] ...)))]
+  [(messages-of-type/mf (minfixpt X τ))
+   ((folded (minfixpt X τ) v#) ...)
+   (where (v# ...)
+          (messages-of-type/mf (type-subst τ X (minfixpt X τ))))]
+  [(messages-of-type/mf (Record [l_rest τ_rest] ... [l_1 τ_1]))
+   ,(for/fold ([records-so-far null])
+              ([sub-record (term (messages-of-type/mf (Record [l_rest τ_rest] ...)))])
       (append
-       (for/list ([generated-v-and-mk (term (messages-of-type/mf τ_1 ,marker))])
-         (match-define (list generated-v unused-marker) generated-v-and-mk)
+       (for/list ([generated-v (term (messages-of-type/mf τ_1))])
          (redex-let csa# ([(record [l_other v#_other] ...) sub-record]
-                          [v#_1 generated-v]
-                          [mk_unused unused-marker])
-           (term [(record [l_other v#_other] ... [l_1 v#_1]) mk_unused])))
-       records-with-markers-so-far))]
-  [(messages-of-type/mf (Record) mk)
-   ([(record) mk])]
-  [(messages-of-type/mf (Addr τ) mk)
-   ([(marked (collective-addr (env τ)) mk) ,(add1 (term mk))])]
-  [(messages-of-type/mf (List τ) mk)
-   ([,(normalize-collection (term (list-val v# ...))) mk_1])
-   (where [(v# ...) mk_1] (value-list-of-type/mf τ mk))]
-  [(messages-of-type/mf (Hash τ_1 τ_2) mk)
-   ([,(normalize-collection (term (hash-val (v#_keys ...) (v#_vals ...)))) mk_vals])
-   (where [(v#_keys ...) mk_keys] (value-list-of-type/mf τ_1 mk))
-   (where [(v#_vals ...) mk_vals] (value-list-of-type/mf τ_2 mk_keys))])
-
-;; Returns a list of generated items of type τ, with the markers increasing on each
-(define-metafunction csa#
-  value-list-of-type/mf : τ mk -> [(v# ...) mk]
-  [(value-list-of-type/mf τ mk)
-   (remark-value-list/mf (v# ...) mk)
-   (where [(v# mk_v) ...] (messages-of-type/mf τ mk))])
-
-(module+ test
-  (test-equal? "value-list-of-type/mf"
-    (term (value-list-of-type/mf (Union [A (Addr Nat)] [B (Addr Nat)]) 0))
-    (term [((variant A (marked (collective-addr (env Nat)) 0))
-            (variant B (marked (collective-addr (env Nat)) 1)))
-           2])))
-
-;; Remarks the given AST starting with the given unused marker, returning the new AST and the least
-;; unused marker
-(define-metafunction csa#
-  remark-value-list/mf : any mk -> [any mk]
-  [(remark-value-list/mf (marked any_addr _) mk)
-   [(marked any_addr mk) ,(add1 (term mk))]]
-  [(remark-value-list/mf (any_1 any_rest ...) mk)
-   [(any_1_fixed any_rest_fixed ...) mk_2]
-   (where [any_1_fixed mk_1] (remark-value-list/mf any_1 mk))
-   (where [(any_rest_fixed ...) mk_2] (remark-value-list/mf (any_rest ...) mk_1))]
-  [(remark-value-list/mf () mk)
-   [() mk]]
-  [(remark-value-list/mf any_1 mk) [any_1 mk]])
-
-(module+ test
-  (test-equal? "remark-value-list/mf"
-    (term (remark-value-list/mf ((marked (collective-addr (env Nat)) 0)
-                                 (marked (collective-addr (env Nat)) 0)
-                                 (marked (collective-addr (env Nat)) 3))
-                                0))
-    (term [((marked (collective-addr (env Nat)) 0)
-            (marked (collective-addr (env Nat)) 1)
-            (marked (collective-addr (env Nat)) 2))
-           3]))
-  (test-equal? "remark-value-list/mf 2"
-    (term (remark-value-list/mf ((marked (collective-addr (env Nat)) 4)
-                                 (marked (collective-addr (env Nat)) 5)
-                                 (marked (collective-addr (env Nat)) 6))
-                                1))
-    (term [((marked (collective-addr (env Nat)) 1)
-            (marked (collective-addr (env Nat)) 2)
-            (marked (collective-addr (env Nat)) 3))
-           4])))
+                          [v#_1 generated-v])
+           (term (record [l_other v#_other] ... [l_1 v#_1]))))
+       records-so-far))]
+  [(messages-of-type/mf (Record))
+   ((record))]
+  [(messages-of-type/mf (Addr τ))
+   ((marked (collective-addr (env τ))))]
+  [(messages-of-type/mf (List τ))
+   (,(normalize-collection (term (list-val v# ...))))
+   (where (v# ...) (messages-of-type/mf τ))]
+  [(messages-of-type/mf (Hash τ_1 τ_2))
+   (,(normalize-collection (term (hash-val (v#_keys ...) (v#_vals ...)))))
+   (where (v#_keys ...) (messages-of-type/mf τ_1))
+   (where (v#_vals ...) (messages-of-type/mf τ_2))])
 
 ;; Generate an exhaustive list of variant values for the given tag and type, with the natural argument
 ;; acting as max-depth for the number of recursive type unfoldings
 (define-metafunction csa#
-  generate-variants : t τ ... mk -> ([(variant t v# ...) mk] ...)
-  [(generate-variants t mk) ([(variant t) mk])]
-  [(generate-variants t τ_rest ... τ_1 mk)
-   ,(for/fold ([variants-with-markers-so-far null])
-              ([sub-variant-with-mk (term (generate-variants t τ_rest ... mk))])
-      (match-define (list sub-variant mk-sv) sub-variant-with-mk)
+  generate-variants : t τ ... -> ((variant t v# ...) ...)
+  [(generate-variants t) ((variant t))]
+  [(generate-variants t τ_rest ... τ_1)
+   ,(for/fold ([variants-so-far null])
+              ([sub-variant (term (generate-variants t τ_rest ...))])
       (append
-       (for/list ([generated-v-with-marker (term (messages-of-type/mf τ_1 ,mk-sv))])
-         (match-define (list generated-v gen-marker) generated-v-with-marker)
+       (for/list ([generated-v (term (messages-of-type/mf τ_1))])
          (redex-let csa# ([(variant t v#_other ...) sub-variant]
-                          [v#_1 generated-v]
-                          [mk_1 gen-marker])
-           (term [(variant t v#_other ... v#_1) mk_1])))
-       variants-with-markers-so-far))])
+                          [v#_1 generated-v])
+           (term (variant t v#_other ... v#_1))))
+       variants-so-far))])
 
 (module+ test
   (test-same-items? "messages-of-type 1"
-   (term (messages-of-type/mf Nat 0))
-   '([abs-nat 0]))
+   (term (messages-of-type/mf Nat))
+   '(abs-nat))
   (test-same-items? "messages-of-type 2"
-    (term (messages-of-type/mf (Union [Begin]) 0)) (list '[(variant Begin) 0]))
+    (term (messages-of-type/mf (Union [Begin]))) (list '(variant Begin)))
   (test-same-items? "messages-of-type 3"
-   (term (messages-of-type/mf (Union [A] [B]) 0))
-   '([(variant A) 0] [(variant B) 0]))
+   (term (messages-of-type/mf (Union [A] [B])))
+   '((variant A) (variant B)))
   (test-same-items? "messages-of-type 4"
-    (term (messages-of-type/mf (Union) 0)) null)
+    (term (messages-of-type/mf (Union))) null)
   (test-same-items? "messages-of-type 5"
-   (term (messages-of-type/mf (Record [a Nat] [b Nat]) 0))
-   (list '[(record [a abs-nat] [b abs-nat]) 0]))
+   (term (messages-of-type/mf (Record [a Nat] [b Nat])))
+   (list '(record [a abs-nat] [b abs-nat])))
   (test-same-items? "messages-of-type 6"
-   (csa#-messages-of-type `(Record [a (Addr Nat)] [b (Addr Nat)]) 0)
-   (list '[(record [a (marked (collective-addr (env Nat)) 0)]
-                   [b (marked (collective-addr (env Nat)) 1)])
-           2]))
+   (csa#-messages-of-type `(Record [a (Addr Nat)] [b (Addr Nat)]))
+   (list `(record [a (marked (collective-addr (env Nat)) ,INIT-MESSAGE-MARKER)]
+                  [b (marked (collective-addr (env Nat)) ,(add1 INIT-MESSAGE-MARKER))])))
   (test-same-items? "messages-of-type 7"
-   (term (messages-of-type/mf (Record [x (Union [A] [B])] [y (Union [C] [D])]) 0))
-   (list '[(record [x (variant A)] [y (variant C)]) 0]
-         '[(record [x (variant A)] [y (variant D)]) 0]
-         '[(record [x (variant B)] [y (variant C)]) 0]
-         '[(record [x (variant B)] [y (variant D)]) 0]))
+   (term (messages-of-type/mf (Record [x (Union [A] [B])] [y (Union [C] [D])])))
+   (list '(record [x (variant A)] [y (variant C)])
+         '(record [x (variant A)] [y (variant D)])
+         '(record [x (variant B)] [y (variant C)])
+         '(record [x (variant B)] [y (variant D)])))
   (define recursive-record-address-type
     `(minfixpt RecTypeAddr (Addr (Record [a RecTypeAddr]))))
   (define recursive-record-type
     `(Record [a ,recursive-record-address-type]))
   (test-same-items? "messages-of-type 8"
-   (csa#-messages-of-type recursive-record-type 0)
-   (list `[(record [a (folded ,recursive-record-address-type
-                              (marked (collective-addr (env ,recursive-record-type)) 0))])
-           1]))
+   (csa#-messages-of-type recursive-record-type)
+   (list `(record [a (folded ,recursive-record-address-type
+                             (marked (collective-addr (env ,recursive-record-type))
+                                     ,INIT-MESSAGE-MARKER))])))
   (test-same-items? "messages-of-type 9"
-   (term (messages-of-type/mf (Union) 0))
+   (term (messages-of-type/mf (Union)))
    '())
   (test-same-items? "messages-of-type 10"
-   (term (messages-of-type/mf (Union [A] [B String (Union [C] [D])]) 0))
-   '([(variant A) 0]
-     [(variant B abs-string (variant C)) 0]
-     [(variant B abs-string (variant D)) 0]))
+   (term (messages-of-type/mf (Union [A] [B String (Union [C] [D])])))
+   '((variant A)
+     (variant B abs-string (variant C))
+     (variant B abs-string (variant D))))
   (test-same-items? "messages-of-type 11"
-   (term (messages-of-type/mf (List Nat) 0))
-   (list `[(list-val abs-nat) 0]))
+   (term (messages-of-type/mf (List Nat)))
+   (list `(list-val abs-nat)))
   (test-same-items? "messages-of-type 12"
-   (term (messages-of-type/mf (Hash Nat (Union [A] [B] [C])) 0))
-   (list `[(hash-val (abs-nat) ((variant A) (variant B) [variant C])) 0])))
+   (term (messages-of-type/mf (Hash Nat (Union [A] [B] [C]))))
+   (list `(hash-val (abs-nat) ((variant A) (variant B) [variant C])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
