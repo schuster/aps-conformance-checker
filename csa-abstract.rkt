@@ -35,7 +35,6 @@
  csa#-output-type
  csa#-output-message
  csa#-output-multiplicity
- csa#-blur-addresses ; needed for blurring in APS#
  internal-addr-types
  externals-in
  csa#-sort-config-components
@@ -1912,78 +1911,146 @@
 
 ;; impl-config nat (a#ext ...) -> (List impl-config (Listof a#int))
 ;;
-;; Blurs all actors in the configuration with the given spawn flag, and blurs any external address not
-;; in relevant-externals. Returns the blurred impl-config as well as the list of internal addresses
-;; that were blurred. See the discussion of blurring in main.rkt for more details.
-(define (csa#-blur-config config id-to-blur relevant-externals)
+;; Blurs all actors in the configuration with the given spawn flag, and removes any markers not in
+;; monitored-markers. See the discussion of blurring in main.rkt for more details.
+(define (csa#-blur-config config id-to-blur monitored-markers)
   ;; 1. Remove all blurred addresses and their messages
-  (match-define (list remaining-config removed-actors)
+  (match-define (list remaining-config actors-to-assimilate)
     (remove-actors-by-id config id-to-blur))
-  ;; 2. Do the actual rename/blur for both internals and externals (in remaining config, removed
+  ;; 2. Do the renaming/marker removal throughout the remaining config for both internals and externals (in remaining config, removed
   ;; actors, and removed messages)
-  (define removed-actor-addresses (map csa#-actor-address removed-actors))
-  (match-define (list renamed-config renamed-removed-actors)
-    (csa#-blur-addresses (list remaining-config removed-actors)
-                         removed-actor-addresses
-                         relevant-externals))
-  ;; 3. Deduplicate message packets in the packet set that now have the same content (the renaming
-  ;; might have caused messages with differing content or address to now be the same)
-  (define deduped-packets (deduplicate-packets (csa#-config-message-packets renamed-config)))
-  ;; 4. Merge blurred behaviors in and subsume others as necessary
-  (define updated-blurred-actors
-    (add-blurred-behaviors (deduplicate-collectives (csa#-config-blurred-actors renamed-config))
-                           renamed-removed-actors))
-  (list
-   (term (,(csa#-config-actors renamed-config)
-          ,updated-blurred-actors
-          ,deduped-packets))
-   removed-actor-addresses))
+  (define addrs-to-assimilate (map csa#-actor-address actors-to-assimilate))
+  (define renamed-config
+    (make-config
+     (rename-for-assimilation (csa#-config-actors remaining-config)
+                              addrs-to-assimilate
+                              monitored-markers)
+     (rename-for-assimilation (csa#-config-blurred-actors remaining-config)
+                              addrs-to-assimilate
+                              monitored-markers)
+     (rename-packets-for-assimilation (csa#-config-message-packets remaining-config)
+                                      addrs-to-assimilate
+                                      monitored-markers)
+     (rename-for-assimilation (csa#-config-receptionists remaining-config)
+                              addrs-to-assimilate
+                              monitored-markers)))
+  ;; 3. Deduplicate message packets, collective actor behaviors, and receptionists that might be
+  ;; identical after the rename (the renaming might have caused terms with differing content to now be
+  ;; the same)
+  (define deduped-config
+    (make-config (csa#-config-actors renamed-config)
+                 (deduplicate-collectives (csa#-config-blurred-actors renamed-config))
+                 (deduplicate-packets (csa#-config-message-packets renamed-config))
+                 (deduplicate-receptionists (csa#-config-receptionists renamed-config))))
+  ;; 4. Do the renaming/removal throughout the actors to assimilate, then add them back into the
+  ;; config
+  (define renamed-actors-to-assimilate
+    (for/list ([actor actors-to-assimilate])
+      (define renamed (rename-for-assimilation actor addrs-to-assimilate monitored-markers))
+      `[,(rename-addr-for-assimilation (csa#-actor-address renamed) addrs-to-assimilate)
+        ,(actor-behavior renamed)]))
+  (make-config (csa#-config-actors deduped-config)
+               (add-blurred-behaviors (csa#-config-blurred-actors deduped-config)
+                                      renamed-actors-to-assimilate)
+               (csa#-config-message-packets deduped-config)
+               (csa#-config-receptionists deduped-config)))
 
 (module+ test
-  (test-equal? "check that messages with blurred addresses get merged together"
+  (test-equal? "check that messages with removed markers get merged together"
     (csa#-blur-config
      (term (()
             ()
-            (((addr 2 0) (addr (env Nat) 1) single)
-             ((addr 2 0) (addr (env Nat) 2) single)
-             ((addr 2 0) (addr (env Nat) 3) single))))
+            (((addr 2 0) (marked (collective-addr (env Nat)) 1) single)
+             ((addr 2 0) (marked (collective-addr (env Nat)) 2) single)
+             ((addr 2 0) (marked (collective-addr (env Nat)) 3) single))
+            ()))
      1
-     (list '(addr (env Nat) 3)))
-    (list
-     (term (()
-            ()
-            (((addr 2 0) (collective-addr (env Nat)) many)
-             ((addr 2 0) (addr (env Nat) 3) single))))
-     null))
+     (list 3))
+    (term (()
+           ()
+           (((addr 2 0) (marked (collective-addr (env Nat))) many)
+            ((addr 2 0) (marked (collective-addr (env Nat)) 3) single))
+           ())))
 
-  (test-equal? "Will remove actors by id"
+  (test-equal? "Will assimilate actors by id"
     (csa#-blur-config
      (term (([(addr 1 0) (() (goto A))]
              [(addr 1 1) (() (goto A))])
             ()
+            ()
             ()))
      0
      null)
-    (list
-     (term (([(addr 1 1) (() (goto A))])
-            ([(collective-addr 1) ((() (goto A)))])
-            ()))
-     (list '(addr 1 0))))
+    (term (([(addr 1 1) (() (goto A))])
+           ([(collective-addr 1) ((() (goto A)))])
+           ()
+           ())))
 
   (test-equal? "Merge collective behaviors when they become the same"
     (csa#-blur-config
      (term (()
             ([(collective-addr 1)
-              ((() (goto A (addr (env Nat) 1)))
-               (() (goto A (collective-addr (env Nat)))))])
+              ((() (goto A (marked (collective-addr (env Nat)) 1)))
+               (() (goto A (marked (collective-addr (env Nat))))))])
+            ()
             ()))
      0
      null)
-    (list
-     (term (()
-            ([(collective-addr 1) ((() (goto A (collective-addr (env Nat)))))])
+    (term (()
+           ([(collective-addr 1) ((() (goto A (marked (collective-addr (env Nat))))))])
+           ()
+           ())))
+
+  (test-equal? "Markers are assimilated on receptionists"
+    (csa#-blur-config
+     (term (() () () ([Nat (marked (addr 1 1) 2 3 4)])))
+     0
+     (list 2))
+    (term (() () () ([Nat (marked (addr 1 1) 2)]))))
+
+  (test-equal? "Markers are assimilated on assimilated receptionists"
+    (csa#-blur-config
+     (term (([(addr 1 1) [() (goto A)]]
+             [(addr 1 0) [() (goto A)]])
+            ()
+            ()
+            ([Nat (marked (addr 1 1) 2 3 4)])))
+     1
+     (list 2))
+    (term (([(addr 1 0) [() (goto A)]])
+           ([(collective-addr 1) ([() (goto A)])])
+           ()
+           ([Nat (marked (collective-addr 1) 2)]))))
+
+  (test-equal? "Markers in atomic actor behaviors are assimilated"
+    (csa#-blur-config
+     (term (([(addr 1 1) [((define-state (A) (m) (goto A (marked (addr 2 1) 2 3))))
+                          (goto A (marked (addr 2 1) 2 3))]])
+            ()
+            ()
             ()))
-     (list))))
+     0
+     (list 3))
+    (term (([(addr 1 1) [((define-state (A) (m) (goto A (marked (addr 2 1) 3))))
+                          (goto A (marked (addr 2 1) 3))]])
+            ()
+            ()
+            ())))
+
+  (test-equal? "Markers in collective actor behaviors are assimilated"
+    (csa#-blur-config
+     (term (()
+            ([(collective-addr 1) ([((define-state (A) (m) (goto A (marked (addr 2 1) 2 3))))
+                                    (goto A (marked (addr 2 1) 2 3))])])
+            ()
+            ()))
+     0
+     (list 3))
+    (term (()
+           ([(collective-addr 1) ([((define-state (A) (m) (goto A (marked (addr 2 1) 3))))
+                                   (goto A (marked (addr 2 1) 3))])])
+           ()
+           ()))))
 
 ;; impl-config nat -> impl-config ((a# b#) ...)
 ;;
@@ -1999,9 +2066,10 @@
          (csa#-config-actor-by-address config (csa#-address-with-opposite-id addr))))
   (define-values (removed-actors remaining-actors)
     (partition should-be-removed? (csa#-config-actors config)))
-  (list (term (,remaining-actors
-               ,(csa#-config-blurred-actors config)
-               ,(csa#-config-message-packets config)))
+  (list (make-config remaining-actors
+                     (csa#-config-blurred-actors config)
+                     (csa#-config-message-packets config)
+                     (csa#-config-receptionists config))
         removed-actors))
 
 (define (switch-spawn-flag address)
@@ -2018,6 +2086,7 @@
         ((addr 2 0) ,test-behavior1)
         ((addr 3 1) ,test-behavior1))
        ()
+       ()
        ()))
      1)
     (list
@@ -2026,124 +2095,163 @@
         ((addr 2 0) ,test-behavior1)
         ((addr 3 1) ,test-behavior1))
        ()
+       ()
        ()))
      (list (term ((addr 1 1) ,test-behavior1))))))
 
-;; term (a#int-without-type ...) (a#ext-without-type ...) -> term
+(define (rename-packets-for-assimilation packets addrs-to-assimilate monitored-markers)
+  (for/list ([packet packets])
+    (make-packet (rename-addr-for-assimilation (csa#-message-packet-address packet)
+                                               addrs-to-assimilate)
+                 (rename-for-assimilation (csa#-message-packet-value packet)
+                                          addrs-to-assimilate
+                                          monitored-markers)
+                 (csa#-message-packet-multiplicity packet))))
+
+(module+ test
+  (test-equal? "rename-packets-for-assimilation"
+    (rename-packets-for-assimilation `([(addr 1 1) (marked (addr 2 1) 3) single])
+                                     (list `(addr 1 1))
+                                     null)
+    `([(collective-addr 1) (marked (addr 2 1)) single])))
+
+;; term (a#int ...) (mk ...) -> term
 ;;
-;; Renames internal addresses in internals-to-blur and external addresses *not* in
-;; relevant-externals to their respective imprecise forms
+;; Transforms internal addresses in addrs-to-assimilate to collective addresses and removes markers
+;; *not* in monitored-markers. Also performs the deduplication for hash and list values
 ;;
 ;; NOTE: any updates to this function may also need to be added to pseudo-blur
-(define (csa#-blur-addresses some-term internals-to-blur relevant-externals)
+(define (rename-for-assimilation some-term addrs-to-assimilate monitored-markers)
   (match some-term
-    [(and addr `(addr ,loc ,_))
-     (cond
-       [(csa#-internal-address? addr)
-        (if (member addr internals-to-blur)
-            (term (collective-addr ,loc))
-            addr)]
-       ;; must be an external address at this point
-       [(member addr relevant-externals) addr]
-       [else (term (collective-addr ,loc))])]
+    [`(marked ,addr ,markers ...)
+     (define new-markers (filter (lambda (m) (member m monitored-markers)) markers))
+     `(marked ,(rename-addr-for-assimilation addr addrs-to-assimilate) ,@new-markers)]
     [(list (and keyword (or 'list-val 'hash-val)) terms ...)
-     (define blurred-args (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) terms))
+     (define blurred-args
+       (map (curryr rename-for-assimilation addrs-to-assimilate monitored-markers) terms))
      (normalize-collection `(,keyword ,@blurred-args))]
     [`(hash-val ,keys ,vals)
-     (define blurred-keys (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) keys))
-     (define blurred-vals (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) vals))
+     (define blurred-keys
+       (map (curryr rename-for-assimilation addrs-to-assimilate monitored-markers) keys))
+     (define blurred-vals
+       (map (curryr rename-for-assimilation addrs-to-assimilate monitored-markers) vals))
      (normalize-collection `(hash-val ,blurred-keys ,blurred-vals))]
     [(list terms ...)
-     (map (curryr csa#-blur-addresses internals-to-blur relevant-externals) terms)]
+     (map (curryr rename-for-assimilation addrs-to-assimilate monitored-markers) terms)]
     [_ some-term]))
 
 (module+ test
   (test-equal? "blur test"
-    (csa#-blur-addresses
-     (term (((addr foo 0) (addr foo 1))
-            (addr bar 1)
-            (addr (env Nat) 1)
-            (addr (env Nat) 2)
-            (addr bar 0)
-            (addr baz 0)
-            (addr quux 1)))
+    (rename-for-assimilation
+     (term (((marked (addr foo 0)) (marked (addr foo 1)))
+            (marked (addr bar 1))
+            (marked (collective-addr (env Nat)) 1)
+            (marked (collective-addr (env Nat)) 2)
+            (marked (addr bar 0))
+            (marked (addr baz 0))
+            (marked (addr quux 1))))
      (list (term (addr foo 1)) (term (addr bar 1)))
-     (list '(addr (env Nat) 2)))
-    (term (((addr foo 0) (collective-addr foo))
-           (collective-addr bar)
-           (collective-addr (env Nat))
-           (addr (env Nat) 2)
-           (addr bar 0)
-           (addr baz 0)
-           (addr quux 1))))
+     (list 2))
+    (term (((marked (addr foo 0)) (marked (collective-addr foo)))
+           (marked (collective-addr bar))
+           (marked (collective-addr (env Nat)))
+           (marked (collective-addr (env Nat)) 2)
+           (marked (addr bar 0))
+           (marked (addr baz 0))
+           (marked (addr quux 1)))))
 
   (test-equal? "blur test 2"
-    (csa#-blur-addresses
+    (rename-for-assimilation
      (redex-let* csa#
                  ([(a# b#)
                    (term
                        ((addr 0 0)
                         (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
                             (begin
-                              (send (addr (env Nat) 1) abs-nat)
-                              (send (addr (env Nat) 2) abs-nat)
+                              (send (marked (collective-addr (env Nat)) 1) abs-nat)
+                              (send (marked (collective-addr (env Nat)) 2) abs-nat)
                               (goto A x y z))))
-                         (goto A (addr (env Nat) 2) (addr (env Nat) 3) (addr (env Nat) 4)))))]
-                  [i# (term (([a# b#]) () ()))])
+                         (goto A
+                               (marked (collective-addr (env Nat)) 2)
+                               (marked (collective-addr (env Nat)) 3)
+                               (marked (collective-addr (env Nat)) 4)))))]
+                  [i# (make-config (term ([a# b#])) null null null)])
                  (term i#))
      null
-     (term ((addr (env Nat) 1) (addr (env Nat) 3))))
+     (list 1 3))
     (redex-let* csa#
                 ([(a# b#)
                   (term
                          ((addr 0 0)
                           (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
                               (begin
-                                (send (addr (env Nat) 1) abs-nat)
-                                (send (collective-addr (env Nat)) abs-nat)
+                                (send (marked (collective-addr (env Nat)) 1) abs-nat)
+                                (send (marked (collective-addr (env Nat))) abs-nat)
                                 (goto A x y z))))
-                           (goto A (collective-addr (env Nat)) (addr (env Nat) 3) (collective-addr (env Nat))))))]
-                 [i# (term (([a# b#]) () ()))])
+                           (goto A
+                                 (marked (collective-addr (env Nat)))
+                                 (marked (collective-addr (env Nat)) 3)
+                                 (marked (collective-addr (env Nat)))))))]
+                 [i# (make-config (term ([a# b#])) null null null)])
                 (term i#)))
 
   ;; Make sure duplicates are removed from lists and hashes
   (test-equal? "blur test 3"
-   (csa#-blur-addresses
+   (rename-for-assimilation
     (redex-let csa#
         ([e# (term (hash-val (abs-nat)
-                             ((addr (env Nat) 1)
-                              (addr (env Nat) 2)
-                              (addr (env Nat) 3)
-                              (addr (env Nat) 4))))])
+                             ((marked (collective-addr (env Nat)) 1)
+                              (marked (collective-addr (env Nat)) 2)
+                              (marked (collective-addr (env Nat)) 3)
+                              (marked (collective-addr (env Nat)) 4))))])
       (term e#))
     null
-    '((addr (env Nat) 1) (addr (env Nat) 3)))
+    '(1 3))
    ;; Some reordering happens as a result of normalize-collection
-   (term (hash-val (abs-nat) ((addr (env Nat) 1) (addr (env Nat) 3) (collective-addr (env Nat))))))
+   (term (hash-val (abs-nat)
+                   ((marked (collective-addr (env Nat)))
+                    (marked (collective-addr (env Nat)) 1)
+                    (marked (collective-addr (env Nat)) 3)))))
 
   (test-equal? "blur test 4"
-   (csa#-blur-addresses
+   (rename-for-assimilation
     (redex-let csa#
-        ([e# (term (list-val (addr (env Nat) 1)
-                             (addr (env Nat) 2)
-                             (addr (env Nat) 3)
-                             (addr (env Nat) 4)))])
+        ([e# (term (list-val (marked (collective-addr (env Nat)) 1)
+                             (marked (collective-addr (env Nat)) 2)
+                             (marked (collective-addr (env Nat)) 3)
+                             (marked (collective-addr (env Nat)) 4)))])
       (term e#))
     null
     null)
-   (term (list-val (collective-addr (env Nat)))))
+   (term (list-val (marked (collective-addr (env Nat))))))
 
   (test-equal? "blur test 5"
-   (csa#-blur-addresses
+   (rename-for-assimilation
     (redex-let csa#
-        ([e# (term (list-val (addr (env Nat) 1)
-                             (addr (env Nat) 2)
-                             (addr (env Nat) 3)
-                             (addr (env Nat) 4)))])
+        ([e# (term (list-val (marked (collective-addr (env Nat)) 1)
+                             (marked (collective-addr (env Nat)) 2)
+                             (marked (collective-addr (env Nat)) 3)
+                             (marked (collective-addr (env Nat)) 4)))])
       (term e#))
     null
-    `((addr (env Nat) 1) (addr (env Nat) 2) (addr (env Nat) 3) (addr (env Nat) 4)))
-   (term (list-val (addr (env Nat) 1) (addr (env Nat) 2) (addr (env Nat) 3) (addr (env Nat) 4)))))
+    `(1 2 3 4))
+   (term (list-val (marked (collective-addr (env Nat)) 1)
+                   (marked (collective-addr (env Nat)) 2)
+                   (marked (collective-addr (env Nat)) 3)
+                   (marked (collective-addr (env Nat)) 4)))))
+
+(define (rename-addr-for-assimilation addr addrs-to-assimilate)
+  (if (member addr addrs-to-assimilate)
+      (match-let ([`(addr ,loc ,_) addr]) `(collective-addr ,loc))
+      addr))
+
+(module+ test
+  (test-equal? "Rename addr for assimilation"
+    (rename-addr-for-assimilation `(addr 1 1) (list `(addr 1 1)))
+    `(collective-addr 1))
+  (test-equal? "Don't rename addrs not supposed to be assimilated"
+    (rename-addr-for-assimilation `(addr 1 0) (list `(addr 1 1)))
+    `(addr 1 0)))
 
 ;; Returns #t if the address is of the form (addr _ id), #f otherwise.
 (define (has-addr-id? addr id)
@@ -2244,6 +2352,10 @@
     (for/list ([collective collectives])
       (map (curry list (csa#-blurred-actor-address collective))
            (csa#-blurred-actor-behaviors collective))))))
+
+;; Leaving this as a separate function just in case I want to define it differently later
+(define (deduplicate-receptionists recs)
+  (remove-duplicates recs))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Canonicalization (the sorting of config components)
