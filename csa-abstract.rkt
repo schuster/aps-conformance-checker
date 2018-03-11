@@ -75,16 +75,21 @@
 
 ;; Abstract-interpretation version of CSA
 (define-extended-language csa# csa-eval
-  (i# (α# β# mk μ#)) ; ρ# and χ# are unnecessary; the spec config tells us the receptionist types, and the ext addr locs give their type
+  ;; TODO: add receptionists back in...
+  ;;
+  ;; NOTE: can leave the marker set out here as an optimization: we assume for the sake of this
+  ;; checker it never goes over 100 (can easily adjust those constants)
+  (i# (α# β# μ# ρ#))
   (α# ((a#-atomic b#) ...))
   (β# ((a#-collective (b# ...)) ...)) ; collective actors, represented by a set of abstract behaviors
   (b# ((Q# ...) e#)) ; behavior
   ;; REFACTOR: make a general structure for abstract multisets: values with multiplicities attached
-  (μ# ((a# v# m) ...)) ; message packets ; NOTE: technically these are marked addresses, but in the model checker internal messages never have markers
+  (μ# ((a# v# m) ...)) ; message packets
   (m single many) ; m for "multiplicity"
+  (ρ# ([τ (marked a# mk ...)] ...))
   (Q# (define-state (q [x τ] ...) (x) e#)
       (define-state (q [x τ] ...) (x) e# [(timeout e#) e#]))
-  (v# (marked a# mk# ...)
+  (v# (marked a# mk ...)
       (variant t v# ...)
       (record [l v#] ...)
       (folded τ v#)
@@ -118,9 +123,8 @@
   ;; there was no current handler before the current handler was run
   (a#-atomic (addr loc natural))
   (a#-collective (collective-addr loc))
-  (mk# mk collective-marker)
   ;; H# = handler machine state (exp + outputs + spawns so far + least unused marker)
-  (H# (e# [([(marked a# mk# ...) v# m] ...) ((a# b#) ...) mk]))
+  (H# (e# [([(marked a# mk ...) v# m] ...) ((a# b#) ...) mk]))
   (E# hole
       (spawning a# τ E# Q# ...)
       (goto q v# ... E# e# ...)
@@ -373,44 +377,52 @@
 ;; it if its multiplicity is single, else leave it there if its multiplicity is many (because removing
 ;; a message from an abstract list of 0 or more yields a list of 0 or more).
 (define (config-remove-packet config addr-val-pair)
-  (match-define `(,atomics ,collectives ,packets) config)
+  (match-define `(,atomics ,collectives ,packets ,recs) config)
   (define new-packets
     ;; if the multiplicity is not single, it must be many, so we just return the original config
     ;; because nothing is actually removed
     (remove (append addr-val-pair `(single)) packets))
-  `(,atomics ,collectives ,new-packets))
+  `(,atomics ,collectives ,new-packets ,recs))
 
 (module+ test
   (check-equal?
    (config-remove-packet `(() () ([(init-addr 1 0) abs-nat single]
                                   [(init-addr 2 0) abs-nat single]
-                                  [(init-addr 1 0) abs-string single]))
+                                  [(init-addr 1 0) abs-string single])
+                              ())
                          `((init-addr 1 0) abs-nat))
    `(() () ([(init-addr 2 0) abs-nat single]
-            [(init-addr 1 0) abs-string single])))
+            [(init-addr 1 0) abs-string single])
+        ()))
   (check-equal?
    (config-remove-packet `(() () ([(init-addr 1 0) abs-nat single]
                                   [(init-addr 2 0) abs-nat single]
-                                  [(init-addr 1 0) abs-string single]))
+                                  [(init-addr 1 0) abs-string single])
+                              ())
                          `((init-addr 2 0) abs-nat))
    `(() () ([(init-addr 1 0) abs-nat single]
-            [(init-addr 1 0) abs-string single])))
+            [(init-addr 1 0) abs-string single])
+        ()))
   (check-equal?
    (config-remove-packet `(() () ([(init-addr 1 0) abs-nat single]
                                   [(init-addr 2 0) abs-nat many]
-                                  [(init-addr 1 0) abs-string single]))
+                                  [(init-addr 1 0) abs-string single])
+                              ())
                          `((init-addr 2 0) abs-nat))
    `(() () ([(init-addr 1 0) abs-nat single]
             [(init-addr 2 0) abs-nat many]
-            [(init-addr 1 0) abs-string single])))
+            [(init-addr 1 0) abs-string single])
+        ()))
   (check-equal?
    (config-remove-packet `(() () ([(init-addr 1 0) abs-nat single]
                                   [(init-addr 2 0) abs-nat many]
-                                  [(init-addr 1 0) abs-string single]))
+                                  [(init-addr 1 0) abs-string single])
+                              ())
                          `((init-addr 3 0) abs-nat))
    `(() () ([(init-addr 1 0) abs-nat single]
             [(init-addr 2 0) abs-nat many]
-            [(init-addr 1 0) abs-string single]))))
+            [(init-addr 1 0) abs-string single])
+        ())))
 
 ;; b# -> e# or #f
 ;;
@@ -1328,44 +1340,44 @@
      `(hash-val ,(sort (remove-duplicates keys) sexp<?)
                 ,(sort (remove-duplicates vals) sexp<?))]))
 
-;; Adds a new output to an existing list of outputs, in sexp<? order, merging with existing packets
+;; Adds a new output to an existing list of outputs, in sexp<? order, merging with existing outputs
 ;; and updating the multiplicity if needed
-(define (add-output existing-packets new-packet)
-  (match-define `[,new-addr ,new-val ,new-mult] new-packet)
-  (match existing-packets
-    [(list) (list new-packet)]
-    [(list old-packet existing-packets ...)
-     (define new-packet-without-mult `[,new-addr ,new-val])
-     (define old-packet-without-mult
-       `[,(csa#-message-packet-address old-packet) ,(csa#-message-packet-value old-packet)])
+(define (add-output existing-outputs new-output)
+  (match-define `[,new-addr ,new-val ,new-mult] new-output)
+  (match existing-outputs
+    [(list) (list new-output)]
+    [(list old-output existing-outputs ...)
+     (define new-output-without-mult `[,new-addr ,new-val])
+     (define old-output-without-mult
+       `[,(csa#-output-address old-output) ,(csa#-output-message old-output)])
      (cond
-       [(equal? old-packet-without-mult new-packet-without-mult)
-        (cons `[,new-addr ,new-val many] existing-packets)]
-       [(sexp<? new-packet-without-mult old-packet-without-mult)
-        (cons new-packet (cons old-packet existing-packets))]
-       [else (cons old-packet (add-output existing-packets new-packet))])]))
+       [(equal? old-output-without-mult new-output-without-mult)
+        (cons `[,new-addr ,new-val many] existing-outputs)]
+       [(sexp<? new-output-without-mult old-output-without-mult)
+        (cons new-output (cons old-output existing-outputs))]
+       [else (cons old-output (add-output existing-outputs new-output))])]))
 
 (module+ test
   (test-equal? "Basic add-output test 1: already exists"
-    (add-output (list `[(addr 1 0) abs-nat single]
-                      `[(addr 2 0) abs-nat single]
-                      `[(addr 3 0) abs-nat single])
-                `[(addr 2 0) abs-nat single])
-    (list `[(addr 1 0) abs-nat single]
-          `[(addr 2 0) abs-nat many]
-          `[(addr 3 0) abs-nat single]))
+    (add-output (list `[(marked (addr 1 0)) abs-nat single]
+                      `[(marked (addr 2 0)) abs-nat single]
+                      `[(marked (addr 3 0)) abs-nat single])
+                `[(marked (addr 2 0)) abs-nat single])
+    (list `[(marked (addr 1 0)) abs-nat single]
+          `[(marked (addr 2 0)) abs-nat many]
+          `[(marked (addr 3 0)) abs-nat single]))
   (test-equal? "Basic add-output test 2: does not exist"
-    (add-output (list `[(addr 1 0) abs-nat single]
-                      `[(addr 2 0) abs-nat single]
-                      `[(addr 3 0) abs-nat single])
-                `[(addr 4 0) abs-nat single])
-    (list `[(addr 1 0) abs-nat single]
-          `[(addr 2 0) abs-nat single]
-          `[(addr 3 0) abs-nat single]
-          `[(addr 4 0) abs-nat single]))
+    (add-output (list `[(marked (addr 1 0)) abs-nat single]
+                      `[(marked (addr 2 0)) abs-nat single]
+                      `[(marked (addr 3 0)) abs-nat single])
+                `[(marked (addr 4 0)) abs-nat single])
+    (list `[(marked (addr 1 0)) abs-nat single]
+          `[(marked (addr 2 0)) abs-nat single]
+          `[(marked (addr 3 0)) abs-nat single]
+          `[(marked (addr 4 0)) abs-nat single]))
   (test-equal? "Must include collective-address outputs for the purpose of escaped addresses"
-    (add-output `() `[(collective-addr (env (Addr Nat))) (addr 2 0) single])
-    `([(collective-addr (env (Addr Nat))) (addr 2 0) single])))
+    (add-output `() `[(marked (collective-addr (env (Addr Nat)))) (marked (addr 2 0)) single])
+    `([(marked (collective-addr (env (Addr Nat)))) (marked (addr 2 0)) single])))
 
 (define (add-spawn existing-spawns new-spawn)
   (if (member new-spawn existing-spawns)
@@ -1394,7 +1406,7 @@
     (partition internal-output? (csa#-transition-effect-sends transition-effect)))
   (csa#-transition trigger
                    external-sends
-                   (merge-messages-into-config with-spawns internal-sends)))
+                   (merge-messages-into-config with-spawns (map output->packet internal-sends))))
 
 ;; Sets the behavior for the actor with the given precise address to the given expression
 (define (update-behavior/precise config address behavior)
@@ -1404,12 +1416,19 @@
     ,(csa#-config-blurred-actors config)
     ,(csa#-config-message-packets config)))
 
+;; converts an output (which includes the marker on an address) to a packet (which does not)
+(define (output->packet output)
+  `[(unmark-addr (csa#-output-address output))
+    (csa#-output-message output)
+    (csa#-output-multiplicity output)])
+
 ;; Abstractly adds the set of new packets to the packet set in the given config.
-(define (merge-messages-into-config config new-outputs)
-  (redex-let csa# ([(any_actors any_blurred any_packets) config])
+(define (merge-messages-into-config config new-packets)
+  (redex-let csa# ([(any_actors any_blurred any_packets any_recs) config])
     (term (any_actors
            any_blurred
-           ,(merge-messages-into-packet-set (term any_packets) new-outputs)))))
+           ,(merge-messages-into-packet-set (term any_packets) new-packets)
+           any_recs))))
 
 ;; Abstractly adds the set of new packets to the given set.
 (define (merge-messages-into-packet-set packet-set new-message-list)
@@ -1417,49 +1436,55 @@
 
 (module+ test
   (test-equal? "merge-messages-into-config 1"
-   (merge-messages-into-config (term (() () ())) (list (term ((addr 0 0) abs-nat single))))
-   (term (() () (((addr 0 0) abs-nat single)))))
+    (merge-messages-into-config (term (() () () ())) (list (term ((addr 0 0) abs-nat single))))
+    (term (() () (((addr 0 0) abs-nat single)) ())))
 
   (test-equal? "merge-messages-into-config 2"
-   (merge-messages-into-config (term (() () ())) (list (term ((addr 0 0) abs-nat many))))
-   (term (() () (((addr 0 0) abs-nat many)))))
+    (merge-messages-into-config (term (() () () ())) (list (term ((addr 0 0) abs-nat many))))
+    (term (() () (((addr 0 0) abs-nat many)) ())))
 
   (test-equal? "merge-messages-into-config 3"
-   (merge-messages-into-config (term (() () (((addr 0 0) abs-nat single))))
-                       (list (term ((addr 0 0) abs-nat single))))
-   (term (() () (((addr 0 0) abs-nat many)))))
+    (merge-messages-into-config (term (() () (((addr 0 0) abs-nat single)) ()))
+                                (list (term ((addr 0 0) abs-nat single))))
+    (term (() () (((addr 0 0) abs-nat many)) ())))
 
   (test-equal? "merge-messages-into-config 4"
-   (merge-messages-into-config (term (() () (((addr 0 0) abs-nat single))))
-                       (list (term ((addr 0 0) abs-nat many))))
-   (term (() () (((addr 0 0) abs-nat many)))))
+    (merge-messages-into-config (term (() () (((addr 0 0) abs-nat single)) ()))
+                                (list (term ((addr 0 0) abs-nat many))))
+    (term (() () (((addr 0 0) abs-nat many)) ())))
 
   (test-equal? "merge-messages-into-config 5"
-   (merge-messages-into-config (term (() () (((addr 0 0) abs-nat single))))
-                               (list (term ((addr 1 0) abs-nat many))))
-   (term (() () (((addr 0 0) abs-nat single) ((addr 1 0) abs-nat many)))))
+    (merge-messages-into-config (term (() () (((addr 0 0) abs-nat single)) ()))
+                                (list (term ((addr 1 0) abs-nat many))))
+    (term (() () (((addr 0 0) abs-nat single) ((addr 1 0) abs-nat many)) ())))
 
   (test-equal? "merge-messages-into-config 6"
-   (merge-messages-into-config (term (()
-                                      ()
-                                      (((addr 1 0) (collective-addr (env Nat)) single)
-                                       ((addr 1 0) (addr (env Nat) 0) single))))
-                               (term (((addr 1 0) (collective-addr (env Nat)) single))))
-   (term (()
-          ()
-          (((addr 1 0) (collective-addr (env Nat)) many)
-           ((addr 1 0) (addr (env Nat) 0) single))))))
+    (merge-messages-into-config (term (()
+                                       ()
+                                       (((addr 1 0) (marked (collective-addr (env Nat))) single)
+                                        ((addr 1 0) (marked (addr (env Nat) 0)) single))
+                                       ()))
+                                (term (((addr 1 0) (marked (collective-addr (env Nat))) single))))
+    (term (()
+           ()
+           (((addr 1 0) (marked (collective-addr (env Nat))) many)
+            ((addr 1 0) (marked (addr (env Nat) 0)) single))
+           ()))))
 
 (define (merge-new-actors config new-actors)
   (for/fold ([config config])
             ([actor new-actors])
-    (match-define (list atomic-actors collective-actors messages) config)
+    (match-define (list atomic-actors collective-actors messages recs) config)
     (match-define (list new-addr new-behavior) actor)
     (if (csa#-atomic-address? new-addr)
-        (list (append atomic-actors (list (list new-addr new-behavior))) collective-actors messages)
+        (list (append atomic-actors (list (list new-addr new-behavior)))
+              collective-actors
+              messages
+              recs)
         (list atomic-actors
               (add-blurred-behaviors collective-actors (list `[,new-addr ,new-behavior]))
-              messages))))
+              messages
+              recs))))
 
 (module+ test
   (define new-spawn1
@@ -1475,6 +1500,7 @@
                (term ((,init-actor1 ,new-spawn1)
                       (((collective-addr foo)
                         ((((define-state (A) (x) (goto A))) (goto A)))))
+                      ()
                       ()))))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -1499,7 +1525,7 @@
        [binding (binding-val binding)])]
     [`abs-nat `abs-nat]
     [`abs-string `abs-string]
-    [`(addr ,_ ,_) exp]
+    [`(marked (addr ,_ ,_) ,_ ...) exp]
     [`(collective-addr ,_) exp]
     [`(spawn ,loc ,type ,init ,states ...)
      (define non-self-bindings (shadow (list 'self)))
@@ -1557,7 +1583,7 @@
 (module+ test
   (check-equal? (csa#-subst-n '(begin x) (list `[x abs-nat])) '(begin abs-nat))
   (check-equal? (csa#-subst-n '(send x y) (list `[y abs-nat])) '(send x abs-nat))
-  (check-equal? (csa#-subst-n '(addr (env Nat) 1) (list `[x abs-nat])) '(addr (env Nat) 1))
+  (check-equal? (csa#-subst-n '(marked (addr (env Nat) 1)) (list `[x abs-nat])) '(marked (addr (env Nat) 1)))
   (check-equal? (csa#-subst-n '(= x y) (list `[x abs-nat])) '(= abs-nat y))
   (check-equal? (csa#-subst-n/case-clause `[(Cons p) (begin p x)] (list `[p abs-nat]))
                 (term [(Cons p) (begin p x)]))
@@ -1567,14 +1593,14 @@
                 (term (list abs-nat abs-nat)))
   (check-equal? (csa#-subst-n `(variant Foo abs-nat) (list `[a abs-nat]))
                 (term (variant Foo abs-nat)))
-  (check-equal? (csa#-subst-n `(addr 1 0) (list `[x abs-nat]))
-                `(addr 1 0))
+  (check-equal? (csa#-subst-n `(marked (addr 1 0)) (list `[x abs-nat]))
+                `(marked (addr 1 0)))
   (test-equal? "spawn subst 1"
     (csa#-subst-n `(spawn loc
                           Nat
                           (goto A self abs-nat)
                           (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
-                  (list `[self (addr 2 0)]))
+                  (list `[self (marked (addr 2 0))]))
     (term (spawn loc
                  Nat
                  (goto A self abs-nat)
@@ -1584,7 +1610,7 @@
                           Nat
                           (goto A self abs-nat)
                           (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
-                  (list `[x (addr 2 0)]))
+                  (list `[x (marked (addr 2 0))]))
     (term (spawn loc
                  Nat
                  (goto A self abs-nat)
@@ -1594,11 +1620,11 @@
                           Nat
                           (goto A self abs-nat)
                           (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
-                  (list `[y (addr 2 0)]))
+                  (list `[y (marked (addr 2 0))]))
     (term (spawn loc
                  Nat
                  (goto A self abs-nat)
-                 (define-state (A [s Nat] [a Nat]) (x) (goto A x (addr 2 0) self)))))
+                 (define-state (A [s Nat] [a Nat]) (x) (goto A x (marked (addr 2 0)) self)))))
 
   (test-equal? "shadowing works as expected"
     (csa#-subst-n `(begin (let ([x abs-nat]) x) x) (list (binding 'x 'abs-string)))
@@ -1689,6 +1715,15 @@
             (begin abs-string (marked (addr (env Nat) 1) 4)))
            5])))
 
+(define (unmark-addr marked)
+  (match marked
+    [`(marked ,a ,_ ...) a]))
+
+(module+ test
+  (test-equal? "unmark-addr"
+    (unmark-addr `(marked (addr (env Nat) 1) 2 3))
+    `(addr (env Nat) 1)))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Abstraction
 
@@ -1709,11 +1744,11 @@
   abstract-config/mf : i (a_internal ...) -> i#
   [(abstract-config/mf (((a b) ...) ; actors
                         () ; messages-in-transit
-                        _ ; receptionists (ignored because the spec config manages these)
-                        _ ; externals (ignored because the spec config manages these)
+                        ρ ; receptionists
+                        _ ; externals (ignored)
                         )
                        (a_internal ...))
-   (([a# b#] ...) () ())
+   (([a# b#] ...) () () ρ)
    (where ([a# b#] ...) ((abstract-actor (a b) (a_internal ...)) ...))])
 
 (define-metafunction csa#
@@ -1749,7 +1784,7 @@
   [(abstract-e natural _) abs-nat]
   [(abstract-e string _) abs-string]
   [(abstract-e x _) x]
-  [(abstract-e a _) a]
+  [(abstract-e (marked a mk ...) _) (marked ,(csa#-abstract-address (term a)) mk ...)]
   [(abstract-e (goto q e ...) (a ...))
    (goto q (abstract-e e (a ...)) ...)]
   [(abstract-e (begin e ...) (a ...)) (begin (abstract-e e (a ...)) ...)]
@@ -1797,32 +1832,39 @@
 ;; Abstracts the address a, where internal-addresses is the list of all addresses belonging to actors
 ;; in a's implementation configuration.
 (define (csa#-abstract-address a)
-  (term (abstract-e ,a ())))
+  a)
 
 (module+ test
-  (check-equal? (term (abstract-e (record [f1 1] [f2 2]) ()))
-                (term (record [f1 abs-nat] [f2 abs-nat])))
-  (check-not-false
-   (redex-match? csa#
-                 (variant Foo (addr 1 0) (addr (env Nat) 2))
-                 (term (abstract-e (variant Foo (addr 1 0) (addr (env Nat) 2)) ()))))
-  (check-equal? (term (abstract-e (list 1 2) ()))
-                (term (list-val abs-nat)))
-  (check-equal? (term (abstract-e (list 1 (let () 1)) ()))
-                (term (list abs-nat (let () abs-nat))))
-  (check-equal? (term (abstract-e (list (variant B) (variant A)) ()))
-                (term (list-val (variant A) (variant B))))
-  (check-equal? (term (abstract-e (hash [1 (variant B)] [2 (variant A)]) ()))
-                (term (hash-val (abs-nat) ((variant A) (variant B)))))
-  (check-equal? (term (abstract-e (hash [1 2] [3 4]) ()))
-                (term (hash-val (abs-nat) (abs-nat))))
-  (check-equal? (term (abstract-e (hash) ()))
-                (term (hash-val () ())))
-  (check-equal? (term (abstract-e (hash [1 (let ([x 1]) x)] [3 4]) ()))
-                (term (hash [abs-nat (let ([x abs-nat]) x)] [abs-nat abs-nat])))
+  (test-equal? "abstract-e 1"
+    (term (abstract-e (record [f1 1] [f2 2]) ()))
+    (term (record [f1 abs-nat] [f2 abs-nat])))
+  (test-not-false "abstract-e 2"
+    (redex-match? csa#
+                  (variant Foo (marked (addr 1 0)) (marked (addr (env Nat) 2) 3))
+                  (term (abstract-e (variant Foo (marked (addr 1 0)) (marked (addr (env Nat) 2) 3)) ()))))
+  (test-equal? "abstract-e 3" (term (abstract-e (list 1 2) ()))
+               (term (list-val abs-nat)))
+  (test-equal? "abstract-e 4"
+    (term (abstract-e (list 1 (let () 1)) ()))
+    (term (list abs-nat (let () abs-nat))))
+  (test-equal? "abstract-e 5"
+    (term (abstract-e (list (variant B) (variant A)) ()))
+    (term (list-val (variant A) (variant B))))
+  (test-equal? "abstract-e 6"
+    (term (abstract-e (hash [1 (variant B)] [2 (variant A)]) ()))
+    (term (hash-val (abs-nat) ((variant A) (variant B)))))
+  (test-equal? "abstract-e 7"
+    (term (abstract-e (hash [1 2] [3 4]) ()))
+    (term (hash-val (abs-nat) (abs-nat))))
+  (test-equal? "abstract-e 8"
+    (term (abstract-e (hash) ()))
+    (term (hash-val () ())))
+  (test-equal? "abstract-e 9"
+    (term (abstract-e (hash [1 (let ([x 1]) x)] [3 4]) ()))
+    (term (hash [abs-nat (let ([x abs-nat]) x)] [abs-nat abs-nat])))
   (test-equal? "Abstraction okay on folded"
-    (term (abstract-e (folded ,recursive-record-address-type (addr 1 0)) ()))
-    `(folded ,recursive-record-address-type (addr 1 0))))
+    (term (abstract-e (folded ,recursive-record-address-type (marked (addr 1 0))) ()))
+    `(folded ,recursive-record-address-type (marked (addr 1 0)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selecting the spawn id to blur
