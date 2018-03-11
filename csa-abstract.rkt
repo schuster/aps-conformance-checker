@@ -35,18 +35,17 @@
  csa#-output-type
  csa#-output-message
  csa#-output-multiplicity
- internal-addr-types
+ ;; internal-addr-types
  externals-in
  csa#-sort-config-components
  csa#-addrs-to-evict
  csa#-evict
- merge-receptionists
+ ;; merge-receptionists
 
  ;; Required by APS#; should go into a "common" language instead
  csa#
  csa#-abstract-address
  type-subst
- type-join
  type<=
 
  ;; Testing helpers
@@ -144,7 +143,7 @@
       (for/fold ([x v#]) ([x E#]) e#)
       (loop-context E#))
   (trigger# (timeout a#)
-            (internal-receive (marked a#)    v# m)
+            (internal-receive         a#     v# m)
             (external-receive (marked a# mk) v#)))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -310,7 +309,7 @@
   (define internal-message-triggers
     (for/list ([packet-entry (csa#-config-message-packets config)])
       (match-define `[,address ,message ,multiplicity] packet-entry)
-      (term (internal-receive (marked ,address) ,message ,multiplicity))))
+      (term (internal-receive ,address ,message ,multiplicity))))
   (define atomic-actor-timeouts
     (for/fold ([timeout-triggers null])
               ([actor (csa#-config-actors config)])
@@ -340,7 +339,7 @@
   (match trigger
     [`(timeout ,addr)
      (eval-timeout config addr trigger abort)]
-    [`(internal-receive (marked ,addr) ,message ,mult)
+    [`(internal-receive ,addr ,message ,mult)
      (eval-message config addr message trigger abort)]
     [`(external-receive (marked ,addr ,_) ,message)
      (eval-message config addr message trigger abort)]))
@@ -1401,17 +1400,57 @@
   ;; 4. add sent messages
   (define-values (internal-sends external-sends)
     (partition internal-output? (csa#-transition-effect-sends transition-effect)))
+  (define config-with-messages
+    (merge-messages-into-config with-spawns (map output->packet internal-sends)))
+  ;; 5. add new receptionists
+  (define new-receptionists
+    ;; NOTE: merge-receptionists will remove duplicates
+    (append*
+     (for/list ([output external-sends])
+       (internal-addr-types (csa#-output-message output) (csa#-output-type output)))))
   (csa#-transition trigger
                    external-sends
-                   (merge-messages-into-config with-spawns (map output->packet internal-sends))))
+                   (make-config (csa#-config-actors config-with-messages)
+                                (csa#-config-blurred-actors config-with-messages)
+                                (csa#-config-message-packets config-with-messages)
+                                (merge-receptionists (csa#-config-receptionists config-with-messages)
+                                                     new-receptionists))))
+
+(module+ test
+  (test-equal? "Applying transition merges in new receptionists"
+    (csa#-apply-transition
+     (make-config (list `[(addr 1 1) (() (goto A))]) null null null)
+     (csa#-transition-effect `(timeout (addr 1 1))
+                             `(() (goto A))
+                             (list `[(marked (collective-addr (env (Addr String))))
+                                     (marked (addr 1 1) 1)
+                                     single])
+                             null
+                             2))
+    (csa#-transition `(timeout (addr 1 1))
+                     (list `[(marked (collective-addr (env (Addr String))))
+                             (marked (addr 1 1) 1)
+                             single])
+                     (make-config (list `[(addr 1 1) (() (goto A))])
+                                  null
+                                  null
+                                  (list `[String (marked (addr 1 1) 1)])))))
 
 ;; Sets the behavior for the actor with the given precise address to the given expression
 (define (update-behavior/precise config address behavior)
   (match-define `(,first-actors ,_ ,later-actors)
     (config-actor-and-rest-by-address config address))
-  `((,@first-actors (,address ,behavior) ,@later-actors)
-    ,(csa#-config-blurred-actors config)
-    ,(csa#-config-message-packets config)))
+  (make-config
+   `(,@first-actors (,address ,behavior) ,@later-actors)
+   (csa#-config-blurred-actors config)
+   (csa#-config-message-packets config)
+   (csa#-config-receptionists config)))
+
+(module+ test
+  (test-equal? "update-behavior/precise"
+    (redex-let csa# ([i# (make-config (list `[(addr 1 1) (() (goto A))]) null null null)])
+      (update-behavior/precise (term i#) `(addr 1 1) `(() (goto B))))
+    (make-config (list `[(addr 1 1) (() (goto B))]) null null null)))
 
 ;; converts an output (which includes the marker on an address) to a packet (which does not)
 (define (output->packet output)
@@ -1474,14 +1513,14 @@
     (match-define (list atomic-actors collective-actors messages recs) config)
     (match-define (list new-addr new-behavior) actor)
     (if (csa#-atomic-address? new-addr)
-        (list (append atomic-actors (list (list new-addr new-behavior)))
-              collective-actors
-              messages
-              recs)
-        (list atomic-actors
-              (add-blurred-behaviors collective-actors (list `[,new-addr ,new-behavior]))
-              messages
-              recs))))
+        (make-config (append atomic-actors (list (list new-addr new-behavior)))
+                     collective-actors
+                     messages
+                     recs)
+        (make-config  atomic-actors
+                      (add-blurred-behaviors collective-actors (list `[,new-addr ,new-behavior]))
+                      messages
+                      recs))))
 
 (module+ test
   (define new-spawn1
@@ -2363,15 +2402,17 @@
 ;; * collective actors by address
 ;; * behaviors of a collective actor by the entire behavior
 ;; * message packets by the entire packet
+;; * receptionists by the entire receptionist
 (define (csa#-sort-config-components config)
-  (match-define `(,atomic-actors ,collective-actors ,packets) config)
+  (match-define `(,atomic-actors ,collective-actors ,packets ,receptionists) config)
   (define (actor<? a b)
     (sexp<? (csa#-actor-address a) (csa#-actor-address b)))
   (define sorted-atomic-actors (sort atomic-actors actor<?))
   (define sorted-collective-actors
     (sort (map sort-collective-actor-behaviors collective-actors) actor<?))
   (define sorted-packets (sort packets sexp<?))
-  `(,sorted-atomic-actors ,sorted-collective-actors ,sorted-packets))
+  (define sorted-receptionists (sort receptionists sexp<?))
+  (make-config sorted-atomic-actors sorted-collective-actors sorted-packets sorted-receptionists))
 
 (define (sort-collective-actor-behaviors actor)
   (match-define `(,addr ,behaviors) actor)
@@ -2379,35 +2420,46 @@
 
 (module+ test
   (define sort-components-test-config
-    `(;; atomic actors
-      ([(addr 2 0) (() (goto A))]
+    (make-config
+     ;; atomic actors
+     `([(addr 2 0) (() (goto A))]
        [(addr 1 0) (() (goto Z))])
-      ;; collective actors
-      ([(collective-addr Q) ((() (goto Z))
-                                (() (goto M))
-                                (() (goto A)))]
+     ;; collective actors
+     `([(collective-addr Q) ((() (goto Z))
+                             (() (goto M))
+                             (() (goto A)))]
        [(collective-addr B) ((() (goto Z))
-                                (() (goto M))
-                                (() (goto A)))])
-      ;; messages
-      ([(addr 2 0) abs-nat single]
-       [(addr 1 0) abs-nat single])))
-  (check-true (redex-match? csa# i# sort-components-test-config))
-  (check-equal?
-   (csa#-sort-config-components sort-components-test-config)
-   `(;; atomic actors
-     ([(addr 1 0) (() (goto Z))]
-      [(addr 2 0) (() (goto A))])
+                             (() (goto M))
+                             (() (goto A)))])
+     ;; messages
+     `([(addr 2 0) abs-nat single]
+       [(addr 1 0) abs-nat single])
+     ;; receptionists
+     `([Nat (marked (addr 2 0) 2)]
+       [Nat (marked (addr 2 0) 1)]
+       [Nat (marked (addr 1 0) 3)])))
+  (test-case "sort-config-components"
+    (check-true  (redex-match? csa# i# sort-components-test-config))
+    (check-equal?
+     (csa#-sort-config-components sort-components-test-config)
+     (make-config
+      ;; atomic actors
+      `([(addr 1 0) (() (goto Z))]
+        [(addr 2 0) (() (goto A))])
       ;; collective actors
-     ([(collective-addr B) ((() (goto A))
-                               (() (goto M))
-                               (() (goto Z)))]
-      [(collective-addr Q) ((() (goto A))
-                               (() (goto M))
-                               (() (goto Z)))])
+      `([(collective-addr B) ((() (goto A))
+                              (() (goto M))
+                              (() (goto Z)))]
+        [(collective-addr Q) ((() (goto A))
+                              (() (goto M))
+                              (() (goto Z)))])
       ;; messages
-     ([(addr 1 0) abs-nat single]
-      [(addr 2 0) abs-nat single]))))
+      `([(addr 1 0) abs-nat single]
+        [(addr 2 0) abs-nat single])
+      ;; receptionists
+      `([Nat (marked (addr 1 0) 3)]
+        [Nat (marked (addr 2 0) 1)]
+        [Nat (marked (addr 2 0) 2)])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Duplicate message merging
@@ -2454,34 +2506,48 @@
     (equal? (term (a#_1 v#_1)) (term (a#_2 v#_2)))))
 
 (module+ test
-  (check-equal?
+  (test-equal? "deduplicate-packets 1"
    (deduplicate-packets
-    (term (((addr (env Nat) 1) abs-nat single)
-           ((addr (env Nat) 1) abs-nat single))))
-   (term (((addr (env Nat) 1) abs-nat many))))
+    (term (((addr 5 1) abs-nat single)
+           ((addr 5 1) abs-nat single))))
+   (term (((addr 5 1) abs-nat many))))
 
-    (check-equal?
+  (test-equal? "deduplicate-packets 2"
    (deduplicate-packets
-    (term (((addr (env Nat) 1) abs-nat single)
-           ((addr (env Nat) 1) abs-nat single)
-           ((addr (env Nat) 1) abs-nat single))))
-   (term (((addr (env Nat) 1) abs-nat many))))
+    (term (((addr 5 1) abs-nat single)
+           ((addr 5 1) abs-nat single)
+           ((addr 5 1) abs-nat single))))
+   (term (((addr 5 1) abs-nat many))))
 
-  (check-equal?
+  (test-equal? "deduplicate-packets 3"
    (deduplicate-packets
-    (term (((addr (env Nat) 1) abs-nat single)
-           ((addr (env Nat) 2) abs-nat single)
-           ((addr (env Nat) 3) abs-nat many)
-           ((collective-addr (env Nat)) abs-nat many)
-           ((addr (env Nat) 1) abs-nat single)
-           ((collective-addr (env Nat)) abs-nat single))))
-   (term (((addr (env Nat) 1) abs-nat many)
-          ((addr (env Nat) 2) abs-nat single)
-          ((addr (env Nat) 3) abs-nat many)
-          ((collective-addr (env Nat)) abs-nat many)))))
+    (term (((addr 5 1) abs-nat single)
+           ((addr 5 2) abs-nat single)
+           ((addr 5 3) abs-nat many)
+           ((collective-addr 5) abs-nat many)
+           ((addr 5 1) abs-nat single)
+           ((collective-addr 5) abs-nat single))))
+   (term (((addr 5 1) abs-nat many)
+          ((addr 5 2) abs-nat single)
+          ((addr 5 3) abs-nat many)
+          ((collective-addr 5) abs-nat many)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Constructors
+
+(define (make-config atomics collectives messages receptionists)
+  (list atomics collectives messages receptionists))
+
+(module+ test
+  (test-true "make-config creates valid abstract program config"
+    (redex-match? csa#
+                  i#
+                  (redex-let csa#
+                      ([α# (list `[(addr 1 1) [() (goto A)]])]
+                       [β# (list `[(collective-addr 1) ([() (goto A)])])]
+                       [μ# (list `[(addr 1 1) abs-nat single])]
+                       [ρ# (list `[Nat (marked (addr 1 1) 2)])])
+                    (make-config (term α#) (term β#) (term μ#) (term ρ#))))))
 
 (define (make-single-actor-abstract-config actor)
   (term (make-single-actor-abstract-config/mf ,actor)))
@@ -2489,7 +2555,20 @@
 (define-metafunction csa#
   make-single-actor-abstract-config/mf : (a# b#) -> i#
   [(make-single-actor-abstract-config/mf (a# b#))
-   (([a# b#]) () ())])
+   (([a# b#]) () () ())])
+
+(module+ test
+  (test-true "make-single-actor-abstract-config returns valid config"
+    (redex-match? csa#
+                  i#
+                  (make-single-actor-abstract-config `[(addr 0 0) [() (goto A)]]))))
+
+(define (make-packet addr message quant)
+  (list addr message quant))
+
+(module+ test
+  (test-true "make-packet creates valid packets"
+    (redex-match? csa# μ# (list (make-packet `(addr 1 1) `abs-nat `single)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
@@ -2505,6 +2584,10 @@
 ;; Returns the configuration's set of in-flight message packets
 (define (csa#-config-message-packets config)
   (third config))
+
+;; Returns the configuration's receptionists
+(define (csa#-config-receptionists config)
+  (fourth config))
 
 (define (config-actor-and-rest-by-address config addr)
   (find-with-rest (lambda (actor) (equal? (csa#-actor-address actor) addr))
@@ -2555,7 +2638,7 @@
 (define csa#-output-address car)
 
 (define (csa#-output-type o)
-  (match (address-location (csa#-output-address o))
+  (match (address-location (unmark-addr (csa#-output-address o)))
     [`(env ,type) type]))
 
 (define csa#-output-message cadr)
@@ -2600,6 +2683,7 @@
     (redex-let csa# ([i# (term (()
                                 (((collective-addr 1) ())
                                  ((collective-addr 2) ((() (goto A)))))
+                                ()
                                 ()))])
       (check-equal? (blurred-actor-behaviors-by-address (term i#) `(collective-addr 2))
                     (list (term (() (goto A))))))))
@@ -2660,7 +2744,16 @@
   trigger-address/mf : trigger# -> a#
   [(trigger-address/mf (timeout a#)) a#]
   [(trigger-address/mf (internal-receive a# _ _)) a#]
-  [(trigger-address/mf (external-receive a# _)) a#])
+  [(trigger-address/mf (external-receive (marked a# _ ...) _)) a#])
+
+(module+ test
+  (test-equal? "Trigger address of timeout" (trigger-address `(timeout (addr 1 1))) `(addr 1 1))
+  (test-equal? "Trigger address of internal-receive"
+    (trigger-address `(internal-receive (addr 1 1) abs-nat single))
+    `(addr 1 1))
+  (test-equal? "Trigger address of external-receive"
+    (trigger-address `(external-receive (marked (addr 1 1) 0) abs-nat))
+    `(addr 1 1)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Predicates
@@ -2672,8 +2765,9 @@
   (csa#-internal-address? addr))
 
 (module+ test
-  (check-true (internal-output? (term ((addr 1 0) abs-nat single))))
-  (check-false (internal-output? (term ((addr (env Nat) 2) abs-nat single)))))
+  (test-true "internal-output? 1" (internal-output? (term ((marked (addr 1 0)) abs-nat single))))
+  (test-false "internal-output? 2"
+    (internal-output? (term ((marked (collective-addr (env Nat)) 2) abs-nat single)))))
 
 (define (csa#-atomic-address? addr)
   (match addr
@@ -2709,7 +2803,7 @@
   (test-false "internal-atomic-action? collecive actor, many-of message"
     (internal-atomic-action? (term (internal-receive (collective-addr 1) abs-nat many))))
   (test-false "internal-atomic-action? external receive"
-    (internal-atomic-action? (term (external-receive (addr 1 0) abs-nat)))))
+    (internal-atomic-action? (term (external-receive (marked (addr 1 0) 0) abs-nat)))))
 
 (define (internal-single-receive? trigger)
   (match trigger
@@ -2726,189 +2820,189 @@
   (test-false "internal-single-receive? collective/many"
     (internal-single-receive? `(internal-receive (collective-addr 1 NEW) abs-nat many)))
   (test-false "internal-single-receive? external-receive"
-    (internal-single-receive? `(external-receive (addr 1 0) abs-nat)))
+    (internal-single-receive? `(external-receive (marked (addr 1 0) 0) abs-nat)))
   (test-false "internal-single-receive? timeout)"
     (internal-single-receive? `(timeout (addr 1 0)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Types
 
-;; NOTE: non-equality-based join for lists and hashes is not implemented
-(define-metafunction csa#
-  type-join : τ τ -> τ
-  [(type-join (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))
-   (Union [t_3 τ_3 ...] ...)
-   (where ([t_3 τ_3 ...] ...)
-          ,(let ()
-             (define branches1 (term ([t_1 τ_1 ...] ...)))
-             (define branches2 (term ([t_2 τ_2 ...] ...)))
-             (define type1-branches
-              (for/list ([branch1 branches1])
-                (define tag (first branch1))
-                (match (findf (lambda (branch2) (equal? (first branch2) tag)) branches2)
-                  [#f branch1]
-                  [branch2
-                   (define (join-components type1 type2)
-                     (term (type-join ,type1 ,type2)))
-                   ;; NOTE: assumes that the branches have the same number of components
-                   `[,tag ,@(map join-components (rest branch1) (rest branch2))]])))
-             (define remaining-branch2-branches
-               (filter (lambda (b2)
-                         (not (findf (lambda (b1) (equal? (first b1) (first b2))) branches1)))
-                       branches2))
-             (define all-new-branches (append type1-branches remaining-branch2-branches))
-             ;; NOTE: We sort here to get the types into a canonical form and avoid repeated states,
-             ;; but only when the number of branches is different from the original number in each
-             ;; list (as a conservative heuristic to detect when the types might be the
-             ;; possibly-out-order types from the original program)
-             (if (and (= (length all-new-branches) (length branches1))
-                      (= (length all-new-branches) (length branches2)))
-                 all-new-branches
-                 (sort all-new-branches sexp<?))))]
-  [(type-join (Record [l_1 τ_1] ...) (Record [l_2 τ_2] ...))
-   (Record [l_1 (type-join τ_1 τ_2)] ...)]
-  ;; If names for minfixpt are the same, don't rename them
-  [(type-join (minfixpt X τ_1) (minfixpt X τ_2))
-   (minfixpt X (type-join τ_1 τ_2))]
-  [(type-join (minfixpt X_1 τ_1) (minfixpt X_2 τ_2))
-   (minfixpt X_fresh (type-join τ_1subst τ_2subst))
-   (where X_fresh
-          ,(variable-not-in (term ((minfixpt X_1 τ_1) (minfixpt X_2 τ_2))) (term X_1)))
-   (where τ_1subst (type-subst τ_1 X_1 X_fresh))
-   (where τ_2subst (type-subst τ_2 X_2 X_fresh))]
-  [(type-join X X) X]
-  [(type-join (Addr τ_1) (Addr τ_2))
-   ;; addresses are contravariant, so have to do the meet instead
-   (Addr (type-meet τ_1 τ_2))]
-  [(type-join τ τ) τ])
+;; ;; NOTE: non-equality-based join for lists and hashes is not implemented
+;; (define-metafunction csa#
+;;   type-join : τ τ -> τ
+;;   [(type-join (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))
+;;    (Union [t_3 τ_3 ...] ...)
+;;    (where ([t_3 τ_3 ...] ...)
+;;           ,(let ()
+;;              (define branches1 (term ([t_1 τ_1 ...] ...)))
+;;              (define branches2 (term ([t_2 τ_2 ...] ...)))
+;;              (define type1-branches
+;;               (for/list ([branch1 branches1])
+;;                 (define tag (first branch1))
+;;                 (match (findf (lambda (branch2) (equal? (first branch2) tag)) branches2)
+;;                   [#f branch1]
+;;                   [branch2
+;;                    (define (join-components type1 type2)
+;;                      (term (type-join ,type1 ,type2)))
+;;                    ;; NOTE: assumes that the branches have the same number of components
+;;                    `[,tag ,@(map join-components (rest branch1) (rest branch2))]])))
+;;              (define remaining-branch2-branches
+;;                (filter (lambda (b2)
+;;                          (not (findf (lambda (b1) (equal? (first b1) (first b2))) branches1)))
+;;                        branches2))
+;;              (define all-new-branches (append type1-branches remaining-branch2-branches))
+;;              ;; NOTE: We sort here to get the types into a canonical form and avoid repeated states,
+;;              ;; but only when the number of branches is different from the original number in each
+;;              ;; list (as a conservative heuristic to detect when the types might be the
+;;              ;; possibly-out-order types from the original program)
+;;              (if (and (= (length all-new-branches) (length branches1))
+;;                       (= (length all-new-branches) (length branches2)))
+;;                  all-new-branches
+;;                  (sort all-new-branches sexp<?))))]
+;;   [(type-join (Record [l_1 τ_1] ...) (Record [l_2 τ_2] ...))
+;;    (Record [l_1 (type-join τ_1 τ_2)] ...)]
+;;   ;; If names for minfixpt are the same, don't rename them
+;;   [(type-join (minfixpt X τ_1) (minfixpt X τ_2))
+;;    (minfixpt X (type-join τ_1 τ_2))]
+;;   [(type-join (minfixpt X_1 τ_1) (minfixpt X_2 τ_2))
+;;    (minfixpt X_fresh (type-join τ_1subst τ_2subst))
+;;    (where X_fresh
+;;           ,(variable-not-in (term ((minfixpt X_1 τ_1) (minfixpt X_2 τ_2))) (term X_1)))
+;;    (where τ_1subst (type-subst τ_1 X_1 X_fresh))
+;;    (where τ_2subst (type-subst τ_2 X_2 X_fresh))]
+;;   [(type-join X X) X]
+;;   [(type-join (Addr τ_1) (Addr τ_2))
+;;    ;; addresses are contravariant, so have to do the meet instead
+;;    (Addr (type-meet τ_1 τ_2))]
+;;   [(type-join τ τ) τ])
 
-(module+ test
-  (test-equal? "type-join 1" (term (type-join Nat Nat)) 'Nat)
-  (test-equal? "type-join 2"
-               (term (type-join (Union [A]) (Union [B])))
-               '(Union [A] [B]))
-  (test-equal? "type-join 2, other direction"
-               (term (type-join (Union [B]) (Union [A])))
-               '(Union [A] [B]))
-  (test-equal? "type-join 3"
-               (term (type-join (Union [A] [B]) (Union [B])))
-               '(Union [A] [B]))
+;; (module+ test
+;;   (test-equal? "type-join 1" (term (type-join Nat Nat)) 'Nat)
+;;   (test-equal? "type-join 2"
+;;                (term (type-join (Union [A]) (Union [B])))
+;;                '(Union [A] [B]))
+;;   (test-equal? "type-join 2, other direction"
+;;                (term (type-join (Union [B]) (Union [A])))
+;;                '(Union [A] [B]))
+;;   (test-equal? "type-join 3"
+;;                (term (type-join (Union [A] [B]) (Union [B])))
+;;                '(Union [A] [B]))
 
-  (test-equal? "type-join for records"
-    (term (type-join (Record [a (Union [A])]) (Record [a (Union [B])])))
-    (term (Record [a (Union [A] [B])])))
+;;   (test-equal? "type-join for records"
+;;     (term (type-join (Record [a (Union [A])]) (Record [a (Union [B])])))
+;;     (term (Record [a (Union [A] [B])])))
 
-  (test-equal? "type-join on addresses"
-    (term (type-join (Addr (Union [A])) (Addr (Union [B]))))
-    (term (Addr (Union))))
+;;   (test-equal? "type-join on addresses"
+;;     (term (type-join (Addr (Union [A])) (Addr (Union [B]))))
+;;     (term (Addr (Union))))
 
-  (test-equal? "type-join on minfixpts with the same names"
-    (term (type-join (minfixpt A (Addr (Union [M A])))
-                     (minfixpt A (Addr (Union [N A])))))
-    (term (minfixpt A (Addr (Union)))))
+;;   (test-equal? "type-join on minfixpts with the same names"
+;;     (term (type-join (minfixpt A (Addr (Union [M A])))
+;;                      (minfixpt A (Addr (Union [N A])))))
+;;     (term (minfixpt A (Addr (Union)))))
 
-  (test-equal? "type-join on minfixpts with different names"
-    (term (type-join (minfixpt A (Addr (Union [M A])))
-                     (minfixpt B (Addr (Union [N B])))))
-    ;; TODO: I think this test is wrong
-    (term (minfixpt A1 (Addr (Union)))))
+;;   (test-equal? "type-join on minfixpts with different names"
+;;     (term (type-join (minfixpt A (Addr (Union [M A])))
+;;                      (minfixpt B (Addr (Union [N B])))))
+;;     ;; TODO: I think this test is wrong
+;;     (term (minfixpt A1 (Addr (Union)))))
 
-  (test-exn "type-join on minfixpts with different numbers of 'unfoldings'"
-    (lambda (exn) #t)
-    (lambda () (term (type-join (minfixpt A (Addr (Union [M (minfixpt A (Addr (Union [M A])))])))
-                                (minfixpt A (Addr (Union [M A])))))))
+;;   (test-exn "type-join on minfixpts with different numbers of 'unfoldings'"
+;;     (lambda (exn) #t)
+;;     (lambda () (term (type-join (minfixpt A (Addr (Union [M (minfixpt A (Addr (Union [M A])))])))
+;;                                 (minfixpt A (Addr (Union [M A])))))))
 
-  (test-equal? "type-join on one more minfixpt example"
-    (term (type-join (minfixpt B (Addr (Addr (Union     [Y B]))))
-                     (minfixpt A (Addr (Addr (Union [X] [Y A]))))))
-    `(minfixpt B1 (Addr (Addr (Union [X] [Y B1])))))
+;;   (test-equal? "type-join on one more minfixpt example"
+;;     (term (type-join (minfixpt B (Addr (Addr (Union     [Y B]))))
+;;                      (minfixpt A (Addr (Addr (Union [X] [Y A]))))))
+;;     `(minfixpt B1 (Addr (Addr (Union [X] [Y B1])))))
 
-  (test-equal? "No sorting when we have same number of branches in result and original inputs"
-    (term (type-join (Union [B] [A]) (Union [B] [A])))
-    (term (Union [B] [A]))))
+;;   (test-equal? "No sorting when we have same number of branches in result and original inputs"
+;;     (term (type-join (Union [B] [A]) (Union [B] [A])))
+;;     (term (Union [B] [A]))))
 
-(define-metafunction csa#
-  type-meet : τ τ -> τ
-  [(type-meet (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))
-   (Union [t_3 τ_3 ...] ...)
-   (where ([t_3 τ_3 ...] ...)
-          ,(let ()
-             (define branches1 (term ([t_1 τ_1 ...] ...)))
-             (define branches2 (term ([t_2 τ_2 ...] ...)))
-             (define all-new-branches
-              (for/fold ([result-branches null])
-                        ([branch1 branches1])
-                (define tag (first branch1))
-                (match (findf (lambda (branch2) (equal? (first branch2) tag)) branches2)
-                  [#f result-branches]
-                  [branch2
-                   (define (meet-components type1 type2)
-                     (term (type-meet ,type1 ,type2)))
-                   ;; NOTE: assumes that the branches have the same number of components
-                   (append result-branches
-                           (list `[,tag ,@(map meet-components (rest branch1) (rest branch2))]))])))
-             ;; NOTE: We sort here to get the types into a canonical form and avoid repeated states,
-             ;; but only when the number of branches is different from the original number in each
-             ;; list (as a conservative heuristic to detect when the types might be the
-             ;; possibly-out-order types from the original program)
-             (if (and (= (length all-new-branches) (length branches1))
-                      (= (length all-new-branches) (length branches2)))
-                 all-new-branches
-                 (sort all-new-branches sexp<?))))]
-  [(type-meet (Record [l_1 τ_1] ...) (Record [l_2 τ_2] ...))
-   (Record [l_1 (type-meet τ_1 τ_2)] ...)]
-  ;; If names for minfixpt are the same, don't rename them
-  [(type-meet (minfixpt X τ_1) (minfixpt X τ_2))
-   (minfixpt X (type-meet τ_1 τ_2))]
-  [(type-meet (minfixpt X_1 τ_1) (minfixpt X_2 τ_2))
-   (minfixpt X_fresh (type-meet τ_1subst τ_2subst))
-   (where X_fresh
-          ,(variable-not-in (term ((minfixpt X_1 τ_1) (minfixpt X_2 τ_2))) (term X_1)))
-   (where τ_1subst (type-subst τ_1 X_1 X_fresh))
-   (where τ_2subst (type-subst τ_2 X_2 X_fresh))]
-  [(type-meet X X) X]
-  [(type-meet (Addr τ_1) (Addr τ_2))
-   (Addr (type-join τ_1 τ_2))]
-  [(type-meet τ τ) τ])
+;; (define-metafunction csa#
+;;   type-meet : τ τ -> τ
+;;   [(type-meet (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))
+;;    (Union [t_3 τ_3 ...] ...)
+;;    (where ([t_3 τ_3 ...] ...)
+;;           ,(let ()
+;;              (define branches1 (term ([t_1 τ_1 ...] ...)))
+;;              (define branches2 (term ([t_2 τ_2 ...] ...)))
+;;              (define all-new-branches
+;;               (for/fold ([result-branches null])
+;;                         ([branch1 branches1])
+;;                 (define tag (first branch1))
+;;                 (match (findf (lambda (branch2) (equal? (first branch2) tag)) branches2)
+;;                   [#f result-branches]
+;;                   [branch2
+;;                    (define (meet-components type1 type2)
+;;                      (term (type-meet ,type1 ,type2)))
+;;                    ;; NOTE: assumes that the branches have the same number of components
+;;                    (append result-branches
+;;                            (list `[,tag ,@(map meet-components (rest branch1) (rest branch2))]))])))
+;;              ;; NOTE: We sort here to get the types into a canonical form and avoid repeated states,
+;;              ;; but only when the number of branches is different from the original number in each
+;;              ;; list (as a conservative heuristic to detect when the types might be the
+;;              ;; possibly-out-order types from the original program)
+;;              (if (and (= (length all-new-branches) (length branches1))
+;;                       (= (length all-new-branches) (length branches2)))
+;;                  all-new-branches
+;;                  (sort all-new-branches sexp<?))))]
+;;   [(type-meet (Record [l_1 τ_1] ...) (Record [l_2 τ_2] ...))
+;;    (Record [l_1 (type-meet τ_1 τ_2)] ...)]
+;;   ;; If names for minfixpt are the same, don't rename them
+;;   [(type-meet (minfixpt X τ_1) (minfixpt X τ_2))
+;;    (minfixpt X (type-meet τ_1 τ_2))]
+;;   [(type-meet (minfixpt X_1 τ_1) (minfixpt X_2 τ_2))
+;;    (minfixpt X_fresh (type-meet τ_1subst τ_2subst))
+;;    (where X_fresh
+;;           ,(variable-not-in (term ((minfixpt X_1 τ_1) (minfixpt X_2 τ_2))) (term X_1)))
+;;    (where τ_1subst (type-subst τ_1 X_1 X_fresh))
+;;    (where τ_2subst (type-subst τ_2 X_2 X_fresh))]
+;;   [(type-meet X X) X]
+;;   [(type-meet (Addr τ_1) (Addr τ_2))
+;;    (Addr (type-join τ_1 τ_2))]
+;;   [(type-meet τ τ) τ])
 
-(module+ test
-  (test-equal? "type-meet 1" (term (type-meet Nat Nat)) 'Nat)
-  (test-equal? "type-meet 2"
-               (term (type-meet (Union [A]) (Union [B])))
-               '(Union))
-  (test-equal? "type-meet 2, other direction"
-               (term (type-meet (Union [B]) (Union [A])))
-               '(Union))
-  (test-equal? "type-meet 3"
-               (term (type-meet (Union [A] [B]) (Union [B])))
-               '(Union [B]))
+;; (module+ test
+;;   (test-equal? "type-meet 1" (term (type-meet Nat Nat)) 'Nat)
+;;   (test-equal? "type-meet 2"
+;;                (term (type-meet (Union [A]) (Union [B])))
+;;                '(Union))
+;;   (test-equal? "type-meet 2, other direction"
+;;                (term (type-meet (Union [B]) (Union [A])))
+;;                '(Union))
+;;   (test-equal? "type-meet 3"
+;;                (term (type-meet (Union [A] [B]) (Union [B])))
+;;                '(Union [B]))
 
-  (test-equal? "type-meet for records"
-    (term (type-meet (Record [a (Union [A])]) (Record [a (Union [B])])))
-    (term (Record [a (Union)])))
+;;   (test-equal? "type-meet for records"
+;;     (term (type-meet (Record [a (Union [A])]) (Record [a (Union [B])])))
+;;     (term (Record [a (Union)])))
 
-  (test-equal? "type-meet on addresses"
-    (term (type-meet (Addr (Union [A])) (Addr (Union [B]))))
-    (term (Addr (Union [A] [B]))))
+;;   (test-equal? "type-meet on addresses"
+;;     (term (type-meet (Addr (Union [A])) (Addr (Union [B]))))
+;;     (term (Addr (Union [A] [B]))))
 
-  (test-equal? "type-meet on minfixpts with the same names"
-    (term (type-meet (minfixpt A (Addr (Union [M A])))
-                     (minfixpt A (Addr (Union [N A])))))
-    (term (minfixpt A (Addr (Union [M A] [N A])))))
+;;   (test-equal? "type-meet on minfixpts with the same names"
+;;     (term (type-meet (minfixpt A (Addr (Union [M A])))
+;;                      (minfixpt A (Addr (Union [N A])))))
+;;     (term (minfixpt A (Addr (Union [M A] [N A])))))
 
-  (test-equal? "type-meet on minfixpts with different names"
-    (term (type-meet (minfixpt A (Addr (Union [M A])))
-                     (minfixpt B (Addr (Union [N B])))))
-    (term (minfixpt A1 (Addr (Union [M A1] [N A1])))))
+;;   (test-equal? "type-meet on minfixpts with different names"
+;;     (term (type-meet (minfixpt A (Addr (Union [M A])))
+;;                      (minfixpt B (Addr (Union [N B])))))
+;;     (term (minfixpt A1 (Addr (Union [M A1] [N A1])))))
 
-  (test-exn "type-meet on minfixpts with different numbers of 'unfoldings'"
-    (lambda (exn) #t)
-    (lambda () (term (type-meet (minfixpt A (Addr (Union [M (minfixpt A (Addr (Union [M A])))])))
-                                (minfixpt A (Addr (Union [M A])))))))
+;;   (test-exn "type-meet on minfixpts with different numbers of 'unfoldings'"
+;;     (lambda (exn) #t)
+;;     (lambda () (term (type-meet (minfixpt A (Addr (Union [M (minfixpt A (Addr (Union [M A])))])))
+;;                                 (minfixpt A (Addr (Union [M A])))))))
 
-  (test-equal? "No sorting when we have same number of branches in result and original inputs"
-    (term (type-meet (Union [B] [A]) (Union [B] [A])))
-    (term (Union [B] [A]))))
+;;   (test-equal? "No sorting when we have same number of branches in result and original inputs"
+;;     (term (type-meet (Union [B] [A]) (Union [B] [A])))
+;;     (term (Union [B] [A]))))
 
 ;; NOTE: this is really a conservative approximation of <= for types. For instance, we don't rename
 ;; variables in recursive types to check for alpha-equivalent recursive types
@@ -3018,49 +3112,51 @@
                                        [A (Union [C] [D])]
                                        (Union [A (Union [C])] [B])))))
 
-;; v# τ -> ([τ a#] ...)
+;; v# τ -> ([τ (marked a# mk ...)] ...)
 ;;
-;; Returns the address environment inferred by type-checking v# as τ
+;; Returns the marked-address environment inferred by type-checking v# as τ
 (define (internal-addr-types v type)
   (filter
    (lambda (entry)
-     (match-define (list type addr) entry)
-     (csa#-internal-address? addr))
+     (match-define (list type marked-addr) entry)
+     (csa#-internal-address? (unmark-addr marked-addr)))
    (addr-types v type)))
 
 (module+ test
-  (test-equal? "internal-addr-types 1"
-    (internal-addr-types `(addr 1 0) `(Addr Nat))
-    (list `(Nat (addr 1 0))))
-  (test-equal? "internal-addr-types 2"
-    (internal-addr-types `(record [a (addr 1 0)]
-                                  [b (addr 1 0)])
+  (test-equal? "internal-addr-types: simple test"
+    (internal-addr-types `(marked (addr 1 0)) `(Addr Nat))
+    (list `(Nat (marked (addr 1 0)))))
+  (test-equal? "internal-addr-types: same address at multiple types"
+    (internal-addr-types `(record [a (marked (addr 1 0))]
+                                  [b (marked (addr 1 0))])
                          `(Record [a (Addr (Union [A]))] [b (Addr (Union [B]))]))
-    (list `((Union [A] [B]) (addr 1 0))))
-  (test-equal? "internal-addr-types 3"
+    (list `((Union [A]) (marked (addr 1 0)))
+          `((Union [B]) (marked (addr 1 0)))))
+  (test-equal? "internal-addr-types: natural"
     (internal-addr-types `abs-nat `Nat)
     null)
-  (test-equal? "internal-addr-types 4"
+  (test-equal? "internal-addr-types 4: string"
     (internal-addr-types `abs-string `String)
     null)
   (test-equal? "internal-addr-types 5: recursive"
     (internal-addr-types `(folded (minfixpt X (Addr (Union [A X])))
-                                  (addr 1 0))
+                                  (marked (addr 1 0)))
                          `(minfixpt X (Addr (Union [A X]))))
-    (list `[(Union [A (minfixpt X (Addr (Union [A X])))]) (addr 1 0)]))
-  (test-case "internal-addr-types 6"
+    (list `[(Union [A (minfixpt X (Addr (Union [A X])))]) (marked (addr 1 0))]))
+  (test-case "internal-addr-types: internals and externals"
     (check-same-items?
-     (internal-addr-types (term (record [a (addr 1 0)]
-                                        [b (addr (env Nat) 2)]
-                                        [c (addr 3 1)]
-                                        [d (list-val (addr 2 0)  (addr (env Nat) 3))]))
+     (internal-addr-types (term (record [a (marked (addr 1 0) 1)]
+                                        [b (marked (collective-addr (env Nat)) 2)]
+                                        [c (marked (addr 3 1) 3)]
+                                        [d (list-val (marked (addr 2 0))
+                                                     (marked (collective-addr (env Nat)) 3))]))
                           (term (Record [a (Addr Nat)]
                                         [b (Addr String)]
                                         [c (Addr String)]
                                         [d (List (Addr Nat))])))
-     (term ((Nat (addr 1 0))
-            (String (addr 3 1))
-            (Nat (addr 2 0)))))))
+     (term ((Nat (marked (addr 1 0) 1))
+            (String (marked (addr 3 1) 3))
+            (Nat (marked (addr 2 0))))))))
 
 ;; v# τ -> ρ#
 ;;
@@ -3074,7 +3170,7 @@
       (merge-receptionists results (addr-types v type))))
 
   (match (list v type)
-    [(list (? (lambda (v) (redex-match? csa# a# v))) `(Addr ,type))
+    [(list `(marked ,(? (lambda (v) (redex-match? csa# a# v))) ,_ ...) `(Addr ,type))
      (list `[,type ,v])]
     [(list `(folded ,type ,v) `(minfixpt ,X ,fold-type))
      (addr-types v (term (type-subst ,fold-type ,X (minfixpt ,X ,fold-type))))]
@@ -3095,65 +3191,67 @@
     [_ (error 'addr-types "Unknown val/type combo ~s ~s" v type)]))
 
 (module+ test
-  (test-equal? "addr-types 1"
-    (addr-types `(addr 1 1) `(Addr Nat))
-    (term ([Nat (addr 1 1)])))
-  (test-equal? "addr-types 2"
-    (addr-types `(variant A abs-nat (addr 2 2)) `(Union [B] [A Nat (Addr String)]))
-    (term ([String (addr 2 2)])))
+  (test-equal? "addr-types: simple addr"
+    (addr-types `(marked (addr 1 1)) `(Addr Nat))
+    (term ([Nat (marked (addr 1 1))])))
+  (test-equal? "addr-types: simple collective addr"
+    (addr-types `(marked (collective-addr 1)) `(Addr Nat))
+    (term ([Nat (marked (collective-addr 1))])))
+  (test-equal? "addr-types: variant"
+    (addr-types `(variant A abs-nat (marked (addr 2 2))) `(Union [B] [A Nat (Addr String)]))
+    (term ([String (marked (addr 2 2))])))
   (test-equal? "addr-types: record"
-    (addr-types `(record [a (addr 1 2)] [b abs-string]) `(Record [a (Addr String)] [b String]))
-    (term ([String (addr 1 2)])))
-  (test-equal? "addr-types: join"
-    (addr-types `(record [a (addr 2 2)]         [b (addr 2 2)])
-                `                      (Record [a (Addr (Union [A]))] [b (Addr (Union [B]))]))
-    (term ([(Union [A] [B]) (addr 2 2)])))
+    (addr-types `(record [a (marked (addr 1 2))] [b abs-string]) `(Record [a (Addr String)] [b String]))
+    (term ([String (marked (addr 1 2))])))
+  (test-equal? "addr-types: same address at multiple types"
+    (addr-types `(record [a (marked (addr 2 2))] [b (marked (addr 2 2))])
+                `(Record [a (Addr (Union [A]))]  [b (Addr (Union [B]))]))
+    (term ([(Union [A]) (marked (addr 2 2))]
+           [(Union [B]) (marked (addr 2 2))])))
   (test-case "addr-types: fold"
     (define type `(minfixpt SelfAddr (Addr (Union [A SelfAddr]))))
     (check-equal?
-     (addr-types `(folded ,type (addr 1 1)) type)
-     (term ([(Union [A ,type]) (addr 1 1)]))))
+     (addr-types `(folded ,type (marked (addr 1 1))) type)
+     (term ([(Union [A ,type]) (marked (addr 1 1))]))))
   (test-equal? "addr-types: list"
-    (addr-types `(list-val (addr 1 1) (addr 2 2)) `(List (Addr (Record))))
-    (term ([(Record) (addr 1 1)] [(Record) (addr 2 2)])))
+    (addr-types `(list-val (marked (addr 1 1)) (marked (addr 2 2))) `(List (Addr (Record))))
+    (term ([(Record) (marked (addr 1 1))] [(Record) (marked (addr 2 2))])))
   (test-equal? "addr-types: hash"
-    (addr-types `(hash-val ((addr 0 0)) ((addr 1 1) (addr 2 2)))
+    (addr-types `(hash-val ((marked (addr 0 0))) ((marked (addr 1 1)) (marked (addr 2 2))))
                 `(Hash (Addr String) (Addr (Record))))
-    (term ([String (addr 0 0)] [(Record) (addr 1 1)] [(Record) (addr 2 2)]))))
+    (term ([String (marked (addr 0 0))]
+           [(Record) (marked (addr 1 1))]
+           [(Record) (marked (addr 2 2))]))))
 
 ;; ρ# ρ# -> ρ#
 ;;
-;; Merges the list of new receptionists into the old one, taking the join of types for duplicate
-;; entries and adding new entries otherwise
-;; TODO: rename this to join-receptionists
+;; Merges the list of new receptionists into the old one,
 (define (merge-receptionists old-recs new-recs)
-  (for/fold ([old-recs old-recs])
-            ([new-rec new-recs])
-    (define new-address (second new-rec))
-    (define (matches-new-rec? old-rec)
-      (equal? new-address (second old-rec)))
-    (match (find-with-rest matches-new-rec? old-recs)
-      [#f (append old-recs (list new-rec))]
-      [`[,before ,old-rec ,after]
-       (define joined-type
-         (term (type-join ,(first old-rec) ,(first new-rec))))
-       (append before (list `[,joined-type ,new-address]) after)])))
+  (remove-duplicates (append old-recs new-recs)))
 
 (module+ test
-  (test-equal? "merge receptionists"
+  (test-equal? "merge-receptionists adds new items"
     (merge-receptionists
-     `((Nat (addr 1 0))
-       ((Union [B]) (addr 20 1))
-       ((Union [C]) (addr 2 0)))
-     `(((Union [A]) (addr 20 1))
-       (Nat (addr 1 0))
-       ((Union [D]) (addr 2 0))
-       (Nat (addr 3 0))))
-    (term
-     ((Nat (addr 1 0))
-      ((Union [A] [B]) (addr 20 1))
-      ((Union [C] [D]) (addr 2 0))
-      (Nat (addr 3 0))))))
+     `([Nat (marked (addr 1 1) 1)])
+     `([Nat (marked (addr 2 2) 2)]))
+    `([Nat (marked (addr 1 1) 1)]
+      [Nat (marked (addr 2 2) 2)]))
+
+  (test-equal? "merge-receptionists removes duplicates"
+    (merge-receptionists
+     `([Nat (marked (addr 1 1))])
+     `([Nat (marked (addr 1 1))]))
+    `([Nat (marked (addr 1 1))]))
+
+  (test-equal? "merge-receptionists handles lists with multiple items"
+    (merge-receptionists
+     `(((Union [A]) (marked (addr 1 1) 1))
+       ((Union [B]) (marked (addr 2 2) 2)))
+     `(((Union [A]) (marked (addr 1 1) 1))
+       ((Union [C]) (marked (addr 3 3) 3))))
+    `(((Union [A]) (marked (addr 1 1) 1))
+      ((Union [B]) (marked (addr 2 2) 2))
+      ((Union [C]) (marked (addr 3 3) 3)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Address containment
@@ -3167,6 +3265,8 @@
     [`(addr (env ,_) ,_) (list the-term)]
     [(list terms ...) (append* (map externals-in/internal the-term))]
     [_ null]))
+
+;; TODO: PICK UP MARKER-CONVERSION HERE
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Eviction (see the Eviction section of aps-abstract.rkt for more info)
@@ -3723,21 +3823,21 @@
 
 (module+ test
   ;; TODO: update these tests
-  (define spawn-behavior-change-test-config
-    (redex-let csa# ([i#
-                      (term
-                       (([(addr the-loc 0)
-                          (() (goto A))]
-                         [(addr second-loc 0)
-                          (() (goto A))]
-                         [(addr third-loc 0)
-                          (() (goto A))])
-                        ([(collective-addr the-loc)
-                          ((() (goto A)))]
-                         [(collective-addr second-loc)
-                          ((() (goto B)))])
-                        ()))])
-      (term i#)))
+  ;; (define spawn-behavior-change-test-config
+  ;;   (redex-let csa# ([i#
+  ;;                     (term
+  ;;                      (([(addr the-loc 0)
+  ;;                         (() (goto A))]
+  ;;                        [(addr second-loc 0)
+  ;;                         (() (goto A))]
+  ;;                        [(addr third-loc 0)
+  ;;                         (() (goto A))])
+  ;;                       ([(collective-addr the-loc)
+  ;;                         ((() (goto A)))]
+  ;;                        [(collective-addr second-loc)
+  ;;                         ((() (goto B)))])
+  ;;                       ()))])
+  ;;     (term i#)))
 
   ;; (test-equal? "effect matches existing spawn behavior, no blurred version"
   ;;  (csa#-transition-effect-compare-spawn-behavior
@@ -4334,16 +4434,18 @@
 
 (module+ test
   (define enabled-action-test-config
-    (redex-let csa# ([i# `(([(addr 0 0)
-                             (((define-state (A) (x) (goto A) ([timeout abs-nat] (goto A))))
-                              (goto A))]
-                            [(addr 1 0)
-                             (((define-state (A) (x) (goto A) ([timeout abs-nat] (goto A)))
-                               (define-state (B) (x) (goto B)))
-                              (goto B))])
-                           ()
-                           ([(addr 0 0) abs-nat many]))])
-      (term i#)))
+    `(([(addr 0 0)
+        (((define-state (A) (x) (goto A) ([timeout abs-nat] (goto A))))
+         (goto A))]
+       [(addr 1 0)
+        (((define-state (A) (x) (goto A) ([timeout abs-nat] (goto A)))
+          (define-state (B) (x) (goto B)))
+         (goto B))])
+      ()
+      ([(addr 0 0) abs-nat many])))
+
+  (test-true "enabled-action-test-config is valid config"
+    (redex-match? csa# i# enabled-action-test-config))
 
   (test-not-false "Enabled internal receive"
     (csa#-action-enabled? enabled-action-test-config
