@@ -32,7 +32,7 @@
       (receptionists [x_receptionist τ] ...)
       (externals [x_external τ] ...)
       ;; NOTE: ; let-bound values and state args e should be x or v
-      (actors [x (let ([x e] ...) (spawn any_loc τ (goto q e ...) Q ...))] ...)))
+      (let-actors ([x (let ([x e] ...) (spawn any_loc τ (goto q e ...) Q ...))] ...) x ...)))
   (e (spawn any_loc τ e Q ...)
      (goto q e ...)
      (send e e)
@@ -106,13 +106,14 @@
 
 (define-extended-language csa-eval
   csa
-  (i (α μ mk ρ χ)) ; configuration; marker is the least unused marker
+  ;; NOTE: don't need to record the marker here; we can just over-estimate it with constants, instead
+  (i (α μ ρ χ)) ; configuration ; TODO: remove χ
   (α ((a b) ...))
   (b ((Q ...) e)) ; behavior
   (μ (m ...))
   (m (a <= v)) ; NOTE: technically these are marked addresses, but in the model checker internal messages never have markers
   ;; TODO: remove the externals list; use types on addresses instead
-  ((ρ χ) ([τ (marked a mk ...)] ...)) ; TODO: this should probably be just one marker...
+  ((ρ χ) ([τ (marked a mk ...)] ...)) ; NOTE: can be 0 or 1 marker, because of loop-sent addresses
   (e ....
      v)
   (v n
@@ -154,19 +155,22 @@
   [(instantiate-prog+bindings/mf
     (program (receptionists [x_receptionist τ_receptionist] ...)
              (externals     [x_external     τ_external] ...)
-             (actors        [x_internal (let ([x_let e_let] ...) e)] ...)))
+             (let-actors    ([x_internal (let ([x_let e_let] ...) e)] ...) x_rec_def ...)))
    (i ([x_receptionist mk_rec] ...) ([x_external mk_ext] ...))
 
    ;; 1. Generate addresses for internal and external actors
    (where (a_internal ...) ((addr (spawn-loc/mf e) 0) ...))
    (where (a_external ...) (generate-externals/mf (τ_external ...)))
 
-   ;; 2. Mark the receptionists and externals
-   (where ((marked a_receptionist) ...) ((subst-n x_receptionist [x_internal (marked a_internal)] ...) ...))
+   ;; 2. Figure out addresses for the externals
+   (where ((marked a_receptionist) ...)
+          ((subst-n x_rec_def [x_internal (marked a_internal)] ...) ...))
+
+   ;; 3. Mark the receptionists and externals
    (where [((marked a_receptionist mk_rec) ...) mk_1] (mark* (a_receptionist ...) 0))
    (where [((marked a_external mk_ext) ...) mk_unused] (mark* (a_external ...) mk_1))
 
-   ;; 3. Do substitutions into spawn to get a behavior
+   ;; 4. Do substitutions into spawn to get a behavior
    ;; NOTE: assuming for now we can ignore the type coercion automatically put in place
    (where ((v_let ...) ...) (((subst-n e_let
                                        [x_external (marked a_external mk_ext)] ...
@@ -184,8 +188,6 @@
            ((a_internal b) ...)
            ; message store
            ()
-           ; least unused marker
-           mk_unused
            ; receptionists
            ([τ_receptionist (marked a_receptionist mk_rec)] ...)
            ; externals
@@ -205,9 +207,10 @@
   (test-case "Instantiate program"
     (define the-prog
       `(program (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Union)])
-                (actors [a (let () (spawn 1 Nat      (goto S1)))]
-                        [b (let () (spawn 2 (Record) (goto S2)))]
-                        [c (let () (spawn 3 Nat      (goto S3)))])))
+                (let-actors ([a (let () (spawn 1 Nat      (goto S1)))]
+                             [b (let () (spawn 2 (Record) (goto S2)))]
+                             [c (let () (spawn 3 Nat      (goto S3)))])
+                            a b)))
     (check-true (redex-match? csa-eval P the-prog))
     (check-equal?
      (instantiate-prog+bindings the-prog)
@@ -225,8 +228,6 @@
          )
         ;; messages
         ()
-        ;; unused marker
-        4
         ;; receptionists
         ((Nat (marked (addr 1 0) 0))
          ((Record) (marked (addr 2 0) 1)))
@@ -402,7 +403,7 @@
 ;; Selectors
 
 (define (csa-config-actor-addresses config)
-  (redex-let* csa-eval ([(((a _) ...) _ _ _ _) config])
+  (redex-let* csa-eval ([(((a _) ...) _ _ _) config])
     (term (a ...))))
 
 (module+ test
@@ -411,7 +412,7 @@
                          [b_2 (term (() (goto B (marked (addr 3 3)) (marked (addr 4 4)))))]
                          [α (term ([(addr 0 0) b_1]
                                    [(addr 1 1) b_2]))]
-                         [i (term (α () 0 () ()))])
+                         [i (term (α () () ()))])
      (check-equal? (csa-config-actor-addresses (term i))
                    (term ((addr 0 0) (addr 1 1)))))))
 
