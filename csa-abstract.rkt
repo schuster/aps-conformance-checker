@@ -74,8 +74,6 @@
 
 ;; Abstract-interpretation version of CSA
 (define-extended-language csa# csa-eval
-  ;; TODO: add receptionists back in...
-  ;;
   ;; NOTE: can leave the marker set out here as an optimization: we assume for the sake of this
   ;; checker it never goes over 100 (can easily adjust those constants)
   (i# (α# β# μ# ρ#))
