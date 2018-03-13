@@ -287,7 +287,7 @@
 ;;
 ;; spawns: (Listof [a# b#])
 ;;
-;; unused-marker: mk
+;; unused-marker: mk ; TODO: remove this?
 (struct csa#-transition-effect (trigger behavior sends spawns unused-marker) #:transparent)
 
 (define (csa#-transition-spawn-locs transition)
@@ -2709,6 +2709,9 @@
     [`(addr ,loc ,_) loc]
     [`(collective-addr ,loc) loc]))
 
+(define (receptionist-marked-address r)
+  (second r))
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; Boolean Logic
 
@@ -3563,10 +3566,9 @@
     `(addr 2 0))
    'B))
 
-;; Rename addresses in everything but the state definitions of the transition so that any
-;; obs-ext > 100 is blurred, and any NEW spawn address is converted to a collective-addr.
+;; Rename addresses in everything but the state definitions of the transition so that any marker >
+;; INIT-MESSAGE-MARKER is removed, and any NEW spawn address is converted to a collective-addr.
 (define (pseudo-blur-transition-result transition-result)
-  ;; TODO: figure out what to do with unused-marker
   (match-define (csa#-transition-effect trigger `(,state-defs ,goto-exp) sends spawns unused-marker)
     transition-result)
   (define new-sends
@@ -3579,17 +3581,12 @@
       `[,(pseudo-blur addr) [,(pseudo-blur spawn-state-defs) ,(pseudo-blur spawn-goto)]]))
   (csa#-transition-effect trigger `(,state-defs ,(pseudo-blur goto-exp)) new-sends new-spawns))
 
+;; Does the marker-removal/assimilation mentioned in comments for pseudo-blur-transition-result, on an
+;; arbitrary expression/term
 (define (pseudo-blur some-term)
   (match some-term
-    [`(addr ,loc ,id)
-     (cond
-       [(csa#-internal-address? some-term)
-        (if (= id 1) `(collective-addr ,loc) some-term)]
-       [else ; external
-        (match-define `(env ,type) loc)
-        (if #f ; TODO: fix this old test (< id FIRST-GENERATED-ADDRESS)
-            some-term
-            `(collective-addr (env ,type)))])]
+    [`(marked ,address ,markers ...)
+     `(marked ,(pseudo-blur-address address) ,@(filter (curryr < INIT-MESSAGE-MARKER) markers))]
     [(list (and keyword (or 'list-val 'hash-val)) terms ...)
      (define blurred-args (map pseudo-blur terms))
      (normalize-collection `(,keyword ,@blurred-args))]
@@ -3601,11 +3598,38 @@
     [_ some-term]))
 
 (module+ test
-  (check-equal? (pseudo-blur `(addr (env Nat) 2)) `(addr (env Nat) 2))
-  (check-equal? (pseudo-blur `(addr (env Nat) 102)) `(collective-addr (env Nat)))
-  (check-equal? (pseudo-blur `(addr 1 0)) `(addr 1 0))
-  (check-equal? (pseudo-blur `(addr 1 1)) `(collective-addr 1)))
+  (test-equal? "pseudo-blur on old external"
+    (pseudo-blur `(marked (collective-addr (env Nat)) 2))
+    `(marked (collective-addr (env Nat)) 2))
+  (test-equal? "pseudo-blur on new external"
+    (pseudo-blur `(marked (collective-addr (env Nat)) 102))
+    `(marked (collective-addr (env Nat))))
+  (test-equal? "pseudo-blur on marked old internal"
+    (pseudo-blur `(marked (addr 1 0)))
+    `(marked (addr 1 0)))
+  (test-equal? "pseudo-blur on marked new internal"
+    (pseudo-blur `(marked (addr 1 1)))
+    `(marked (collective-addr 1)))
+  (test-equal? "pseudo-blur on old internal"
+    (pseudo-blur `(marked (addr 1 0)))
+    `(marked (addr 1 0)))
+  (test-equal? "pseudo-blur on marked new internal"
+    (pseudo-blur `(marked (addr 1 1)))
+    `(marked (collective-addr 1))))
 
+(define (pseudo-blur-address a)
+  (match a
+    [`(addr ,loc ,id)
+     (cond
+       [(csa#-internal-address? a)
+        (if (= id 1) `(collective-addr ,loc) a)]
+       [else
+        ;; externals are already collective, so can just return the address
+        a])]
+    [_ ;; don't need to do anything for collectives
+     a]))
+
+;; returns true if the given packet appears with a "many" quantity in the given config
 (define (new-pseudo-send? config send)
   (match-define `[,addr ,message ,_] send)
   (not (member `[,addr ,message many] (csa#-config-message-packets config))))
@@ -4371,12 +4395,12 @@
     'not-gteq)
 
   (test-equal? "compare-value addresses 1"
-    (compare-value `(addr 1 0)
-                   `(addr 2 0))
+    (compare-value `(marked (addr 1 0))
+                   `(marked (addr 2 0)))
     'not-gteq)
   (test-equal? "compare-value addresses 3"
-    (compare-value `(addr 1 0)
-                   `(addr 1 0))
+    (compare-value `(marked (addr 1 0))
+                   `(marked (addr 1 0)))
     'eq))
 
 ;; comparison-result comparison-result -> comparison-result
@@ -4431,9 +4455,9 @@
             (csa#-config-message-packets config))]
     [`(timeout ,addr)
      (ormap get-timeout-handler-exp (csa#-behaviors-of config addr))]
-    [_ #t]))
-
-;; TODO: redo these tests
+    [`(external-receive ,marked-addr ,message)
+     (findf (lambda (rec) (equal? (receptionist-marked-address rec) marked-addr))
+            (csa#-config-receptionists config))]))
 
 (module+ test
   (define enabled-action-test-config
@@ -4445,7 +4469,8 @@
           (define-state (B) (x) (goto B)))
          (goto B))])
       ()
-      ([(addr 0 0) abs-nat many])))
+      ([(addr 0 0) abs-nat many])
+      ([Nat (marked (addr 0 0) 1)])))
 
   (test-true "enabled-action-test-config is valid config"
     (redex-match? csa# i# enabled-action-test-config))
@@ -4456,15 +4481,18 @@
   (test-false "Disabled internal receive"
     (csa#-action-enabled? enabled-action-test-config
                           '(internal-receive (addr 1 0) abs-nat single)))
-  (test-not-false "External receives are always enabled"
-    (csa#-action-enabled? enabled-action-test-config
-                          '(external-receive (addr 1 0) abs-nat)))
   (test-not-false "Enabled timeout"
     (csa#-action-enabled? enabled-action-test-config
                           '(timeout (addr 0 0))))
   (test-false "Disabled timeout"
     (csa#-action-enabled? enabled-action-test-config
-                          '(timeout (addr 1 0)))))
+                          '(timeout (addr 1 0))))
+  (test-not-false "Enabled external receive"
+    (csa#-action-enabled? enabled-action-test-config
+                          `(external-receive (marked (addr 0 0) 1) abs-nat)))
+  (test-false "Disabled external receive"
+    (csa#-action-enabled? enabled-action-test-config
+                          `(external-receive (marked (addr 0 0) 2) abs-nat))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debug helpers
