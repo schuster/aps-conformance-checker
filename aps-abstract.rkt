@@ -54,126 +54,99 @@
 
 (define-extended-language aps#
   aps-eval-with-csa#
-  (s# (ρ#_obs ρ#_unobs (goto φ u ...) (Φ ...) O#)) ; TODO: change u here to be a
-  (ρ# ([τ a#] ...))
-  (u .... a#_ext)
-  (O# ([a#_ext po ...] ...))
-  (match-fork (ρ#_obs (goto φ) (Φ ...))))
+  (s# s) ; NOTE: leaving s# in just so I don't have to convert all the code below
+  ;; (match-fork (ρ#_obs (goto φ) (Φ ...))) ; TODO: do I still need this?
+  )
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Abstraction
+;; ---------------------------------------------------------------------------------------------------
+;; Substitution
 
-;; (define (aps#-abstract-config spec-config)
-;;   ;; Doing a redex-let here just to add a codomain contract
-;;   (redex-let* aps# ([s# (term (aps#-abstract-config/mf ,spec-config))])
-;;              (term s#)))
+(define-metafunction aps#
+  subst-n/aps#/u : u (x mk) ... -> u
+  [(subst-n/aps#/u u) u]
+  [(subst-n/aps#/u u (x mk) any_rest ...)
+   (subst-n/aps#/u (subst/aps#/u u x mk) any_rest ...)])
 
-;; (define-metafunction aps#
-;;   aps#-abstract-config/mf : any -> any
-;;   [(aps#-abstract-config/mf a)
-;;    ,(csa#-abstract-address (term a))]
-;;   [(aps#-abstract-config/mf (any ...))
-;;    ((aps#-abstract-config/mf any) ...)]
-;;   [(aps#-abstract-config/mf any) any])
+(define-metafunction aps#
+  subst/aps#/u : u x mk -> u
+  [(subst/aps#/u x x mk) mk]
+  [(subst/aps#/u x_2 x mk) x_2]
+  [(subst/aps#/u mk_2 x mk) mk_2])
 
-;; (module+ test
-;;   (check-equal?
-;;    (aps#-abstract-config (term (((Nat (addr 0 0)))
-;;                                 ()
-;;                                 (goto A (addr (env Nat) 1))
-;;                                 ((define-state (A x) (* -> () (goto A x))))
-;;                                 (((addr (env Nat) 2) * (record))))))
-;;    (term (((Nat (addr 0 0)))
-;;           ()
-;;           (goto A (addr (env Nat) 1))
-;;           ((define-state (A x) (* -> () (goto A x))))
-;;           (((addr (env Nat) 2) * (record)))))))
+(define-metafunction aps#
+  subst/aps#/trans : (pt -> (f ...) (goto φ u ...)) x mk -> (pt -> (f ...) (goto φ u ...))
+  [(subst/aps#/trans (p -> (f ...) (goto φ u ...)) x mk)
+   (p -> (f ...) (goto φ u ...))
+   (judgment-holds (pattern-binds-var p x))]
+  [(subst/aps#/trans (pt -> (f ...) (goto φ u ...)) x mk)
+   (pt -> ((subst/aps#/f f x mk) ...) (goto φ (subst/aps#/u u x mk) ...))])
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Substitution
+(define-metafunction aps#
+  subst-n/aps#/f : f (x mk) ... -> f
+  [(subst-n/aps#/f f) f]
+  [(subst-n/aps#/f f (x mk) any_rest ...)
+   (subst-n/aps#/f (subst/aps#/f f x mk) any_rest ...)])
 
-;; (define-metafunction aps#
-;;   subst-n/aps#/u : u (x a#) ... -> u
-;;   [(subst-n/aps#/u u) u]
-;;   [(subst-n/aps#/u u (x a#) any_rest ...)
-;;    (subst-n/aps#/u (subst/aps#/u u x a#) any_rest ...)])
+(define-metafunction aps#
+  subst/aps#/f : f x mk -> f
+  [(subst/aps#/f (obligation u po) x mk)
+   (obligation (subst/aps#/u u x mk) (subst/aps#/po po x mk))]
+  [(subst/aps#/f (fork (goto φ u ...) Φ ...) x mk)
+   (fork (goto φ (subst/aps#/u u x mk) ...) Φ ...)])
 
-;; (define-metafunction aps#
-;;   subst/aps#/u : u x a# -> u
-;;   [(subst/aps#/u x x a#) a#]
-;;   [(subst/aps#/u x_2 x a#) x_2]
-;;   [(subst/aps#/u a#_2 x a#) a#_2])
+(define-metafunction aps#
+  subst/aps#/po : po x mk -> po
+  [(subst/aps#/po * _ _) *]
+  [(subst/aps#/po (or po ...) x mk) (or (subst/aps#/po po x mk) ...)]
+  [(subst/aps#/po (fork (goto φ u ...) Φ ...) x mk)
+   (fork (goto φ (subst/aps#/u u x mk) ...)
+         Φ ...)]
+  [(subst/aps#/po (delayed-fork (goto φ) Φ ...) x mk)
+   (delayed-fork (goto φ) Φ ...)]
+  [(subst/aps#/po self _ _) self]
+  [(subst/aps#/po (variant t po ...) x mk) (variant t (subst/aps#/po po x mk) ...)]
+  [(subst/aps#/po (record [l po] ...) x mk) (record [l (subst/aps#/po po x mk)] ...)])
 
-;; (define-metafunction aps#
-;;   subst/aps#/trans : (pt -> (f ...) (goto φ u ...)) x a# -> (pt -> (f ...) (goto φ u ...))
-;;   [(subst/aps#/trans (p -> (f ...) (goto φ u ...)) x a#)
-;;    (p -> (f ...) (goto φ u ...))
-;;    (judgment-holds (pattern-binds-var p x))]
-;;   [(subst/aps#/trans (pt -> (f ...) (goto φ u ...)) x a#)
-;;    (pt -> ((subst/aps#/f f x a#) ...) (goto φ (subst/aps#/u u x a#) ...))])
+(module+ test
+  (test-equal? "Simple subst/aps#/f test"
+    (term (subst/aps#/f [fork (goto S1 x)
+                              (define-state (S1 y x) [* -> () (goto S2 y)])
+                              (define-state (S2 y) [* -> ([obligation y *]) (goto S2 y)])]
+                        x
+                        1))
+    (term [fork (goto S1 1)
+                (define-state (S1 y x) [* -> () (goto S2 y)])
+                (define-state (S2 y) [* -> ([obligation y *]) (goto S2 y)])]))
 
-;; (define-metafunction aps#
-;;   subst-n/aps#/f : f (x a#) ... -> f
-;;   [(subst-n/aps#/f f) f]
-;;   [(subst-n/aps#/f f (x a#) any_rest ...)
-;;    (subst-n/aps#/f (subst/aps#/f f x a#) any_rest ...)])
+  (test-equal? "Substitution should not go into state defs"
+    (term (subst/aps#/f [fork (goto A x) (define-state (A) [* -> () (goto B x)])] x 1))
+    (term [fork (goto A 1) (define-state (A) [* -> () (goto B x)])]))
 
-;; (define-metafunction aps#
-;;   subst/aps#/f : f x a# -> f
-;;   [(subst/aps#/f (obligation u po) x a#)
-;;    (obligation (subst/aps#/u u x a#) (subst/aps#/po po x a#))]
-;;   [(subst/aps#/f (fork (goto φ u ...) Φ ...) x a#)
-;;    (fork (goto φ (subst/aps#/u u x a#) ...) Φ ...)])
+  (test-equal? "Substitute into goto in an output obligation fork"
+    (term (subst/aps#/f [obligation 0 (variant A (fork (goto S x)))] x 1))
+    (term [obligation 0 (variant A (fork (goto S 1)))]))
 
-;; (define-metafunction aps#
-;;   subst/aps#/po : po x a# -> po
-;;   [(subst/aps#/po * _ _) *]
-;;   [(subst/aps#/po (or po ...) x a#) (or (subst/aps#/po po x a#) ...)]
-;;   [(subst/aps#/po (fork (goto φ u ...) Φ ...) x a#)
-;;    (fork (goto φ (subst/aps#/u u x a#) ...)
-;;          Φ ...)]
-;;   [(subst/aps#/po (delayed-fork (goto φ) Φ ...) x a#)
-;;    (delayed-fork (goto φ) Φ ...)]
-;;   [(subst/aps#/po self _ _) self]
-;;   [(subst/aps#/po (variant t po ...) x a#) (variant t (subst/aps#/po po x a#) ...)]
-;;   [(subst/aps#/po (record [l po] ...) x a#) (record [l (subst/aps#/po po x a#)] ...)])
+  (test-equal? "Substitute for fork and delayed-fork"
+    (term (subst/aps#/f [obligation x (variant A (fork (goto B y)) (delayed-fork (goto C)))]
+                        y
+                        1))
+    (term [obligation x (variant A (fork (goto B 1)) (delayed-fork (goto C)))])))
 
-;; (module+ test
-;;   (test-equal? "Simple subst/aps#/f test"
-;;     (term (subst/aps#/f [fork (goto S1 x)
-;;                               (define-state (S1 y x) [* -> () (goto S2 y)])
-;;                               (define-state (S2 y) [* -> ([obligation y *]) (goto S2 y)])]
-;;                         x
-;;                         (addr (env Nat) 1)))
-;;     (term [fork (goto S1 (addr (env Nat) 1))
-;;                 (define-state (S1 y x) [* -> () (goto S2 y)])
-;;                 (define-state (S2 y) [* -> ([obligation y *]) (goto S2 y)])]))
+(define-judgment-form aps#
+  #:mode (pattern-binds-var I I)
+  #:contract (pattern-binds-var p x)
+  [------------
+   (pattern-binds-var x x)]
 
-;;   (test-equal? "Substitute into goto in an output obligation fork"
-;;     (term (subst/aps#/f [obligation (addr (env Nat) 0) (variant A (fork (goto S x)))] x (addr (env Nat) 1)))
-;;     (term [obligation (addr (env Nat) 0) (variant A (fork (goto S (addr (env Nat) 1))))]))
+  [(side-condition ,(ormap (lambda (p) (judgment-holds (pattern-binds-var ,p x)))
+                           (term (p ...))))
+   ----------
+   (pattern-binds-var (variant t p ...) x)]
 
-;;   (test-equal? "Substitute for fork and delayed-fork"
-;;     (term (subst/aps#/f [obligation x (variant A (fork (goto B y)) (delayed-fork (goto C)))]
-;;                         y
-;;                         (addr (env Nat) 1)))
-;;     (term [obligation x (variant A (fork (goto B (addr (env Nat) 1))) (delayed-fork (goto C)))])))
-
-;; (define-judgment-form aps#
-;;   #:mode (pattern-binds-var I I)
-;;   #:contract (pattern-binds-var p x)
-;;   [------------
-;;    (pattern-binds-var x x)]
-
-;;   [(side-condition ,(ormap (lambda (p) (judgment-holds (pattern-binds-var ,p x)))
-;;                            (term (p ...))))
-;;    ----------
-;;    (pattern-binds-var (variant t p ...) x)]
-
-;;   [(side-condition ,(ormap (lambda (p) (judgment-holds (pattern-binds-var ,p x)))
-;;                            (term (p ...))))
-;;    ----------
-;;    (pattern-binds-var (reocrd [l p] ...) x)])
+  [(side-condition ,(ormap (lambda (p) (judgment-holds (pattern-binds-var ,p x)))
+                           (term (p ...))))
+   ----------
+   (pattern-binds-var (reocrd [l p] ...) x)])
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Transition selection
