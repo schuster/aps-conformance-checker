@@ -27,7 +27,7 @@
  csa#-actor-with-opposite-id-exists?
  csa#-address-id
  csa#-atomic-address?
- csa#-ids-that-know-externals
+ csa#-ids-that-know-markers
 
  ;; Required by APS#
  csa#-internal-address?
@@ -36,7 +36,7 @@
  csa#-output-message
  csa#-output-multiplicity
  ;; internal-addr-types
- externals-in
+ markers-in
  csa#-sort-config-components
  csa#-addrs-to-evict
  csa#-evict
@@ -1915,13 +1915,13 @@
 (define (csa#-actor-with-opposite-id-exists? config address)
   (csa#-config-actor-by-address config (csa#-address-with-opposite-id address)))
 
-;; impl-config (Listof a#ext) -> (Listof spawn-id)
+;; impl-config (Listof mk) -> (Listof spawn-id)
 ;;
 ;; Returns the list of all actor-address-ids such that at least one actor in the config whose address
 ;; has one of those ids (and such that an actor with the opposite id exists) "knows"
-;; (i.e. syntactically contains in its behavior) at least one of the addresses in the
-;; relevant-externals list
-(define (csa#-ids-that-know-externals config relevant-externals)
+;; (i.e. syntactically contains in its behavior) an address with at least one of the markers in the
+;; relevant-markers list
+(define (csa#-ids-that-know-markers config relevant-markers)
   (define all-atomics-with-opposite-id-exists
     (filter
      (lambda (actor)
@@ -1933,15 +1933,15 @@
        (equal? (csa#-address-id (csa#-actor-address actor)) 0))
      all-atomics-with-opposite-id-exists))
   (append
-   (if (contains-relevant-externals? old-spawns relevant-externals) (list 0) null)
-   (if (contains-relevant-externals? new-spawns relevant-externals) (list 1) null)))
+   (if (contains-addr-with-markers? old-spawns relevant-markers) (list 0) null)
+   (if (contains-addr-with-markers? new-spawns relevant-markers) (list 1) null)))
 
-;; Returns true if the given list of actors contains in their behaviors at least one of the given
-;; external addresses
-(define (contains-relevant-externals? actors externals)
+;; Returns true if the given list of actors contains in their behaviors an address marked with at
+;; least one of the given markers
+(define (contains-addr-with-markers? actors markers)
   (not
    (set-empty?
-    (set-intersect (list->set externals) (list->set (externals-in actors))))))
+    (set-intersect (list->set markers) (list->set (markers-in actors))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Blurring
@@ -2759,10 +2759,9 @@
 ;; Predicates
 
 ;; Returns true if the output is to an internal address, false otherwise
-;; TODO: this should probably use marked addresses instead
 (define (internal-output? output)
-  (match-define `((marked ,addr ,_ ...) ,_ ,_) output)
-  (csa#-internal-address? addr))
+  (match-let ([`((marked ,addr ,_ ...) ,_ ,_) output])
+    (csa#-internal-address? addr)))
 
 (module+ test
   (test-true "internal-output? 1" (internal-output? (term ((marked (addr 1 0)) abs-nat single))))
@@ -3256,17 +3255,15 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Address containment
 
-;; Returns the list of all atomic external addresses in the given term
-(define (externals-in the-term)
-  (remove-duplicates (externals-in/internal the-term)))
+;; Returns the list of all markers in the given term
+(define (markers-in the-term)
+  (remove-duplicates (markers-in/internal the-term)))
 
-(define (externals-in/internal the-term)
+(define (markers-in/internal the-term)
   (match the-term
-    [`(addr (env ,_) ,_) (list the-term)]
-    [(list terms ...) (append* (map externals-in/internal the-term))]
+    [`(marked ,_ ,markers ...) markers]
+    [(list terms ...) (append* (map markers-in/internal the-term))]
     [_ null]))
-
-;; TODO: PICK UP MARKER-CONVERSION HERE
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Eviction (see the Eviction section of aps-abstract.rkt for more info)
@@ -3300,59 +3297,65 @@
   (define evictable1
     `[,evictable-addr1
       (((define-state (A [x (Union [Foo (Addr Nat)])]) (m)
-          (send (addr 2 0) "foobar")
-          (send (: (record [a (addr 3 0)]) a) "foo")
+          (send (marked (addr 2 0)) "foobar")
+          (send (: (record [a (marked (addr 3 0))]) a) "foo")
           (goto A x)))
-       (goto A (variant Foo (addr 1 0))))])
+       (goto A (variant Foo (marked (addr 1 0)))))])
   (define collective-evictable1
     `[,collective-evictable-addr1
       ([((define-state (A [x (Union [Foo (Addr Nat)])]) (m)
-           (send (addr 2 0) "foobar")
-           (send (: (record [a (addr 3 0)]) a) "foo")
+           (send (marked (addr 2 0)) "foobar")
+           (send (: (record [a (marked (addr 3 0))]) a) "foo")
            (goto A x)))
-        (goto A (variant Foo (addr 1 0)))])])
+        (goto A (variant Foo (marked (addr 1 0))))])])
   (define non-evictable2-addr `(addr (3-EVICT Nat ()) 0))
   (define non-evictable2
     `[,non-evictable2-addr
-      [((define-state (B) (m) (begin ,evictable-addr1 (addr (env Nat) 1) (goto B))))
+      [((define-state (B) (m)
+          (begin (marked ,evictable-addr1)
+                 (marked (collective-addr (env Nat)) 1)
+                 (goto B))))
        (goto B)]])
-  (define non-evictable-has-obs-ext-message-addr `(addr (4-EVICT (Addr Nat) ()) 0))
-  (define non-evictable-has-obs-ext-message
-    `[,non-evictable-has-obs-ext-message-addr
+  (define non-evictable-has-mon-ext-message-addr `(addr (4-EVICT (Addr Nat) ()) 0))
+  (define non-evictable-has-mon-ext-message
+    `[,non-evictable-has-mon-ext-message-addr
       [((define-state (A) (m) (goto A))) (goto A)]])
 
   (define evict-test-config
-    `((,non-evictable1 ,evictable1 ,non-evictable2 ,non-evictable-has-obs-ext-message)
+    `((,non-evictable1 ,evictable1 ,non-evictable2 ,non-evictable-has-mon-ext-message)
       ;; β#
       (,collective-evictable1)
       ;; μ#
-      ([,evictable-addr1 (addr 4 0) single]
-       [(addr (4-EVICT (Addr Nat) ()) 0) (addr (env Nat) 3) single]
-       [,non-evictable2-addr ,collective-evictable-addr1 many])))
+      ([,evictable-addr1 (marked (addr 4 0)) single]
+       [(addr (4-EVICT (Addr Nat) ()) 0) (marked (collective-addr (env Nat)) 3) single]
+       [,non-evictable2-addr (marked ,collective-evictable-addr1) many])))
 
   (define expected-precise-evicted-config
     `(([(addr 1 1) (() (goto S))]
        [(addr (3-EVICT Nat ()) 0)
-        [((define-state (B) (m) (begin (collective-addr (env (Addr Nat))) (addr (env Nat) 1) (goto B))))
+        [((define-state (B) (m)
+            (begin (marked (collective-addr (env (Addr Nat))))
+                   (marked (collective-addr (env Nat)) 1)
+                   (goto B))))
          (goto B)]]
-       ,non-evictable-has-obs-ext-message)
+       ,non-evictable-has-mon-ext-message)
       ;; β#
       (,collective-evictable1)
       ;; μ#
-      ([(addr (4-EVICT (Addr Nat) ()) 0) (addr (env Nat) 3) single]
-       [,non-evictable2-addr ,collective-evictable-addr1 many])))
+      ([(addr (4-EVICT (Addr Nat) ()) 0) (marked (collective-addr (env Nat)) 3) single]
+       [,non-evictable2-addr (marked ,collective-evictable-addr1) many])))
 
     (define expected-blurred-evicted-config
       `((,non-evictable1
          ,evictable1
          ,non-evictable2
-         ,non-evictable-has-obs-ext-message)
+         ,non-evictable-has-mon-ext-message)
         ;; β#
         ()
         ;; μ#
-        ([,evictable-addr1 (addr 4 0) single]
-         [(addr (4-EVICT (Addr Nat) ()) 0) (addr (env Nat) 3) single]
-         [,non-evictable2-addr (collective-addr (env (Addr Nat))) many])))
+        ([,evictable-addr1 (marked (addr 4 0)) single]
+         [(addr (4-EVICT (Addr Nat) ()) 0) (marked (collective-addr (env Nat)) 3) single]
+         [,non-evictable2-addr (marked (collective-addr (env (Addr Nat)))) many])))
 
   (test-equal? "Addresses to evict"
     (csa#-addrs-to-evict evict-test-config)
@@ -3367,14 +3370,14 @@
        (let ([packets-to-this-actor
               (filter (lambda (packet) (equal? (csa#-message-packet-address packet) addr))
                       (csa#-config-message-packets i))])
-         (null? (externals-in (list behaviors packets-to-this-actor))))))
+         (null? (markers-in (list behaviors packets-to-this-actor))))))
 
 (module+ test
   (test-false "non-evictable actor 1" (evictable? non-evictable1-addr evict-test-config))
   (test-true "evictable actor 1" (evictable? evictable-addr1 evict-test-config))
   (test-false "non-evictable actor 2" (evictable? non-evictable2-addr evict-test-config))
   (test-false "non-evictable b/c external in message"
-    (evictable? non-evictable-has-obs-ext-message-addr evict-test-config)))
+    (evictable? non-evictable-has-mon-ext-message-addr evict-test-config)))
 
 (define (evictable-addr? address)
   (evictable-location? (address-location address)))
@@ -3398,8 +3401,8 @@
   (check-true (evictable-addr? `(collective-addr (L-EVICT Nat ()))))
   (check-false (evictable-addr? `(collective-addr (EVICT-NOT Nat ())))))
 
-;; i# a# -> (list i# ρ#)
-;; Evicts the given address from the given config
+;; i# a# -> (list i# ρ#) Evicts the given address from the given config, returning the new
+;; configuration and receptionists added
 (define (csa#-evict i addr)
   (match-define (list remaining-actors remaining-blurred-actors evicted-behavior)
     (cond
@@ -3451,17 +3454,17 @@
   (test-equal? "csa#-evict atomic address"
     (csa#-evict evict-test-config evictable-addr1)
     (list expected-precise-evicted-config
-          `([String (addr 2 0)]
-            [String (addr 3 0)]
-            [Nat (addr 1 0)]
-            [Nat (addr 4 0)])))
+          `([String (marked (addr 2 0))]
+            [String (marked (addr 3 0))]
+            [Nat (marked (addr 1 0))]
+            [Nat (marked (addr 4 0))])))
 
   (test-equal? "csa#-evict collective address"
     (csa#-evict evict-test-config collective-evictable-addr1)
     (list expected-blurred-evicted-config
-          `([String (addr 2 0)]
-            [String (addr 3 0)]
-            [Nat (addr 1 0)]))))
+          `([String (marked (addr 2 0))]
+            [String (marked (addr 3 0))]
+            [Nat (marked (addr 1 0))]))))
 
 (define (sexp-by-path sexp path)
   (match path
