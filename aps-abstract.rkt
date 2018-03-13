@@ -148,27 +148,27 @@
    ----------
    (pattern-binds-var (reocrd [l p] ...) x)])
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Transition selection
+;; ---------------------------------------------------------------------------------------------------
+;; Transition selection
 
-;; ;; Returns the syntax for each transition of the FSM in the spec config
-;; (define (config-current-transitions config)
-;;   (term (config-current-transitions/mf ,config)))
+;; Returns the syntax for each transition of the FSM in the spec config
+(define (config-current-transitions config)
+  (term (config-current-transitions/mf ,config)))
 
-;; ;; FIX: deal with the case where the pattern variables shadow the state variables
-;; (define-metafunction aps#
-;;   config-current-transitions/mf : s# -> ((pt -> (f ...) (goto φ u ...)) ...)
-;;   [(config-current-transitions/mf
-;;     (_
-;;      _
-;;      (goto φ a# ...)
-;;      (_ ... (define-state (φ x ...) (pt -> (f ...) (goto φ_trans u_trans ...)) ...) _ ...)
-;;      _))
-;;    ((pt ->
-;;         ((subst-n/aps#/f f (x a#) ...) ...)
-;;         (goto φ_trans (subst-n/aps#/u u_trans (x a#) ...) ...)) ...
-;;     ;; Note that we include the "null"/no-step transition
-;;     (free -> () (goto φ a# ...)))])
+;; FIX: deal with the case where the pattern variables shadow the state variables
+(define-metafunction aps#
+  config-current-transitions/mf : s# -> ((pt -> (f ...) (goto φ u ...)) ...)
+  [(config-current-transitions/mf
+    (_
+     _
+     (goto φ mk ...)
+     (_ ... (define-state (φ x ...) (pt -> (f ...) (goto φ_trans u_trans ...)) ...) _ ...)
+     _))
+   ((pt ->
+        ((subst-n/aps#/f f (x mk) ...) ...)
+        (goto φ_trans (subst-n/aps#/u u_trans (x mk) ...) ...)) ...
+    ;; Note that we include the "null"/no-step transition
+    (free -> () (goto φ mk ...)))])
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Evaluation
