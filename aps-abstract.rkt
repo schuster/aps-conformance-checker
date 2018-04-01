@@ -1669,156 +1669,96 @@
 ;;     (test-false "transition-to-same-state? wrong address"
 ;;       (transition-to-same-state? transition-test-config `[free -> () (goto A (addr (env Nat) 2))]))))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Selectors
+;; ---------------------------------------------------------------------------------------------------
+;; Selectors
 
-;; (define (aps#-config-obs-receptionists config)
-;;   (redex-let aps# ([(ρ# _ ...) config])
-;;     (term ρ#)))
+(define (aps#-psm-mon-receptionists psm)
+  (redex-let aps# ([((mk ...) _ ...) psm])
+    (term (mk ...))))
 
-;; (define (aps#-config-unobs-receptionists config)
-;;   (term (config-unobs-receptionists/mf ,config)))
+(define (aps#-psm-mon-externals psm)
+  (redex-let aps# ([(_ (mk ...) _ ...) psm])
+    (term (mk ...))))
 
-;; (define-metafunction aps#
-;;   config-unobs-receptionists/mf : s# -> ((τ a#) ...)
-;;   [(config-unobs-receptionists/mf (_ (any_rec ...) _ ...)) (any_rec ...)])
+(module+ test
+  (define mon-markers-test-psm `[(2) (0 1) (goto A) () ()])
+  (test-true "valid psm: mon-markers-test-psm" (redex-match? aps# s# mon-markers-test-psm))
+  (test-equal? "mon-receptionists "(aps#-psm-mon-receptionists mon-markers-test-psm) `(2))
+  (test-equal? "mon-externals" (aps#-psm-mon-externals     mon-markers-test-psm) `(0 1)))
 
-;; (module+ test
-;;   (redex-let aps# ([s# `(((Nat (addr 2 0)))
-;;                          ((Nat (addr 0 0))
-;;                           (Nat (addr 1 0)))
-;;                          (goto A)
-;;                          ()
-;;                          ())])
-;;     (check-equal? (aps#-config-unobs-receptionists (term s#))
-;;                   `((Nat (addr 0 0))
-;;                     (Nat (addr 1 0))))))
+(define (aps#-psm-state-defs psm)
+  (redex-let aps# ([(_ _ _ any_state-defs _) psm])
+             (term any_state-defs)))
 
-;; (define (aps#-config-state-defs config)
-;;   (redex-let aps# ([(_ _ _ any_state-defs _) config])
-;;              (term any_state-defs)))
+(define (aps#-psm-current-state psm)
+  (redex-let aps# ([(_ _ any_goto _ ...) psm])
+    (term any_goto)))
 
-;; (define (aps#-config-current-state config)
-;;   (redex-let aps# ([(_ _ any_goto _ ...) config])
-;;     (term any_goto)))
+(define (aps#-psm-current-state-args psm)
+  (redex-let aps# ([(_ _ (goto _ mk ...) _ ...) psm])
+    (term (mk ...))))
 
-;; (define (aps#-config-current-state-args config)
-;;   (redex-let aps# ([(_ _ (goto _ a# ...) _ ...) config])
-;;     (term (a# ...))))
+(define (aps#-psm-obligations psm)
+  (term (psm-obligations/mf ,psm)))
 
-;; (define (aps#-config-commitment-map config)
-;;   (term (config-commitment-map/mf ,config)))
+(define-metafunction aps#
+  psm-obligations/mf : s# -> O
+  [(psm-obligations/mf (_ _ _ _ O)) O])
 
-;; (define-metafunction aps#
-;;   config-commitment-map/mf : s# -> O#
-;;   [(config-commitment-map/mf (_ _ _ _ O#)) O#])
+(module+ test
+  (test-equal? "aps#-psm-obligations"
+    (aps#-psm-obligations
+     `(()
+       (1 2 3)
+       (goto S1)
+       ()
+       ([1 *]
+        [1 (record)]
+        [3 *]
+        [3 (variant A)]
+        [3 (record [a *])])))
+    (term ([1 *]
+           [1 (record)]
+           [3 *]
+           [3 (variant A)]
+           [3 (record [a *])]))))
 
-;; (module+ test
-;;   (test-equal? "Config commitment map"
-;;     (aps#-config-commitment-map `(((Nat (addr 1 0))) () (goto A1) () ()))
-;;     '()))
+(define (aps#-transition-trigger transition)
+  (redex-let aps# ([(pt -> _ _) transition])
+    (term pt)))
 
-;; ;; Returns all singleton commitments in the config as a list of address/pattern pairs
-;; (define (aps#-config-commitments config)
-;;   (append*
-;;    (map (lambda (entry)
-;;           (define addr (aps#-commitment-entry-address entry))
-;;           (map (lambda (pat) `[,addr ,pat])  (aps#-commitment-entry-patterns entry)))
-;;         (aps#-config-commitment-map config))))
+(define (aps#-transition-effects transition)
+  (third transition))
 
-;; (module+ test
-;;   (test-equal? "config-commitments"
-;;     (aps#-config-commitments
-;;      `(()
-;;        ()
-;;        (goto S1)
-;;        ()
-;;        ([(addr (env Nat) 1) * (record)]
-;;         [(addr (env Nat) 2)]
-;;         [(addr (env Nat) 3) * (variant A) (record [a *])])))
-;;     (list `[(addr (env Nat) 1) *]
-;;           `[(addr (env Nat) 1) (record)]
-;;           `[(addr (env Nat) 3) *]
-;;           `[(addr (env Nat) 3) (variant A)]
-;;           `[(addr (env Nat) 3) (record [a *])])))
+(define (aps#-transition-goto transition)
+  (fourth transition))
 
-;; (define (aps#-transition-trigger transition)
-;;   (redex-let aps# ([(pt -> _ _) transition])
-;;     (term pt)))
+(define (aps#-obligation-dest o)
+  (first o))
 
-;; (define (aps#-transition-effects transition)
-;;   (third transition))
+(define (aps#-obligation-pattern o)
+  (second o))
 
-;; (define (aps#-transition-goto transition)
-;;   (fourth transition))
+(define (obligations-for-marker obligations marker)
+  (map aps#-obligation-pattern
+       (filter (lambda (obl) (equal? (aps#-obligation-dest obl) marker))
+               obligations)))
 
-;; (define (aps#-commitment-entry-address entry)
-;;   (redex-let aps# ([(a# _ ...)  entry])
-;;              (term a#)))
-
-;; (define (aps#-commitment-entry-patterns entry)
-;;   (redex-let aps# ([(_ po ...)  entry])
-;;     (term (po ...))))
-
-;; (module+ test
-;;   (test-case "aps#-commitment-entry-patterns"
-;;     (redex-let* aps# ([any_entry (term [(addr (env Nat) 1) * (record)])]
-;;                       [O# (term (any_entry))])
-;;       (check-equal? (aps#-commitment-entry-patterns (term any_entry))
-;;                     (list '* '(record))))))
-
-;; (define (commitments-for-address commitment-map address)
-;;   (term (commitments-for-address/mf ,commitment-map ,address)))
-
-;; (define-metafunction aps#
-;;   commitments-for-address/mf : O# a# -> (po ...) or #f
-;;   [(commitments-for-address/mf (_ ... (a# po ...) _ ...)
-;;                                a#)
-;;    (po ...)]
-;;   [(commitments-for-address/mf _ _) #f])
-
-;; (module+ test
-;;   (define test-O#
-;;     (term (((addr (env Nat) 1) * (record))
-;;            ((addr (env Nat) 2) (variant True) (variant False)))))
-;;   (check-equal?
-;;    (commitments-for-address
-;;     test-O#
-;;     (term (addr (env Nat) 1)))
-;;    (term (* (record))))
-;;   (check-equal?
-;;    (commitments-for-address
-;;     test-O#
-;;     (term (addr (env Nat) 2)))
-;;    (term ((variant True) (variant False))))
-;;   (check-false
-;;    (commitments-for-address
-;;     test-O#
-;;     (term (addr (env Nat) 3)))))
-
-;; ;; "Relevant" external addresses are those in either the current state arguments or obligations of a
-;; ;; spec config
-;; (define (aps#-relevant-external-addrs s#)
-;;   (term (relevant-external-addrs/mf ,s#)))
-
-;; (define-metafunction aps#
-;;   relevant-external-addrs/mf : s# -> (a# ...)
-;;   [(relevant-external-addrs/mf s#)
-;;    (any_commitment-addr ...)
-;;    (where ((any_commitment-addr _ ...) ...) (config-commitment-map/mf s#))])
-
-;; (module+ test
-;;   (check-equal?
-;;    (aps#-relevant-external-addrs
-;;     (redex-let* aps#
-;;                 ([O# (term (((addr (env Nat) 1)) ((addr (env Nat) 2)) ((addr (env Nat) 3)) ((addr (env Nat) 4))))]
-;;                  [s# (term (()
-;;                             ()
-;;                             (goto Always (addr (env Nat) 1) (addr (env Nat) 2) (addr (env Nat) 3))
-;;                             ((define-state (Always r1 r2) (* -> () (goto Always r1 r2))))
-;;                             O#))])
-;;                 (term s#)))
-;;    (term ((addr (env Nat) 1) (addr (env Nat) 2) (addr (env Nat) 3) (addr (env Nat) 4)))))
+(module+ test
+  (define test-O
+    (term ((1 *)
+           (1 (record))
+           (2 (variant True))
+           (2 (variant False)))))
+  (check-equal?
+   (obligations-for-marker test-O (term 1))
+   (term (* (record))))
+  (check-equal?
+   (obligations-for-marker test-O (term 2))
+   (term ((variant True) (variant False))))
+  (check-equal?
+   (obligations-for-marker test-O (term 3))
+   null))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Spec Split
