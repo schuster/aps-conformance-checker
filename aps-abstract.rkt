@@ -10,13 +10,13 @@
 ;;  aps#-matching-steps
 ;;  aps#-resolve-outputs
 ;;  aps#-abstract-config
-;;  split-spec
+;;  split-psm
 ;;  aps#-blur-config
 ;;  canonicalize-pair
 ;;  try-rename-address
 ;;  reverse-rename-address
 ;;  aps#-config-has-commitment?
-;;  aps#-completed-no-transition-config?
+;;  aps#-completed-no-transition-psm?
 ;;  evict-pair
 ;;  ;; needed for widening
 ;;  aps#-config<=
@@ -29,7 +29,7 @@
 
 ;;  ;; Testing helpers
 ;;  make-s#
-;;  aps#-make-no-transition-config
+;;  aps#-make-no-transition-psm
 
 ;;  ;; Debugging helpers
 ;;  spec-config-without-state-defs)
@@ -1760,216 +1760,163 @@
    (obligations-for-marker test-O (term 3))
    null))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Spec Split
+;; ---------------------------------------------------------------------------------------------------
+;; Spec Split
 
-;; ;; s# -> (Listof s#)
-;; ;;
-;; ;; Splits the given specifcation configuration into multiple configs, to ensure the space of explored
-;; ;; spec configs is finite. For each external address in the commitment map that is not a state
-;; ;; argument and does not have a "self" pattern in one of its patterns (and therefore will never have
-;; ;; more commitments addeded nor be needed to resolve the current self address), it creates a new
-;; ;; config consisting only of the commitments on that address (along with commitments for any addresses
-;; ;; mentioned in fork patterns for that address) and a dummy FSM with no transitions. After removing
-;; ;; those commitment map entries, the remaining config is also returned. The unobserved environment's
-;; ;; interface does not change in any of the new configs.
-;; (define (split-spec config)
-;;   (define entries (aps#-config-commitment-map config))
-;;   ;; A commitment map entry is "relevant" if its address is used as a state argument or one of its
-;;   ;; patterns contains the "self" pattern. For each irrelevant entry, we split off a new spec config.
-;;   (define-values (relevant-entries irrelevant-entries)
-;;     (partition
-;;      (lambda (entry)
-;;        (or (member (aps#-commitment-entry-address entry) (aps#-config-current-state-args config))
-;;            (ormap pattern-contains-self? (aps#-commitment-entry-patterns entry))))
-;;      (aps#-config-commitment-map config)))
-;;   (define commitment-only-configs
-;;     (for/list ([entry irrelevant-entries])
-;;       (aps#-config-from-commitment-entry
-;;        entry
-;;        (aps#-config-obs-receptionists config)
-;;        (aps#-config-unobs-receptionists config))))
-;;   (cons (term (,(aps#-config-obs-receptionists config)
-;;                ,(aps#-config-unobs-receptionists config)
-;;                ,(aps#-config-current-state config)
-;;                ,(aps#-config-state-defs config)
-;;                ,relevant-entries))
-;;         commitment-only-configs))
+;; s# -> (Listof s#)
+;;
+;; Splits the given PSM into multiple PSMs, to ensure the space of explored PSMs is finite. For each
+;; monitored external marker in the commitment map that is not a state argument and does not have a
+;; "self" pattern in one of its patterns (and therefore will never have more obligations addeded nor
+;; be needed to resolve the current self address), it creates a new PSM consisting only of the
+;; obligations on that marker and a dummy FSM with no transitions. After removing those obligations,
+;; the remaining PSM is also returned.
+(define (split-psm psm)
+  ;; A marker is "relevant" if it is a state argument or one of its obligation patterns contains the
+  ;; "self" pattern. For each irrelevant marker, we split off a new PSM.
+  (define-values (relevant-markers irrelevant-markers)
+    (partition
+     (lambda (marker)
+       (or (member marker (aps#-psm-current-state-args psm))
+           (ormap pattern-contains-self? (obligations-for-marker (aps#-psm-obligations psm) marker))))
+     (aps#-psm-mon-externals psm)))
+  (define obligation-only-psms
+    (for/list ([marker irrelevant-markers])
+      (aps#-psm-from-marker-and-obligations
+       marker
+       (obligations-for-marker (aps#-psm-obligations psm) marker))))
+  (cons (term (,(aps#-psm-mon-receptionists psm)
+               ,relevant-markers
+               ,(aps#-psm-current-state psm)
+               ,(aps#-psm-state-defs psm)
+               ,(filter
+                 (lambda (obl) (member (aps#-obligation-dest obl) relevant-markers))
+                 (aps#-psm-obligations psm))))
+        obligation-only-psms))
 
-;; (module+ test
-;;   (define (make-simple-spec-for-split-test commitments)
-;;     (term
-;;      (((Nat (addr 0 0)))
-;;       ()
-;;       (goto A (addr (env Nat) 0))
-;;       ((define-state (A x) [* -> () (goto A x)]))
-;;       ,commitments)))
+(module+ test
+  (define (make-simple-psm-for-split-test mon-exts obligations)
+    (redex-let aps# ([s# (term
+                          (()
+                           ,mon-exts
+                           (goto A 0)
+                           ((define-state (A x) [* -> () (goto A x)]))
+                           ,obligations))])
+      (term s#)))
 
-;;   (test-equal? "split spec with one FSM gets same spec"
-;;     (split-spec (make-simple-spec-for-split-test '()))
-;;     (list (make-simple-spec-for-split-test '())))
+  (test-equal? "split spec with one FSM gets same spec"
+    (split-psm (make-simple-psm-for-split-test '() '()))
+    (list (make-simple-psm-for-split-test '() '())))
 
-;;   (test-equal? "split with one related commit"
-;;    (split-spec (make-simple-spec-for-split-test `(((addr (env Nat) 0) *))))
-;;    (list (make-simple-spec-for-split-test `(((addr (env Nat) 0) *)))))
+  (test-equal? "split with one related commit"
+    (split-psm (make-simple-psm-for-split-test `(0) `([0 *])))
+    (list (make-simple-psm-for-split-test  `(0) `([0 *]))))
 
-;;   (test-same-items? "split with unrelated commit"
-;;    (split-spec (make-simple-spec-for-split-test `(((addr (env Nat) 1) *))))
-;;    (list (make-simple-spec-for-split-test `())
-;;          (aps#-make-no-transition-config `((Nat (addr 0 0))) `(((addr (env Nat) 1) *)))))
+  (test-same-items? "split with unrelated commit"
+    (split-psm (make-simple-psm-for-split-test `(1) `([1 *])))
+    (list (make-simple-psm-for-split-test `() `())
+         (aps#-psm-from-marker-and-obligations 1 (list `*))))
 
-;;   (test-equal? "split a dummy state"
-;;     (split-spec (aps#-make-no-transition-config null `(((addr (env Nat) 1) *))))
-;;     (list (aps#-make-no-transition-config null `(((addr (env Nat) 1) *)))))
+  (test-equal? "split a dummy state"
+    (split-psm (aps#-psm-from-marker-and-obligations 1 (list `*)))
+    (list (aps#-psm-from-marker-and-obligations 1 (list `*))))
 
-;;   (test-equal? "split a spec with a 'self' commitment"
-;;     (split-spec (term (()
-;;                        ()
-;;                        (goto A)
-;;                        ()
-;;                        (((addr (env Nat) 1) self)))))
-;;     (list (term (()
-;;                  ()
-;;                  (goto A)
-;;                  ()
-;;                  (((addr (env Nat) 1) self))))))
+  (test-equal? "split a spec with a 'self' commitment"
+    (split-psm (term (()
+                      (1)
+                      (goto A)
+                      ()
+                      ((1 self)))))
+    (list (term (()
+                 (1)
+                 (goto A)
+                 ()
+                 ((1 self)))))))
 
-;;   (test-equal? "split spec with fork mentioning self pattern"
-;;     (split-spec (term (()
-;;                        ()
-;;                        (goto A (addr (env Nat) 2))
-;;                        ()
-;;                        (((addr (env Nat) 1) (fork (goto B)
-;;                                                   (define-state (B)
-;;                                                     [x -> ([obligation x self]) (goto B)])))
-;;                         ((addr (env Nat) 2))))))
-;;     (list
-;;      (term (()
-;;             ()
-;;             (goto A (addr (env Nat) 2))
-;;             ()
-;;             (((addr (env Nat) 2)))))
-;;      (aps#-make-no-transition-config
-;;       null
-;;       (list `((addr (env Nat) 1) (fork (goto B)
-;;                                        (define-state (B)
-;;                                          [x -> ([obligation x self]) (goto B)]))))))))
+(define (pattern-contains-self? pat)
+  (match pat
+    ['self #t]
+    [(? symbol?) #f]
+    [`(fork ,_ ...) #f]
+    [`(delayed-fork ,_ ...) #f]
+    [`(or ,pats ...) (ormap pattern-contains-self? pats)]
+    [`(variant ,_ ,pats ...) (ormap pattern-contains-self? pats)]
+    [`(record [,_ ,pats] ...) (ormap pattern-contains-self? pats)]))
 
-;; (define (pattern-contains-self? pat)
-;;   (match pat
-;;     ['self #t]
-;;     [(? symbol?) #f]
-;;     [`(fork ,_ ...) #f]
-;;     [`(delayed-fork ,_ ...) #f]
-;;     [`(or ,pats ...) (ormap pattern-contains-self? pats)]
-;;     [`(variant ,_ ,pats ...) (ormap pattern-contains-self? pats)]
-;;     [`(record [,_ ,pats] ...) (ormap pattern-contains-self? pats)]))
+(module+ test
+  (test-false "pattern-contains-self?: self only in fork's state def"
+    (pattern-contains-self?
+     `(fork (goto A) (define-state (A x) [free -> ([obligation x self]) (goto A x)]))))
+  (test-true "pattern-contains-self?: true"
+    (pattern-contains-self? `(record [a *] [b self])))
+    (test-true "pattern-contains-self?: true 2"
+      (pattern-contains-self? `(variant A * self)))
+  (test-true "pattern-contains-self?: true 3"
+    (pattern-contains-self? `(or (variant B) (variant A * self))))
+  (test-false "pattern-contains-self?: false"
+    (pattern-contains-self? `(record [a *] [b (variant B)])))
+  (test-false "pattern-contains-self?: false 2"
+    (pattern-contains-self? `(record [a (fork (goto A))] )))
+  (test-false "pattern-contains-self?: false 3"
+    (pattern-contains-self? `(record [a (delayed-fork (goto A))] ))))
 
-;; (module+ test
-;;   (test-false "pattern-contains-self?: self only in fork's state def"
-;;     (pattern-contains-self?
-;;      `(fork (goto A) (define-state (A x) [free -> ([obligation x self]) (goto A x)]))))
-;;   (test-true "pattern-contains-self?: true"
-;;     (pattern-contains-self? `(record [a *] [b self])))
-;;     (test-true "pattern-contains-self?: true 2"
-;;       (pattern-contains-self? `(variant A * self)))
-;;   (test-true "pattern-contains-self?: true 3"
-;;     (pattern-contains-self? `(or (variant B) (variant A * self))))
-;;   (test-false "pattern-contains-self?: false"
-;;     (pattern-contains-self? `(record [a *] [b (variant B)])))
-;;   (test-false "pattern-contains-self?: false 2"
-;;     (pattern-contains-self? `(record [a (fork (goto A))] )))
-;;   (test-false "pattern-contains-self?: false 3"
-;;     (pattern-contains-self? `(record [a (delayed-fork (goto A))] ))))
+;; Makes a PSM with no observed receptionist, a single observed external, and an FSM with no transitions. Used for
+;; specifications where only the commitments are important.
+(define (aps#-psm-from-marker-and-obligations mon-external obl-patterns)
+  (term (()
+         (,mon-external)
+         (goto DummySpecFsmState ,mon-external)
+         ((define-state (DummySpecFsmState x)))
+         ,(map (lambda (p) `[,mon-external ,p]) obl-patterns))))
 
-;; ;; Makes a specification config with no observed receptionist and an FSM with no transitions. Used for
-;; ;; specifications where only the commitments are important.
-;; (define (aps#-make-no-transition-config unobs-receptionists commitments)
-;;   ;; TODO: expecting the first entry to be the relevant entry is a hack and should be removed once I
-;;   ;; switch over to delayed forks
-;;   (term (()
-;;          ,unobs-receptionists
-;;          (goto DummySpecFsmState ,(aps#-commitment-entry-address (first commitments)))
-;;          ((define-state (DummySpecFsmState x)))
-;;          ,commitments)))
+(module+ test
+  (test-equal? "aps#-psm-from-marker-and-obligations"
+    (aps#-psm-from-marker-and-obligations 0 (list `*))
+    `(()
+      (0)
+      (goto DummySpecFsmState 0)
+      ((define-state (DummySpecFsmState x)))
+      ([0 *])))
 
-;; (module+ test
-;;   (test-equal? "aps#-make-no-transition-config"
-;;     (aps#-make-no-transition-config (list `[Nat (addr 0 0)])
-;;                                     (list `[(addr (env Nat) 0) *]
-;;                                           `[(addr (env Nat) 1)]))
-;;     `(()
-;;       ([Nat (addr 0 0)])
-;;       (goto DummySpecFsmState (addr (env Nat) 0))
-;;       ((define-state (DummySpecFsmState x)))
-;;       ([(addr (env Nat) 0) *]
-;;        [(addr (env Nat) 1)]))))
+  (test-equal? "aps#-psm-from-marker-and-obligations 2"
+    (aps#-psm-from-marker-and-obligations 0 `(* (record [a *] [b *])))
+    `(()
+      (0)
+      (goto DummySpecFsmState 0)
+      ((define-state (DummySpecFsmState x)))
+      ([0 *] [0 (record [a *] [b *])]))))
 
-;; ;; Creates a spec config with a transition-less FSM and a commitment map with just the given
-;; ;; entry. The receptionists for the unobserved environment will be the given list plus the given FSM
-;; ;; address if it is not UNKONWN.
-;; (define (aps#-config-from-commitment-entry entry obs-receptionists unobs-receptionists)
-;;   (aps#-make-no-transition-config (merge-receptionists unobs-receptionists obs-receptionists)
-;;                                   (list entry)))
+(define (aps#-completed-no-transition-psm? s)
+  ;; A configuration is a completed, no-transition configuration if its only current transition is the
+  ;; implicit do-nothing transition, it has no remaining obligations, and no observable receptionist.
+  (and (null? (aps#-psm-mon-receptionists s))
+       (= 1 (length (config-current-transitions s)))
+       (null? (aps#-psm-obligations s))))
 
-;; (module+ test
-;;   (check-equal?
-;;    (aps#-config-from-commitment-entry
-;;     (term ((addr (env Nat) 0) * (record [a *] [b *])))
-;;     '()
-;;     null)
-;;    (aps#-make-no-transition-config '() '(((addr (env Nat) 0) * (record [a *] [b *])))))
-
-;;   (test-equal? "Commitment entry spec should also include old FSM address as unobs receptionist"
-;;     (aps#-config-from-commitment-entry
-;;      (term ((addr (env Nat) 0) * (record [a *] [b *])))
-;;      '((Nat (addr 0 0)))
-;;      null)
-;;     (aps#-make-no-transition-config
-;;      '((Nat (addr 0 0)))
-;;      '(((addr (env Nat) 0) * (record [a *] [b *])))))
-
-;;   (test-equal? "Merge obs address into unobs addrs"
-;;     (aps#-config-from-commitment-entry (term ((addr (env Nat) 0)))
-;;                                          `(((Union [A]) (addr 0 0)))
-;;                                          `(((Union [B]) (addr 0 0))))
-;;     (aps#-make-no-transition-config
-;;      `(((Union [A] [B]) (addr 0 0)))
-;;      '(((addr (env Nat) 0))))))
-
-;; (define (aps#-completed-no-transition-config? s)
-;;   ;; A configuration is a completed, no-transition configuration if its only current transition is the
-;;   ;; implicit do-nothing transition, it has no remaining obligations, and no observable receptionist.
-;;   (and (null? (aps#-config-obs-receptionists s))
-;;        (= 1 (length (config-current-transitions s)))
-;;        (match (aps#-config-commitment-map s)
-;;          [(list `(,_) ...) #t]
-;;          [_ #f])))
-
-;; (module+ test
-;;   ;; empty config set, non-empty configs, other kind of spec config with empty coms
-;;   (test-case "completed-no-transition-config?: no commitments"
-;;     (redex-let aps# ([s# (aps#-make-no-transition-config null (list `((addr (env Nat) 1))))])
-;;       (check-true (aps#-completed-no-transition-config? (term s#)))))
-;;   (test-case "completed-no-transition-config?: some commitments"
-;;     (redex-let aps# ([s# (aps#-make-no-transition-config null (list `((addr (env Nat) 1) *)))])
-;;       (check-false (aps#-completed-no-transition-config? (term s#)))))
-;;   (test-case "completed-no-transition-config?: spec with transitions, no commitments"
-;;     (redex-let aps# ([s#
-;;                       `(()
-;;                         ()
-;;                         (goto A)
-;;                         ((define-state (A) [free -> () (goto A)]))
-;;                         ())])
-;;       (check-false (aps#-completed-no-transition-config? (term s#)))))
-;;   (test-case "completed-no-transition-config?: observed interface"
-;;     (redex-let aps# ([s#
-;;                       `(((Nat (addr 1 0)))
-;;                         ()
-;;                         (goto A)
-;;                         ((define-state (A)))
-;;                         ())])
-;;       (check-false (aps#-completed-no-transition-config? (term s#))))))
+(module+ test
+  ;; empty config set, non-empty configs, other kind of spec config with empty coms
+  (test-case "completed-no-transition-psm?: no commitments"
+    (redex-let aps# ([s# (aps#-psm-from-marker-and-obligations 1 null)])
+      (check-true (aps#-completed-no-transition-psm? (term s#)))))
+  (test-case "completed-no-transition-psm?: some commitments"
+    (redex-let aps# ([s# (aps#-psm-from-marker-and-obligations 1 (list `*))])
+      (check-false (aps#-completed-no-transition-psm? (term s#)))))
+  (test-case "completed-no-transition-psm?: spec with transitions, no commitments"
+    (redex-let aps# ([s#
+                      `(()
+                        ()
+                        (goto A)
+                        ((define-state (A) [free -> () (goto A)]))
+                        ())])
+      (check-false (aps#-completed-no-transition-psm? (term s#)))))
+  (test-case "completed-no-transition-psm?: observed receptionist"
+    (redex-let aps# ([s#
+                      `((1)
+                        ()
+                        (goto A)
+                        ((define-state (A)))
+                        ())])
+      (check-false (aps#-completed-no-transition-psm? (term s#))))))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Blurring
@@ -1993,7 +1940,7 @@
 
 ;; (module+ test
 ;;   (test-equal? "aps#-blur-config"
-;;     (aps#-blur-config (aps#-make-no-transition-config
+;;     (aps#-blur-config (aps#-make-no-transition-psm
 ;;                        `((Nat (addr 0 0))
 ;;                          (Nat (addr 1 0))
 ;;                          (Nat (addr 1 1))
@@ -2002,7 +1949,7 @@
 ;;                          (Nat (addr 2 0)))
 ;;                        `([(addr (env Nat) 0)]))
 ;;                       (list (term (addr 1 1))))
-;;     (aps#-make-no-transition-config
+;;     (aps#-make-no-transition-psm
 ;;      `((Nat (addr 0 0))
 ;;        (Nat (addr 1 0))
 ;;        (Nat (collective-addr 1))
