@@ -1918,185 +1918,141 @@
                         ())])
       (check-false (aps#-completed-no-transition-psm? (term s#))))))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Canonicalization (i.e. renaming)
+;; ---------------------------------------------------------------------------------------------------
+;; Canonicalization (i.e. renaming)
 
-;; ;; NOTE: OLD/NEW are now 0/1; comments have not been updated yet
+;; Given an impl config/PSM pair, transforms it into an equivalent (for the purpose of conformance),
+;; canonical form. Also returns the address and marker rename maps. Specifically:
+;;
+;; 1. Changes all spawn address ages (0/1) to 0 (assumes that these configs have already been
+;; blurred so that either a 0 or a 1 version of an address exists, but not both)
+;;
+;; 2. Renames all markers such that the specified receptionist (if any) gets 0, then the state
+;; arguments of the PSM, then the (at most one) monitored external that is not a state argument.
+;;
+;; 3. Also sorts the components of the config and PSM (not strictly necessary to ensure a bounded
+;; state space, but provides a form of symmetry reduction).
+(define (canonicalize-pair impl-config psm)
+  (match-define `(,aged-impl-config ,addr-substitutions) (csa#-age-addresses impl-config))
+  (define markers-to-rename
+    (remove-duplicates
+     (append
+      (aps#-psm-mon-receptionists psm)
+      (aps#-psm-current-state-args psm)
+      (map aps#-obligation-dest (aps#-psm-obligations psm)))))
 
-;; ;; Given an impl config/spec config pair, transforms it into an equivalent (for the purpose of
-;; ;; conformance), canonical form. Also returns the address rename map. Specifically:
-;; ;;
-;; ;; 1. Changes all spawn address new/old flags to OLD (assumes that these configs have already been
-;; ;; blurred so that either an OLD or a NEW version of an address exists, but not both)
-;; ;;
-;; ;; 2. Renames all atomic external addresses such that the first one in the spec config's state
-;; ;; argument list is address 0, then address 1, then address 2, and so on. The remaining atomic
-;; ;; external addresses are sorted and then given the next available address identifiers in order (so if
-;; ;; addresses 52, 81, and 35 remain and 6 is the next available identifier, 35 would map to 6, 52 to 7,
-;; ;; and 81 to 8).
-;; ;;
-;; ;; 3. Also sorts the escaped addresses in the impl config and the receptionists in the spec config
-;; ;; (not strictly necessary to ensure a bounded state space, but provides a form of symmetry
-;; ;; reduction).
-;; (define (canonicalize-pair impl-config spec-config)
-;;   (match-define (list aged-impl-config aged-spec-config)
-;;     (age-addresses (list impl-config spec-config)))
-;;   (define state-args (aps#-config-current-state-args aged-spec-config))
-;;   (define state-arg-substitutions
-;;     (for/list ([state-arg state-args]
-;;                [new-number (build-list (length state-args) values)])
-;;       (redex-let aps# ([(addr _ natural) state-arg])
-;;         (list (term natural) new-number))))
-;;   (define remaining-observed-addrs
-;;     (filter (lambda (addr) (not (member addr state-args)))
-;;             (map aps#-commitment-entry-address (aps#-config-commitment-map aged-spec-config))))
-;;   (define remaining-substitutions
-;;     (for/list ([addr (sort remaining-observed-addrs sexp<?)]
-;;                [new-number (build-list (length remaining-observed-addrs)
-;;                                        (curry + (length state-args)))])
-;;       (redex-let aps# ([(addr _ natural) addr])
-;;         (list (term natural) new-number))))
-;;   (define substitutions (append state-arg-substitutions remaining-substitutions))
-;;   (match-define (list renamed-impl-config renamed-spec-config)
-;;     (rename-external-addresses (list aged-impl-config aged-spec-config) substitutions))
-;;   (list (csa#-sort-config-components renamed-impl-config)
-;;         (aps#-sort-obligation-entries (aps#-sort-receptionists renamed-spec-config))
-;;         substitutions))
+  (define marker-substitutions
+    (for/list ([old-marker markers-to-rename]
+               [new-marker (build-list (length markers-to-rename) values)])
+      `[,old-marker ,new-marker]))
+  (define renamed-impl-config (csa#-rename-markers aged-impl-config marker-substitutions))
+  (define renamed-spec-config (aps#-rename-markers psm marker-substitutions))
+  (list (csa#-sort-config-components renamed-impl-config)
+        (aps#-sort-psm-components renamed-spec-config)
+        addr-substitutions
+        marker-substitutions))
 
-;; (module+ test
-;;   (test-equal? "canonicalize 1"
-;;     (canonicalize-pair
-;;      (make-single-actor-abstract-config
-;;       (term ((addr 0 0)
-;;              (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
-;;               (goto A (addr (env Nat) 25) (addr (env Nat) 42) (addr (env Nat) 10))))))
-;;      (term
-;;       (((Nat (addr 0 0)))
-;;        ()
-;;        (goto A (addr (env Nat) 25) (addr (env Nat) 42) (addr (env Nat) 10))
-;;        ((define-state (A a b c) [* -> () (goto A)]))
-;;        (((addr (env Nat) 25)) ((addr (env Nat) 42)) ((addr (env Nat) 10))))))
-;;     (term
-;;      (,(make-single-actor-abstract-config
-;;         (term ((addr 0 0)
-;;                (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
-;;                 (goto A (addr (env Nat) 0) (addr (env Nat) 1) (addr (env Nat) 2))))))
-;;       (((Nat (addr 0 0)))
-;;        ()
-;;        (goto A (addr (env Nat) 0) (addr (env Nat) 1) (addr (env Nat) 2))
-;;        ((define-state (A a b c) [* -> () (goto A)]))
-;;        (((addr (env Nat) 0)) ((addr (env Nat) 1)) ((addr (env Nat) 2))))
-;;       ([25 0] [42 1] [10 2]))))
+(module+ test
+  (test-equal? "canonicalize 1"
+    (canonicalize-pair
+     (make-single-actor-abstract-config
+      (term ((addr 0 0)
+             (((define-state (A) (m) (goto A)))
+              (goto A
+                    (marked (addr (env Nat) 0) 3)
+                    (marked (addr (env Nat) 0) 2)
+                    (marked (addr (env Nat) 0) 4)))))
+      (term ([Nat (marked (addr 0 0) 7)])))
+     (term
+      ((7)
+       (2 3 4)
+       (goto A 4 3 2)
+       ((define-state (A a b c) [* -> () (goto A)]))
+       ([2 *] [3 (record)]))))
+    (list
+     (make-single-actor-abstract-config
+      (term ((addr 0 0)
+             (((define-state (A) (m) (goto A)))
+              (goto A
+                    (marked (addr (env Nat) 0) 2)
+                    (marked (addr (env Nat) 0) 3)
+                    (marked (addr (env Nat) 0) 1)))))
+      (term ([Nat (marked (addr 0 0) 0)])))
+     (term
+      ((0)
+       (1 2 3)
+       (goto A 1 2 3)
+       ((define-state (A a b c) [* -> () (goto A)]))
+       ([2 (record)] [3 *])))
+     `([(addr 0 0) (addr 0 0)])
+     `([7 0]
+       [4 1]
+       [3 2]
+       [2 3])))
 
-;;   (test-equal? "canonicalize 2"
-;;     (canonicalize-pair
-;;      (make-single-actor-abstract-config
-;;       (term ((addr 0 0)
-;;              (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
-;;               (goto A (addr (env Nat) 10) (addr (env Nat) 42) (addr (env Nat) 25))))))
-;;      (term
-;;       (((Nat (addr 0 0)))
-;;        ()
-;;        (goto A (addr (env Nat) 25) (addr (env Nat) 42) (addr (env Nat) 10))
-;;        ((define-state (A c b a) [* -> () (goto A)]))
-;;        (((addr (env Nat) 25)) ((addr (env Nat) 42)) ((addr (env Nat) 10))))))
-;;     (term
-;;      (,(make-single-actor-abstract-config
-;;         (term ((addr 0 0)
-;;                (((define-state (A [a (Addr Nat)] [b (Addr Nat)] [c (Addr Nat)]) (m) (goto A)))
-;;                 (goto A (addr (env Nat) 2) (addr (env Nat) 1) (addr (env Nat) 0))))))
-;;       (((Nat (addr 0 0)))
-;;        ()
-;;        (goto A (addr (env Nat) 0) (addr (env Nat) 1) (addr (env Nat) 2))
-;;        ((define-state (A c b a) [* -> () (goto A)]))
-;;        (((addr (env Nat) 0)) ((addr (env Nat) 1)) ((addr (env Nat) 2))))
-;;       ([25 0] [42 1] [10 2]))))
+  (test-equal? "canonicalize spec config with self patterns"
+    (canonicalize-pair
+     (make-single-actor-abstract-config
+      (term ((addr 1 0) (() (goto A (marked (addr (env Nat) 0) 57)))))
+      '())
+     `[()
+       ()
+       (goto B)
+       ()
+       ([57 self])])
+    `[,(make-single-actor-abstract-config
+        (term ((addr 1 0) (() (goto A (marked (addr (env Nat) 0) 0)))))
+        '())
+      [()
+       ()
+       (goto B)
+       ()
+       ([0 self])]
+      ([(addr 1 0) (addr 1 0)])
+      ([57 0])]))
 
-;;   (test-equal? "canonicalize spec config with self patterns"
-;;     (canonicalize-pair
-;;      (make-single-actor-abstract-config
-;;       (term ((addr 1 0)
-;;              (() (goto A)))))
-;;      `[()
-;;        ()
-;;        (goto B (addr (env Nat) 99))
-;;        ()
-;;        ([(addr (env Nat) 57) self]
-;;         [(addr (env Nat) 99)]
-;;         [(addr (env Nat) 42) self])])
-;;     `[,(make-single-actor-abstract-config
-;;         (term ((addr 1 0)
-;;                (() (goto A)))))
-;;       [()
-;;        ()
-;;        (goto B (addr (env Nat) 0))
-;;        ()
-;;        ([(addr (env Nat) 0)]
-;;         [(addr (env Nat) 1) self]
-;;         [(addr (env Nat) 2) self])]
-;;       [[99 0]
-;;        [42 1]
-;;        [57 2]]]))
+(define (aps#-rename-markers psm subst)
+  (define (rename-marker m)
+    (second (assoc m subst)))
+  (match-define `[,mon-recs ,mon-exts (goto ,state ,args ...) ,state-defs ,obls] psm)
+  `[,(map rename-marker mon-recs)
+    ,(map rename-marker mon-exts)
+    (goto ,state ,@(map rename-marker args))
+    ,state-defs
+    ,(map (lambda (obl)
+            `[,(rename-marker (aps#-obligation-dest obl))
+              ,(aps#-obligation-pattern obl)])
+          obls)])
 
-;; ;; Given a term, changes all spawn addresses of the form (spawn-addr _ NEW _) to (spawn-addr _ OLD _),
-;; ;; to ensure that spawned addresses in the next handler are fresh.
-;; (define (age-addresses some-term)
-;;   (match some-term
-;;     [(and `(addr ,loc ,id) (? csa#-internal-address?))
-;;      (if (equal? id 1)
-;;          (term (addr ,loc 0))
-;;          some-term)]
-;;     [(list terms ...) (map age-addresses terms)]
-;;     [_ some-term]))
+(module+ test
+  (test-equal? "aps#-rename-markers"
+    (aps#-rename-markers
+     (term
+      ((7)
+       (2 3 4)
+       (goto A 4 3 2)
+       ((define-state (A a b c) [* -> () (goto A)]))
+       ([2 *] [3 (record)])))
+     `([7 0]
+       [4 1]
+       [3 2]
+       [2 3]))
+    (term
+     ((0)
+      (3 2 1)
+      (goto A 1 2 3)
+      ((define-state (A a b c) [* -> () (goto A)]))
+      ([3 *] [2 (record)])))))
 
-;; (module+ test
-;;   (test-equal? "Age addresses test"
-;;     (redex-let aps# ([e# `(list (addr 1 1)
-;;                                 (addr 2 0)
-;;                                 (addr 3 0)
-;;                                 (addr (env Nat) 4))])
-;;         (age-addresses (term e#)))
-;;     `(list (addr 1 0)
-;;            (addr 2 0)
-;;            (addr 3 0)
-;;            (addr (env Nat) 4))))
-
-;; ;; Any (Listof (List Natural Natural)) -> Any
-;; ;;
-;; ;; Renames precise external addresses in the given term by replacing its number with
-;; ;; the corresponding number in the alist mapping
-;; (define (rename-external-addresses term number-mapping)
-;;   (match term
-;;     [(and `(addr ,loc ,old-id) (? (negate csa#-internal-address?)))
-;;      (match (findf (lambda (entry) (eq? (first entry) old-id)) number-mapping)
-;;        [#f `(addr ,loc ,old-id)]
-;;        [(list _ new-id) `(addr ,loc ,new-id)])]
-;;     [(list subterms ...)
-;;      (map (curryr rename-external-addresses number-mapping) subterms)]
-;;     [_ term]))
-
-;; (module+ test
-;;   (check-equal?
-;;    (rename-external-addresses
-;;     `(some-term (addr (env Nat) 2) (another-term (addr (env Nat) 5)) (addr (env Nat) 13) (addr (env Nat) 0))
-;;     `([2 1] [13 2] [5 3]))
-;;    (term (some-term (addr (env Nat) 1) (another-term (addr (env Nat) 3)) (addr (env Nat) 2) (addr (env Nat) 0)))))
-
-;; ;; Returns a spec config identical to the given one except that the the receptionist list is sorted
-;; (define (aps#-sort-receptionists config)
-;;   (redex-let aps# ([(any_obs-receptionists any_unobs-receptionists any_rest ...) config])
-;;     (term (any_obs-receptionists ,(sort (term any_unobs-receptionists) sexp<?) any_rest ...))))
-
-;; (define (aps#-sort-obligation-entries config)
-;;   (match-define `[,obs-recs ,unobs-recs ,goto ,state-defs ,obligation-map] config)
-;;   (define (entry< entry1 entry2)
-;;     (sexp<? (aps#-commitment-entry-address entry1)
-;;             (aps#-commitment-entry-address entry2)))
-;;   `[,obs-recs
-;;     ,unobs-recs
-;;     ,goto
-;;     ,state-defs
-;;     ,(sort obligation-map entry<)])
+;; Returns a spec config identical to the given one, except that the the obs-recs, obs-exts, and obls
+;; are sorted
+(define (aps#-sort-psm-components psm)
+  (match-define `[,mon-recs ,mon-exts ,state ,state-defs ,obls] psm)
+  `[,(sort mon-recs sexp<?)
+    ,(sort mon-exts sexp<?)
+    ,state
+    ,state-defs
+    ,(sort obls sexp<?)])
 
 ;; (define (try-rename-address rename-map addr)
 ;;   (match-define `(addr ,loc ,old-id) addr)

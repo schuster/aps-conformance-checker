@@ -12,6 +12,8 @@
  csa#-make-external-trigger
  csa#-abstract-config
  csa#-blur-config
+ csa#-age-addresses
+ csa#-rename-markers
  internal-atomic-action?
  trigger-address
  internal-single-receive?
@@ -1531,7 +1533,7 @@
     (term ((addr 0 0) (((define-state (B) (x) (goto B))) (goto B)))))
   (test-equal? "merge-new-actors test"
                (merge-new-actors
-                (make-single-actor-abstract-config init-actor1)
+                (make-single-actor-abstract-config init-actor1 null)
                 (list new-spawn1 new-spawn2))
                (term ((,init-actor1 ,new-spawn1)
                       (((collective-addr foo)
@@ -2397,6 +2399,66 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Canonicalization (the sorting of config components)
 
+;; Converts all address identifiers to 0, and returns the appropriate address substitution map
+(define (csa#-age-addresses config)
+  ;; TODO: return addr subst, too
+  (list (do-aging config)
+        (map
+         (lambda (actor)
+           (define addr (csa#-actor-address actor))
+           `[,addr ,(do-aging addr)])
+         (csa#-config-actors config))))
+
+(module+ test
+  (test-equal? "Age addresses test"
+    (redex-let csa# ([i# `[([(addr 1 1) (() (goto A (marked (addr 1 1))))]
+                            [(addr 2 0) (() (goto B (marked (addr 1 1))))]
+                            [(addr 3 2) (() (goto C
+                                                  (marked (addr (env Nat) 0))
+                                                  (marked (addr (env String) 0))
+                                                  (list)))])
+                           ()
+                           ()
+                           ()]])
+      (csa#-age-addresses (term i#)))
+    (list `[([(addr 1 0) (() (goto A (marked (addr 1 0))))]
+                            [(addr 2 0) (() (goto B (marked (addr 1 0))))]
+                            [(addr 3 0) (() (goto C
+                                                  (marked (addr (env Nat) 0))
+                                                  (marked (addr (env String) 0))
+                                                  (list)))])
+                           ()
+                           ()
+                           ()]
+          `([(addr 1 1) (addr 1 0)]
+            [(addr 2 0) (addr 2 0)]
+            [(addr 3 2) (addr 3 0)]))))
+
+;; Given a term, changes all spawn addresses of the form (addr _ 1 _) to (addr _ 0 _),
+;; to ensure that spawned addresses in the next handler are fresh.
+(define (do-aging some-term)
+  (match some-term
+    [`(addr ,loc ,id) (term (addr ,loc 0))]
+    [(list terms ...) (map do-aging terms)]
+    [_ some-term]))
+
+(define (csa#-rename-markers some-term subst)
+  (match some-term
+    [`(marked ,addr ,marker)
+     `(marked ,addr ,(second (assoc marker subst)))]
+    [(list terms ...) (map (curryr csa#-rename-markers subst) terms)]
+    [_ some-term]))
+
+(module+ test
+  (test-equal? "csa#-rename-markers"
+    (csa#-rename-markers `(list (marked (addr 1 0) 2)
+                                (marked (addr 3 0)))
+                         `([0 1]
+                           [1 2]
+                           [2 3]))
+     `(list (marked (addr 1 0) 3)
+            (marked (addr 3 0)))))
+
 ;; Sorts the components of an impl configuration as follows:
 ;; * atomic actors by address
 ;; * collective actors by address
@@ -2549,19 +2611,19 @@
                        [ρ# (list `[Nat (marked (addr 1 1) 2)])])
                     (make-config (term α#) (term β#) (term μ#) (term ρ#))))))
 
-(define (make-single-actor-abstract-config actor)
-  (term (make-single-actor-abstract-config/mf ,actor)))
+(define (make-single-actor-abstract-config actor recs)
+  (term (make-single-actor-abstract-config/mf ,actor ,recs)))
 
 (define-metafunction csa#
-  make-single-actor-abstract-config/mf : (a# b#) -> i#
-  [(make-single-actor-abstract-config/mf (a# b#))
-   (([a# b#]) () () ())])
+  make-single-actor-abstract-config/mf : (a# b#) ρ# -> i#
+  [(make-single-actor-abstract-config/mf (a# b#) ρ#)
+   (([a# b#]) () () ρ#)])
 
 (module+ test
   (test-true "make-single-actor-abstract-config returns valid config"
     (redex-match? csa#
                   i#
-                  (make-single-actor-abstract-config `[(addr 0 0) [() (goto A)]]))))
+                  (make-single-actor-abstract-config `[(addr 0 0) [() (goto A)]] `()))))
 
 (define (make-packet addr message quant)
   (list addr message quant))
