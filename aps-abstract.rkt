@@ -1919,68 +1919,6 @@
       (check-false (aps#-completed-no-transition-psm? (term s#))))))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Blurring
-
-;; ;; Blurs the given specification configuration by removing all receptionists in the unobserved
-;; ;; environment interface with the wrong spawn flag
-;; (define (aps#-blur-config config internals-to-blur)
-;;   (redex-let aps# ([[any_obs-receptionists
-;;                      any_unobs-receptionists
-;;                      any_exp
-;;                      any_state-defs
-;;                      any_out-coms]
-;;                     config])
-;;     (define blurred-unobs-env
-;;       (csa#-blur-addresses (term any_unobs-receptionists) internals-to-blur null))
-;;     (term [any_obs-receptionists
-;;            ,(merge-receptionists null blurred-unobs-env)
-;;            any_exp
-;;            any_state-defs
-;;            any_out-coms])))
-
-;; (module+ test
-;;   (test-equal? "aps#-blur-config"
-;;     (aps#-blur-config (aps#-make-no-transition-psm
-;;                        `((Nat (addr 0 0))
-;;                          (Nat (addr 1 0))
-;;                          (Nat (addr 1 1))
-;;                          (Nat (addr 2 1))
-;;                          (Nat (collective-addr 1))
-;;                          (Nat (addr 2 0)))
-;;                        `([(addr (env Nat) 0)]))
-;;                       (list (term (addr 1 1))))
-;;     (aps#-make-no-transition-psm
-;;      `((Nat (addr 0 0))
-;;        (Nat (addr 1 0))
-;;        (Nat (collective-addr 1))
-;;        (Nat (addr 2 1))
-;;        (Nat (addr 2 0)))
-;;      `([(addr (env Nat) 0)])))
-
-;;   (test-equal? "aps#-blur-config merges addresses after blur"
-;;     (aps#-blur-config `(()
-;;                         ([(Union [A]) (collective-addr 1)]
-;;                          [(Union [B]) (addr 1 0)])
-;;                         (goto S)
-;;                         ()
-;;                         ())
-;;                       (list `(addr 1 0)))
-;;      `(()
-;;        ([(Union [A] [B]) (collective-addr 1)])
-;;        (goto S)
-;;        ()
-;;        ())))
-
-;; ;; (define-metafunction aps#
-;; ;;   blur-receptionists : (a#int ...) spawn-flag -> (a#int ...)
-;; ;;   [(blur-receptionists () _) ()]
-;; ;;   [(blur-receptionists ((spawn-addr any_loc spawn-flag τ) any_rest ...) spawn-flag)
-;; ;;    (blur-receptionists (any_rest ...) spawn-flag)]
-;; ;;   [(blur-receptionists (any_1 any_rest ...) spawn-flag)
-;; ;;    (any_1 any_result ...)
-;; ;;    (where (any_result ...) (blur-receptionists (any_rest ...) spawn-flag))])
-
-;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Canonicalization (i.e. renaming)
 
 ;; ;; NOTE: OLD/NEW are now 0/1; comments have not been updated yet
