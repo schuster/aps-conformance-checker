@@ -722,114 +722,116 @@
 ;;                `([(addr (env Nat) 1) * (record) * (variant A)]
 ;;                  [(addr (env Nat) 2) *])))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Input pattern matching
+;; ---------------------------------------------------------------------------------------------------
+;; Input pattern matching
 
-;; ;; Matches the trigger against the given transition pattern, returning the bindings created from the
-;; ;; match if such a match exists, else #f
-;; (define (match-trigger from-observer? trigger obs-receptionists pattern)
-;;   (match
-;;       (judgment-holds
-;;        (match-trigger/j ,from-observer? ,trigger ,obs-receptionists ,pattern any_bindings)
-;;        any_bindings)
-;;     [(list) #f]
-;;     [(list binding-list) binding-list]
-;;     [(list _ _ _ ...)
-;;      (error 'match-trigger
-;;             "Match resulted in multiple possible substitutions")]))
+;; Matches the trigger against the given transition pattern in a context where the given markers are
+;; the monitored receptionist markers, returning the bindings created from the match if such a match
+;; exists, else #f
+(define (match-trigger mon-recs trigger pattern)
+  (match
+      (judgment-holds
+       (match-trigger/j ,mon-recs ,trigger ,pattern any_bindings)
+       any_bindings)
+    [(list) #f]
+    [(list binding-list) binding-list]
+    [(list _ _ _ ...)
+     (error 'match-trigger
+            "Match resulted in multiple possible substitutions")]))
 
-;; (define-judgment-form aps#
-;;   #:mode (match-trigger/j I I I I O)
-;;   #:contract (match-trigger/j boolean trigger# ρ# pt ([x a#] ...))
+(define-judgment-form aps#
+  #:mode (match-trigger/j I I I O)
+  #:contract (match-trigger/j (mk ...) trigger# pt ([x mk] ...))
 
-;;   [-------------------------------------------------------
-;;    (match-trigger/j _ (timeout _) _ free ())]
+  [-------------------------------------------------------
+   (match-trigger/j _ (timeout _) free ())]
 
-;;   [----------------------------------------------------------------------
-;;    (match-trigger/j _ (internal-receive _ _ _) _ free ())]
+  [----------------------------------------------------------------------
+   (match-trigger/j _ (internal-receive _ _ _) free ())]
 
-;;   [-----------------------------------------------------------------------
-;;    (match-trigger/j #f (external-receive _ _) _ free ())]
+  [(side-condition ,(not (member (term mk) (term (mk_mon-recs ...)))))
+   -----------------------------------------------------------------------
+   (match-trigger/j (mk_mon-recs ...) (external-receive (marked _ mk) _) free ())]
 
-;;   [(aps#-match/j v# p any_bindings)
-;;    ----------------------------------------------------------------
-;;    (match-trigger/j #t (external-receive a# v#) ((_ a#)) p any_bindings)])
+  [(aps#-match/j v# p any_bindings)
+   --------------------------------------------------------------------------------------
+   (match-trigger/j (_ ... mk _ ...) (external-receive (marked a# mk) v#) p any_bindings)])
 
-;; (module+ test
-;;   (check-equal?
-;;    (match-trigger #f '(timeout (addr 0 0)) '((Nat (addr 0 0))) 'free)
-;;    null)
+(module+ test
+  (test-equal? "Timeout matches free transition"
+   (match-trigger null '(timeout (addr 0 0)) 'free)
+   null)
 
-;;   (check-equal?
-;;    (match-trigger #f '(external-receive (addr 0 0) abs-nat) '((Nat (addr 0 0))) 'free)
-;;    null)
+  (test-equal? "External-receive on unmonitored marker matches free transition"
+   (match-trigger (list 1) '(external-receive (marked (addr 0 0) 2) abs-nat) 'free)
+   null)
 
-;;   (check-false
-;;    (match-trigger #t '(external-receive (addr 0 0) abs-nat) '((Nat (addr 0 0))) 'free))
+  (test-false "External receive on monitored receptionist does not match free transition"
+   (match-trigger (list 1) '(external-receive (marked (addr 0 0) 1) abs-nat) 'free))
 
-;;   (check-equal?
-;;    (match-trigger #t '(external-receive (addr 0 0) (addr (env Nat) 1)) '((Nat (addr 0 0))) 'x)
-;;    (list '(x (addr (env Nat) 1))))
+  (test-equal? "External receive on monitored receptionist matches var-pattern transition"
+   (match-trigger (list 1) '(external-receive (marked (addr 0 0) 1) (marked (addr (env Nat) 1) 2)) 'x)
+   (list '[x 2]))
 
-;;   (check-false
-;;    (match-trigger #f '(internal-receive (addr 0 0) abs-nat single) '((Nat (addr 0 0))) 'x))
+  (test-false "Internal receive does not match pattern transition"
+   (match-trigger (list 1) '(internal-receive (addr 0 0) abs-nat single) 'x))
 
-;;   (check-false
-;;    (match-trigger #t '(external-receive (addr 0 0) abs-nat) '((Nat (addr 0 0))) 'x))
+  (test-false "External receive of natural does not match var-pattern transition"
+   (match-trigger (list 1) '(external-receive (marked (addr 0 0) 1) abs-nat)  'x))
 
-;;   (check-equal?
-;;    (match-trigger #f '(internal-receive (addr 0 0) abs-nat single) '((Nat (addr 0 0))) 'free)
-;;    null)
+  (test-equal? "Internal receive matches free transition"
+   (match-trigger (list 1) '(internal-receive (addr 0 0) abs-nat single) 'free)
+   null)
 
-;;   (check-false
-;;    (match-trigger #t '(external-receive (addr 0 0) (variant A)) '(((Union [A]) (addr 0 0))) 'free))
+  (test-false "External receive on monitored receptionist does not match free transition (2)"
+   (match-trigger (list 1) '(external-receive (marked (addr 0 0) 1) (variant A)) 'free))
 
-;;   (check-equal?
-;;    (match-trigger #t '(external-receive (addr 0 0) (variant A)) '(((Union [A]) (addr 0 0))) '*)
-;;    null))
+  (test-equal? "External receive of variant matches * pattern"
+   (match-trigger (list 1) '(external-receive (marked (addr 0 0) 1) (variant A)) '*)
+   null))
 
-;; (define-judgment-form aps#
-;;   #:mode (aps#-match/j I I O)
-;;   #:contract (aps#-match/j v# p ((x a#) ...))
+(define-judgment-form aps#
+  #:mode (aps#-match/j I I O)
+  #:contract (aps#-match/j v# p ((x mk) ...))
 
-;;   [-------------------
-;;    (aps#-match/j _ * ())]
+  [-------------------
+   (aps#-match/j _ * ())]
 
-;;   [(side-condition ,(not (csa#-internal-address? (term a#))))
-;;    -----------------------------------
-;;    (aps#-match/j a# x ([x a#]))]
+  [-----------------------------------
+   ;; The model checker should enforce by this point that all received addresses have exactly one
+   ;; marker
+   (aps#-match/j (marked a# mk) x ([x mk]))]
 
-;;   [(aps#-match/j v# p ([x a#_binding] ...)) ...
-;;    --------------
-;;    (aps#-match/j (variant t v# ..._n) (variant t p ..._n) ([x a#_binding] ... ...))]
+  [(aps#-match/j v# p ([x mk_binding] ...)) ...
+   --------------
+   (aps#-match/j (variant t v# ..._n) (variant t p ..._n) ([x mk_binding] ... ...))]
 
-;;   [(aps#-match/j v# p ([x a#_binding] ...)) ...
-;;    ---------------------------------------------
-;;    (aps#-match/j (record [l v#] ..._n) (record [l p] ..._n) ([x a#_binding] ... ...))]
+  [(aps#-match/j v# p ([x mk_binding] ...)) ...
+   ---------------------------------------------
+   (aps#-match/j (record [l v#] ..._n) (record [l p] ..._n) ([x mk_binding] ... ...))]
 
-;;   ;; Just ignore folds in the values: in a real language, the programmer wouldn't see them and
-;;   ;; therefore would not write patterns for them
-;;   [(aps#-match/j v# p ([x a#_binding] ...))
-;;    -----------------------------------------------------------
-;;    (aps#-match/j (folded _ v#) p ([x a#_binding] ...))])
+  ;; Just ignore folds in the values: in a real language, the programmer wouldn't see them and
+  ;; therefore would not write patterns for them
+  [(aps#-match/j v# p ([x mk_binding] ...))
+   -----------------------------------------------------------
+   (aps#-match/j (folded _ v#) p ([x mk_binding] ...))])
 
-;; (module+ test
-;;   (check-true (judgment-holds (aps#-match/j abs-nat * ())))
-;;   (check-true (judgment-holds (aps#-match/j (addr (env Nat) 1) x ([x (addr (env Nat) 1)]))))
-;;   (check-false (judgment-holds (aps#-match/j (addr 0 1) x ([x (addr 0 1)]))))
-;;   (check-true (judgment-holds (aps#-match/j (variant A abs-string) (variant A *) ())))
-;;   (check-true (judgment-holds (aps#-match/j (variant A (addr (env Nat) 1))
-;;                                             (variant A x)
-;;                                             ([x (addr (env Nat) 1)]))))
-;;   (check-true (judgment-holds (aps#-match/j (record [a (addr (env Nat) 1)])
-;;                                             (record [a x])
-;;                                             ([x (addr (env Nat) 1)]))))
-;;   (check-true (judgment-holds (aps#-match/j abs-nat * any)))
-;;   (check-false (judgment-holds (aps#-match/j abs-nat x any)))
-;;   (check-true (judgment-holds (aps#-match/j (folded Nat (addr (env Nat) 1)) x any)))
-;;   ;; matches two ways, but should only return one result:
-;;   (check-equal? (judgment-holds (aps#-match/j (folded Nat abs-nat) * any_bindings) any_bindings)
-;;                 (list '())))
+(module+ test
+  (check-true (judgment-holds (aps#-match/j abs-nat * ())))
+  (check-true (judgment-holds (aps#-match/j (marked (addr (env Nat) 1) 2) x ([x 2]))))
+  (check-true (judgment-holds (aps#-match/j (variant A abs-string) (variant A *) ())))
+  (check-true (judgment-holds (aps#-match/j (variant A (marked (addr (env Nat) 1) 2))
+                                            (variant A x)
+                                            ([x 2]))))
+  (check-true (judgment-holds (aps#-match/j (record [a (marked (addr (env Nat) 1) 2)])
+                                            (record [a x])
+                                            ([x 2]))))
+  (check-true (judgment-holds (aps#-match/j abs-nat * any)))
+  (check-false (judgment-holds (aps#-match/j abs-nat x any)))
+  (check-true (judgment-holds (aps#-match/j (folded Nat (marked (addr (env Nat) 1) 2)) x any)))
+  ;; matches two ways, but should only return one result:
+  (check-equal? (judgment-holds (aps#-match/j (folded Nat abs-nat) * any_bindings) any_bindings)
+                (list '())))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Output pattern matching
