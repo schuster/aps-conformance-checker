@@ -43,6 +43,7 @@
  csa#-addrs-to-evict
  csa#-evict
  ;; merge-receptionists
+ csa#-contains-marker?
 
  ;; Required by APS#; should go into a "common" language instead
  csa#
@@ -2887,6 +2888,32 @@
     (internal-single-receive? `(external-receive (marked (addr 1 0) 0) abs-nat)))
   (test-false "internal-single-receive? timeout)"
     (internal-single-receive? `(timeout (addr 1 0)))))
+
+;; Returns true iff the given value contains any of the given markers
+(define (csa#-contains-marker? val target-markers)
+  (match val
+    [`(marked ,_ ,found-markers ...)
+     (ormap (curryr member found-markers) target-markers)]
+    [`(variant ,_ ,vals ...)
+     (ormap (curryr csa#-contains-marker? target-markers) vals)]
+    [`(record [,_ ,vals] ...)
+     (ormap (curryr csa#-contains-marker? target-markers) vals)]
+    [`(folded ,_ ,val)
+     (csa#-contains-marker? val target-markers)]
+    [`(list-val ,vals ...)
+     (ormap (curryr csa#-contains-marker? target-markers) vals)]
+    [`(hash-val ,keys ,vals)
+     (or (ormap (curryr csa#-contains-marker? target-markers) keys)
+         (ormap (curryr csa#-contains-marker? target-markers) vals))]
+    [_ #f]))
+
+(module+ test
+  (test-false "basic value does not contain given markers"
+    (csa#-contains-marker? `(record [a abs-nat]) (list 1)))
+  (test-false "record with internal address does not contain given markers"
+    (csa#-contains-marker? `(record [b (marked (addr 0 0) 1)]) (list 2)))
+  (test-not-false "record with external address contains any of given markers"
+    (csa#-contains-marker? `(record [b (marked (addr (env Nat) 0) 1)]) (list 1))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Types
