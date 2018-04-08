@@ -831,204 +831,156 @@
 ;;   (check-equal? (judgment-holds (aps#-match/j (folded Nat abs-nat) * any_bindings) any_bindings)
 ;;                 (list '())))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Output pattern matching
+;; ---------------------------------------------------------------------------------------------------
+;; Output pattern matching
 
-;; ;; v# ρ# (listof pattern) -> (listof [po ρ#_obs ρ#_unobs (match-fork ...)])
-;; ;;
-;; ;; Attempts to match the given value and observed receptionist map against all of the given patterns,
-;; ;; returning a list of tuples [po ρ#_obs ρ#_unobs (match-fork ...)] for each way to match against one
-;; ;; of the given patterns.
-;; (define (find-matching-patterns value type obs-receptionists patterns)
-;;   (reverse
-;;    (for/fold ([success-results null])
-;;              ([pattern patterns])
-;;      (define this-pattern-results
-;;        (map (curry cons pattern) (aps#-match-po value type obs-receptionists pattern)))
-;;      (append success-results this-pattern-results))))
+;; v# (listof pattern) -> (listof [po (mk ...) (s ...)])
+;;
+;; Attempts to match the given value against all of the given patterns, returning a list of tuples [po
+;; (match-fork ...)] for each way to match against one of the given patterns.
+(define (find-matching-patterns value patterns)
+  (reverse
+   (for/fold ([success-results null])
+             ([pattern patterns])
+     (define this-pattern-results
+       (map (curry cons pattern) (aps#-match-po value pattern)))
+     (append success-results this-pattern-results))))
 
-;; (module+ test
-;;   (check-equal?
-;;    (list->set (find-matching-patterns `(variant A) `(Union [A]) null (list '* '(variant A) '(variant B))))
-;;    (set `[* () () ()]
-;;         `[(variant A) () () ()])))
+(module+ test
+  (check-equal?
+   (list->set (find-matching-patterns `(variant A) (list '* '(variant A) '(variant B))))
+   (set `[* () ()]
+        `[(variant A) () ()])))
 
-;; ;; v# ρ#_obs po -> (Listof [ρ#_obs ρ#_unobs (match-fork ...)])
-;; ;;
-;; ;; Attempts to match the given message and observed receptionist set against the given
-;; ;; pattern. Returns the outputs from every successful judgment for the match relation.
-;; (define (aps#-match-po value type obs-receptionists pattern)
-;;   (judgment-holds (aps#-matches-po?/j ,value
-;;                                       ,type
-;;                                       ,obs-receptionists
-;;                                       ,pattern
-;;                                       any_new-obs-receptionists
-;;                                       any_new-unobs-receptionists
-;;                                       any_forks)
-;;                   (any_new-obs-receptionists any_new-unobs-receptionists any_forks)))
+;; v# po -> (Listof [(mk ...) (s ...))
+;;
+;; Attempts to match the given message against the given pattern. Returns the outputs from every
+;; successful judgment for the match relation.
+(define (aps#-match-po value pattern)
+  (judgment-holds (aps#-matches-po?/j ,value ,pattern any_markers any_forks)
+                  [any_markers any_forks]))
 
-;; (define-judgment-form aps#
-;;   #:mode (aps#-matches-po?/j I I I I O O O)
-;;   #:contract (aps#-matches-po?/j v# τ ρ#_obs po ρ#_obs-new ρ#_unobs (match-fork ...))
+(define-judgment-form aps#
+  #:mode (aps#-matches-po?/j I I O O)
+  #:contract (aps#-matches-po?/j v# po (mk ...) (s ...))
 
-;;   [-----
-;;    (aps#-matches-po?/j v# τ ρ#_obs * ρ#_obs ,(internal-addr-types (term v#) (term τ)) ())]
+  [-----
+   (aps#-matches-po?/j v# * () ())]
 
-;;   [(aps#-matches-po?/j v# τ ρ#_obs po                  any_obs-recs any_unobs-receptionists any_forks)
-;;    -----
-;;    (aps#-matches-po?/j v# τ ρ#_obs (or _ ... po _ ...) any_obs-recs any_unobs-receptionists any_forks)]
+  [(aps#-matches-po?/j v# po                  any_self-markers any_forks)
+   -----
+   (aps#-matches-po?/j v# (or _ ... po _ ...) any_self-markers any_forks)]
 
-;;   [(side-condition ,(csa#-internal-address? (term a#)))
-;;    ----
-;;    (aps#-matches-po?/j a#
-;;                        (Addr τ)
-;;                        ρ#_obs
-;;                        (delayed-fork (goto φ) Φ ...)
-;;                        ρ#_obs
-;;                        ()
-;;                        ((([τ a#]) (goto φ) (Φ ...))))]
+  [(side-condition ,(csa#-internal-address? (term a#)))
+   ----
+   ;; every sent-to-env address should have exactly *one* marker on it, because of the various
+   ;; transformations
+   (aps#-matches-po?/j (marked a# mk)
+                       (delayed-fork (goto φ) Φ ...)
+                       ()
+                       ([(mk) () (goto φ) (Φ ...) ()]))]
 
-;;   [(side-condition ,(csa#-internal-address? (term a#)))
-;;    ----
-;;    (aps#-matches-po?/j a# (Addr τ) ([τ a#]) self ([τ a#]) () ())]
+  [(side-condition ,(csa#-internal-address? (term a#)))
+   ----
+   (aps#-matches-po?/j (marked a# mk) self (mk) ())]
 
-;;   [(side-condition ,(csa#-internal-address? (term a#)))
-;;    ----
-;;    (aps#-matches-po?/j a# (Addr τ) () self ([τ a#]) () ())]
+  [(aps#-list-matches-po?/j ((v# po) ...) any_self-markers any_forks)
+   ------
+   (aps#-matches-po?/j (variant t v# ..._n)
+                       (variant t po ..._n)
+                       any_self-markers
+                       any_forks)]
 
-;;   [(aps#-list-matches-po?/j ((v# τ po) ...) ρ#_obs any_obs-recs any_unobs-receptionists any_forks)
-;;    ------
-;;    (aps#-matches-po?/j (variant t v# ..._n)
-;;                        (Union _ ... (t τ ..._n) _ ...)
-;;                        ρ#_obs
-;;                        (variant t po ..._n)
-;;                        any_obs-recs
-;;                        any_unobs-receptionists
-;;                        any_forks)]
+  ;; Records
 
-;;   ;; Records
+  [(aps#-list-matches-po?/j ((v# po) ...) any_self-markers any_forks)
+   ------
+   (aps#-matches-po?/j (record [l v#] ..._n)
+                       (record [l po] ..._n)
+                       any_self-markers
+                       any_forks)]
 
-;;   [(aps#-list-matches-po?/j ((v# τ po) ...) ρ#_obs any_obs-recs any_unobs-receptionists any_forks)
-;;    ------
-;;    (aps#-matches-po?/j (record [l v#] ..._n)
-;;                        (Record [l τ] ..._n)
-;;                        ρ#_obs
-;;                        (record [l po] ..._n)
-;;                        any_obs-recs
-;;                        any_unobs-receptionists
-;;                        any_forks)]
+  ;; Just ignore folds in the values: in a real language, the programmer wouldn't see them and
+  ;; therefore would not write patterns for them
+  [(aps#-matches-po?/j v# po any_self-markers any_forks)
+   -------------------------------------------------------------------------------------
+   (aps#-matches-po?/j (folded _ v#) po any_self-markers any_forks)])
 
-;;   ;; Just ignore folds in the values: in a real language, the programmer wouldn't see them and
-;;   ;; therefore would not write patterns for them
-;;   [(aps#-matches-po?/j v# (type-subst τ X (minfixpt X τ)) ρ#_obs po any_obs-recs any_unobs-receptionists any_forks)
-;;    -------------------------------------------------------------------------------------
-;;    (aps#-matches-po?/j (folded (minfixpt X τ) v#) (minfixpt X τ) ρ#_obs po any_obs-recs any_unobs-receptionists any_forks)])
+(define-judgment-form aps#
+  #:mode (aps#-list-matches-po?/j I O O)
+  #:contract (aps#-list-matches-po?/j ((v# po) ...) (mk ...) (s ...))
 
-;; (define-judgment-form aps#
-;;   #:mode (aps#-list-matches-po?/j I I O O O)
-;;   #:contract (aps#-list-matches-po?/j ((v# τ po) ...) ρ#_obs ρ#_obs-new ρ#_unobs (match-fork ...))
+  [---------
+   (aps#-list-matches-po?/j () () ())]
 
-;;   [---------
-;;    (aps#-list-matches-po?/j () any_addr any_addr () ())]
+  [(aps#-matches-po?/j v# po (any_self-markers1 ...) (any_forks1 ...))
+   (aps#-list-matches-po?/j (any_rest ...)
+                            (any_self-markers2 ...)
+                            (any_forks2 ...))
+   ---------
+   (aps#-list-matches-po?/j ((v# po) any_rest ...)
+                            (any_self-markers1 ... any_self-markers2 ...)
+                            (any_forks1 ... any_forks2 ...))])
 
-;;   [(aps#-matches-po?/j v# τ ρ#_obs po any_obs-rec1 (any_unobs-receptionists1 ...) (any_forks1 ...))
-;;    (aps#-list-matches-po?/j (any_rest ...)
-;;                             any_obs-rec1
-;;                             any_obs-rec2
-;;                             (any_unobs-receptionists2 ...)
-;;                             (any_forks2 ...))
-;;    ---------
-;;    (aps#-list-matches-po?/j ((v# τ po) any_rest ...)
-;;                             ρ#_obs
-;;                             any_obs-rec2
-;;                             (any_unobs-receptionists1 ... any_unobs-receptionists2 ...)
-;;                             (any_forks1 ... any_forks2 ...))])
+;; TODO: ensure somewhere that at most one self-addr is used
 
-;; (module+ test
-;;   (check-equal?
-;;    (aps#-match-po 'abs-nat `Nat '() '*)
-;;    (list (list '() null null)))
-;;   (check-equal?
-;;    (aps#-match-po 'abs-nat 'Nat '() '(record))
-;;    null)
-;;   (check-equal?
-;;    (aps#-match-po '(addr 0 0) `(Addr Nat) '() 'self)
-;;    (list (list '((Nat (addr 0 0))) null null)))
-;;   (check-equal?
-;;    (aps#-match-po '(addr 0 0) `(Addr Nat) '() '*)
-;;    (list (list '() (list '(Nat (addr 0 0))) null)))
-;;   (check-equal?
-;;    (aps#-match-po '(addr (env Nat) 0) `(Addr Nat) '() 'self)
-;;    null)
-;;   (check-equal?
-;;    (aps#-match-po '(variant A abs-nat (addr 2 0)) `(Union [A Nat (Addr Nat)]) '() '(variant A * self))
-;;    (list (list '((Nat (addr 2 0))) '() '())))
-;;   (check-equal?
-;;    (aps#-match-po '(variant A abs-nat (addr 2 0)) `(Union [A Nat (Addr Nat)]) '() '(variant A * *))
-;;    (list (list '() '((Nat (addr 2 0))) '())))
-;;   (check-equal?
-;;    (aps#-match-po '(variant A abs-nat (addr 2 0)) `(Union [A Nat (Addr Nat)]) '((Nat (addr 2 0))) '(variant A * self))
-;;    (list (list '((Nat (addr 2 0))) '() '())))
-;;   (test-equal? "Variant match with address/or pattern"
-;;    (aps#-match-po '(variant A abs-nat (addr 2 0))
-;;                   `(Union [A Nat (Addr Nat)])
-;;                   '((Nat (addr 2 0)))
-;;                   '(or (variant A * self) (variant B)))
-;;    (list (list '((Nat (addr 2 0))) '() '())))
-;;   (test-equal? "Variant match with or pattern 2"
-;;     (aps#-match-po (term (variant A)) '(Union [A] [B] [C]) '() (term (or (variant A) (variant B))))
-;;     (list (list '() null null)))
-;;   (test-equal? "Variant match with or pattern 3"
-;;     (aps#-match-po (term (variant B)) '(Union [A] [B] [C]) '() (term (or (variant A) (variant B))))
-;;     (list (list '() null null)))
-;;   (test-equal? "Variant match with or pattern 4"
-;;    (aps#-match-po (term (variant C)) '(Union [A] [B] [C])'() (term (or (variant A) (variant B))))
-;;    null)
-;;   (test-equal? "Variant match with self"
-;;     (aps#-match-po '(variant A abs-nat (addr 2 0))
-;;                    '(Union [A Nat (Addr Nat)])
-;;                    '((Nat (addr 1 0)))
-;;                    '(variant A * self))
-;;     null)
-;;   (test-equal? "Spawn match po test"
-;;     (aps#-match-po '(addr 'foo 1)
-;;                    '(Addr Nat)
-;;                    '()
-;;                    '(delayed-fork (goto B) (define-state (B))))
-;;     (list (list '()
-;;                 '()
-;;                 '([([Nat (addr 'foo 1)]) (goto B) ((define-state (B)))]))))
-;;   (test-equal? "Full match po test"
-;;     (aps#-match-po '(variant A (addr 'foo 1) (addr 2 0))
-;;                    '(Union [A (Addr Nat) (Addr Nat)])
-;;                    '()
-;;                    '(variant A (delayed-fork (goto B) (define-state (B))) self))
-;;    (list (list '((Nat (addr 2 0)))
-;;                '()
-;;                '([([Nat (addr 'foo 1)])
-;;                   (goto B)
-;;                   ((define-state (B)))]))))
-
-;;   (test-case "Fold test"
-;;     (define rec-type '(minfixpt X (Addr (Union [Done] [More X]))))
-;;     (check-equal?
-;;      (aps#-match-po `(folded ,rec-type (addr 0 0))
-;;                     rec-type
-;;                     '()
-;;                     '(delayed-fork (goto B) (define-state (B))))
-;;      (list (list '()
-;;                  `()
-;;                  (list `[([(Union [Done] [More ,rec-type]) (addr 0 0)])
-;;                          (goto B)
-;;                          ((define-state (B)))])))))
-
-;;   (test-equal? "'Or' pattern can match in multiple ways"
-;;     (list->set (aps#-match-po `(addr 1 0) '(Addr Nat) null `(or * self)))
-;;     (set `[([Nat (addr 1 0)]) () ()]
-;;          `[() ([Nat (addr 1 0)]) ()])))
+(module+ test
+  (test-equal? "Output match with *"
+    (aps#-match-po 'abs-nat '*)
+    (list `[() ()]))
+  (test-equal? "Output-match abs-nat against record"
+    (aps#-match-po 'abs-nat '(record))
+    null)
+  (test-equal? "Output-match address with self"
+    (aps#-match-po '(marked (addr 0 0) 1) 'self)
+    (list `[(1) ()]))
+  (test-equal? "Output-match address with *"
+    (aps#-match-po '(marked (addr 0 0) 1) '*)
+    (list `[() ()]))
+  (test-equal? "Output-match external address with self"
+    (aps#-match-po '(marked (addr (env Nat) 0) 1) 'self)
+    null)
+  (test-equal? "Output-match contained address with self"
+    (aps#-match-po '(variant A abs-nat (marked (addr 2 0) 1)) '(variant A * self))
+    (list `[(1) ()]))
+  (test-equal? "Output-match contained address with *"
+    (aps#-match-po '(variant A abs-nat (marked (addr 2 0) 1)) '(variant A * *))
+    (list `[() ()]))
+  (test-equal? "Variant match with address/or pattern"
+    (aps#-match-po '(variant A abs-nat (marked (addr 2 0) 1))
+                   '(or (variant A * self) (variant B)))
+    (list `[(1) ()]))
+  (test-equal? "Variant match with or pattern 2"
+    (aps#-match-po (term (variant A)) (term (or (variant A) (variant B))))
+    (list `[() ()]))
+  (test-equal? "Variant match with or pattern 3"
+    (aps#-match-po (term (variant B)) (term (or (variant A) (variant B))))
+    (list `[() ()]))
+  (test-equal? "Variant match with or pattern 4"
+    (aps#-match-po (term (variant C)) (term (or (variant A) (variant B))))
+   null)
+  (test-equal? "Spawn match po test"
+    (aps#-match-po '(marked (addr 'foo 1) 2)
+                   '(delayed-fork (goto B) (define-state (B))))
+    (list `[() ([(2) () (goto B) ((define-state (B))) ()])]))
+  (test-equal? "Full match po test"
+    (aps#-match-po '(variant A (marked (addr 'foo 1) 1) (marked (addr 2 0) 2))
+                   '(variant A (delayed-fork (goto B) (define-state (B))) self))
+    (list `[(2) ([(1) () (goto B) ((define-state (B))) ()])]))
+  (test-equal? "Fold test"
+    (aps#-match-po `(folded (minfixpt X (Addr (Union [Done] [More X]))) (marked (addr 0 0) 1))
+                   '(delayed-fork (goto B) (define-state (B))))
+    (list `[() ([(1) () (goto B) ((define-state (B))) ()])]))
+  (test-equal? "'Or' pattern can match in multiple ways"
+    (list->set (aps#-match-po `(marked (addr 1 0) 2) `(or * self)))
+    (set `[() ()]
+         `[(2) ()])))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Commitment Satisfaction
+
+;; ;; TODO: need to ensure that the PSM ends up with at most one specified receptionist marker (I think
+;; ;; this was originally done in the pattern matching)
 
 ;; ;; (s# ...) ((a#ext v# m) ...) -> (Listof (List (s# ...) ([a# po] ...)]))
 ;; ;;
