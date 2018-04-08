@@ -1446,124 +1446,53 @@
 ;;      (get-free-transitions-for-resolution config address)))
 ;;   (resolve-with-transitions config address type message free-stable-transitions))
 
-;; ;; s# O# [ρ#_o ρ#_u (match-fork ...)] -> (s# ...)
-;; (define (incorporate-output-match-results original-pre-config
-;;                                           obligations
-;;                                           match-result)
-;;   (match-define (list matched-obs-receptionists matched-unobs-receptionists match-forks) match-result)
-;;   (match-define (list _ original-unobs-recs goto state-defs _) original-pre-config)
-;;   (define all-fork-obs-receptionists (append* (map first match-forks)))
-;;   (define updated-pre-config
-;;     (list matched-obs-receptionists
-;;           (merge-receptionists
-;;            original-unobs-recs
-;;            (merge-receptionists matched-unobs-receptionists all-fork-obs-receptionists))
-;;           goto
-;;           state-defs
-;;           null))
-;;   (define forked-pre-configs
-;;     (for/list ([match-fork match-forks])
-;;       (match-define (list (list fork-obs-rec) goto state-defs) match-fork)
-;;       (define other-fork-obs-receptionists
-;;         ;; "remove" removes only the first item that matches, so if any other fork had the same
-;;         ;; receptionist address and type, it will be included in the unobs receptionist here
-;;         (remove fork-obs-rec all-fork-obs-receptionists))
-;;       `[(,fork-obs-rec)
-;;         ,(merge-receptionists
-;;           matched-obs-receptionists
-;;           (merge-receptionists matched-unobs-receptionists other-fork-obs-receptionists))
-;;         ,goto
-;;         ,state-defs
-;;         ()]))
-;;   (dist updated-pre-config forked-pre-configs obligations))
+;; s [(mk ...) (s ...)] -> (s ...)
+(define (incorporate-output-match-results original-psm match-result)
+  (match-define (list matched-self-markers matched-forks) match-result)
+  (match-define (list original-mon-inputs original-mon-exts goto state-defs obligations) original-psm)
+  (define updated-mon-inputs (remove-duplicates (append matched-self-markers original-mon-inputs)))
+  (when (> (length updated-mon-inputs) 1)
+    (error 'incorporate-output-match-results "Cannot have more than one monitored input marker"))
+  (define updated-original-psm
+    `[,updated-mon-inputs
+      ,original-mon-exts
+      ,goto
+      ,state-defs
+      ,obligations])
+  (cons updated-original-psm matched-forks))
 
-;; (module+ test
-;;   (test-equal? "incorporate-output-match-results 1"
-;;     (incorporate-output-match-results
-;;      `(() () (goto A) ((define-state (A))) ())
-;;      null
-;;      `[([Nat (addr 1 0)]) ([String (addr 2 0)]) ()])
-;;     (list `(([Nat (addr 1 0)]) ([String (addr 2 0)]) (goto A) ((define-state (A))) ())))
+(module+ test
+  (test-equal? "incorporate-output-match-results 1"
+    (incorporate-output-match-results
+     `(() () (goto A) ((define-state (A))) ())
+     `[(1) ()])
+    (list `[(1) () (goto A) ((define-state (A))) ()]))
 
-;;   (test-equal? "incorporate-output-match-results with delayed-fork"
-;;     (list->set
-;;      (incorporate-output-match-results
-;;       `(() () (goto A) ((define-state (A))) ())
-;;       `([(addr (env Nat) 1) *])
-;;       `[() () ([([Nat (addr 1 0)]) (goto B) ((define-state (B)))])]))
-;;     (set
-;;      `(() ([Nat (addr 1 0)]) (goto A) ((define-state (A))) ([(addr (env Nat) 1) *]))
-;;      `(([Nat (addr 1 0)]) () (goto B) ((define-state (B))) ()))))
+  (test-equal? "incorporate-output-match-results with delayed-fork"
+    (list->set
+     (incorporate-output-match-results
+      `(() () (goto A) ((define-state (A))) ([1 *]))
+      `[() ([(2) () (goto B) ((define-state (B))) ()])]))
+    (set
+     `(() () (goto A) ((define-state (A))) ([1 *]))
+     `((2) () (goto B) ((define-state (B))) ()))))
 
-;; (define (config-observes-address? config addr)
-;;   (match (commitments-for-address (aps#-config-commitment-map config) addr)
-;;     [#f #f]
-;;     [_ #t]))
+(define (aps#-config-has-commitment? config marker pattern)
+  (member `[,marker ,pattern] (aps#-psm-obligations config)))
 
-;; (define (aps#-remove-commitment-pattern commitment-map address pat)
-;;   (term (remove-commitment-pattern/mf ,commitment-map ,address ,pat)))
-
-;; (define-metafunction aps#
-;;   remove-commitment-pattern/mf : O# a# po -> O#
-;;   [(remove-commitment-pattern/mf (any_1 ... (a# any_2 ... po any_3 ...) any_4 ...)
-;;                                  a#
-;;                                  po)
-;;    (any_1 ... (a# any_2 ... any_3 ...) any_4 ...)]
-;;   ;; we might call this metafunction with a free output pattern not in the obligation list, so if the
-;;   ;; pattern doesn't exist just return the existing map
-;;   ;;
-;;   ;; NOTE: I think now that I've set the macro-step obligations to record only the *minimal* set of
-;;   ;; fulfilled obligations, this case wouldn't happen, but I'm leaving it in for now
-;;   [(remove-commitment-pattern/mf any_obligations _ _) any_obligations])
-
-;; (module+ test
-;;   (check-equal?
-;;    (aps#-remove-commitment-pattern
-;;     (term (((addr (env Nat) 1) *))) (term (addr (env Nat) 1)) (term *))
-;;    (term (((addr (env Nat) 1)))))
-;;   (check-equal?
-;;    (aps#-remove-commitment-pattern
-;;     (term (((addr (env Nat) 1) *))) (term (addr (env Nat) 1)) (term *))
-;;    (term (((addr (env Nat) 1)))))
-;;   (check-equal?
-;;    (aps#-remove-commitment-pattern
-;;     (term (((addr (env Nat) 1) * (record)))) (term (addr (env Nat) 1)) (term *))
-;;    (term (((addr (env Nat) 1) (record)))))
-;;   (check-equal?
-;;    (aps#-remove-commitment-pattern
-;;     (term (((addr (env Nat) 1) * (record) (record [a *])) ((addr (env Nat) 2) *)))
-;;     (term (addr (env Nat) 1))
-;;     (term *))
-;;    (term (((addr (env Nat) 1) (record) (record [a *])) ((addr (env Nat) 2) *)))))
-
-;; (define (config-merge-unobs-addresses config new-addrs)
-;;   `(,(aps#-config-obs-receptionists config)
-;;     ,(merge-receptionists (aps#-config-unobs-receptionists config) new-addrs)
-;;     ,(aps#-config-current-state config)
-;;     ,(aps#-config-state-defs config)
-;;     ,(aps#-config-commitment-map config)))
-
-;; (define (aps#-config-has-commitment? config address pattern)
-;;   (judgment-holds (aps#-commitment-map-has-commitment?/j ,(aps#-config-commitment-map config)
-;;                                                          ,address
-;;                                                          ,pattern)))
-
-;; (define-judgment-form aps#
-;;   #:mode (aps#-commitment-map-has-commitment?/j I I I)
-;;   #:contract (aps#-commitment-map-has-commitment?/j O# a# po)
-;;   [-----
-;;    (aps#-commitment-map-has-commitment?/j (_ ... [a# _ ... po _ ...] _ ...) a# po)])
-
-;; (module+ test
-;;   (define has-commitment-test-config
-;;     (term (() () (goto S1) () (((addr (env Nat) 1) *)
-;;                                ((addr (env Nat) 2) * (record))))))
-;;   (test-false "aps#-config-has-commitment? 1"
-;;     (aps#-config-has-commitment? has-commitment-test-config (term (addr (env Nat) 3)) (term *)))
-;;   (test-false "aps#-config-has-commitment? 2"
-;;     (aps#-config-has-commitment? has-commitment-test-config (term (addr (env Nat) 1)) (term (record))))
-;;   (test-true "aps#-config-has-commitment? 1"
-;;     (aps#-config-has-commitment? has-commitment-test-config (term (addr (env Nat) 2)) (term (record)))))
+(module+ test
+  (define has-commitment-test-config
+    (term (()
+           ()
+           (goto S1)
+           ()
+           ([1 *] [2 *] [2 (record)]))))
+  (test-false "aps#-config-has-commitment? 1"
+    (aps#-config-has-commitment? has-commitment-test-config (term 3) (term *)))
+  (test-false "aps#-config-has-commitment? 2"
+    (aps#-config-has-commitment? has-commitment-test-config (term 1) (term (record))))
+  (test-not-false "aps#-config-has-commitment? 1"
+    (aps#-config-has-commitment? has-commitment-test-config (term 2) (term (record)))))
 
 ;; Returns #t if this transition goes to the given state and has exactly one effect (an obligation)
 (define (free-stable-transition? transition full-state)
