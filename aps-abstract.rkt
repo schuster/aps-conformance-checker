@@ -1565,61 +1565,61 @@
 ;;   (test-true "aps#-config-has-commitment? 1"
 ;;     (aps#-config-has-commitment? has-commitment-test-config (term (addr (env Nat) 2)) (term (record)))))
 
-;; ;; Returns #t if this transition goes to the given state and has exactly one effect (an obligation)
-;; (define (free-stable-transition? transition full-state)
-;;   (match transition
-;;     [`(free -> ([obligation ,_ ,_]) ,(== full-state)) #t]
-;;     [_ #f]))
+;; Returns #t if this transition goes to the given state and has exactly one effect (an obligation)
+(define (free-stable-transition? transition full-state)
+  (match transition
+    [`(free -> ([obligation ,_ ,_]) ,(== full-state)) #t]
+    [_ #f]))
 
-;; ;; s# a# -> ([pt -> (f ...) (goto φ u ...)])
-;; ;;
-;; ;; Returns the transitions (after subsitution with the current state arguments) with an unobs trigger
-;; ;; and a single effect: an obligation
-;; (define (get-free-transitions-for-resolution config target-addr)
-;;   (filter
-;;    (lambda (trans)
-;;      (match trans
-;;        [`(free -> ([obligation ,obligation-addr ,_]) ,_)
-;;         (equal? obligation-addr target-addr)]
-;;        [_ #f]))
-;;    (config-current-transitions config)))
+;; s# a# -> ([pt -> (f ...) (goto φ u ...)])
+;;
+;; Returns the transitions (after subsitution with the current state arguments) of the PSM that have an unobs
+;; trigger and a single obligation effect
+(define (get-free-transitions-for-resolution psm target-marker)
+  (filter
+   (lambda (trans)
+     (match trans
+       [`(free -> ([obligation ,obligation-marker ,_]) ,_)
+        (equal? obligation-marker target-marker)]
+       [_ #f]))
+   (config-current-transitions psm)))
 
-;; (module+ test
-;;   (define free-transition-spec
-;;     (term
-;;      (()
-;;       ()
-;;       (goto S1 (addr (env Nat) 1) (addr (env Nat) 2))
-;;       ((define-state (S1 a b)
-;;          [x -> ([obligation x *]) (goto S1)]
-;;          [x -> ([obligation b *]) (goto S1)]
-;;          [free -> ([obligation a (variant A)]) (goto S2 a b)]
-;;          [free -> ([obligation a (variant B)]) (goto S2 a a)]
-;;          [free -> ([obligation a (variant C)]) (goto S1 a b)]
-;;          [free -> ([obligation b (variant D)]) (goto S1 a b)]
-;;          [free -> ([obligation b (variant E)]) (goto S2 a b)]))
-;;       ([(addr (env Nat) 1)] [(addr (env Nat) 2)]))))
-;;   (check-equal?
-;;    (get-free-transitions-for-resolution free-transition-spec `(addr (env Nat) 1))
-;;    `([free -> ([obligation (addr (env Nat) 1) (variant A)]) (goto S2 (addr (env Nat) 1) (addr (env Nat) 2))]
-;;      [free -> ([obligation (addr (env Nat) 1) (variant B)]) (goto S2 (addr (env Nat) 1) (addr (env Nat) 1))]
-;;      [free -> ([obligation (addr (env Nat) 1) (variant C)]) (goto S1 (addr (env Nat) 1) (addr (env Nat) 2))]))
-;;   (check-equal?
-;;    (get-free-transitions-for-resolution free-transition-spec `(addr (env Nat) 2))
-;;    `([free -> ([obligation (addr (env Nat) 2) (variant D)]) (goto S1 (addr (env Nat) 1) (addr (env Nat) 2))]
-;;      [free -> ([obligation (addr (env Nat) 2) (variant E)]) (goto S2 (addr (env Nat) 1) (addr (env Nat) 2))])))
+(module+ test
+  (define free-transition-spec
+    (term
+     (()
+      ()
+      (goto S1 1 2)
+      ((define-state (S1 a b)
+         [x -> ([obligation x *]) (goto S1)]
+         [x -> ([obligation b *]) (goto S1)]
+         [free -> ([obligation a (variant A)]) (goto S2 a b)]
+         [free -> ([obligation a (variant B)]) (goto S2 a a)]
+         [free -> ([obligation a (variant C)]) (goto S1 a b)]
+         [free -> ([obligation b (variant D)]) (goto S1 a b)]
+         [free -> ([obligation b (variant E)]) (goto S2 a b)]))
+      ())))
+  (check-equal?
+   (get-free-transitions-for-resolution free-transition-spec 1)
+   `([free -> ([obligation 1 (variant A)]) (goto S2 1 2)]
+     [free -> ([obligation 1 (variant B)]) (goto S2 1 1)]
+     [free -> ([obligation 1 (variant C)]) (goto S1 1 2)]))
+  (check-equal?
+   (get-free-transitions-for-resolution free-transition-spec 2)
+   `([free -> ([obligation 2 (variant D)]) (goto S1 1 2)]
+     [free -> ([obligation 2 (variant E)]) (goto S2 1 2)])))
 
-;; (define (transition-to-same-state? config transition)
-;;   (equal? (aps#-transition-goto transition) (aps#-config-current-state config)))
+(define (transition-to-same-state? config transition)
+  (equal? (aps#-transition-goto transition) (aps#-psm-current-state config)))
 
-;; (module+ test
-;;   (let ([transition-test-config `[() () (goto A (addr (env Nat) 1)) () ()]])
-;;     (test-true "transition-to-same-state? true"
-;;       (transition-to-same-state? transition-test-config `[free -> () (goto A (addr (env Nat) 1))]))
-;;     (test-false "transition-to-same-state? wrong state"
-;;       (transition-to-same-state? transition-test-config `[free -> () (goto B (addr (env Nat) 1))]))
-;;     (test-false "transition-to-same-state? wrong address"
-;;       (transition-to-same-state? transition-test-config `[free -> () (goto A (addr (env Nat) 2))]))))
+(module+ test
+  (let ([transition-test-config `[() () (goto A 1) () ()]])
+    (test-true "transition-to-same-state? true"
+      (transition-to-same-state? transition-test-config `[free -> () (goto A 1)]))
+    (test-false "transition-to-same-state? wrong state"
+      (transition-to-same-state? transition-test-config `[free -> () (goto B 1)]))
+    (test-false "transition-to-same-state? wrong address"
+      (transition-to-same-state? transition-test-config `[free -> () (goto A 2)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
