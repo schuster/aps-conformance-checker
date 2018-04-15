@@ -637,112 +637,78 @@
       ()
       (1)]))
 
-;; ;; ς (ς ...) O# -> (s# ...)
-;; ;;
-;; ;; As described in the dissertation, distributes the obligations in the obligation map to each
-;; ;; pre-configuration according to the external addresses "relevant" to each pre-config (determined by
-;; ;; the state arguments on that configuration and any extra addresses set in the pre-config). Static
-;; ;; constraints on the specification ensure that every observed external address is relevant to at most
-;; ;; one spec config.
-;; ;;
-;; ;; The dist function described in the dissertation assigns obligations non-deterministically if the
-;; ;; address is not relevant in any pre-config. Here we use the strategy of assigning them to the
-;; ;; "current" config by default.
-;; (define (dist current-pre-config forked-pre-configs obligation-map)
-;;   (define-values (remaining-obligation-map forked-configs)
-;;    (for/fold ([obligation-map obligation-map]
-;;               [forked-configs null])
-;;              ([pre-config forked-pre-configs])
-;;      (match-define (list obs-receptionists unobs-receptionists goto state-defs relevants) pre-config)
-;;      (match-define (list remaining-obligation-map forked-map)
-;;        (fork-commitment-map obligation-map (append (externals-in goto) relevants)))
-;;      ;; The new unobs receptionists are *all* receptionists from the parent config, plus the
-;;      ;; observable receptionists of the other forks
-;;      (values remaining-obligation-map
-;;              (cons (term (,obs-receptionists ,unobs-receptionists ,goto ,state-defs ,forked-map))
-;;                    forked-configs))))
-;;   (match current-pre-config
-;;     [`(,obs-receptionists ,unobs-receptionists ,goto ,state-defs ,_)
-;;      (cons `(,obs-receptionists ,unobs-receptionists ,goto ,state-defs ,remaining-obligation-map)
-;;            forked-configs)]))
+;; s (s ...) O -> (s ...)
+;;
+;; As described in the dissertation, distributes the given obligations to each PSM according to the
+;; monitored externals on each PSM. Also checks that no two PSMs monitor the same external
+;; marker. Returns the list of updated PSMs, with the "current" one as the first item in the list.
+(define (dist current-psm forked-psms new-obligations)
+  (define duplicate-marker
+    (check-duplicates (append* (map aps#-psm-mon-externals (cons current-psm forked-psms)))))
+  (when duplicate-marker
+    (error 'dist "Multiple PSMs monitor the marker ~s" duplicate-marker))
 
-;; (module+ test
-;;   (test-equal? "Degenerate dist case"
-;;                (dist (term (() () (goto A) ((define-state (A))) ())) null null)
-;;                (list (term (() () (goto A) ((define-state (A))) ()))))
+  ;; loop over all obligations and insert them into the correct forked PSM, one by one
+  (define-values (updated-forked-psms remaining-obligations)
+    (for/fold ([updated-forked-psms null]
+               [remaining-obligations new-obligations])
+              ([psm forked-psms])
+      (match-define `[,updated-psm ,new-remaining-obligations]
+        (add-relevant-obligations psm remaining-obligations))
+      (values (cons updated-psm updated-forked-psms) new-remaining-obligations)))
+  ;; current PSM gets all remaining obligations
+  (cons (add-obligations current-psm remaining-obligations)
+        (reverse updated-forked-psms)))
 
-;;   (test-equal? "Basic dist case"
-;;     (dist (term (() () (goto A) ((define-state (A))) ()))
-;;           (list `[() () (goto B (addr (env Nat) 2)) ((define-state (B r))) ()])
-;;           (term ([(addr (env Nat) 1) *] [(addr (env Nat) 2) (record)])))
-;;     (list (term (() () (goto A) ((define-state (A))) ([(addr (env Nat) 1) *])))
-;;           (term (() () (goto B (addr (env Nat) 2)) ((define-state (B r))) ([(addr (env Nat) 2) (record)])))))
+(module+ test
+  (test-equal? "Degenerate dist case"
+    (dist `[() () (goto A) ((define-state (A))) ()] null null)
+    (list `[() () (goto A) ((define-state (A))) ()]))
 
-;;   (test-equal? "Dist with extra relevant address"
-;;     (dist (term (() () (goto A (addr (env Nat) 1)) () ()))
-;;           (list (term (() () (goto B) () ((addr (env Nat) 2)))))
-;;           (term ([(addr (env Nat) 1) *]
-;;                  [(addr (env Nat) 2) *])))
-;;     (list (term (() () (goto A (addr (env Nat) 1)) () ([(addr (env Nat) 1) *])))
-;;           (term (() () (goto B) () ([(addr (env Nat) 2) *])))))
+  (test-equal? "Basic dist case"
+    (dist `[() () (goto A) ((define-state (A))) ()]
+          (list `[() (2) (goto B 2) ((define-state (B r))) ()])
+          (list `[1 *]
+                `[2 (record)]))
+    (list `[() () (goto A) ((define-state (A))) ([1 *])]
+          `[() (2) (goto B 2) ((define-state (B r))) ([2 (record)])]))
 
-;;   (test-equal? "Dist an obligation with self pattern and that address in the fork's args"
-;;     (dist (term (() () (goto A) () ()))
-;;           (list (term (() () (goto B (addr (env Nat) 1)) () ((addr (env Nat) 1)))))
-;;           (term ([(addr (env Nat) 1) (variant X self)])))
-;;     (list (term (() () (goto A) () ()) )
-;;           (term (() () (goto B (addr (env Nat) 1)) () ([(addr (env Nat) 1) (variant X self)]))))))
+  (test-equal? "Dist with extra relevant address"
+    (dist `[() (1) (goto A 1) () ()]
+          (list `[() (2) (goto B) () ()])
+          (list `[1 *]
+                `[2 *]))
+    (list `[() (1) (goto A 1) () ([1 *])]
+          `[() (2) (goto B) () ([2 *])]))
 
-;; ;; O# (a# ...) -> (O#_old O#_new)
-;; ;;
-;; ;; Moves entries from the given obligation map whose address is in the given list and creates a new
-;; ;; obligation map from that list. The list of addresses may contain duplicates.
-;; (define (fork-commitment-map commitment-map addresses)
-;;   (term (fork-commitment-map/mf ,commitment-map () ,(remove-duplicates addresses))))
+  (test-equal? "Dist an obligation with self pattern and that destination marker in the forked PSM's args"
+    (dist `[() () (goto A) () ()]
+          (list (term (() (1) (goto B 1) () ())))
+          (list `[1 (variant X self)]))
+    (list `[() () (goto A) () ()]
+          `[() (1) (goto B 1) () ([1 (variant X self)])]))
 
-;; ;; Takes all entries from the first O# that match an address in the given list and moves it to the
-;; ;; second O#. The list of addresses must *not* contain duplicates.
-;; (define-metafunction aps#
-;;   fork-commitment-map/mf : O# O# (a# ...) -> (O# O#)
-;;   [(fork-commitment-map/mf O#_current O#_new ())
-;;    (O#_current O#_new)]
-;;   [(fork-commitment-map/mf O#_current (any_fork-entries ...) (a# any_rest ...))
-;;    (fork-commitment-map/mf O#_updated (any_fork-entries ... (a# any_pulled ...)) (any_rest ...))
-;;    (where (O#_updated (any_pulled ...)) (O#-pull O#_current a#))])
+  (test-exn "Cannot distribute obligations over PSMs that monitor same marker"
+    (lambda (exn) #t)
+    (lambda ()
+      (dist `[() (1) (goto A 1) () ()]
+            (list `[() (1) (goto B 1) () ()])
+            (list `[1 *])))))
 
-;; (define-metafunction aps#
-;;   O#-pull : O# a# -> (O# (po ...))
-;;   [(O#-pull (any_1 ... (a# any_com ...) any_2 ...) a#)
-;;    ((any_1 ... any_2 ...) (any_com ...))]
-;;   [(O#-pull O# a#) (O# ())])
+;; Adds to the PSM the obligations from obls that have a destination marker monitored by the
+;; PSM. Returns updated PSM and any obligations not used
+(define (add-relevant-obligations psm new-obls)
+  (match-define `[,mon-recs ,mon-exts ,goto ,state-defs ,old-obls] psm)
+  (define-values (relevant-new-obls other-obls)
+    (partition (lambda (obl) (member (aps#-obligation-dest obl) mon-exts))
+               new-obls))
+  `[,(add-obligations psm relevant-new-obls)
+    ,other-obls])
 
-;; (module+ test
-;;   (check-equal?
-;;    (fork-commitment-map
-;;     (term (((addr (env Nat) 1) *)
-;;            ((addr (env Nat) 2))
-;;            ((addr (env Nat) 3))
-;;            ((addr (env Nat) 4) (record))))
-;;     (term ((addr (env Nat) 1) (addr (env Nat) 3) (addr (env Nat) 5))))
-;;    (list
-;;     (term (((addr (env Nat) 2))
-;;            ((addr (env Nat) 4) (record))))
-;;     (term (((addr (env Nat) 1) *)
-;;            ((addr (env Nat) 3))
-;;            ((addr (env Nat) 5))))))
-
-;;   (test-equal? "fork-commitment-map: No duplicate entries when address list has duplicates"
-;;     (fork-commitment-map `([(addr (env Nat) 1) *]) (list `(addr (env Nat) 1) `(addr (env Nat) 1)))
-;;     `[()
-;;       ([(addr (env Nat) 1) *])]))
-
-;; ;; Adds all addresses matched in the substitution (i.e. the set of bindings) as keys in the output
-;; ;; commitment map
-;; (define (observe-addresses-from-subst commitment-map the-subst)
-;;   (redex-let aps# ([(any_map-entries ...) commitment-map]
-;;                    [([_ a#_ext] ...) the-subst])
-;;              (term (any_map-entries ... (a#_ext) ...))))
-
+;; Adds all of the given obligations to the given PSM
+(define (add-obligations psm new-obls)
+  (match-define `[,mon-recs ,mon-exts ,goto ,state-defs ,old-obls] psm)
+  `[,mon-recs ,mon-exts ,goto ,state-defs ,(append old-obls new-obls)])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Input pattern matching
