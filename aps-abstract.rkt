@@ -363,125 +363,170 @@
   (test-false "Has duplicate obligations"
     (all-obligations-unique? `[() () (goto A) () ([1 (variant A)] [1 *] [1 (variant A)])])))
 
-;; ;; s# spec-state-transition bool trigger -> [s# ...] or #f
-;; ;;
-;; ;; Returns the config updated by running the given transition, if it can be taken from the given
-;; ;; trigger, along with all configs spawned in the transition, or #f if the transition is not possible
-;; ;; from this trigger
-;; (define (attempt-transition config transition from-observer? trigger)
-;;   (match (match-trigger from-observer?
-;;                         trigger
-;;                         (aps#-config-obs-receptionists config)
-;;                         (aps#-transition-trigger transition))
-;;     [#f #f]
-;;     [(list bindings ...)
-;;      (match-define (list new-obligations pre-configs)
-;;        (perform (subst-into-effects (aps#-transition-effects transition) bindings)
-;;                 (merge-receptionists (aps#-config-obs-receptionists config)
-;;                                      (aps#-config-unobs-receptionists config))))
-;;      (define updated-obligation-map
-;;        (term
-;;         (add-commitments
-;;          ,(observe-addresses-from-subst
-;;            (aps#-config-commitment-map config) bindings)
-;;          ,@new-obligations)))
-;;      (define stepped-current-pre-config
-;;        (term (,(aps#-config-obs-receptionists config)
-;;               ,(aps#-config-unobs-receptionists config)
-;;               ,(subst-into-goto (aps#-transition-goto transition) bindings)
-;;               ,(aps#-config-state-defs config)
-;;               ())))
-;;      (dist stepped-current-pre-config pre-configs updated-obligation-map)]))
+;; state-transition trigger
+(define (transition-matches? mon-recs trigger transition)
+  (match (match-trigger mon-recs trigger (aps#-transition-trigger transition))
+    [#f #f]
+    [_ #t]))
 
-;; (module+ test
-;;   (test-equal? "Transition should put observed no-commitment addresses in commitment map"
-;;     (attempt-transition
-;;      `((((Addr Nat) (addr 0 0)))
-;;        ()
-;;        (goto A)
-;;        ((define-state (A) [r -> () (goto A)]))
-;;        ())
-;;      `[r -> () (goto A)]
-;;      #t
-;;      `(external-receive (addr 0 0) (addr (env Nat) 1)))
-;;     (list
-;;      `((((Addr Nat) (addr 0 0)))
-;;        ()
-;;        (goto A)
-;;        ((define-state (A) [r -> () (goto A)]))
-;;        ([(addr (env Nat) 1)]))))
+(module+ test
+  (test-true "received message matches transition pattern"
+    (transition-matches? (list 1)
+                         `(external-receive (marked (addr 0 0) 1) (variant A))
+                         `[(variant A) -> () (goto B)]))
 
-;;   (test-equal? "Address with commitments and added to state arg should be added exactly once to obligations"
-;;     (attempt-transition
-;;      `((((Addr Nat) (addr 0 0)))
-;;        ()
-;;        (goto A)
-;;        ((define-state (A) [r -> ([obligation r *]) (goto B r)]))
-;;        ())
-;;      `[r -> ([obligation r *]) (goto B r)]
-;;      #t
-;;      `(external-receive (addr 0 0) (addr (env Nat) 1)))
-;;     (list
-;;      `((((Addr Nat) (addr 0 0)))
-;;        ()
-;;        (goto B (addr (env Nat) 1))
-;;        ((define-state (A) [r -> ([obligation r *]) (goto B r)]))
-;;        ([(addr (env Nat) 1) *]))))
+  (test-false "received message does not match transition pattern"
+    (transition-matches? (list 1)
+                         `(external-receive (marked (addr 0 0) 1) (variant B))
+                         `[(variant A) -> () (goto B)]))
 
-;;   (test-case "Immediate fork pattern transition"
-;;     (define fork-pattern `(fork (goto Z y) (define-state (Z y) [* -> () (goto Z y)])))
-;;     (check-equal?
-;;      (attempt-transition
-;;       `(([(Addr Nat) (addr 1 0)])
-;;         ([String (addr 2 0)])
-;;         (goto A (addr (env Nat) 1))
-;;         ((define-state (A x) [y -> ([obligation x ,fork-pattern]) (goto B)])
-;;          (define-state (B) [* -> () (goto B)]))
-;;         ;; check for captured and uncaptured addresses, too
-;;         ([(addr (env Nat) 1)]
-;;          [(addr (env Nat) 3) *]))
-;;       `[y -> ([obligation (addr (env Nat) 1) ,fork-pattern]) (goto B)]
-;;       #t
-;;       `(external-receive (addr 1 0) (addr (env (Addr Nat)) 2)))
-;;      (list
-;;       `(([(Addr Nat) (addr 1 0)])
-;;         ([String (addr 2 0)])
-;;         (goto B)
-;;         ((define-state (A x) [y -> ([obligation x ,fork-pattern]) (goto B)])
-;;          (define-state (B) [* -> () (goto B)]))
-;;         ([(addr (env Nat) 3) *]))
-;;       `(()
-;;         ([(Addr Nat) (addr 1 0)] [String (addr 2 0)])
-;;         (goto Z (addr (env (Addr Nat)) 2))
-;;         ((define-state (Z y) [* -> () (goto Z y)]))
-;;         ([(addr (env (Addr Nat)) 2)]
-;;          [(addr (env Nat) 1) self])))))
+  (test-false "received message on unobs marker does not match transition pattern"
+    (transition-matches? (list 1)
+                         `(external-receive (marked (addr 0 0) 2) (variant A))
+                         `[(variant A) -> () (goto B)]))
 
-;;   (test-case "Delayed fork pattern transition"
-;;     (define fork-pattern `(delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)])))
-;;     (check-equal?
-;;      (attempt-transition
-;;       `(([(Addr Nat) (addr 1 0)])
-;;         ([String (addr 2 0)])
-;;         (goto A (addr (env Nat) 1))
-;;         ((define-state (A x) [* -> ([obligation x ,fork-pattern]) (goto B)])
-;;          (define-state (B) [* -> () (goto B)]))
-;;         ;; check for captured and uncaptured addresses, too
-;;         ([(addr (env Nat) 1)]
-;;          [(addr (env Nat) 2)]
-;;          [(addr (env Nat) 3) *]))
-;;       `[* -> ([obligation (addr (env Nat) 1) ,fork-pattern]) (goto B)]
-;;       #t
-;;       `(external-receive (addr 1 0) (addr (env (Addr Nat)) 2)))
-;;      (list
-;;       `(([(Addr Nat) (addr 1 0)])
-;;         ([String (addr 2 0)])
-;;         (goto B)
-;;         ((define-state (A x) [* -> ([obligation x ,fork-pattern]) (goto B)])
-;;          (define-state (B) [* -> () (goto B)]))
-;;         ([(addr (env Nat) 1) ,fork-pattern]
-;;          [(addr (env Nat) 2)]
-;;          [(addr (env Nat) 3) *]))))))
+  (test-false "received message on monitored marker cannot match free transition"
+    (transition-matches? (list 1)
+                         `(external-receive (marked (addr 0 0) 1) (variant A))
+                         `[free -> () (goto B)]))
+
+  (test-true "received message on unmonitored marker matches free transition"
+    (transition-matches? (list 1)
+                         `(external-receive (marked (addr 0 0) 2) (variant A))
+                         `[free -> () (goto B)])))
+
+;; s# spec-state-transition trigger -> (s# ...)
+;;
+;; Returns the config updated by running the given transition, along with all configs spawned in the
+;; transition.
+(define (take-transition psm transition trigger)
+  (match-define (list bindings ...)
+    (match-trigger (aps#-psm-mon-receptionists psm)
+                   trigger
+                   (aps#-transition-trigger transition)))
+  (match-define (list new-obligations forked-psms self-markers)
+    (perform (subst-into-effects (aps#-transition-effects transition) bindings)))
+  (define fork-mon-externals (append* (map aps#-psm-mon-externals forked-psms)))
+  (define new-goto (subst-into-goto (aps#-transition-goto transition) bindings))
+  (define new-mon-externals
+    (append
+     (aps#-goto-args new-goto)
+     self-markers
+     (filter (lambda (m) (not (member m fork-mon-externals))) (map second bindings))))
+  (define stepped-current-psm
+    (term [,(aps#-psm-mon-receptionists psm)
+           ,(remove-duplicates (append (aps#-psm-mon-externals psm) new-mon-externals))
+           ,new-goto
+           ,(aps#-psm-state-defs psm)
+           ,(aps#-psm-obligations psm)]))
+  (dist stepped-current-psm forked-psms new-obligations))
+
+(module+ test
+  (test-equal? "Transition should put observed no-commitment marker in monitored-externals"
+    (take-transition
+     `[(0)
+       ()
+       (goto A)
+       ((define-state (A) [r -> () (goto A)]))
+       ()]
+     `[r -> () (goto A)]
+     `(external-receive (marked (addr 0 0) 0) (marked (addr (env Nat) 1) 1)))
+    (list
+     `[(0)
+       (1)
+       (goto A)
+       ((define-state (A) [r -> () (goto A)]))
+       ()]))
+
+  (test-equal? "Pattern-matched marker added to monitored externals"
+    (take-transition
+     `[(1)
+       ()
+       (goto A)
+       ()
+       ()]
+     `[x -> () (goto A)]
+     `(external-receive (marked (addr 0 0) 1) (marked (addr (env Nat) 1) 2)))
+    (list `[(1) (2) (goto A) () ()]))
+
+  (test-equal? "Pattern-matched marker not added to monitored externals if fork keeps it"
+    (take-transition
+     `[(1)
+       ()
+       (goto A)
+       ()
+       ()]
+     `[x -> ([fork (goto B x)]) (goto A)]
+     `(external-receive (marked (addr 0 0) 1) (marked (addr (env Nat) 1) 2)))
+    (list `[(1) () (goto A) () ()]
+          `[() (2) (goto B 2) () ()]))
+
+  (test-equal? "Markers with commitments and added to state arg should be added exactly once to obligations"
+    (take-transition
+     `[(0)
+       ()
+       (goto A)
+       ((define-state (A) [r -> ([obligation r *]) (goto B r)]))
+       ()]
+     `[r -> ([obligation r *]) (goto B r)]
+     `(external-receive (marked (addr 0 0) 0) (marked (addr (env Nat) 1) 1)))
+    (list
+     `[(0)
+       (1)
+       (goto B 1)
+       ((define-state (A) [r -> ([obligation r *]) (goto B r)]))
+       ([1 *])]))
+
+  (test-case "Immediate fork pattern transition"
+    (define fork-pattern `(fork (goto Z y) (define-state (Z y) [* -> () (goto Z y)])))
+    (check-equal?
+     (take-transition
+      `[(1)
+        (3 4)
+        (goto A 3)
+        ((define-state (A x) [(variant A y z) -> ([obligation z ,fork-pattern]) (goto B)])
+         (define-state (B) [* -> () (goto B)]))
+        ;; check for captured and uncaptured addresses, too
+        ([4 *])]
+      `[(variant A y z) -> ([obligation z ,fork-pattern]) (goto B)]
+      `(external-receive (marked (addr 1 0) 1)
+                         (variant A
+                                  (marked (addr (env (Addr Nat)) 5) 5)
+                                  (marked (addr (env (Addr Nat)) 6) 6))))
+     (list
+      `((1)
+        (3 4)
+        (goto B)
+        ((define-state (A x) [(variant A y z) -> ([obligation z ,fork-pattern]) (goto B)])
+         (define-state (B) [* -> () (goto B)]))
+        ([4 *]))
+      `(()
+        (6 5)
+        (goto Z 5)
+        ((define-state (Z y) [* -> () (goto Z y)]))
+        ([6 self])))))
+
+  (test-case "Delayed fork pattern transition"
+    (define fork-pattern `(delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)])))
+    (check-equal?
+     (take-transition
+      `((0)
+        (1 2 3)
+        (goto A 1)
+        ((define-state (A x) [* -> ([obligation x ,fork-pattern]) (goto B)])
+         (define-state (B) [* -> () (goto B)]))
+        ;; check for captured and uncaptured addresses, too
+        ([3 *]))
+      `[* -> ([obligation 1 ,fork-pattern]) (goto B)]
+      `(external-receive (marked (addr 1 0) 0) (marked (addr (env (Addr Nat)) 2) 4)))
+     (list
+      `((0)
+        (1 2 3)
+        (goto B)
+        ((define-state (A x) [* -> ([obligation x ,fork-pattern]) (goto B)])
+         (define-state (B) [* -> () (goto B)]))
+        ([3 *]
+         [1 ,fork-pattern]))))))
 
 ;; (f ...) ([x mk] ...) -> (f ...)
 ;;
@@ -642,23 +687,16 @@
 ;; As described in the dissertation, distributes the given obligations to each PSM according to the
 ;; monitored externals on each PSM. Also checks that no two PSMs monitor the same external
 ;; marker. Returns the list of updated PSMs, with the "current" one as the first item in the list.
+;;
+;; Assumes that every obligation has *some* PSM in the given ones that monitors the obligation's
+;; destination marker.
 (define (dist current-psm forked-psms new-obligations)
   (define duplicate-marker
     (check-duplicates (append* (map aps#-psm-mon-externals (cons current-psm forked-psms)))))
   (when duplicate-marker
     (error 'dist "Multiple PSMs monitor the marker ~s" duplicate-marker))
-
-  ;; loop over all obligations and insert them into the correct forked PSM, one by one
-  (define-values (updated-forked-psms remaining-obligations)
-    (for/fold ([updated-forked-psms null]
-               [remaining-obligations new-obligations])
-              ([psm forked-psms])
-      (match-define `[,updated-psm ,new-remaining-obligations]
-        (add-relevant-obligations psm remaining-obligations))
-      (values (cons updated-psm updated-forked-psms) new-remaining-obligations)))
-  ;; current PSM gets all remaining obligations
-  (cons (add-obligations current-psm remaining-obligations)
-        (reverse updated-forked-psms)))
+  (for/list ([psm (cons current-psm forked-psms)])
+    (add-obligations psm (filter (curryr obligation-relevant-to? psm) new-obligations))))
 
 (module+ test
   (test-equal? "Degenerate dist case"
@@ -666,11 +704,11 @@
     (list `[() () (goto A) ((define-state (A))) ()]))
 
   (test-equal? "Basic dist case"
-    (dist `[() () (goto A) ((define-state (A))) ()]
+    (dist `[() (1) (goto A) ((define-state (A))) ()]
           (list `[() (2) (goto B 2) ((define-state (B r))) ()])
           (list `[1 *]
                 `[2 (record)]))
-    (list `[() () (goto A) ((define-state (A))) ([1 *])]
+    (list `[() (1) (goto A) ((define-state (A))) ([1 *])]
           `[() (2) (goto B 2) ((define-state (B r))) ([2 (record)])]))
 
   (test-equal? "Dist with extra relevant address"
@@ -695,15 +733,9 @@
             (list `[() (1) (goto B 1) () ()])
             (list `[1 *])))))
 
-;; Adds to the PSM the obligations from obls that have a destination marker monitored by the
-;; PSM. Returns updated PSM and any obligations not used
-(define (add-relevant-obligations psm new-obls)
-  (match-define `[,mon-recs ,mon-exts ,goto ,state-defs ,old-obls] psm)
-  (define-values (relevant-new-obls other-obls)
-    (partition (lambda (obl) (member (aps#-obligation-dest obl) mon-exts))
-               new-obls))
-  `[,(add-obligations psm relevant-new-obls)
-    ,other-obls])
+;; True iff the given oblgiation's destination marker is monitored by the PSM.
+(define (obligation-relevant-to? obl psm)
+  (member (aps#-obligation-dest obl) (aps#-psm-mon-externals psm)))
 
 ;; Adds all of the given obligations to the given PSM
 (define (add-obligations psm new-obls)
@@ -1566,8 +1598,7 @@
     (term any_goto)))
 
 (define (aps#-psm-current-state-args psm)
-  (redex-let aps# ([(_ _ (goto _ mk ...) _ ...) psm])
-    (term (mk ...))))
+  (aps#-goto-args (aps#-psm-current-state psm)))
 
 (define (aps#-psm-obligations psm)
   (term (psm-obligations/mf ,psm)))
@@ -1603,6 +1634,9 @@
 
 (define (aps#-transition-goto transition)
   (fourth transition))
+
+(define (aps#-goto-args goto-exp)
+  (rest (rest goto-exp)))
 
 (define (aps#-obligation-dest o)
   (first o))
@@ -2099,6 +2133,6 @@
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Debugging
 
-;; (define (spec-config-without-state-defs config)
-;;   (redex-let aps# ([(any_obs-rec any_unobs-rec any_goto _ any_out) config])
-;;     (term (any_obs-rec any_unobs-rec any_goto any_out))))
+(define (spec-config-without-state-defs config)
+  (match-define `[,mon-recs ,mon-exts ,goto ,_ ,obls] config)
+  `[,mon-recs ,mon-exts ,goto ,obls])
