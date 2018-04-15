@@ -333,35 +333,35 @@
 ;;      `(external-receive (addr 0 0) (addr (env Nat) 1)))
 ;;     null))
 
-;; (define (addrs-with-self-obligations config)
-;;   (map aps#-commitment-entry-address
-;;        (filter
-;;         (lambda (obl-map-entry)
-;;           (ormap pattern-contains-self?
-;;                  (aps#-commitment-entry-patterns obl-map-entry)))
-;;         (aps#-config-commitment-map config))))
+;; Returns the set of markers for which the given PSM has an obligation whose pattern contains a
+;; "self" pattern
+(define (markers-with-self-obligations psm)
+  (define self-obls
+    (filter
+     (lambda (obligation) (pattern-contains-self? (aps#-obligation-pattern obligation)))
+     (aps#-psm-obligations psm)))
+  (remove-duplicates (map aps#-obligation-dest self-obls)))
 
-;; (module+ test
-;;   (test-equal? "Addresses with self obligation"
-;;     (addrs-with-self-obligations
-;;      `(() () (goto A) () ([(addr 0 0) self]
-;;                           [(addr 0 1) *]
-;;                           [(addr 0 2) (record [a *] [b self])])))
-;;     (list `(addr 0 0) `(addr 0 2))))
+(module+ test
+  (test-equal? "Addresses with self obligation"
+    (markers-with-self-obligations
+     `[()
+       ()
+       (goto A)
+       ()
+       ([1 self]
+        [2 *]
+        [3 (record [a *] [b self])])])
+    (list 1 3)))
 
-;; (define (all-obligations-unique? config)
-;;   (andmap
-;;    (lambda (entry)
-;;      (if (check-duplicates (aps#-commitment-entry-patterns entry))
-;;          #f
-;;          #t))
-;;    (aps#-config-commitment-map config)))
+(define (all-obligations-unique? psm)
+  (not (check-duplicates (aps#-psm-obligations psm))))
 
-;; (module+ test
-;;   (test-true "Does not have duplicate obligations"
-;;     (all-obligations-unique? `(() () (goto A) () ([(addr 0 0) * (variant A)]))))
-;;   (test-false "Has duplicate obligations"
-;;     (all-obligations-unique? `(() () (goto A) () ([(addr 0 0) (variant A) * (variant A) ])))))
+(module+ test
+  (test-true "Does not have duplicate obligations"
+    (all-obligations-unique? `[() () (goto A) () ([1 *] [1 (variant A)])]))
+  (test-false "Has duplicate obligations"
+    (all-obligations-unique? `[() () (goto A) () ([1 (variant A)] [1 *] [1 (variant A)])])))
 
 ;; ;; s# spec-state-transition bool trigger -> [s# ...] or #f
 ;; ;;
