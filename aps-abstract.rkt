@@ -483,120 +483,159 @@
 ;;          [(addr (env Nat) 2)]
 ;;          [(addr (env Nat) 3) *]))))))
 
-;; ;; (f ...) ([x a#] ...) -> (f ...)
-;; ;;
-;; ;; Substitutes the given bindings into the given effects
-;; (define (subst-into-effects effects bindings)
-;;   (redex-let aps# ([([x a#] ...) bindings])
-;;     (for/list ([effect effects])
-;;       (term (subst-n/aps#/f ,effect [x a#] ...)))))
+;; (f ...) ([x mk] ...) -> (f ...)
+;;
+;; Substitutes the given bindings into the given effects
+(define (subst-into-effects effects bindings)
+  (redex-let aps# ([([x mk] ...) bindings])
+    (for/list ([effect effects])
+      (term (subst-n/aps#/f ,effect [x mk] ...)))))
 
-;; ;; (goto state x ...) ([x a#] ...) -> (goto state a ...)
-;; ;;
-;; ;; Substitutes the given bindings into the given specification goto expression
-;; (define (subst-into-goto goto bindings)
-;;   (redex-let aps# ([([x a#] ...) bindings]
-;;                    [(goto φ u ...) goto])
-;;     (term (goto φ (subst-n/aps#/u u [x a#] ...) ...))))
+;; (goto state x ...) ([x mk] ...) -> (goto state mk ...)
+;;
+;; Substitutes the given bindings into the given specification goto expression
+(define (subst-into-goto goto bindings)
+  (redex-let aps# ([([x mk] ...) bindings]
+                   [(goto φ u ...) goto])
+    (term (goto φ (subst-n/aps#/u u [x mk] ...) ...))))
 
-;; ;; (f ...) ρ -> (([a# po] ...) (ς ...))
-;; ;;
-;; ;; Performs the given effects in the context of the given receptionist interface, returning new
-;; ;; obligations and forked pre-configurations
-;; (define (perform effects receptionists)
-;;   (for/fold ([results (list null null)])
-;;             ([effect effects])
-;;     (match-define (list obls-so-far pre-configs-so-far) results)
-;;     (match effect
-;;       [`(obligation ,address ,pattern)
-;;        (match-define (list post-extract-pattern extracted-pre-configs)
-;;          (extract pattern receptionists address))
-;;        (list (cons `[,address ,post-extract-pattern] obls-so-far)
-;;              (append pre-configs-so-far extracted-pre-configs))]
-;;       [`(fork ,goto ,state-defs ...)
-;;        (list obls-so-far
-;;              (cons `(() ,receptionists ,goto ,state-defs ()) pre-configs-so-far))])))
+;; (f ...) ρ -> [([mk po] ...) (s ...) (mk ...)]
+;;
+;; Performs the given effects, returning new obligations, forked PSMs, and markers that have a "self"
+;; pattern for this PSM
+(define (perform effects)
+  (for/fold ([results (list null null null)])
+            ([effect effects])
+    (match-define (list obls-so-far forks-so-far self-markers-so-far) results)
+    (match effect
+      [`(obligation ,dest ,pattern)
+       (match-define (list post-extract-pattern extracted-psms markers-for-self)
+         (extract pattern dest))
+       (list (cons `[,dest ,post-extract-pattern] obls-so-far)
+             (append forks-so-far extracted-psms)
+             (remove-duplicates (append self-markers-so-far markers-for-self)))]
+      [`(fork ,goto ,state-defs ...)
+       (list obls-so-far
+             (cons `[()
+                     ,(remove-duplicates (aps#-goto-args goto))
+                     ,goto
+                     ,state-defs
+                     ()]
+                   forks-so-far)
+             self-markers-so-far)])))
 
-;; (module+ test
-;;   (test-equal? "perform 1"
-;;     (perform
-;;      (list `[obligation (addr (env Nat) 1)
-;;                         (fork (goto Z (addr (env Nat) 2)) (define-state (Z a) [* -> () (goto Z a)]))])
-;;      `([Nat (addr 1 0)]
-;;        [String (addr 2 0)]))
-;;     `(([(addr (env Nat) 1) self])
-;;       ([()
-;;         ([Nat (addr 1 0)]
-;;          [String (addr 2 0)])
-;;         (goto Z (addr (env Nat) 2))
-;;         ((define-state (Z a) [* -> () (goto Z a)]))
-;;         ((addr (env Nat) 1))])))
+(module+ test
+  (test-equal? "perform 1"
+    (perform
+     (list `[obligation 1
+                        (fork (goto Z 2) (define-state (Z a) [* -> () (goto Z a)]))]))
+    `[([1 self])
+      ([()
+        (1 2)
+        (goto Z 2)
+        ((define-state (Z a) [* -> () (goto Z a)]))
+        ()])
+      ()])
 
-;;   (test-equal? "perform delayed-fork obligation"
-;;     (perform
-;;      (list `[obligation (addr (env Nat) 1)
-;;                         (delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)]))])
-;;      `([Nat (addr 1 0)]
-;;        [String (addr 2 0)]))
-;;     `(([(addr (env Nat) 1) (delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)]))])
-;;       ()))
+  (test-equal? "perform delayed-fork obligation"
+    (perform
+     (list `[obligation 1
+                        (delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)]))]))
+    `(([1 (delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)]))])
+      ()
+      ()))
 
-;;   (test-equal? "perform fork"
-;;     (perform (list `[fork (goto A (addr (env Nat) 1))])
-;;              '())
-;;     `(() ([() () (goto A (addr (env Nat) 1)) () ()]))))
+  (test-equal? "perform fork"
+    (perform (list `[fork (goto A 1)]))
+    `(()
+      ([() (1) (goto A 1) () ()])
+      ()))
 
-;; ;; po ρ a# -> (po, (ς ...))
-;; ;;
-;; ;; Extracts all forks from the given pattern that is an obligation on the given address, replacing
-;; ;; those patterns with the "self" pattern and creating pre-configurations for each fork using the
-;; ;; given receptionists as the unobs receptionists
-;; (define (extract pattern receptionists addr)
-;;   (define (extract-sub-patterns sub-patterns make-pattern)
-;;     (match-define (list `[,extracted-pats ,pre-configs] ...)
-;;       (map (curryr extract receptionists addr) sub-patterns))
-;;     (list (make-pattern extracted-pats) (append* pre-configs)))
-;;   (match pattern
-;;     [`* (list pattern null)]
-;;     [`(or ,pats ...)
-;;      (extract-sub-patterns pats (lambda (pats) `(or ,@pats)))]
-;;     [`(variant ,tag ,pats ...)
-;;      (extract-sub-patterns pats (lambda (pats) `(variant ,tag ,@pats)))]
-;;     [`(record [,fields ,pats] ...)
-;;      (extract-sub-patterns
-;;       pats
-;;       (lambda (pats) `(record ,@(map (lambda (f p) `[,f ,p]) fields pats))))]
-;;     [`(fork ,goto ,state-defs ...)
-;;      (list 'self `([() ,receptionists ,goto ,state-defs (,addr)]))]
-;;     [`(delayed-fork ,_ ,_ ...) (list pattern null)]
-;;     ['self (list pattern null)]))
+  (test-equal? "perform obligation with 'self'"
+    (perform (list `[obligation 1 (variant A self)]))
+    `[([1 (variant A self)])
+      ()
+      (1)])
 
-;; (module+ test
-;;   (test-equal? "extract 1"
-;;     (extract `(or (fork (goto A (addr (env Nat) 1))) (fork (goto B (addr (env Nat) 2))))
-;;              `([Nat (addr 1 0)])
-;;              `(addr (env Nat) 3))
-;;     `[(or self self)
-;;       ([() ([Nat (addr 1 0)]) (goto A (addr (env Nat) 1)) () ((addr (env Nat) 3))]
-;;        [() ([Nat (addr 1 0)]) (goto B (addr (env Nat) 2)) () ((addr (env Nat) 3))])])
+  (test-equal? "perform multiple effects"
+    (perform (list
+              `[obligation 1 (fork (goto Z 2) (define-state (Z a) [* -> () (goto Z a)]))]
+              `[obligation 3 (delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)]))]
+              `[fork (goto A 4)]
+              `[obligation 5 (variant A self)]))
+    `[([5 (variant A self)]
+       [3 (delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)]))]
+       [1 self])
+      ([() (4) (goto A 4) () ()]
+       [() (1 2) (goto Z 2) ((define-state (Z a) [* -> () (goto Z a)])) ()])
+      (5)]))
 
-;;   (test-equal? "extract fork"
-;;     (extract `(fork (goto A (addr (env Nat) 1)) (define-state (A x)))
-;;              `([Nat (addr 1 0)])
-;;              `(addr (env Nat) 3))
-;;     `[self
-;;       ([()
-;;         ([Nat (addr 1 0)])
-;;         (goto A (addr (env Nat) 1))
-;;         ((define-state (A x)))
-;;         ((addr (env Nat) 3))])])
+;; po mk -> (po, (s ...), (mk ...))
+;;
+;; Extracts all forks from the given pattern that is an obligation on the given address, replacing
+;; those patterns with the "self" pattern and creating PSMs for each fork. Also returns the markers
+;; for obligations that have a "self" pattern referring to the current PSM
+(define (extract pattern dest)
+  (define (extract-sub-patterns sub-patterns make-pattern)
+    (match-define (list `[,extracted-pats ,forks ,markers-for-self] ...)
+      (map (curryr extract dest) sub-patterns))
+    (list (make-pattern extracted-pats)
+          (append* forks)
+          (append* markers-for-self)))
+  (match pattern
+    [`* (list pattern null null)]
+    [`(or ,pats ...)
+     (extract-sub-patterns pats (lambda (pats) `(or ,@pats)))]
+    [`(variant ,tag ,pats ...)
+     (extract-sub-patterns pats (lambda (pats) `(variant ,tag ,@pats)))]
+    [`(record [,fields ,pats] ...)
+     (extract-sub-patterns
+      pats
+      (lambda (pats) `(record ,@(map (lambda (f p) `[,f ,p]) fields pats))))]
+    [`(fork ,goto ,state-defs ...)
+     (list 'self
+           (list `[()
+                   ,(remove-duplicates (cons dest (aps#-goto-args goto)))
+                   ,goto
+                   ,state-defs
+                   ()])
+           null)]
+    [`(delayed-fork ,_ ,_ ...) (list pattern null null)]
+    ['self (list pattern null (list dest))]))
 
-;;   (test-equal? "extract delayed-fork"
-;;     (extract `(delayed-fork (goto B) (define-state (B)) (define-state (C)))
-;;              `()
-;;              `(addr (env Nat) 2))
-;;     `[(delayed-fork (goto B) (define-state (B)) (define-state (C)))
-;;       ()]))
+(module+ test
+  (test-equal? "extract 1"
+    (extract `(or (fork (goto A 1))
+                  (fork (goto B 2)))
+             3)
+    `[(or self self)
+      ([() (3 1) (goto A 1) () ()]
+       [() (3 2) (goto B 2) () ()])
+      ()])
+
+  (test-equal? "extract fork"
+    (extract `(fork (goto A 1) (define-state (A x)))
+             2)
+    `[self
+      ([()
+        (2 1)
+        (goto A 1)
+        ((define-state (A x)))
+        ()])
+      ()])
+
+  (test-equal? "extract delayed-fork"
+    (extract `(delayed-fork (goto B) (define-state (B)) (define-state (C)))
+             2)
+    `[(delayed-fork (goto B) (define-state (B)) (define-state (C)))
+      ()
+      ()])
+
+  (test-equal? "extract self"
+    (extract `(variant A self) 1)
+    `[(variant A self)
+      ()
+      (1)]))
 
 ;; ;; ς (ς ...) O# -> (s# ...)
 ;; ;;
@@ -704,23 +743,6 @@
 ;;                    [([_ a#_ext] ...) the-subst])
 ;;              (term (any_map-entries ... (a#_ext) ...))))
 
-;; ;; NOTE: assumes an entry has been added already (e.g. with observe-addresses-from-subst)
-;; (define-metafunction aps#
-;;   add-commitments : O# [a# po] ... -> O#
-;;   [(add-commitments O#) O#]
-;;   [(add-commitments (any_1 ... (a# any_coms ...)             any_2 ...) [a# po] any_rest ...)
-;;    (add-commitments (any_1 ... (a# any_coms ... po) any_2 ...) any_rest ...)])
-
-;; (module+ test
-;;   (test-equal? "add-commitments"
-;;                (term (add-commitments
-;;                       ([(addr (env Nat) 1) * (record)]
-;;                        [(addr (env Nat) 2)])
-;;                       [(addr (env Nat) 1) *]
-;;                       [(addr (env Nat) 2) *]
-;;                       [(addr (env Nat) 1) (variant A)]))
-;;                `([(addr (env Nat) 1) * (record) * (variant A)]
-;;                  [(addr (env Nat) 2) *])))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Input pattern matching
