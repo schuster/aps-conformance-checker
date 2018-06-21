@@ -13,8 +13,8 @@
  split-psm
  ;; aps#-blur-config
  canonicalize-pair
- ;; try-rename-address
- ;; reverse-rename-address
+ try-rename-marker
+ reverse-rename-marker
  ;; aps#-config-has-commitment?
  ;; aps#-completed-no-transition-psm?
  ;; evict-pair
@@ -1911,30 +1911,31 @@
     ,state-defs
     ,(sort obls sexp<?)])
 
-;; (define (try-rename-address rename-map addr)
-;;   (match-define `(addr ,loc ,old-id) addr)
-;;   (match (findf (lambda (entry) (eq? (first entry) old-id)) rename-map)
-;;     [#f #f]
-;;     [(list _ new-id) `(addr ,loc ,new-id)]))
+(define (try-rename-marker rename-map marker)
+  (match (findf (lambda (entry) (eq? (first entry) marker)) rename-map)
+    [#f #f]
+    [(list _ new-marker) new-marker]))
 
-;; (module+ test
-;;   (test-equal? "try-rename-address success"
-;;     (try-rename-address (term ([1 3] [2 4])) (term (addr (env Nat) 2)))
-;;     (term (addr (env Nat) 4)))
-;;   (test-false "try-rename-address failure"
-;;     (try-rename-address (term ([1 3] [2 4])) (term (addr (env Nat) 5)))))
+(module+ test
+  (test-equal? "try-rename-marker success"
+    (try-rename-marker (term ([1 3] [2 4])) 2)
+    4)
+  (test-false "try-rename-marker failure"
+    (try-rename-marker (term ([1 3] [2 4])) 5)))
 
-;; ;; Performs the reverse of the mapping indicated by the given address rename map on the given address
-;; (define (reverse-rename-address rename-map addr)
-;;   (match-define `(addr ,loc ,id) addr)
-;;   (match (findf (lambda (entry) (equal? (second entry) id)) rename-map)
-;;     [#f (error 'reverse-rename-address "Unable to find entry for ~s in ~s" addr rename-map)]
-;;     [(list prev _) (term (addr ,loc ,prev))]))
+;; Performs the reverse of the mapping indicated by the given marker rename map on the given marker
+(define (reverse-rename-marker rename-map marker)
+  (match (findf (lambda (entry) (equal? (second entry) marker)) rename-map)
+    [#f (error 'reverse-rename-marker "Unable to find entry for ~s in ~s" marker rename-map)]
+    [(list prev _) prev]))
 
-;; (module+ test
-;;   (test-equal? "try-rename-address success"
-;;     (reverse-rename-address (term ([1 3] [2 4])) (term (addr (env Nat) 4)))
-;;     (term (addr (env Nat) 2))))
+(module+ test
+  (test-equal? "reverse-rename-marker success"
+    (reverse-rename-marker (term ([1 3] [2 4])) 4)
+    2)
+  (test-exn "reverse-rename-marker failure"
+    (lambda (exn) #t)
+    (lambda () (reverse-rename-marker (term ([1 3] [2 4])) 2))))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Eviction
