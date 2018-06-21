@@ -57,15 +57,20 @@
 ;; "Type" Definitions
 
 ;; IncomingStepsDict = (Hash config-pair
-;;                          (MutableSetof (List config-pair impl-step spec-step (Hash Addr Addr))))
+;;                          (MutableSetof (List config-pair
+;;                                              impl-step
+;;                                              spec-step
+;;                                              (Hash Addr Addr)
+;;                                              (Hash Marker Marker))))
 ;;
 ;; Records all implementation and specification transitions that led to some pair discovered during
 ;; the initial construction of the rank-1 simulation. Formally, for all pairs <i, s> in either the
 ;; related pairs or unrelated successors returned by find-rank1-simulation, incoming-steps(i, s) = a
-;; set of tuples of the form (<i', s'>, i-step, s-step, address-map), where i-step is some transition
-;; from i', s-step is a transition from s' that matches i-step, and <i, s> ∈ sbc(i'', s'') where i''
-;; and s'' are the destination configurations from i-step and s-step, respectively, and address-map
-;; maps the addresses in <i', s'> to those in <i, s>.
+;; set of tuples of the form (<i', s'>, i-step, s-step, address-map, marker-map), where i-step is some
+;; transition from i', s-step is a transition from s' that matches i-step, and <i, s> ∈ sbc(i'', s'')
+;; where i'' and s'' are the destination configurations from i-step and s-step, respectively, and
+;; address-map maps the addresses in <i', s'> to those in <i, s>, and marker-map does a similar
+;; mapping for markers.
 ;;
 ;; In prune-unsupported, we use this data structure to determine the set of related pairs and
 ;; transitions that depend on this pair to prove their own membership in a relation.
