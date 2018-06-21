@@ -2,37 +2,37 @@
 
 ;; Abstract semantic domains for APS (specification language), and associated functions
 
-;; (provide
-;;  ;; Required by conformance checker
-;;  aps#-config-obs-receptionists
-;;  aps#-config-unobs-receptionists
-;;  aps#-config-commitments
-;;  aps#-matching-steps
-;;  aps#-resolve-outputs
-;;  aps#-abstract-config
-;;  split-psm
-;;  aps#-blur-config
-;;  canonicalize-pair
-;;  try-rename-address
-;;  reverse-rename-address
-;;  aps#-config-has-commitment?
-;;  aps#-completed-no-transition-psm?
-;;  evict-pair
-;;  ;; needed for widening
-;;  aps#-config<=
+(provide
+ ;; Required by conformance checker
+ ;; aps#-config-obs-receptionists
+ ;; aps#-config-unobs-receptionists
+ ;; aps#-config-commitments
+ aps#-matching-steps
+ aps#-resolve-outputs
+ ;; aps#-abstract-config
+ split-psm
+ ;; aps#-blur-config
+ canonicalize-pair
+ ;; try-rename-address
+ ;; reverse-rename-address
+ ;; aps#-config-has-commitment?
+ ;; aps#-completed-no-transition-psm?
+ ;; evict-pair
+ ;; needed for widening
+ ;; aps#-config<=
 
-;;  ;; Required only for testing
-;;  aps#
+ ;; Required only for testing
+ aps#
 
-;;  ;; Required by conformance checker for blurring
-;;  aps#-relevant-external-addrs
+ ;; Required by conformance checker for blurring
+ ;; aps#-relevant-external-addrs
 
-;;  ;; Testing helpers
-;;  make-s#
-;;  aps#-make-no-transition-psm
+ ;; Testing helpers
+ make-s#
+ ;; aps#-make-no-transition-psm
 
-;;  ;; Debugging helpers
-;;  spec-config-without-state-defs)
+ ;; Debugging helpers
+ spec-config-without-state-defs)
 
 ;; ---------------------------------------------------------------------------------------------------
 
