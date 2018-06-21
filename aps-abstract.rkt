@@ -990,197 +990,193 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Commitment Satisfaction
 
-;; ;; TODO: need to ensure that the PSM ends up with at most one specified receptionist marker (I think
-;; ;; this was originally done in the pattern matching)
+;; (s# ...) (((marked a#ext mk ...) v# m) ...) -> (Listof (List (s# ...) ([mk po] ...)]))
+;;
+;; Given a list of all active PSMs (the current one plus any new forks), returns a list of
+;; ways to step the given PSMs to match the given outputs. Each "way" is a list of stepped
+;; PSMs and a list of obligations fulfilled as part of those steps (where the obligation may
+;; be fulfilled in any one step).
+(define (aps#-resolve-outputs psms outputs)
+  (define all-mon-externals (append* (map aps#-psm-mon-externals psms)))
+  (when (ormap (curryr csa#-contains-marker? all-mon-externals)
+               (map csa#-output-message outputs))
+    (error 'aps#-resolve-outputs
+           "Cannot check conformance for program that sends observed external markers to environment. Violating outputs: ~s"
+           outputs))
+  (aps#-resolve-outputs/internal psms outputs))
 
-;; ;; (s# ...) ((a#ext v# m) ...) -> (Listof (List (s# ...) ([a# po] ...)]))
-;; ;;
-;; ;; Given a list of all active spec configs (the current one plus any new forks), returns a list of
-;; ;; ways to step the given configurations to match the given outputs. Each "way" is a list of stepped
-;; ;; configurations and a list of obligations fulfilled as part of those steps (where the obligation may
-;; ;; be fulfilled in any one step).
-;; (define (aps#-resolve-outputs spec-configs outputs)
-;;   (unless (null?
-;;            (filter (lambda (addr) (ormap (curryr config-observes-address? addr) spec-configs))
-;;                    (externals-in (map csa#-output-message outputs))))
-;;     (error 'aps#-resolve-outputs
-;;            "Cannot check conformance for program that sends observed external addresses to environment. Violating outputs: ~s"
-;;            outputs))
-;;   (aps#-resolve-outputs/internal spec-configs outputs))
+;; (Listof s# ...) (((marked a#ext mk ...) v# m) ...) -> (Listof (List (s# ...) ([mk po] ...)])
+(define (aps#-resolve-outputs/internal psms outputs)
+  (match outputs
+    [(list) (list `(,psms ()))]
+    [(list output remaining-outputs ...)
+     (append*
+      (for/list ([resolved-psms-and-fulfillments (resolve-output/many-psms psms output)])
+        (match-define (list resolved-psms fulfillments) resolved-psms-and-fulfillments)
+        ;; returns a list of resolve-results
+        (for/list ([new-resolved-psms-and-fulfillments
+                    (aps#-resolve-outputs/internal resolved-psms remaining-outputs)])
+          (match-define (list new-psms new-fulfillments) new-resolved-psms-and-fulfillments)
+          (list new-psms (append fulfillments new-fulfillments)))))]))
 
-;; ;; (Listof s# ...) ((a#ext v# m) ...) -> (Listof (List (s# ...) ([a# po] ...)])
-;; (define (aps#-resolve-outputs/internal spec-configs outputs)
-;;   (match outputs
-;;     [(list) (list `(,spec-configs ()))]
-;;     [(list output remaining-outputs ...)
-;;      (append*
-;;       (for/list ([resolved-configs-and-fulfillments (resolve-output/many-configs spec-configs output)])
-;;         (match-define (list resolved-configs fulfillments) resolved-configs-and-fulfillments)
-;;         ;; returns a list of resolve-results
-;;         (for/list ([new-resolved-configs-and-fulfillments (aps#-resolve-outputs/internal resolved-configs remaining-outputs)])
-;;           (match-define (list new-configs new-fulfillments) new-resolved-configs-and-fulfillments)
-;;           (list new-configs (append fulfillments new-fulfillments)))))]))
-
-;; TODO: put these tests back
 (module+ test
   (define (make-dummy-spec mon-exts commitments)
     (term (() ,mon-exts (goto DummyState) ((define-state (DummyState))) ,commitments)))
 
-;;   (test-equal? "resolve test: no outputs"
-;;     (aps#-resolve-outputs
-;;      (list (make-dummy-spec `(((addr (env Nat) 1)))))
-;;      (term ()))
-;;     (list `[,(list (make-dummy-spec `(((addr (env Nat) 1))))) ()]))
-;;   (test-equal? "resolve test 1"
-;;     (aps#-resolve-outputs
-;;      (list (make-dummy-spec `(((addr (env Nat) 1)))))
-;;      (term (((addr (env Nat) 1) abs-nat single))))
-;;     null)
-;;   (test-equal? "resolve test 1: many"
-;;     (aps#-resolve-outputs
-;;      (list (make-dummy-spec `(((addr (env Nat) 1)))))
-;;      (term (((addr (env Nat) 1) abs-nat many))))
-;;     null)
-;;   (test-equal? "resolve test 2"
-;;     (aps#-resolve-outputs
-;;      (list (make-dummy-spec `(((addr (env Nat) 1) *))))
-;;      (term (((addr (env Nat) 1) abs-nat single))))
-;;     (list `[,(list (make-dummy-spec `(((addr (env Nat) 1)))))
-;;             ([(addr (env Nat) 1) *])]))
-;;   (test-equal? "resolve test 3"
-;;     (aps#-resolve-outputs
-;;      (list (make-dummy-spec `(((addr (env Nat) 1) * (record)))))
-;;      (term (((addr (env Nat) 1) abs-nat single))))
-;;     (list `[,(list (make-dummy-spec `(((addr (env Nat) 1) (record)))))
-;;             (((addr (env Nat) 1) *))]))
-;;   (define free-output-spec
-;;     (term
-;;      (()
-;;       ()
-;;       (goto S1 (addr (env (Union [A] [B] [C] [D])) 1) (addr (env (Union [A] [B] [C] [D])) 2))
-;;       ((define-state (S1 a b)
-;;          [x -> ([obligation x *]) (goto S1)]
-;;          [x -> ([obligation b *]) (goto S1)]
-;;          [free -> ([obligation a (variant A)]) (goto S2)]
-;;          [free -> ([obligation a (variant B)]) (goto S1 a b)]
-;;          [free -> ([obligation a (variant C)]) (goto S1 a b)]
-;;          [free -> ([obligation b (variant D)]) (goto S1 a b)]))
-;;       ([(addr (env (Union [A] [B] [C] [D])) 1)] [(addr (env (Union [A] [B] [C] [D])) 2)]))))
-;;   (test-equal? "resolve against free outputs"
-;;     (aps#-resolve-outputs (list free-output-spec) (term ([(addr (env (Union [A] [B] [C] [D])) 1) (variant C) many])))
-;;     (list `[,(list free-output-spec) ()]))
+  (test-equal? "resolve test: no outputs"
+    (aps#-resolve-outputs
+     (list (make-dummy-spec `(1) `()))
+     (term ()))
+    (list `[,(list (make-dummy-spec `(1) `())) ()]))
+  (test-equal? "resolve test 1"
+    (aps#-resolve-outputs
+     (list (make-dummy-spec `(1) `()))
+     (term (((marked (addr (env Nat) 1) 1) abs-nat single))))
+    null)
+  (test-equal? "resolve test 1: many"
+    (aps#-resolve-outputs
+     (list (make-dummy-spec `(1) `()))
+     (term (((marked (addr (env Nat) 1) 1) abs-nat many))))
+    null)
+  (test-equal? "resolve test 2"
+    (aps#-resolve-outputs
+     (list (make-dummy-spec `(1) `([1 *])))
+     (term (((marked (addr (env Nat) 1) 1) abs-nat single))))
+    (list `[,(list (make-dummy-spec `(1) '()))
+            ([1 *])]))
+  (test-equal? "resolve test 3"
+    (aps#-resolve-outputs
+     (list (make-dummy-spec `(1) `([1 *] [1 (record)])))
+     (term (((marked (addr (env Nat) 1) 1) abs-nat single))))
+    (list `[,(list (make-dummy-spec `(1) `([1 (record)])))
+            ([1 *])]))
+  (define free-output-spec
+    (term
+     (()
+      (1 2)
+      (goto S1 1 2)
+      ((define-state (S1 a b)
+         [x -> ([obligation x *]) (goto S1)]
+         [x -> ([obligation b *]) (goto S1)]
+         [free -> ([obligation a (variant A)]) (goto S2)]
+         [free -> ([obligation a (variant B)]) (goto S1 a b)]
+         [free -> ([obligation a (variant C)]) (goto S1 a b)]
+         [free -> ([obligation b (variant D)]) (goto S1 a b)]))
+      ())))
+  (test-equal? "resolve against free outputs"
+    (aps#-resolve-outputs (list free-output-spec) (term ([(marked (addr (env (Union [A] [B] [C] [D])) 1) 1) (variant C) many])))
+    (list `[,(list free-output-spec) ()]))
 
-;;   (test-equal? "resolve with unobs transitions"
-;;     (aps#-resolve-outputs
-;;      (list `[()
-;;              ()
-;;              (goto A (addr (env (Union [A] [B] [C] [D])) 1))
-;;              ((define-state (A x)
-;;                 [free -> ([obligation x (variant C)]) (goto B)]))
-;;              ([(addr (env (Union [A] [B] [C] [D])) 1)])])
-;;      (term ([(addr (env (Union [A] [B] [C] [D])) 1) (variant C) single])))
-;;     (list `[,(list
-;;               `[()
-;;                 ()
-;;                 (goto B)
-;;                 ((define-state (A x)
-;;                    [free -> ([obligation x (variant C)]) (goto B)]))
-;;                 ([(addr (env (Union [A] [B] [C] [D])) 1)])])
-;;             ([(addr (env (Union [A] [B] [C] [D])) 1) (variant C)])]))
+  (test-equal? "resolve with unobs transitions"
+    (aps#-resolve-outputs
+     (list `[()
+             (1)
+             (goto A 1)
+             ((define-state (A x)
+                [free -> ([obligation x (variant C)]) (goto B)]))
+             ()])
+     (term ([(marked (addr (env (Union [A] [B] [C] [D])) 1) 1) (variant C) single])))
+    (list `[,(list
+              `[()
+                (1)
+                (goto B)
+                ((define-state (A x)
+                   [free -> ([obligation x (variant C)]) (goto B)]))
+                ()])
+            ([1 (variant C)])]))
 
-;;   (test-equal? "resolve against two different branches of an 'or' pattern"
-;;     (list->set
-;;      (aps#-resolve-outputs
-;;       (list
-;;        (term
-;;         (()
-;;          ()
-;;          (goto S1)
-;;          ((define-state (S1)))
-;;          ([(addr (env (Addr Nat)) 1) (or * (delayed-fork (goto B)))]))))
-;;       (term ([(addr (env (Addr Nat)) 1) (addr 2 0) single]))))
-;;     (set
-;;      ;; result 1 (match against the fork)
-;;      `[,(list
-;;          (term
-;;           (()
-;;            ((Nat (addr 2 0)))
-;;            (goto S1)
-;;            ((define-state (S1)))
-;;            ([(addr (env (Addr Nat)) 1)])))
-;;          (term
-;;           (((Nat (addr 2 0)))
-;;            ()
-;;            (goto B)
-;;            ()
-;;            ())))
-;;        ,(list (term [(addr (env (Addr Nat)) 1) (or * (delayed-fork (goto B)))]))]
-;;      ;; result 2 (match against *)
-;;      `[,(list
-;;          (term
-;;           (()
-;;            ((Nat (addr 2 0)))
-;;            (goto S1)
-;;            ((define-state (S1)))
-;;            ([(addr (env (Addr Nat)) 1)]))))
-;;        ,(list (term [(addr (env (Addr Nat)) 1) (or * (delayed-fork (goto B)))]))]))
+  (test-equal? "resolve against two different branches of an 'or' pattern"
+    (list->set
+     (aps#-resolve-outputs
+      (list
+       (term
+        (()
+         (1)
+         (goto S1)
+         ((define-state (S1)))
+         ([1 (or * (delayed-fork (goto B)))]))))
+      (term ([(marked (addr (env (Addr Nat)) 1) 1) (marked (addr 2 0) 2) single]))))
+    (set
+     ;; result 1 (match against the fork)
+     `[,(list
+         (term
+          (()
+           (1)
+           (goto S1)
+           ((define-state (S1)))
+           ()))
+         (term
+          ((2)
+           ()
+           (goto B)
+           ()
+           ())))
+       ,(list (term [1 (or * (delayed-fork (goto B)))]))]
+     ;; result 2 (match against *)
+     `[,(list
+         (term
+          (()
+           (1)
+           (goto S1)
+           ((define-state (S1)))
+           ())))
+       ,(list (term [1 (or * (delayed-fork (goto B)))]))]))
 
-;;   (test-equal? "Resolve against spawned spec"
-;;     (aps#-resolve-outputs
-;;      (list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 1) (variant A *)]))
-;;            `(() () (goto S2) ((define-state (S2))) ([(addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 2) (variant B *)])))
-;;      (list `[(addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 1) (variant A (addr 1 0)) single]
-;;            `[(addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 2) (variant B (addr 2 0)) single]))
-;;     (list `[,(list `(()
-;;                      ((Nat (addr 1 0))
-;;                       (Nat (addr 2 0)))
-;;                      (goto S1)
-;;                      ((define-state (S1)))
-;;                      ([(addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 1)]))
-;;                    `(()
-;;                      ((Nat (addr 1 0))
-;;                       (Nat (addr 2 0)))
-;;                      (goto S2)
-;;                      ((define-state (S2)))
-;;                      ([(addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 2)])))
-;;             ,(list '[(addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 1) (variant A *)]
-;;                    '[(addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 2) (variant B *)])]))
+  (test-equal? "Resolve against spawned spec"
+    (aps#-resolve-outputs
+     (list `(() (1) (goto S1) ((define-state (S1))) ([1 (variant A *)]))
+           `(() (2) (goto S2) ((define-state (S2))) ([2 (variant B *)])))
+     (list `[(marked (addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 1) 1) (variant A (marked (addr 1 0) 3)) single]
+           `[(marked (addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 2) 2) (variant B (marked (addr 2 0) 4)) single]))
+    (list `[,(list `(()
+                     (1)
+                     (goto S1)
+                     ((define-state (S1)))
+                     ())
+                   `(()
+                     (2)
+                     (goto S2)
+                     ((define-state (S2)))
+                     ()))
+            ,(list '[1 (variant A *)]
+                   '[2 (variant B *)])]))
 
-;;   (test-equal? "Resolve against self pattern, no existing obs receptionist"
-;;     (aps#-resolve-outputs
-;;      (list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Addr Nat)) 1) self])))
-;;      (list `[(addr (env (Addr Nat)) 1) (addr 1 0) single]))
-;;     (list `[,(list `(([Nat (addr 1 0)])
-;;                      ()
-;;                      (goto S1)
-;;                      ((define-state (S1)))
-;;                      ([(addr (env (Addr Nat)) 1)])))
-;;             ,(list `[(addr (env (Addr Nat)) 1) self])]))
+  (test-equal? "Resolve against self pattern, no existing obs receptionist"
+    (aps#-resolve-outputs
+     (list `(() (1) (goto S1) ((define-state (S1))) ([1 self])))
+     (list `[(marked (addr (env (Addr Nat)) 1) 1) (marked (addr 1 0) 2) single]))
+    (list `[,(list `((2)
+                     (1)
+                     (goto S1)
+                     ((define-state (S1)))
+                     ()))
+            ,(list `[1 self])]))
 
-;;   (test-equal? "Resolve against self pattern, existing obs receptionist"
-;;     (aps#-resolve-outputs
-;;      (list `(([Nat (addr 1 0)])
-;;              ()
-;;              (goto S1)
-;;              ((define-state (S1)))
-;;              ([(addr (env (Addr Nat)) 1) self])))
-;;      (list `[(addr (env (Addr Nat)) 1) (addr 1 0) single]))
-;;     (list `[,(list `(([Nat (addr 1 0)])
-;;                      ()
-;;                      (goto S1)
-;;                      ((define-state (S1)))
-;;                      ([(addr (env (Addr Nat)) 1)])))
-;;             ,(list `[(addr (env (Addr Nat)) 1) self])]))
+  (test-equal? "Resolve against self pattern, existing obs receptionist"
+    (aps#-resolve-outputs
+     (list `((2)
+             (1)
+             (goto S1)
+             ((define-state (S1)))
+             ([1 self])))
+     (list `[(marked (addr (env (Addr Nat)) 1) 1) (marked (addr 1 0) 2) single]))
+    (list `[,(list `((2)
+                     (1)
+                     (goto S1)
+                     ((define-state (S1)))
+                     ()))
+            ,(list `[1 self])]))
 
-;;   (test-equal? "Resolve against self pattern, existing other obs receptionist"
-;;     (aps#-resolve-outputs
-;;      (list `(([Nat (addr 1 0)])
-;;              ()
-;;              (goto S1)
-;;              ((define-state (S1)))
-;;              ([(addr (env (Addr Nat)) 1) self])))
-;;      (list `[(addr (env (Addr Nat)) 1) (addr 2 0) single]))
-;;     null)
+  (test-exn "Resolve against self pattern, existing other obs receptionist"
+    (lambda (exn) #t)
+    (lambda ()
+      (aps#-resolve-outputs
+       (list `((2)
+               (1)
+               (goto S1)
+               ((define-state (S1)))
+               ([1 self])))
+       (list `[(marked (addr (env (Addr Nat)) 1) 1) (marked (addr 2 0) 3) single]))))
 
 ;;   (test-equal? "Addresses in unobserved messages are added to receptionists"
 ;;     (aps#-resolve-outputs
@@ -1256,57 +1252,47 @@
 ;;           `[,(list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1)]))
 ;;                    `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a (variant A)] [b *])])))
 ;;             ,(list `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a *] [b (variant B)])]
-;;                    `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a *] [b *])])])))
-
-;; (define (resolve-output/many-configs configs output)
-;;   ;; (printf "resolve-output/many-configs ~s ~s\n" configs output)
-;;   (match configs
-;;     [(list) (list `[() ()])]
-;;     [(list config remaining-configs ...)
-;;      (define address (csa#-output-address output))
-;;      (define type (csa#-output-type output))
-;;      (define message (csa#-output-message output))
-;;      (define quantity (csa#-output-multiplicity output))
-;;      (append*
-;;       (for/list ([resolved-configs-and-fulfillments (resolve-output config address type message quantity)])
-;;         (match-define (list resolved-configs fulfillments) resolved-configs-and-fulfillments)
-;;         ;; returns a list of resolve-results
-;;         (for/list ([remaining-resolve-result (resolve-output/many-configs remaining-configs output)])
-;;           (match-define (list remaining-resolved-configs new-fulfillments) remaining-resolve-result)
-;;           (list (append resolved-configs remaining-resolved-configs)
-;;                 (append fulfillments new-fulfillments)))))])
+;;                    `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a *] [b *])])]))
   )
 
-;; (module+ test
-;;   (test-equal?
-;;       "resolve-output/many-configs: Addresses in unobserved messages are added to receptionists"
-;;     (resolve-output/many-configs
-;;      (list `(() () (goto S1) ((define-state (S1))) ())
-;;            `(() () (goto S2) ((define-state (S2))) ()))
-;;      `[(addr (env (Union [A (Addr Nat) (Addr String)])) 1) (variant A (addr 1 0) (addr 2 0)) single])
-;;     (list `[,(list `(()
-;;                      ((Nat (addr 1 0))
-;;                       (String (addr 2 0)))
-;;                      (goto S1)
-;;                      ((define-state (S1)))
-;;                      ())
-;;                    `(()
-;;                      ((Nat (addr 1 0))
-;;                       (String (addr 2 0)))
-;;                      (goto S2)
-;;                      ((define-state (S2)))
-;;                      ()))
-;;             ()]))
+(define (resolve-output/many-psms psms output)
+  ;; (printf "resolve-output/many-psms ~s ~s\n" configs output)
+  (match psms
+    [(list) (list `[() ()])]
+    [(list psm remaining-psms ...)
+     (define marker (csa#-output-marker output))
+     (define message (csa#-output-message output))
+     (define quantity (csa#-output-multiplicity output))
+     (append*
+      (for/list ([resolved-psms-and-fulfillments (resolve-output psm marker message quantity)])
+        (match-define (list resolved-psms fulfillments) resolved-psms-and-fulfillments)
+        ;; returns a list of resolve-results
+        (for/list ([remaining-resolve-result (resolve-output/many-psms remaining-psms output)])
+          (match-define (list remaining-resolved-psms new-fulfillments) remaining-resolve-result)
+          (list (append resolved-psms remaining-resolved-psms)
+                (append fulfillments new-fulfillments)))))]))
 
-;;   (test-equal? "resolve-output/many-configs: Resolve against two configs that both observe (e.g. for when transition is both obs and unobs)"
-;;     (resolve-output/many-configs
-;;      (list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a *]           [b (variant B)])]))
-;;            `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a (variant A)] [b *])])))
-;;      `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a (variant A)] [b (variant B)]) single])
-;;     (list `[,(list `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1)]))
-;;                    `(() () (goto S1) ((define-state (S1))) ([(addr (env (Record [a (Union [A])] [b (Union [B])])) 1)])))
-;;             ,(list `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a *]           [b (variant B)])]
-;;                    `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a (variant A)] [b *])])])))
+(module+ test
+  (test-equal?
+      "resolve-output/many-psms: Outputs to unmonitored addresses cause no change"
+    (resolve-output/many-psms
+     (list `(() () (goto S1) ((define-state (S1))) ())
+           `(() () (goto S2) ((define-state (S2))) ()))
+     `[(marked (addr (env (Union [A (Addr Nat) (Addr String)])) 1) 1)
+       (variant A (addr 1 0) (addr 2 0)) single])
+    (list `[,(list `(() () (goto S1) ((define-state (S1))) ())
+                   `(() () (goto S2) ((define-state (S2))) ()))
+            ()]))
+
+  (test-equal? "resolve-output/many-psms: Resolve against two PSMs that both monitor (e.g. for when transition is both obs and unobs)"
+    (resolve-output/many-psms
+     (list `(() (1) (goto S1) ((define-state (S1))) ([1 (record [a *]           [b (variant B)])]))
+           `(() (1) (goto S1) ((define-state (S1))) ([1 (record [a (variant A)] [b *])])))
+     `[(marked (addr (env (Record [a (Union [A])] [b (Union [B])])) 1) 1) (record [a (variant A)] [b (variant B)]) single])
+    (list `[,(list `(() (1) (goto S1) ((define-state (S1))) ())
+                   `(() (1) (goto S1) ((define-state (S1))) ()))
+            ,(list `[1 (record [a *]           [b (variant B)])]
+                   `[1 (record [a (variant A)] [b *])])])))
 
 ;; s# mk v# m -> ([(s# ...) ([mk po] ...)] ...)
 ;;

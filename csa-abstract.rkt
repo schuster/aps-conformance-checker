@@ -34,6 +34,7 @@
  ;; Required by APS#
  csa#-internal-address?
  csa#-output-address
+ csa#-output-marker
  csa#-output-type
  csa#-output-message
  csa#-output-multiplicity
@@ -2699,6 +2700,21 @@
   (third packet))
 
 (define csa#-output-address car)
+
+(define (csa#-output-marker o)
+  (match-define `(marked ,_ ,markers ...) (csa#-output-address o))
+  (match markers
+    [(list mk) mk]
+    [_ (error 'csa#-output-marker "Unexpected number of markers on output address: expected 1, got ~s" (length markers))]))
+
+(module+ test
+  (test-equal? "csa#-output-marker"
+    (csa#-output-marker `[(marked (addr (env Nat) 0) 1) Nat abs-nat single])
+    1)
+
+  (test-exn "Error for csa#-output-marker"
+    (lambda (exn) #t)
+    (lambda () (csa#-output-marker `[(marked (addr (env Nat) 0) 1 2) Nat abs-nat single]))))
 
 (define (csa#-output-type o)
   (match (address-location (unmark-addr (csa#-output-address o)))
