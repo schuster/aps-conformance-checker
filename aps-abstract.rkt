@@ -987,8 +987,8 @@
     (set `[() ()]
          `[(2) ()])))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Commitment Satisfaction
+;; ---------------------------------------------------------------------------------------------------
+;; Commitment Satisfaction
 
 ;; ;; TODO: need to ensure that the PSM ends up with at most one specified receptionist marker (I think
 ;; ;; this was originally done in the pattern matching)
@@ -1021,9 +1021,10 @@
 ;;           (match-define (list new-configs new-fulfillments) new-resolved-configs-and-fulfillments)
 ;;           (list new-configs (append fulfillments new-fulfillments)))))]))
 
-;; (module+ test
-;;   (define (make-dummy-spec commitments)
-;;     (term (() () (goto DummyState) ((define-state (DummyState))) ,commitments)))
+;; TODO: put these tests back
+(module+ test
+  (define (make-dummy-spec mon-exts commitments)
+    (term (() ,mon-exts (goto DummyState) ((define-state (DummyState))) ,commitments)))
 
 ;;   (test-equal? "resolve test: no outputs"
 ;;     (aps#-resolve-outputs
@@ -1273,7 +1274,8 @@
 ;;         (for/list ([remaining-resolve-result (resolve-output/many-configs remaining-configs output)])
 ;;           (match-define (list remaining-resolved-configs new-fulfillments) remaining-resolve-result)
 ;;           (list (append resolved-configs remaining-resolved-configs)
-;;                 (append fulfillments new-fulfillments)))))]))
+;;                 (append fulfillments new-fulfillments)))))])
+  )
 
 ;; (module+ test
 ;;   (test-equal?
@@ -1306,156 +1308,156 @@
 ;;             ,(list `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a *]           [b (variant B)])]
 ;;                    `[(addr (env (Record [a (Union [A])] [b (Union [B])])) 1) (record [a (variant A)] [b *])])])))
 
-;; ;; s# a# v# m -> ([(s# ...) ([a po] ...)] ...)
-;; ;;
-;; ;; Returns a set of tuples each containing a list of specification configs and a set of obligations
-;; ;; such that the input configuration can take an output step with the given message to the given
-;; ;; configurations and fulfill the resturned obligations to match the message.
-;; (define (resolve-output config address type message quantity)
-;;   (cond
-;;     [(config-observes-address? config address)
-;;      (match quantity
-;;        ['single
-;;         (define config-list-pattern-pairs
-;;           (match (resolve-with-obligation config address type message)
-;;             [(list)
-;;              ;; if we can't find a match with existing patterns, try the free-output patterns
-;;              (match (resolve-with-free-obl-patterns config address type message)
-;;                [(list)
-;;                 ;; if free-output patterns also don't match, try the other free-transition
-;;                 ;; patterns as a last resort
-;;                 (resolve-with-free-transition config address type message)]
-;;                [results results])]
-;;             [results results]))
-;;         (for/list ([clpp config-list-pattern-pairs])
-;;           (match-define (list configs pattern) clpp)
-;;           (list configs `([,address ,pattern])))]
-;;        ['many
-;;         ;; have to use free-output patterns if output may have been sent more than once (e.g. in
-;;         ;; a loop)
-;;         (map
-;;          (lambda (resolve-result)
-;;            (match-define `[,configs ,_] resolve-result)
-;;            ;; many-of outputs don't fulfill an obligation, because they *might* not
-;;            ;; happen. Macro-steps only records the minimal set of fulfillments
-;;            (list configs null))
-;;          (resolve-with-free-obl-patterns config address type message))])]
-;;     [else
-;;      ;; TODO: should I save the result of internal-addr-types for performance?
-;;      (define exposed-receptionists (internal-addr-types message type))
-;;      (list `[,(list (config-merge-unobs-addresses config exposed-receptionists))
-;;              ()])]))
+;; s# mk v# m -> ([(s# ...) ([mk po] ...)] ...)
+;;
+;; Returns a set of tuples each containing a list of PSMs and a set of obligations
+;; such that the input PSM can take an output step with the given message to the given
+;; PSMs and fulfill the resturned obligations to match the message.
+(define (resolve-output psm marker message quantity)
+  (cond
+    [(member marker (aps#-psm-mon-externals psm))
+     (match quantity
+       ['single
+        (define config-list-pattern-pairs
+          (match (resolve-with-obligation psm marker message)
+            [(list)
+             ;; if we can't find a match with existing patterns, try the free-output patterns
+             (match (resolve-with-free-obl-patterns psm marker message)
+               [(list)
+                ;; if free-output patterns also don't match, try the other free-transition
+                ;; patterns as a last resort
+                (resolve-with-free-transition psm marker message)]
+               [results results])]
+            [results results]))
+        (for/list ([clpp config-list-pattern-pairs])
+          (match-define (list configs pattern) clpp)
+          (list configs `([,marker ,pattern])))]
+       ['many
+        ;; have to use free-output patterns if output may have been sent more than once (e.g. in
+        ;; a loop)
+        (map
+         (lambda (resolve-result)
+           (match-define `[,psms ,_] resolve-result)
+           ;; many-of outputs don't fulfill an obligation, because they *might* not
+           ;; happen. Macro-steps only records the minimal set of fulfillments
+           (list psms null))
+         (resolve-with-free-obl-patterns psm marker message))])]
+    [else
+     (list `[,(list psm) ()])]))
 
-;; (module+ test
-;;   (test-equal? "resolve-output 1"
-;;     (resolve-output
-;;      (make-dummy-spec `([(addr (env Nat) 1) *]))
-;;      `(addr (env Nat) 1)
-;;      `Nat
-;;      `abs-nat
-;;      `single)
-;;     (list `[(,(make-dummy-spec `([(addr (env Nat) 1)]))) ([(addr (env Nat) 1) *])]))
-;;   (test-equal? "resolve-output unobserved address"
-;;     (resolve-output
-;;      `(() () (goto A) ((define-state (A))) ())
-;;      `(addr (env (Addr Nat)) 1)
-;;      `(Addr Nat)
-;;      `(addr 1 0)
-;;      `single)
-;;     (list `[,(list `(() ([Nat (addr 1 0)]) (goto A) ((define-state (A))) ()))
-;;             ()])))
+(module+ test
+  (test-equal? "resolve-output 1"
+    (resolve-output
+     (make-dummy-spec `(1) `([1 *]))
+     1
+     `abs-nat
+     `single)
+    (list `[(,(make-dummy-spec `(1) `()))
+            ([1 *])]))
 
-;; ;; s# a# v# -> ([(s# ...) po] ...)
-;; (define (resolve-with-obligation config address type message)
-;;   (define commitment-patterns
-;;     (commitments-for-address (aps#-config-commitment-map config) address))
-;;   (match-define (list obs-recs unobs-recs goto state-defs obligations) config)
-;;   (define success-results
-;;     (filter values (find-matching-patterns message type obs-recs commitment-patterns)))
-;;   (for/list ([match-result success-results])
-;;     (define matched-pattern (first match-result))
-;;     (define remaining-obligations
-;;       (aps#-remove-commitment-pattern obligations address matched-pattern))
-;;     (list (incorporate-output-match-results `(,obs-recs ,unobs-recs ,goto ,state-defs ())
-;;                                             remaining-obligations
-;;                                             (rest match-result))
-;;           matched-pattern)))
+  (test-equal? "resolve-output unobserved address"
+    (resolve-output
+     `[() () (goto A) ((define-state (A))) ()]
+     1
+     `(marked (addr 1 0) 2)
+     `single)
+    (list `[,(list `(() () (goto A) ((define-state (A))) ()))
+            ()])))
 
-;; (module+ test
-;;  (test-equal? "resolve-with-obligation 1"
-;;    (resolve-with-obligation
-;;     (make-dummy-spec `([(addr (env  Nat) 1) *]))
-;;     `(addr (env Nat) 1)
-;;     `Nat
-;;     `abs-nat)
-;;    (list `[,(list (make-dummy-spec `([(addr (env Nat) 1)]))) *])))
+;; s# mk v# -> ([(s# ...) po] ...)
+(define (resolve-with-obligation psm marker message)
+  (define commitment-patterns
+    (obligations-for-marker (aps#-psm-obligations psm) marker))
+  (define success-results
+    (filter values (find-matching-patterns message commitment-patterns)))
+  (for/list ([match-result success-results])
+    (define matched-pattern (first match-result))
+    (list (incorporate-output-match-results
+           (aps#-psm-remove-obligation psm marker matched-pattern)
+           (rest match-result))
+          matched-pattern)))
 
-;; ;; s# a# v# -> ([(s# ...) po] ...)
-;; (define (resolve-with-free-transition config address type message)
-;;   (define non-free-stable-transitions
-;;     (filter
-;;      (negate (curry transition-to-same-state? config))
-;;      (get-free-transitions-for-resolution config address)))
-;;   (resolve-with-transitions config address type message non-free-stable-transitions))
+(module+ test
+ (test-equal? "resolve-with-obligation 1"
+   (resolve-with-obligation
+    (make-dummy-spec `(1) `([1 *]))
+    1
+    `abs-nat)
+   (list `[,(list (make-dummy-spec `(1) `())) *])))
 
-;; (module+ test
-;;   (test-equal? "resolve-with-free-transition with fork"
-;;    (resolve-with-free-transition
-;;     `[()
-;;       ()
-;;       (goto A (addr (env (Addr Nat)) 1))
-;;       ((define-state (A x)
-;;          [free -> ([obligation x [fork (goto C) (define-state (C))]]) (goto B)]))
-;;       ([(addr (env (Addr Nat)) 1)])]
-;;     `(addr (env (Addr Nat)) 1)
-;;     `(Addr Nat)
-;;     `(addr 1 0))
-;;    `([([([Nat (addr 1 0)])
-;;         ()
-;;         (goto C)
-;;         ((define-state (C)))
-;;         ([(addr (env (Addr Nat)) 1)])]
-;;        [()
-;;         ([Nat (addr 1 0)])
-;;         (goto B)
-;;         ((define-state (A x)
-;;            [free -> ([obligation x [fork (goto C) (define-state (C))]]) (goto B)]))
-;;         ()])
-;;       self])))
+(define (aps#-psm-remove-obligation psm marker pattern)
+  (match-define `(,recs ,exts ,goto ,state-defs ,obls) psm)
+  `(,recs ,exts ,goto ,state-defs ,(remove  `[,marker ,pattern] obls)))
 
-;; ;; s# a# v# (transition# ...) -> ([(s# ...) po] ...)
-;; ;;
-;; ;; Attempts to resolve the given output step from the given spec config using any one of the given
-;; ;; transitions (only one transition per attempt).
-;; (define (resolve-with-transitions config address type message possible-transitions)
-;;   (for/fold ([results null])
-;;             ([trans possible-transitions])
-;;     ;; REFACTOR: I'm using a fake trigger here, but attempt-transition probably shouldn't require a
-;;     ;; trigger at all
-;;     (define all-configs (attempt-transition config trans #f `(timeout (addr 1 0))))
-;;     (match-define (list earlier-configs observing-config later-configs)
-;;       (find-with-rest (curryr config-observes-address? address) all-configs))
-;;     (define exposed-receptionists (internal-addr-types message type))
-;;     (define updated-unobserving-configs
-;;           (map (curryr config-merge-unobs-addresses exposed-receptionists)
-;;                (append earlier-configs later-configs)))
-;;     (append
-;;      results
-;;      (for/list ([result (resolve-with-obligation observing-config address type message)])
-;;        (match-define `[,resolved-configs ,pattern] result)
-;;        `[,(append resolved-configs updated-unobserving-configs) ,pattern]))))
+(module+ test
+  (test-equal? "aps#-psm-remove-obligation"
+    (aps#-psm-remove-obligation `[() (1 2) (goto A) () ([2 *] [1 *] [1 (variant A)])]
+                                1
+                                `*)
+    `[() (1 2) (goto A) () ([2 *] [1 (variant A)])]))
 
-;; ;; s# a# v# -> ([(s# ...) po] ...)
-;; ;;
-;; ;; Returns a set of tuples each containing a list of specification configs and a pattern such that the
-;; ;; input configuration can take an output step with the given message to the given configurations and
-;; ;; using the returned free obligation pattern to match the message.
-;; (define (resolve-with-free-obl-patterns config address type message)
-;;   (define free-stable-transitions
-;;     (filter
-;;      (curry transition-to-same-state? config)
-;;      (get-free-transitions-for-resolution config address)))
-;;   (resolve-with-transitions config address type message free-stable-transitions))
+;; s# mk v# -> ([(s# ...) po] ...)
+(define (resolve-with-free-transition psm marker message)
+  (define non-free-stable-transitions
+    (filter
+     (negate (curry transition-to-same-state? psm))
+     (get-free-transitions-for-resolution psm marker)))
+  (resolve-with-transitions psm marker message non-free-stable-transitions))
+
+(module+ test
+  (test-equal? "resolve-with-free-transition with delayed fork"
+   (resolve-with-free-transition
+    `[()
+      (1)
+      (goto A 1)
+      ((define-state (A x)
+         [free -> ([obligation x (delayed-fork (goto C) (define-state (C)))]) (goto B)]))
+      ()]
+    1
+    `(marked (addr 1 0) 2))
+   `([([()
+        (1)
+        (goto B)
+        ((define-state (A x)
+           [free -> ([obligation x [delayed-fork (goto C) (define-state (C))]]) (goto B)]))
+        ()]
+       [(2)
+        ()
+        (goto C)
+        ((define-state (C)))
+        ()])
+      (delayed-fork (goto C) (define-state (C)))])))
+
+;; s# mk v# (transition# ...) -> ([(s# ...) po] ...)
+;;
+;; Attempts to resolve the given output step from the given spec config using any one of the given
+;; transitions (only one transition per attempt).
+(define (resolve-with-transitions psm marker message possible-transitions)
+  (for/fold ([results null])
+            ([trans possible-transitions])
+    ;; REFACTOR: I'm using a fake trigger here, but attempt-transition probably shouldn't require a
+    ;; trigger at all
+    (define all-configs (take-transition psm trans `(timeout (addr 1 0))))
+    (match-define (list earlier-psms observing-psm later-psms)
+      (find-with-rest (lambda (psm) (member marker (aps#-psm-mon-externals psm)))
+                      all-configs))
+    (append
+     results
+     (for/list ([result (resolve-with-obligation observing-psm marker message)])
+       (match-define `[,resolved-psms ,pattern] result)
+       `[,(append resolved-psms (append earlier-psms later-psms)) ,pattern]))))
+
+;; s# mk v# -> ([(s# ...) po] ...)
+;;
+;; Returns a set of tuples each containing a list of specification configs and a pattern such that the
+;; input configuration can take an output step with the given message to the given configurations and
+;; using the returned free obligation pattern to match the message.
+(define (resolve-with-free-obl-patterns psm marker message)
+  (define free-stable-transitions
+    (filter
+     (curry transition-to-same-state? psm)
+     (get-free-transitions-for-resolution psm marker)))
+  (resolve-with-transitions psm marker message free-stable-transitions))
 
 ;; s [(mk ...) (s ...)] -> (s ...)
 (define (incorporate-output-match-results original-psm match-result)
