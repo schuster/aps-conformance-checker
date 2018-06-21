@@ -58,8 +58,9 @@
 
 ;; A mapped-derivative represents a possible sbc-derivative of some impl-step/spec-step pair. It
 ;; contains the new configuration pair itself as well as a hash table from addresses to addresses
-;; representing the address-substitution done during the canonicalization phase.
-(struct mapped-derivative (config-pair address-map) #:transparent)
+;; representing the address-substitution done during the canonicalization phase, and a similar
+;; marker-to-marker map.
+(struct mapped-derivative (config-pair address-map marker-map) #:transparent)
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Algorithm
@@ -125,25 +126,25 @@
 ;;   (list satisfying-pairs unsatisfying-pairs))
 
 (module+ test
-  (define (make-com-sat-ext-address number) `(addr (env Nat) ,number))
-  (define (sat-test-node name commitment-address-number commitment-patterns)
-    (define mult-patterns (map (lambda (pat) `(variant ,pat)) commitment-patterns))
+  (define (sat-test-node name commitment-marker commitment-patterns)
     (config-pair name
                  `(()
-                   ()
+                   (,commitment-marker)
                    (goto A)
                    ()
-                   ([,(make-com-sat-ext-address commitment-address-number) ,@mult-patterns]))))
+                   (letters->commitments commitment-marker commitment-patterns))))
   (define (sat-other-derivative-node name)
     (config-pair name `(() () (goto A) () ())))
   (define (sat-impl-step trigger) (impl-step trigger null null #f))
-  (define (letters->sat-list addr sat-letters)
-    (map (lambda (letter) `((addr (env Nat) ,addr) (variant ,letter)))
+  (define (letters->commitments marker sat-letters)
+    (map (lambda (letter) `(,marker (variant ,letter)))
          sat-letters))
+  ;; TODO: why the #f and #t here for spec steps? Do they still make a difference? Is it just so they
+  ;; don't look identical to another spec step from that node?
   (define (sat-spec-step com-addr-number . satisfied-commitment-letters)
-    (spec-step #f (letters->sat-list com-addr-number satisfied-commitment-letters)))
+    (spec-step #f (letters->commitments com-addr-number satisfied-commitment-letters)))
   (define (sat-alt-spec-step com-addr-number . satisfied-commitment-letters)
-    (spec-step #t (letters->sat-list com-addr-number satisfied-commitment-letters)))
+    (spec-step #t (letters->commitments com-addr-number satisfied-commitment-letters)))
 
   ;; These are the structures used for most of the tests for commitment satisfaction
   (define a-node (sat-test-node 'A 1 (list 'V 'W 'X 'Y 'Z)))
@@ -173,7 +174,7 @@
   (define sat-im-trigger2 `(internal-receive (addr 5 0) (variant B) single))
 
   ;; er stands for "External Receive"
-  (define sat-er-trigger1 `(external-receive (addr 1 0) abs-nat))
+  (define sat-er-trigger1 `(external-receive (marked (addr 1 0) 0) abs-nat))
 
   (define ag-impl-step (sat-impl-step sat-aw-trigger1))
   (define ai-impl-step (sat-impl-step sat-aw-trigger2))
@@ -222,29 +223,29 @@
 
   (define com-sat-incoming
     (mutable-hash
-     [a-node (mutable-set (list b-node ba-impl-step ba-spec-step (make-com-sat-map 1 1))
-                          (list i-node ia-impl-step ia-spec-step (make-com-sat-map 3 1))
-                          (list j-node ja-impl-step ja-spec-step (make-com-sat-map 3 1))
-                          (list l-node la-impl-step la-spec-step (make-com-sat-map 5 1))
-                          (list n-node na-impl-step na-spec-step (make-com-sat-map 1 1))
-                          (list o-node oa-impl-step oa-spec-step (make-com-sat-map 1 1)))]
+     [a-node (mutable-set (list b-node ba-impl-step ba-spec-step null (make-com-sat-map 1 1))
+                          (list i-node ia-impl-step ia-spec-step null (make-com-sat-map 3 1))
+                          (list j-node ja-impl-step ja-spec-step null (make-com-sat-map 3 1))
+                          (list l-node la-impl-step la-spec-step null (make-com-sat-map 5 1))
+                          (list n-node na-impl-step na-spec-step null (make-com-sat-map 1 1))
+                          (list o-node oa-impl-step oa-spec-step null (make-com-sat-map 1 1)))]
      [b-node (mutable-set)]
-     [c-node (mutable-set (list b-node b-cd-impl-step bc-spec-step (make-com-sat-map 1 1)))]
-     [d-node (mutable-set (list b-node b-cd-impl-step bd-spec-step (make-com-sat-map 1 1)))]
-     [e-node (mutable-set (list b-node b-ef-impl-step be-spec-step (make-com-sat-map 1 1)))]
-     [f-node (mutable-set (list b-node b-ef-impl-step bf-spec-step (make-com-sat-map 1 1)))]
-     [g-node (mutable-set (list a-node ag-impl-step ag-spec-step (make-com-sat-map 1 2))
-                          (list h-node hg-impl-step hg-spec-step (make-com-sat-map 2 2)))]
-     [h-node (mutable-set (list g-node gh-impl-step gh-spec-step (make-com-sat-map 2 2)))]
-     [i-node (mutable-set (list a-node ai-impl-step ai-spec-step (make-com-sat-map 1 3))
-                          (list j-node ji-impl-step ji-spec-step (make-com-sat-map 3 3)))]
-     [j-node (mutable-set (list i-node ij-impl-step ij-spec-step (make-com-sat-map 3 3)))]
-     [k-node (mutable-set (list a-node akm-impl-step akm-spec-step (make-com-sat-map 1 4)))]
+     [c-node (mutable-set (list b-node b-cd-impl-step bc-spec-step null (make-com-sat-map 1 1)))]
+     [d-node (mutable-set (list b-node b-cd-impl-step bd-spec-step null (make-com-sat-map 1 1)))]
+     [e-node (mutable-set (list b-node b-ef-impl-step be-spec-step null (make-com-sat-map 1 1)))]
+     [f-node (mutable-set (list b-node b-ef-impl-step bf-spec-step null (make-com-sat-map 1 1)))]
+     [g-node (mutable-set (list a-node ag-impl-step ag-spec-step null (make-com-sat-map 1 2))
+                          (list h-node hg-impl-step hg-spec-step null (make-com-sat-map 2 2)))]
+     [h-node (mutable-set (list g-node gh-impl-step gh-spec-step null (make-com-sat-map 2 2)))]
+     [i-node (mutable-set (list a-node ai-impl-step ai-spec-step null (make-com-sat-map 1 3))
+                          (list j-node ji-impl-step ji-spec-step null (make-com-sat-map 3 3)))]
+     [j-node (mutable-set (list i-node ij-impl-step ij-spec-step null (make-com-sat-map 3 3)))]
+     [k-node (mutable-set (list a-node akm-impl-step akm-spec-step null (make-com-sat-map 1 4)))]
      [m-node (mutable-set (list a-node akm-impl-step akm-spec-step null))]
-     [l-node (mutable-set (list a-node al-impl-step al-spec-step (make-com-sat-map 1 5)))]
-     [n-node (mutable-set (list a-node an-impl-step an-spec-step (make-com-sat-map 1 1))
-                          (list o-node on-impl-step on-spec-step (make-com-sat-map 1 1)))]
-     [o-node (mutable-set (list n-node no-impl-step no-spec-step (make-com-sat-map 1 1)))]))
+     [l-node (mutable-set (list a-node al-impl-step al-spec-step null (make-com-sat-map 1 5)))]
+     [n-node (mutable-set (list a-node an-impl-step an-spec-step null (make-com-sat-map 1 1))
+                          (list o-node on-impl-step on-spec-step null (make-com-sat-map 1 1)))]
+     [o-node (mutable-set (list n-node no-impl-step no-spec-step null (make-com-sat-map 1 1)))]))
 
   (define com-sat-related-steps
     (mutable-hash
@@ -268,11 +269,11 @@
      [(list o-node on-impl-step) (mutable-set on-spec-step)]
      [(list o-node oa-impl-step) (mutable-set oa-spec-step)]))
 
-  (define (single-match-step i-step s-step derivative addr-map)
+  (define (single-match-step i-step s-step derivative marker-map)
     (full-step
      i-step
      s-step
-     (mutable-set (mapped-derivative derivative addr-map))))
+     (mutable-set (mapped-derivative derivative null marker-map))))
 
   (define com-sat-outgoing
     (mutable-hash
@@ -284,8 +285,8 @@
         akm-impl-step
         akm-spec-step
         (mutable-set
-         (mapped-derivative k-node (make-com-sat-map 1 4))
-         (mapped-derivative m-node null)))
+         (mapped-derivative k-node null (make-com-sat-map 1 4))
+         (mapped-derivative m-node null null)))
        (single-match-step al-impl-step al-spec-step l-node (make-com-sat-map 1 5))
        (single-match-step an-impl-step an-spec-step n-node (make-com-sat-map 1 1)))]
      [b-node
@@ -294,19 +295,19 @@
        (full-step
         b-cd-impl-step
         bc-spec-step
-        (mutable-set (mapped-derivative c-node (make-com-sat-map 1 1))))
+        (mutable-set (mapped-derivative c-node null (make-com-sat-map 1 1))))
        (full-step
         b-cd-impl-step
         bd-spec-step
-        (mutable-set (mapped-derivative d-node (make-com-sat-map 1 1))))
+        (mutable-set (mapped-derivative d-node null (make-com-sat-map 1 1))))
        (full-step
         b-ef-impl-step
         be-spec-step
-        (mutable-set (mapped-derivative e-node (make-com-sat-map 1 1))))
+        (mutable-set (mapped-derivative e-node null (make-com-sat-map 1 1))))
        (full-step
         b-ef-impl-step
         bf-spec-step
-        (mutable-set (mapped-derivative f-node (make-com-sat-map 1 1)))))]
+        (mutable-set (mapped-derivative f-node null (make-com-sat-map 1 1)))))]
      [c-node (mutable-set)]
      [d-node (mutable-set)]
      [e-node (mutable-set)]
@@ -587,8 +588,8 @@
 ;;    unsat-pairs-set))
 
 (module+ test
-  (define (make-config-commitment-pair configs address-number variant-tag)
-    (list configs (list (make-com-sat-ext-address address-number) `(variant ,variant-tag))))
+  (define (make-config-commitment-pair configs marker variant-tag)
+    (list configs (list marker `(variant ,variant-tag))))
 
   ;; (test-equal? "all reachable pairs satisfy the commitment"
   ;;   (find-sat/unsat-pairs (make-config-commitment-pair a-node 1 'Y)
