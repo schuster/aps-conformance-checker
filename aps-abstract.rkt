@@ -168,170 +168,159 @@
         ((subst-n/aps#/f f (x mk) ...) ...)
         (goto φ_trans (subst-n/aps#/u u_trans (x mk) ...) ...)) ...
     ;; Note that we include the "null"/no-step transition
+    ;; TODO: move this out of here and into aps#-matching-spec-steps
     (free -> () (goto φ mk ...)))])
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Evaluation
+;; ---------------------------------------------------------------------------------------------------
+;; Evaluation
 
-;; ;; s# bool trigger -> ([s# ...] ...)
-;; ;;
-;; ;; Returns all spec configs that can possibly be reached in one step by transitioning from the given
-;; ;; trigger, also returning spec configs spawned during that transition
-;; (define (aps#-matching-steps spec-config observed? unobserved? trigger)
-;;   ;; The semantics for specs says it has to take an obs step if the trigger is observed, and
-;;   ;; unobserved step if the trigger is unobserved, and both if it can be both observed and
-;;   ;; unobserved. So here we compute all ways to do an obs transition, all ways to do an unobs
-;;   ;; transition, then find all possible combinations of those different transitions.
-;;   (define available-transitions
-;;     ;; Remove the free-output transitions: these would cause the checker to make many "bad
-;;     ;; guesses" about what conforms to what, and the outputs they use can always be used for
-;;     ;; other transitions.
-;;     (filter (negate (curryr free-stable-transition? (aps#-config-current-state spec-config)))
-;;             (config-current-transitions spec-config)))
-;;   (define (possible-transitions-for from-observer?)
-;;     (define raw-results
-;;       (filter values
-;;        (map (lambda (t) (attempt-transition spec-config t from-observer? trigger))
-;;             available-transitions)))
-;;     (when (null? raw-results)
-;;       (error 'aps#-matching-steps
-;;              "The trigger ~s (from-observer: ~s) has no way to transition in spec config ~s"
-;;              trigger from-observer? (spec-config-without-state-defs spec-config)))
-;;     (filter (lambda (transitioned-configs)
-;;               (and
-;;                ;; can run into infinite loop if we allow multiple observed addresses to have an
-;;                ;; obligation with "self" in the pattern, so we eliminate those transitions
-;;                (<= (length (addrs-with-self-obligations (first transitioned-configs))) 1)
-;;                ;; can also run into infinite loop if we allow multiple obligations, so we only use
-;;                ;; transitions that don't duplicate them
-;;                (andmap all-obligations-unique? transitioned-configs)))
-;;             raw-results))
-;;   (define obs-steps
-;;     (cond
-;;       [observed? (possible-transitions-for #t)]
-;;       [else
-;;        ;; if not observed, return a list containing a single "empty" transition so we can combine the
-;;        ;; unobs moves with something
-;;        (list null)]))
-;;   (define unobs-steps
-;;     (cond
-;;       [unobserved? (possible-transitions-for #f)]
-;;       [else
-;;        ;; if not unobserved, return a list containing a single "empty" transition so we can combine
-;;        ;; the obs moves with something
-;;        (list null)]))
+;; s# trigger -> ([s# ...] ...)
+;;
+;; Returns all spec configs (sets of PSMs) that can possibly be reached in one step by transitioning
+;; from the given PSM with the given trigger. Each config includes PSMs, also returning spec configs
+;; spawned during that transition
+(define (aps#-matching-steps spec-config trigger)
+  (define available-transitions
+    ;; Remove the free-output transitions: these would cause the checker to make many "bad
+    ;; guesses" about what conforms to what, and the outputs they use can always be used for
+    ;; other transitions.
+    (filter (negate (curryr free-stable-transition? (aps#-psm-current-state spec-config)))
+            (config-current-transitions spec-config)))
 
-;;   (remove-duplicates
-;;    (for/fold ([all-steps null])
-;;              ([obs-step obs-steps])
-;;      (define this-step-with-unobs-steps
-;;        (for/list ([unobs-step unobs-steps])
-;;          (remove-duplicates (append obs-step unobs-step))))
-;;      (append all-steps this-step-with-unobs-steps))))
+  (define matching-transitions
+    (filter (curry transition-matches? (aps#-psm-mon-receptionists spec-config) trigger)
+            available-transitions))
+  (when (null? matching-transitions)
+      (error 'aps#-matching-steps
+             "The trigger ~s has no way to transition in spec config ~s"
+             trigger (spec-config-without-state-defs spec-config)))
 
-;; (module+ test
-;;   (test-equal? "Null step is possible"
-;;                (aps#-matching-steps
-;;                 (make-s# (term ((define-state (A))))
-;;                          (term (goto A))
-;;                          (term ())
-;;                          (term ()))
-;;                 #f #t
-;;                 (term (timeout (addr 0 0))))
-;;                (list
-;;                 (list (make-s# (term ((define-state (A))))
-;;                          (term (goto A))
-;;                          (term ())
-;;                          (term ())))))
+  (define transition-results
+    (map (lambda (t) (take-transition spec-config t trigger)) matching-transitions))
+  (remove-duplicates
+   (filter (lambda (transitioned-configs)
+             (and
+              ;; can run into infinite loop if we allow multiple observed markers to have an
+              ;; obligation with "self" in the pattern, so we eliminate those transitions
+              (<= (length (markers-with-self-obligations (first transitioned-configs))) 1)
+              ;; can also run into infinite loop if we allow multiple obligations, so we only use
+              ;; transitions that don't duplicate them
+              (andmap all-obligations-unique? transitioned-configs)))
+           transition-results)))
 
-;;   (test-case "Can do obs and unobs at same time"
-;;     (define (make-test-config current-state)
-;;       (make-s# (term ((define-state (A)
-;;                         [*     -> () (goto B)]
-;;                         [free -> () (goto C)])))
-;;                (term (goto ,current-state))
-;;                (term ())
-;;                (term ())))
-;;     (check-equal?
-;;      (list->set
-;;       (aps#-matching-steps (make-test-config 'A)
-;;                            #t #t
-;;                            (term (external-receive (addr 0 0) abs-nat))))
-;;      (set
-;;       ;; Option 1: A and B
-;;       (list (make-test-config 'B) (make-test-config 'A))
-;;       ;; Option 2: A and C
-;;       (list (make-test-config 'B) (make-test-config 'C)))))
+(module+ test
+  (test-equal? "Null step is possible"
+               (aps#-matching-steps
+                (make-s# (term ((define-state (A))))
+                         (term (goto A))
+                         (term ()))
+                (term (timeout (addr 0 0))))
+               (list
+                (list (make-s# (term ((define-state (A))))
+                               (term (goto A))
+                               (term ())))))
 
-;;   (test-equal? "Don't allow multiple copies of obligations"
-;;     (aps#-matching-steps
-;;      (make-s# (term ((define-state (A r) [* -> ((obligation r *)) (goto A r)])))
-;;               (term (goto A (addr (env Nat) 0)))
-;;               null
-;;               (term (((addr (env Nat) 0) *))))
-;;      #t #f
-;;      (term (external-receive (addr 0 0) abs-nat)))
-;;     null)
+  (test-equal? "Monitored receive"
+    (aps#-matching-steps
+     (make-s# (term ((define-state (A)
+                       [*     -> () (goto B)]
+                       [free -> () (goto C)])))
+              (term (goto A))
+              (term ()))
+     (term (external-receive (marked (addr 0 0) 0) abs-nat)))
+    (list
+     (list
+      (make-s# (term ((define-state (A)
+                        [*     -> () (goto B)]
+                        [free -> () (goto C)])))
+               (term (goto B))
+               (term ())))))
 
-;;   (test-exn "No match for a trigger leads to exception"
-;;     (lambda (exn) #t)
-;;     (lambda ()
-;;       (aps#-matching-steps
-;;        (make-s# (term ((define-state (A r))))
-;;                 (term (goto A (addr (env Nat) 0)))
-;;                 null
-;;                 (term (((addr (env Nat) 0)))))
-;;        #t #f
-;;        (term (external-receive (addr 0 0) abs-nat)))))
+  (test-equal? "Unmonitored receive"
+    (list->set
+     (aps#-matching-steps
+      (make-s# (term ((define-state (A)
+                        [*     -> () (goto B)]
+                        [free -> () (goto C)])))
+               (term (goto A))
+               (term ()))
+      (term (external-receive (marked (addr 0 0) 1) abs-nat))))
+    (set
+     ;; "null" transition
+     (list
+      (make-s# (term ((define-state (A)
+                        [*     -> () (goto B)]
+                        [free -> () (goto C)])))
+               (term (goto A))
+               (term ())))
+     ;; free transition
+     (list
+      (make-s# (term ((define-state (A)
+                        [*     -> () (goto B)]
+                        [free -> () (goto C)])))
+               (term (goto C))
+               (term ())))))
 
-;;   (test-equal? "Spec observes address but neither saves it nor has obligations for it"
-;;     (aps#-matching-steps
-;;      (make-s# `((define-state (A) [r -> () (goto A)]))
-;;               `(goto A)
-;;               null
-;;               null)
-;;      #t #f
-;;      `(external-receive (addr 0 0) (addr (env Nat) 1)))
-;;     (list `[,(make-s# `((define-state (A) [r -> () (goto A)]))
-;;                       `(goto A)
-;;                       null
-;;                       `([(addr (env Nat) 1)]))]))
+  (test-equal? "Don't allow multiple copies of obligations"
+    (aps#-matching-steps
+     (valid-s# `[(0)
+                 (1)
+                 (goto A 1)
+                 ((define-state (A r) [* -> ((obligation r *)) (goto A r)]))
+                 ([1 *])])
+     (term (external-receive (marked (addr 0 0) 0) abs-nat)))
+    null)
 
-;;   (test-equal? "Unobserved address not tracked in obligation map"
-;;     (aps#-matching-steps
-;;      (make-s# `((define-state (A) [r -> () (goto A)]))
-;;               `(goto A)
-;;               null
-;;               null)
-;;      #f #t
-;;      `(external-receive (addr 0 0) (addr (env Nat) 1)))
-;;     (list `[,(make-s# `((define-state (A) [r -> () (goto A)]))
-;;                       `(goto A)
-;;                       null
-;;                       null)]))
+  (test-exn "No match for a trigger leads to exception"
+    (lambda (exn) #t)
+    (lambda ()
+      (aps#-matching-steps
+       (make-s# (term ((define-state (A))))
+                (term (goto A))
+                `())
+       (term (external-receive (marked (addr 0 0) 0) abs-nat)))))
 
-;;   (test-equal? "Address matched by wildcard not tracked in obligation map"
-;;     (aps#-matching-steps
-;;      (make-s# `((define-state (A) [* -> () (goto A)]))
-;;               `(goto A)
-;;               null
-;;               null)
-;;      #t #f
-;;      `(external-receive (addr 0 0) (addr (env Nat) 1)))
-;;     (list `[,(make-s# `((define-state (A) [* -> () (goto A)]))
-;;                       `(goto A)
-;;                       null
-;;                       null)]))
+  (test-equal? "Spec observes address but neither saves it nor has obligations for it"
+    (aps#-matching-steps
+     (make-s# `((define-state (A) [r -> () (goto A)]))
+              `(goto A)
+              null)
+     `(external-receive (marked (addr 0 0) 0) (marked (addr (env Nat) 1) 1)))
+    (list `[,(valid-s# `[(0)
+                         (1)
+                         (goto A)
+                         ((define-state (A) [r -> () (goto A)]))
+                         ()])]))
 
-;;   (test-equal? "Don't return transitions that would have addrs with multiple self obls"
-;;     (aps#-matching-steps
-;;      (make-s# `((define-state (A) [r -> ([obligation r self]) (goto A)]))
-;;               `(goto A)
-;;               null
-;;               `([(addr (env Nat) 2) self]))
-;;      #t #f
-;;      `(external-receive (addr 0 0) (addr (env Nat) 1)))
-;;     null))
+  (test-equal? "Address received on unmonitored rec not added as monitored external"
+    (aps#-matching-steps
+     (make-s# `((define-state (A) [r -> () (goto A)]))
+              `(goto A)
+              null)
+     `(external-receive (marked (addr 0 0) 1) (marked (addr (env Nat) 1) 2)))
+    (list `[,(make-s# `((define-state (A) [r -> () (goto A)]))
+                      `(goto A)
+                      null)]))
+
+  (test-equal? "Address matched by wildcard not added as monitored external"
+    (aps#-matching-steps
+     (make-s# `((define-state (A) [* -> () (goto A)]))
+              `(goto A)
+              null)
+     `(external-receive (marked (addr 0 0) 0) (marked (addr (env Nat) 1) 2)))
+    (list `[,(make-s# `((define-state (A) [* -> () (goto A)]))
+                      `(goto A)
+                      null)]))
+
+  (test-equal? "Don't return transitions that would have addrs with multiple self obls"
+    (aps#-matching-steps
+     (valid-s# `[(0)
+                 (2)
+                 (goto A)
+                 ((define-state (A) [r -> ([obligation r self]) (goto A)]))
+                 ([2 self])])
+     `(external-receive (marked (addr 0 0) 0) (marked (addr (env Nat) 1) 3)))
+    null))
 
 ;; Returns the set of markers for which the given PSM has an obligation whose pattern contains a
 ;; "self" pattern
@@ -2124,11 +2113,15 @@
 ;;     (receptionists<= `([(Union [A] [B]) (addr 1 0)])
 ;;                      `([(Union [A])     (addr 1 0)]))))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Testing Helpers
+;; ---------------------------------------------------------------------------------------------------
+;; Testing Helpers
 
-;; (define (make-s# defs goto unobs-receptionists out-coms)
-;;   (term (((Nat (addr 0 0))) ,unobs-receptionists ,goto ,defs ,out-coms)))
+(define (make-s# defs goto out-coms)
+  (term ((0) () ,goto ,defs ,out-coms)))
+
+(define (valid-s# psm)
+  (redex-let aps# ([s# psm])
+    (term s#)))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Debugging
