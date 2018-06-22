@@ -1242,80 +1242,80 @@
 ;;        (mutable-hash [(list ax-pair ab-step) (mutable-set)]
 ;;                      [(list by-pair bc-step) (mutable-set)]))))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Debugging
+;; ---------------------------------------------------------------------------------------------------
+;; Debugging
 
-;; (define DEBUG-WIDEN #f)
+(define DEBUG-WIDEN #f)
 
-;; (define (widen-printf m . args)
-;;   (when DEBUG-WIDEN
-;;     (apply printf (format "~s: ~a" (date->string (seconds->date (current-seconds)) #t) m) args)))
+(define (widen-printf m . args)
+  (when DEBUG-WIDEN
+    (apply printf (format "~s: ~a" (date->string (seconds->date (current-seconds)) #t) m) args)))
 
-;; (define DISPLAY-STEPS #f)
+(define DISPLAY-STEPS #f)
 
-;; (define (display-step-line msg)
-;;   (when DISPLAY-STEPS (displayln msg)))
+(define (display-step-line msg)
+  (when DISPLAY-STEPS (displayln msg)))
 
-;; (define (pair->debug-pair pair)
-;;   (list (impl-config-without-state-defs (config-pair-impl-config pair))
-;;         (spec-config-without-state-defs (config-pair-spec-config pair))))
+(define (pair->debug-pair pair)
+  (list (impl-config-without-state-defs (config-pair-impl-config pair))
+        (spec-config-without-state-defs (config-pair-spec-config pair))))
 
-;; (define (debug-impl-step step)
-;;   (list (impl-step-trigger step)
-;;         (impl-step-outputs step)))
+(define (debug-impl-step step)
+  (list (impl-step-trigger step)
+        (impl-step-outputs step)))
 
-;; (define (debug-transition-result result)
-;;   (list (csa#-transition-effect-trigger result)
-;;         (csa#-transition-effect-sends result)
-;;         (csa#-transition-effect-spawns result)))
+(define (debug-transition-result result)
+  (list (csa#-transition-effect-trigger result)
+        (csa#-transition-effect-sends result)
+        (csa#-transition-effect-spawns result)))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Logging
+;; ---------------------------------------------------------------------------------------------------
+;; Logging
 
-;; ;; Change LOG-RUN to #t to write relevant checking data to a file so that the process of the check can
-;; ;; be recreated after the fact without creating the simulation graph all over again.
-;; (define LOG-RUN #f)
-;; (define LOG-FILE-PATH "checker_run_log.fasl")
+;; Change LOG-RUN to #t to write relevant checking data to a file so that the process of the check can
+;; be recreated after the fact without creating the simulation graph all over again.
+(define LOG-RUN #f)
+(define LOG-FILE-PATH "checker_run_log.fasl")
 
-;; (define (open-log)
-;;   (if LOG-RUN (open-output-file LOG-FILE-PATH #:exists 'replace) #f))
+(define (open-log)
+  (if LOG-RUN (open-output-file LOG-FILE-PATH #:exists 'replace) #f))
 
-;; (define (close-log log-file)
-;;   (when LOG-RUN (close-output-port log-file)))
+(define (close-log log-file)
+  (when LOG-RUN (close-output-port log-file)))
 
-;; ;; NOTE: we flush the output after every entry so that there's something in the log even if the
-;; ;; checker crashes in mid-run.
+;; NOTE: we flush the output after every entry so that there's something in the log even if the
+;; checker crashes in mid-run.
 
-;; (define (log-initial-pairs log-file initial-pairs)
-;;   (when LOG-RUN
-;;     (for ([pair initial-pairs])
-;;       (s-exp->fasl `(initial-pair ,pair) log-file))
-;;     (flush-output log-file)))
+(define (log-initial-pairs log-file initial-pairs)
+  (when LOG-RUN
+    (for ([pair initial-pairs])
+      (s-exp->fasl `(initial-pair ,pair) log-file))
+    (flush-output log-file)))
 
-;; (define (log-exploring log-file pair)
-;;   (when LOG-RUN
-;;     (s-exp->fasl `(exploring ,pair) log-file)
-;;     (flush-output log-file)))
+(define (log-exploring log-file pair)
+  (when LOG-RUN
+    (s-exp->fasl `(exploring ,pair) log-file)
+    (flush-output log-file)))
 
-;; (define (log-related-spec-steps log-file config-and-i-step related-steps)
-;;   (when LOG-RUN
-;;     (s-exp->fasl `(related-spec-step ,config-and-i-step ,(set->list related-steps)) log-file)
-;;     (flush-output log-file)))
+(define (log-related-spec-steps log-file config-and-i-step related-steps)
+  (when LOG-RUN
+    (s-exp->fasl `(related-spec-step ,config-and-i-step ,(set->list related-steps)) log-file)
+    (flush-output log-file)))
 
-;; (define (log-unrelated log-file pair)
-;;   (when LOG-RUN
-;;     (s-exp->fasl `(unrelated ,pair) log-file)
-;;     (flush-output log-file)))
+(define (log-unrelated log-file pair)
+  (when LOG-RUN
+    (s-exp->fasl `(unrelated ,pair) log-file)
+    (flush-output log-file)))
 
-;; (define (log-incoming log-file pair step)
-;;   (when LOG-RUN
-;;     (s-exp->fasl `(incoming ,pair ,step) log-file)
-;;     (flush-output log-file)))
+(define (log-incoming log-file pair step)
+  (when LOG-RUN
+    (s-exp->fasl `(incoming ,pair ,step) log-file)
+    (flush-output log-file)))
 
-;; (define (log-related log-file pair)
-;;   (when LOG-RUN
-;;     (s-exp->fasl `(related ,pair) log-file)
-;;     (flush-output log-file)))
+(define (log-related log-file pair)
+  (when LOG-RUN
+    (s-exp->fasl `(related ,pair) log-file)
+    (flush-output log-file)))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Test Helpers
