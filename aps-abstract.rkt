@@ -6,7 +6,7 @@
  ;; Required by conformance checker
  ;; aps#-config-obs-receptionists
  ;; aps#-config-unobs-receptionists
- ;; aps#-config-commitments
+ aps#-psm-obligations
  aps#-matching-steps
  aps#-resolve-outputs
  ;; aps#-abstract-config
