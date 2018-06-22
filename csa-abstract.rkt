@@ -7,6 +7,7 @@
  (struct-out csa#-transition)
  csa#-transition-spawn-locs
  csa#-messages-of-type
+ csa#-config-receptionists
  csa#-enabled-internal-actions
  csa#-action-enabled?
  csa#-make-external-trigger

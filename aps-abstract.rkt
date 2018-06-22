@@ -16,7 +16,7 @@
  try-rename-marker
  reverse-rename-marker
  aps#-config-has-commitment?
- ;; aps#-completed-no-transition-psm?
+ aps#-completed-no-transition-psm?
  ;; evict-pair
  ;; needed for widening
  ;; aps#-config<=
@@ -25,7 +25,7 @@
  aps#
 
  ;; Required by conformance checker for blurring
- ;; aps#-relevant-external-addrs
+ aps#-psm-mon-externals
 
  ;; Testing helpers
  make-s#
