@@ -210,8 +210,8 @@
 ;;     [abstract-impl-config
 ;;      (map first (sbc (config-pair abstract-impl-config (aps#-abstract-config spec-config))))]))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Simulation
+;; ---------------------------------------------------------------------------------------------------
+;; Simulation
 
 ;; ;; (Setof config-pair) -> (List (Setof config-pair)
 ;; ;;                              (Setof config-pair)
@@ -385,172 +385,169 @@
 ;;                 (log-related log-file pair)
 ;;                 (loop (set-add related-pairs pair) unrelated-successors)])])])])))
 
-;; ;; i# s# -> (listof (i# Boolean Boolean))
-;; ;;
-;; ;; Returns all implementation steps possible from the given impl-config/spec-config pair, or #f if
-;; ;; some step leads to an unverifiable configuration. The spec config is used to determine whether
-;; ;; sending a message to a given receptionist in the implementation config can be observed, unobserved,
-;; ;; or both.
-;; (define (impl-steps-from impl-config spec-config)
-;;   (let/cc return-continuation
-;;     ;; Certain evaluation steps can lead to an unverifiable configuration. When that happens, rather
-;;     ;; than continuing to evaluate other possible steps from this configuration, we call this
-;;     ;; continuation to abort the whole evaluation step.
-;;     (define (abort) (return-continuation #f))
-;;     (define triggers (impl-triggers-from impl-config spec-config))
-;;     (widen-printf "Finding impl steps from ~s triggers\n" (length triggers))
-;;     (append*
-;;      (for/list ([trigger-with-obs/unobs triggers])
-;;        (widen-printf "Trigger: ~s\n" trigger-with-obs/unobs)
-;;        (flush-output)
-;;        (define effects (csa#-eval-trigger impl-config (first trigger-with-obs/unobs) abort))
-;;        (for/list ([effect effects])
-;;          (apply-transition impl-config
-;;                            effect
-;;                            (second trigger-with-obs/unobs)
-;;                            (third  trigger-with-obs/unobs)))))))
+;; i# s# -> (listof i#)
+;;
+;; Returns all implementation steps possible from the given impl-config/spec-config pair, or #f if
+;; some step leads to an unverifiable configuration. The spec config is used to determine whether
+;; sending a message to a given receptionist in the implementation config can be observed, unobserved,
+;; or both.
+(define (impl-steps-from impl-config spec-config)
+  (let/cc return-continuation
+    ;; Certain evaluation steps can lead to an unverifiable configuration. When that happens, rather
+    ;; than continuing to evaluate other possible steps from this configuration, we call this
+    ;; continuation to abort the whole evaluation step.
+    (define (abort) (return-continuation #f))
+    (define triggers (impl-triggers-from impl-config spec-config))
+    (widen-printf "Finding impl steps from ~s triggers\n" (length triggers))
+    (append*
+     (for/list ([trigger triggers])
+       (widen-printf "Trigger: ~s\n" trigger)
+       (flush-output)
+       (define effects (csa#-eval-trigger impl-config trigger abort))
+       (for/list ([effect effects])
+         (apply-transition impl-config effect))))))
 
-;; ;; i# csa#-transition-effect Boolean -> (list impl-step Boolean_obs Boolean_unobs)
-;; (define (apply-transition config effect observed? unobserved?)
-;;   (define transition (csa#-apply-transition config effect))
-;;   (list
-;;    (impl-step (csa#-transition-trigger transition)
-;;               (csa#-transition-outputs transition)
-;;               (csa#-transition-spawn-locs effect)
-;;               (csa#-transition-final-config transition))
-;;    observed?
-;;    unobserved?))
+;; i# csa#-transition-effect -> impl-step
+(define (apply-transition config effect observed? unobserved?)
+  ;; REFACTOR: inline this whole method
+  (define transition (csa#-apply-transition config effect))
+  (impl-step (csa#-transition-trigger transition)
+             (csa#-transition-outputs transition)
+             (csa#-transition-spawn-locs effect)
+             (csa#-transition-final-config transition)))
 
-;; ;; i# s# -> (Listof (List trigger# Boolean Boolean))
-;; ;;
-;; ;; Returns a list of all possible triggers from the given config pair, where the booleans associated
-;; ;; with each indicate whether the trigger can be observed, and the second whether it can be unobserved
-;; (define (impl-triggers-from impl-config spec-config)
-;;   (define obs-receives
-;;     (external-triggers-for-receptionists (aps#-config-obs-receptionists spec-config)))
-;;   (define unobs-receives
-;;     (external-triggers-for-receptionists (aps#-config-unobs-receptionists spec-config)))
-;;   (define internal-triggers (csa#-enabled-internal-actions impl-config))
-;;   (append
-;;    (map (lambda (obs-receive) (list obs-receive #t (if (member obs-receive unobs-receives) #t #f)))
-;;         obs-receives)
-;;    (map (lambda (unobs-receive) (list unobs-receive #f #t))
-;;         (filter (lambda (unobs-receive) (not (member unobs-receive obs-receives))) unobs-receives))
-;;    (map (lambda (trigger) (list trigger #f #t)) internal-triggers)))
+;; i# s# -> (Listof trigger#)
+;;
+;; Returns a list of all possible triggers from the given config pair, where the booleans associated
+;; with each indicate whether the trigger can be observed, and the second whether it can be unobserved
+(define (impl-triggers-from impl-config spec-config)
+  (append
+   (external-triggers-for-receptionists (csa#-config-receptionists impl-config))
+   (csa#-enabled-internal-actions impl-config)))
 
-;; ;; (Listof τa) -> (Listof trigger#)
-;; ;;
-;; ;; Returns all possible external actions that would be allowed by the interface given by the typed
-;; ;; addresses
-;; (define (external-triggers-for-receptionists typed-addrs)
-;;   (append*
-;;    (for/list ([typed-addr typed-addrs])
-;;      (match-define `[,type ,addr] typed-addr)
-;;      (for/list ([message (csa#-messages-of-type type)])
-;;        (csa#-make-external-trigger addr message)))))
+;; (Listof τa) -> (Listof trigger#)
+;;
+;; Returns all possible external actions that would be allowed by the interface given by the typed
+;; addresses
+(define (external-triggers-for-receptionists receptionists)
+  (append*
+   (for/list ([receptionist receptionists])
+     (match-define `[,type ,marked-address] receptionist)
+     (for/list ([message (csa#-messages-of-type type)])
+       (csa#-make-external-trigger marked-address message)))))
 
-;; ;; Returns a set of the possible spec steps (see the struct above) from the given spec config that
-;; ;; match the given implementation step
-;; (define (matching-spec-steps spec-config i-step obs? unobs?)
-;;   (define matched-stepped-configs (mutable-set))
-;;   (for ([trigger-result (aps#-matching-steps spec-config
-;;                                              obs?
-;;                                              unobs?
-;;                                              (impl-step-trigger i-step))])
-;;     (match (aps#-resolve-outputs trigger-result (impl-step-outputs i-step))
-;;       [(list) (void)]
-;;       [(list results ...)
-;;        (for ([result results])
-;;          (match-define `[,stepped-configs ,satisfied-commitments] result)
-;;          (set-add! matched-stepped-configs (spec-step stepped-configs satisfied-commitments)))]))
-;;   matched-stepped-configs)
+(module+ test
+  (test-equal? "external-triggers-for-receptionists"
+    (external-triggers-for-receptionists
+     (list `[Nat (marked (addr 0 0) 1)]
+           `[(Union [A] [B (Union [C] [D])]) (marked (addr 0 1) 2)]
+           `[(Addr Nat) (marked (addr 0 2) 3)]))
+    (list `(external-receive (marked (addr 0 0) 1) abs-nat)
+          `(external-receive (marked (addr 0 1) 2) (variant A))
+          `(external-receive (marked (addr 0 1) 2) (variant B (variant C)))
+          `(external-receive (marked (addr 0 1) 2) (variant B (variant D)))
+          `(external-receive (marked (addr 0 2) 3) (marked (collective-addr (env Nat)) 100)))))
 
-;; (module+ test
-;;   (define null-spec-config (make-s# '((define-state (S))) '(goto S) null null))
+;; Returns a set of the possible spec steps (see the struct above) from the given spec config that
+;; match the given implementation step
+(define (matching-spec-steps spec-config i-step)
+  (define matched-stepped-configs (mutable-set))
+  (for ([trigger-result (aps#-matching-steps spec-config (impl-step-trigger i-step))])
+    (match (aps#-resolve-outputs trigger-result (impl-step-outputs i-step))
+      [(list) (void)]
+      [(list results ...)
+       (for ([result results])
+         (match-define `[,stepped-configs ,satisfied-commitments] result)
+         (set-add! matched-stepped-configs (spec-step stepped-configs satisfied-commitments)))]))
+  matched-stepped-configs)
 
-;;   (test-case "Null transition okay for unobs"
-;;     (check-equal?
-;;      (matching-spec-steps
-;;       null-spec-config
-;;       (impl-step '(internal-receive (addr 0 0) abs-nat single) null null #f)
-;;       #f #t)
-;;      (mutable-set (spec-step (list null-spec-config) null))))
-;;   (test-case "Null transition not okay for observed input"
-;;     (check-exn
-;;      (lambda (exn) #t)
-;;      (lambda ()
-;;        (matching-spec-steps
-;;         null-spec-config
-;;         (impl-step '(external-receive (addr 0 0) abs-nat) null null #f)
-;;         #t #f))))
-;;   (test-case "No match if trigger does not match"
-;;     (check-exn
-;;      (lambda (exn) #t)
-;;      (lambda ()
-;;        (matching-spec-steps
-;;         (make-s# '((define-state (A) [x -> () (goto A)])) '(goto A) null null)
-;;         (impl-step '(external-receive (addr 0 0) abs-nat) null null #f)
-;;         #t #f))))
-;;   (test-case "Unobserved outputs don't need to match"
-;;     (check-equal?
-;;      (matching-spec-steps
-;;       null-spec-config
-;;       (impl-step '(internal-receive (addr 0 0) abs-nat single) (list '((addr (env Nat) 1) abs-nat single)) null  #f)
-;;       #f #t)
-;;      (mutable-set (spec-step (list null-spec-config) null))))
-;;   (test-case "No match if outputs do not match"
-;;     (check-equal?
-;;      (matching-spec-steps
-;;       (make-s# '((define-state (A))) '(goto A) null (list '((addr (env Nat) 1))))
-;;       (impl-step '(internal-receive (addr 0 0) abs-nat single) (list '((addr (env Nat) 1) abs-nat single)) null #f)
-;;       #f #t)
-;;      (mutable-set)))
-;;   (test-case "Output can be matched by previous commitment"
-;;     (check-equal?
-;;      (matching-spec-steps
-;;       (make-s# '((define-state (A))) '(goto A) null (list '((addr (env Nat) 1) *)))
-;;       (impl-step '(internal-receive (addr 0 0) abs-nat single) (list '((addr (env Nat) 1) abs-nat single)) null #f)
-;;       #f #t)
-;;      (mutable-set (spec-step (list (make-s# '((define-state (A))) '(goto A) null (list '((addr (env Nat) 1)))))
-;;                              (list `[(addr (env Nat) 1) *])))))
-;;   (test-case "Output can be matched by new commitment"
-;;     (check-equal?
-;;      (matching-spec-steps
-;;       (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)])) '(goto A) null null)
-;;       (impl-step '(external-receive (addr 0 0) (addr (env Nat) 1)) (list '((addr (env Nat) 1) abs-nat single)) null #f)
-;;       #t #f)
-;;      (mutable-set (spec-step (list (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)]))
-;;                                             '(goto A)
-;;                                             null
-;;                                             (list '((addr (env Nat) 1)))))
-;;                              (list `[(addr (env Nat) 1) *])))))
-;;   (test-case "Can't duplicate commitments"
-;;     (check-equal?
-;;      (matching-spec-steps
-;;       (make-s# '((define-state (A x) [* -> ([obligation x *]) (goto A x)])) '(goto A (addr (env Nat) 1)) null (list '[(addr (env Nat) 1) *]))
-;;       (impl-step '(external-receive (addr 0 0) abs-nat) null null #f)
-;;       #t #f)
-;;      (mutable-set))))
+(module+ test
+  (define null-spec-config (make-s# '((define-state (S))) '(goto S) null))
 
-;; ;; Given a hash table whose values are sets, add val to the set in dict corresponding to key (or
-;; ;; create the hash-table entry with a set containing that val if no entry exists).
-;; (define (dict-of-sets-add! dict key val)
-;;   (match (hash-ref dict key #f)
-;;     [#f
-;;      (hash-set! dict key (mutable-set val))]
-;;     [the-set
-;;      (set-add! the-set val)]))
+  (test-case "Null transition okay for internal receive"
+    (check-equal?
+     (matching-spec-steps
+      null-spec-config
+      (impl-step '(internal-receive (addr 0 0) abs-nat single) null null #f))
+     (mutable-set (spec-step (list null-spec-config) null))))
+  (test-case "Null transition not okay for monitored external receive"
+    (check-exn
+     (lambda (exn) #t)
+     (lambda ()
+       (matching-spec-steps
+        null-spec-config
+        (impl-step '(external-receive (marked (addr 0 0) 0) abs-nat) null null #f)))))
+  (test-case "No match if trigger does not match"
+    (check-exn
+     (lambda (exn) #t)
+     (lambda ()
+       (matching-spec-steps
+        (make-s# '((define-state (A) [x -> () (goto A)])) '(goto A) null)
+        (impl-step '(external-receive (marked (addr 0 0) 0) abs-nat) null null #f)))))
+  (test-case "Unmonitored outputs don't need to match"
+    (check-equal?
+     (matching-spec-steps
+      null-spec-config
+      (impl-step '(internal-receive (addr 0 0) abs-nat single)
+                 (list '((marked (addr (env Nat) 1) 1) abs-nat single))
+                 null
+                 #f))
+     (mutable-set (spec-step (list null-spec-config) null))))
+  (test-case "No match if outputs do not match"
+    (check-equal?
+     (matching-spec-steps
+      (valid-s# `[(0) (1) (goto A) ((define-state (A))) ()])
+      (impl-step '(internal-receive (addr 0 0) abs-nat single)
+                 (list '((marked (addr (env Nat) 1) 1) abs-nat single))
+                 null
+                 #f))
+     (mutable-set)))
+  (test-case "Output can be matched by previous commitment"
+    (check-equal?
+     (matching-spec-steps
+      (valid-s# `[(0) (1) (goto A) ((define-state (A))) ([1 *])])
+      (impl-step '(internal-receive (addr 0 0) abs-nat single)
+                 (list '((marked (addr (env Nat) 1) 1) abs-nat single))
+                 null
+                 #f))
+     (mutable-set (spec-step (list (valid-s# `[(0) (1) (goto A) ((define-state (A))) ()]))
+                             (list `[1 *])))))
+  (test-case "Output can be matched by new commitment"
+    (check-equal?
+     (matching-spec-steps
+      (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)])) '(goto A) null)
+      (impl-step '(external-receive (marked (addr 0 0) 0) (marked (addr (env Nat) 1) 1))
+                 (list '((marked (addr (env Nat) 1) 1) abs-nat single))
+                 null
+                 #f))
+     (mutable-set (spec-step (list (valid-s# `[(0) (1) (goto A) ((define-state (A) [x -> ([obligation x *]) (goto A)])) ()]))
+                             (list `[1 *])))))
+  (test-case "Can't duplicate commitments"
+    (check-equal?
+     (matching-spec-steps
+      (valid-s# '[(0) (1) (goto A 1) ((define-state (A x) [* -> ([obligation x *]) (goto A x)])) ([1 *])])
+      (impl-step '(external-receive (marked (addr 0 0) 0) abs-nat) null null #f))
+     (mutable-set))))
 
-;; ;; [mutable-set-of X] -> #f or X
-;; ;;
-;; ;; Removes and returns an arbitrary element of the set, or returns #f if the set is already empty
-;; (define (set-dequeue-if-non-empty! s)
-;;   (cond
-;;     [(set-empty? s) #f]
-;;     [else
-;;      (define e (set-first s))
-;;      (set-remove! s e)
-;;      e]))
+;; Given a hash table whose values are sets, add val to the set in dict corresponding to key (or
+;; create the hash-table entry with a set containing that val if no entry exists).
+(define (dict-of-sets-add! dict key val)
+  (match (hash-ref dict key #f)
+    [#f
+     (hash-set! dict key (mutable-set val))]
+    [the-set
+     (set-add! the-set val)]))
+
+;; [mutable-set-of X] -> #f or X
+;;
+;; Removes and returns an arbitrary element of the set, or returns #f if the set is already empty
+(define (set-dequeue-if-non-empty! s)
+  (cond
+    [(set-empty? s) #f]
+    [else
+     (define e (set-first s))
+     (set-remove! s e)
+     e]))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Split/Blur/Canonicalize (SBC)

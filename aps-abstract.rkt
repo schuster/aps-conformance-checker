@@ -29,6 +29,7 @@
 
  ;; Testing helpers
  make-s#
+ valid-s#
  ;; aps#-make-no-transition-psm
 
  ;; Debugging helpers
