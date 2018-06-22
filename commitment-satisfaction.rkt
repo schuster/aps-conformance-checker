@@ -132,7 +132,7 @@
                    (,commitment-marker)
                    (goto A)
                    ()
-                   (letters->commitments commitment-marker commitment-patterns))))
+                   ,(letters->commitments commitment-marker commitment-patterns))))
   (define (sat-other-derivative-node name)
     (config-pair name `(() () (goto A) () ())))
   (define (sat-impl-step trigger) (impl-step trigger null null #f))
@@ -652,87 +652,87 @@
   ;;              (make-config-commitment-pair l-node 5 'W))))
   )
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Unsatisfied commitments graph construction
+;; ---------------------------------------------------------------------------------------------------
+;; Unsatisfied commitments graph construction
 
-;; ;; (List config-pair (List address pattern)) IncomingDict OutgoingDict RelatedSpecStepsDict
-;; ;; -> Graph
-;; ;;
-;; ;; Builds a graph whose vertices are pairs of configuation pairs and commitments such that vertices
-;; ;; are in the either-way reachability graph of init-config and there is an edge from v1 to v2 iff
-;; ;; there is a step of v1's impl-config to v2's impl-config that does not satisfy the commitment in v1,
-;; ;; and v2's commitment is the possibly renamed version of v1's commitment.
-;; (define (build-unsatisfying-graph init-config-commitment-pair incoming outgoing related-spec-steps)
-;;   (define G (make-graph))
-;;   (define init-vertex (graph-add-vertex! G init-config-commitment-pair))
-;;   (define worklist (queue init-vertex))
+;; (List config-pair (List marker pattern)) IncomingDict OutgoingDict RelatedSpecStepsDict
+;; -> Graph
+;;
+;; Builds a graph whose vertices are pairs of configuation pairs and commitments such that vertices
+;; are in the either-way reachability graph of init-config and there is an edge from v1 to v2 iff
+;; there is a step of v1's impl-config to v2's impl-config that does not satisfy the commitment in v1,
+;; and v2's commitment is the possibly renamed version of v1's commitment.
+(define (build-unsatisfying-graph init-config-commitment-pair incoming outgoing related-spec-steps)
+  (define G (make-graph))
+  (define init-vertex (graph-add-vertex! G init-config-commitment-pair))
+  (define worklist (queue init-vertex))
 
-;;   ;; Loop invariants:
-;;   ;; * every pair in the worklist has a corresponding vertex in G
-;;   ;;
-;;   ;; * every pair in G but not in the worklist has an edge in G for every possible step to or from the
-;;   ;; pair that does not satisfy its commitment. This is exactly the visited set.
-;;   (let loop ([visited (set)])
-;;     (match (dequeue-if-non-empty! worklist)
-;;       [#f (void)]
-;;       [vertex
-;;        (define pair (vertex-value vertex))
-;;        ;; 1. check if this pair has already been visited
-;;        (cond
-;;          [(set-member? visited pair)
-;;           (loop visited)]
-;;          [else
-;;           ;; 2. For each impl-step from this node that does not satisfy the commitment, add its edges
-;;           ;; that do not satisfy the commitment
-;;           (define config-pair (first pair))
-;;           (define commitment (second pair))
-;;           (define commitment-address (first commitment))
-;;           (define pattern (second commitment))
+  ;; Loop invariants:
+  ;; * every pair in the worklist has a corresponding vertex in G
+  ;;
+  ;; * every pair in G but not in the worklist has an edge in G for every possible step to or from the
+  ;; pair that does not satisfy its commitment. This is exactly the visited set.
+  (let loop ([visited (set)])
+    (match (dequeue-if-non-empty! worklist)
+      [#f (void)]
+      [vertex
+       (define pair (vertex-value vertex))
+       ;; 1. check if this pair has already been visited
+       (cond
+         [(set-member? visited pair)
+          (loop visited)]
+         [else
+          ;; 2. For each impl-step from this node that does not satisfy the commitment, add its edges
+          ;; that do not satisfy the commitment
+          (define config-pair (first pair))
+          (define commitment (second pair))
+          (define commitment-marker (first commitment))
+          (define pattern (second commitment))
 
-;;           ;; Add vertices and edges from walking backwards
-;;           (for ([incoming-entry (hash-ref incoming config-pair)])
-;;             (match-define (list prev-config-pair i-step s-step addr-map) incoming-entry)
-;;             (define prev-address (reverse-rename-address addr-map commitment-address))
-;;             (define prev-commitment (list prev-address pattern))
-;;             (when (and (aps#-config-has-commitment? (config-pair-spec-config prev-config-pair)
-;;                                                     prev-address pattern)
-;;                        (not (member prev-commitment (spec-step-satisfied-commitments s-step))))
-;;               (define pred-vertex
-;;                 (graph-find-or-add-vertex! G (list prev-config-pair prev-commitment)))
-;;               (graph-add-edge-if-new! G (list i-step s-step) pred-vertex vertex)
-;;               (enqueue! worklist pred-vertex)))
+          ;; Add vertices and edges from walking backwards
+          (for ([incoming-entry (hash-ref incoming config-pair)])
+            (match-define (list prev-config-pair i-step s-step addr-map marker-map) incoming-entry)
+            (define prev-marker (reverse-rename-marker marker-map commitment-marker))
+            (define prev-commitment (list prev-marker pattern))
+            (when (and (aps#-config-has-commitment? (config-pair-spec-config prev-config-pair)
+                                                    prev-marker pattern)
+                       (not (member prev-commitment (spec-step-satisfied-commitments s-step))))
+              (define pred-vertex
+                (graph-find-or-add-vertex! G (list prev-config-pair prev-commitment)))
+              (graph-add-edge-if-new! G (list i-step s-step) pred-vertex vertex)
+              (enqueue! worklist pred-vertex)))
 
-;;           ;; Add vertices and edges from walking forwards
-;;           (for ([the-full-step (hash-ref outgoing config-pair)])
-;;             (match-define (full-step impl-step spec-step derivatives) the-full-step)
-;;             (unless (member commitment (spec-step-satisfied-commitments spec-step))
-;;               (match-define (list derivative successor-commitment)
-;;                 (find-carrying-derivative derivatives commitment))
-;;               (define successor-vertex
-;;                 (graph-find-or-add-vertex! G (list derivative successor-commitment)))
-;;               (graph-add-edge-if-new! G (list impl-step spec-step) vertex successor-vertex)
-;;               (enqueue! worklist successor-vertex)))
-;;           (loop (set-add visited pair))])]))
-;;   G)
+          ;; Add vertices and edges from walking forwards
+          (for ([the-full-step (hash-ref outgoing config-pair)])
+            (match-define (full-step impl-step spec-step derivatives) the-full-step)
+            (unless (member commitment (spec-step-satisfied-commitments spec-step))
+              (match-define (list derivative successor-commitment)
+                (find-carrying-derivative derivatives commitment))
+              (define successor-vertex
+                (graph-find-or-add-vertex! G (list derivative successor-commitment)))
+              (graph-add-edge-if-new! G (list impl-step spec-step) vertex successor-vertex)
+              (enqueue! worklist successor-vertex)))
+          (loop (set-add visited pair))])]))
+  G)
 
 (module+ test
   ;; Tests for graph: I think just something that tests a little of everything: only do the non-sat
   ;; edges, record triggers in edges, backwards and forwards, multiple spec steps, etc.
 
-  ;; (test-graph-equal? "build-unsatisfying-graph: G with pattern W"
-  ;;   (build-unsatisfying-graph (make-config-commitment-pair g-node 2 'W)
-  ;;                             com-sat-incoming
-  ;;                             com-sat-outgoing
-  ;;                             com-sat-related-steps)
-  ;;   (graph-literal (vertices [a (make-config-commitment-pair a-node 1 'W)]
-  ;;                            [g (make-config-commitment-pair g-node 2 'W)]
-  ;;                            [h (make-config-commitment-pair h-node 2 'W)]
-  ;;                            [l (make-config-commitment-pair l-node 5 'W)])
-  ;;                  (edges [(list ag-impl-step ag-spec-step) a g]
-  ;;                         [(list gh-impl-step gh-spec-step) g h]
-  ;;                         [(list hg-impl-step hg-spec-step) h g]
-  ;;                         [(list al-impl-step al-spec-step) a l]
-  ;;                         [(list la-impl-step la-spec-step) l a])))
+  (test-graph-equal? "build-unsatisfying-graph: G with pattern W"
+    (build-unsatisfying-graph (make-config-commitment-pair g-node 2 'W)
+                              com-sat-incoming
+                              com-sat-outgoing
+                              com-sat-related-steps)
+    (graph-literal (vertices [a (make-config-commitment-pair a-node 1 'W)]
+                             [g (make-config-commitment-pair g-node 2 'W)]
+                             [h (make-config-commitment-pair h-node 2 'W)]
+                             [l (make-config-commitment-pair l-node 5 'W)])
+                   (edges [(list ag-impl-step ag-spec-step) a g]
+                          [(list gh-impl-step gh-spec-step) g h]
+                          [(list hg-impl-step hg-spec-step) h g]
+                          [(list al-impl-step al-spec-step) a l]
+                          [(list la-impl-step la-spec-step) l a])))
 
   (define com-sat-w-on-a-graph
     (graph-literal (vertices [a (make-config-commitment-pair a-node 1 'W)]
@@ -745,12 +745,12 @@
                           [(list al-impl-step al-spec-step) a l]
                           [(list la-impl-step la-spec-step) l a])))
 
-  ;; (test-graph-equal? "build-unsatisfying-graph: A with pattern W"
-  ;;   (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'W)
-  ;;                             com-sat-incoming
-  ;;                             com-sat-outgoing
-  ;;                             com-sat-related-steps)
-  ;;   com-sat-w-on-a-graph)
+  (test-graph-equal? "build-unsatisfying-graph: A with pattern W"
+    (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'W)
+                              com-sat-incoming
+                              com-sat-outgoing
+                              com-sat-related-steps)
+    com-sat-w-on-a-graph)
 
   (define com-sat-x-on-a-graph
     (graph-literal
@@ -769,12 +769,12 @@
             [(list ij-impl-step ij-spec-step) i j]
             [(list ji-impl-step ji-spec-step) j i])))
 
-  ;; (test-graph-equal? "build-unsatisfying-graph: A with pattern X"
-  ;;   (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'X)
-  ;;                             com-sat-incoming
-  ;;                             com-sat-outgoing
-  ;;                             com-sat-related-steps)
-  ;;   com-sat-x-on-a-graph)
+  (test-graph-equal? "build-unsatisfying-graph: A with pattern X"
+    (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'X)
+                              com-sat-incoming
+                              com-sat-outgoing
+                              com-sat-related-steps)
+    com-sat-x-on-a-graph)
 
   (define com-sat-z-on-a-graph
     (graph-literal
@@ -807,12 +807,12 @@
             [(list ji-impl-step ji-spec-step) j i]
             [(list la-impl-step la-spec-step) l a])))
 
-    ;; (test-graph-equal? "build-unsatisfying-graph: A with pattern Z"
-    ;; (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'Z)
-    ;;                           com-sat-incoming
-    ;;                           com-sat-outgoing
-    ;;                           com-sat-related-steps)
-    ;; com-sat-z-on-a-graph)
+    (test-graph-equal? "build-unsatisfying-graph: A with pattern Z"
+    (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'Z)
+                              com-sat-incoming
+                              com-sat-outgoing
+                              com-sat-related-steps)
+    com-sat-z-on-a-graph)
 
   (define com-sat-v-on-a-graph
     (graph-literal
@@ -823,73 +823,72 @@
             [(list no-impl-step no-spec-step) n o]
             [(list on-impl-step on-spec-step) o n])))
 
-  ;; (test-graph-equal? "build-unsatisfying-graph: A with pattern V"
-  ;;   (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'V)
-  ;;                             com-sat-incoming
-  ;;                             com-sat-outgoing
-  ;;                             com-sat-related-steps)
-  ;;   com-sat-v-on-a-graph)
-  )
+  (test-graph-equal? "build-unsatisfying-graph: A with pattern V"
+    (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'V)
+                              com-sat-incoming
+                              com-sat-outgoing
+                              com-sat-related-steps)
+    com-sat-v-on-a-graph))
 
-;; mapped-derivative (List address pattern) -> (List config-pair (List address pattern))
+;; mapped-derivative (List marker pattern) -> (List config-pair (List marker pattern))
 ;;
 ;; Finds the derivative within the given list that carries the given commitment from the previous
 ;; configuration pair, returning both the derivative config pair as well as the new commitment
-;; (i.e. the commitment that has the address renamed to match the new config)
-;; (define (find-carrying-derivative derivatives commitment)
-;;   (define com-address (first commitment))
-;;   (let loop ([derivatives (set->list derivatives)])
-;;     (match derivatives
-;;       [(list derivative derivatives ...)
-;;        (match (try-rename-address (mapped-derivative-address-map derivative) com-address)
-;;          [#f (loop derivatives)]
-;;          [new-address (list (mapped-derivative-config-pair derivative)
-;;                             (list new-address (second commitment)))])]
-;;       [(list) (error 'find-carrying-derivative
-;;                      "Unable to find carrying derivative for ~s in ~s"
-;;                      commitment
-;;                      derivatives)])))
+;; (i.e. the commitment that has the marker renamed to match the new config)
+(define (find-carrying-derivative derivatives commitment)
+  (define com-marker (first commitment))
+  (let loop ([derivatives (set->list derivatives)])
+    (match derivatives
+      [(list derivative derivatives ...)
+       (match (try-rename-marker (mapped-derivative-marker-map derivative) com-marker)
+         [#f (loop derivatives)]
+         [new-marker (list (mapped-derivative-config-pair derivative)
+                            (list new-marker (second commitment)))])]
+      [(list) (error 'find-carrying-derivative
+                     "Unable to find carrying derivative for ~s in ~s"
+                     commitment
+                     derivatives)])))
 
-;; (module+ test
-;;   (check-equal?
-;;    (find-carrying-derivative (list (mapped-derivative 'A null)
-;;                                    (mapped-derivative 'B (list `[2 3]))
-;;                                    (mapped-derivative 'C (list `[1 4] `[5 2]))
-;;                                    (mapped-derivative 'D (list `[6 1]`[3 2])))
-;;                              `((addr (env Nat) 3) *))
-;;    (list 'D `((addr (env Nat) 2) *))))
+(module+ test
+  (check-equal?
+   (find-carrying-derivative (list (mapped-derivative 'A null null)
+                                   (mapped-derivative 'B null (list `[2 3]))
+                                   (mapped-derivative 'C null (list `[1 4] `[5 2]))
+                                   (mapped-derivative 'D null (list `[6 1]`[3 2])))
+                             `(3 *))
+   (list 'D `(2 *))))
 
-;; ;; Returns the vertex with the given value in the graph, or adds such a vertex if none exists and
-;; ;; returns it
-;; (define (graph-find-or-add-vertex! g val)
-;;   (match (graph-find-vertex g val)
-;;     [#f (graph-add-vertex! g val)]
-;;     [v v]))
+;; Returns the vertex with the given value in the graph, or adds such a vertex if none exists and
+;; returns it
+(define (graph-find-or-add-vertex! g val)
+  (match (graph-find-vertex g val)
+    [#f (graph-add-vertex! g val)]
+    [v v]))
 
-;; ;; Adds an edge with the given value, source, and destination to the given graph if such an edge does
-;; ;; not already exist
-;; (define (graph-add-edge-if-new! g val src dest)
-;;   (define (target-edge? e)
-;;     (and (equal? (edge-value e) val)
-;;          (equal? (vertex-value (edge-source e)) (vertex-value src))
-;;          (equal? (vertex-value (edge-destination e)) (vertex-value dest))))
-;;   (unless (findf target-edge? (vertex-outgoing src))
-;;     (graph-add-edge! g val src dest)))
+;; Adds an edge with the given value, source, and destination to the given graph if such an edge does
+;; not already exist
+(define (graph-add-edge-if-new! g val src dest)
+  (define (target-edge? e)
+    (and (equal? (edge-value e) val)
+         (equal? (vertex-value (edge-source e)) (vertex-value src))
+         (equal? (vertex-value (edge-destination e)) (vertex-value dest))))
+  (unless (findf target-edge? (vertex-outgoing src))
+    (graph-add-edge! g val src dest)))
 
-;; (module+ test
-;;   (test-graph-equal? "graph-add-edge-if-new!"
-;;     (let ()
-;;       (define g (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b])))
-;;       (graph-add-edge-if-new! g 1 (graph-find-vertex g 'a) (graph-find-vertex g 'b))
-;;       g)
-;;     (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b])))
+(module+ test
+  (test-graph-equal? "graph-add-edge-if-new!"
+    (let ()
+      (define g (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b])))
+      (graph-add-edge-if-new! g 1 (graph-find-vertex g 'a) (graph-find-vertex g 'b))
+      g)
+    (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b])))
 
-;;   (test-graph-equal? "graph-add-edge-if-new! 2"
-;;     (let ()
-;;       (define g (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b])))
-;;       (graph-add-edge-if-new! g 2 (graph-find-vertex g 'a) (graph-find-vertex g 'b))
-;;       g)
-;;     (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b] [2 a b]))))
+  (test-graph-equal? "graph-add-edge-if-new! 2"
+    (let ()
+      (define g (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b])))
+      (graph-add-edge-if-new! g 2 (graph-find-vertex g 'a) (graph-find-vertex g 'b))
+      g)
+    (graph-literal (vertices [a 'a] [b 'b]) (edges [1 a b] [2 a b]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Graph helpers

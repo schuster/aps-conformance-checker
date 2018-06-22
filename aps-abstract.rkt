@@ -15,7 +15,7 @@
  canonicalize-pair
  try-rename-marker
  reverse-rename-marker
- ;; aps#-config-has-commitment?
+ aps#-config-has-commitment?
  ;; aps#-completed-no-transition-psm?
  ;; evict-pair
  ;; needed for widening
