@@ -25,6 +25,7 @@
  aps#
 
  ;; Required by conformance checker for blurring
+ aps#-psm-mon-receptionists
  aps#-psm-mon-externals
 
  ;; Testing helpers

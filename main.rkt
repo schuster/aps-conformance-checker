@@ -597,160 +597,161 @@
 ;; (define (sbc* pairs)
 ;;   (append* (map sbc pairs)))
 
-;; ;; impl-config spec-config -> (List impl-config spec-config)
-;; ;;
-;; ;; Blurs the given configurations into only the portions that are relevant to the specification
-;; ;; configuration, moving the rest of the configurations into the "imprecise" sections of the
-;; ;; abstraction.
-;; ;;
-;; ;; Specifically, this chooses actors with either the NEW or OLD flag to be more likely to match this
-;; ;; specification, then takes all actors with the same spawn location and opposite flag and merges
-;; ;; their behaviors into the set of behaviors for the "blurred" actors of that location.
-;; (define (blur-by-relevant-addresses impl-config spec-config)
-;;   (match-define (list blurred-impl-config blurred-internals)
-;;     (csa#-blur-config impl-config
-;;                       (choose-id-to-blur impl-config spec-config)
-;;                       (aps#-relevant-external-addrs spec-config)))
-;;   (list
-;;    blurred-impl-config
-;;    (aps#-blur-config spec-config blurred-internals)))
+;; impl-config spec-config -> (List impl-config spec-config)
+;;
+;; Blurs the given configurations into only the portions that are relevant to the specification
+;; configuration, moving the rest of the configurations into the "imprecise" sections of the
+;; abstraction.
+;;
+;; Specifically, this chooses actors with either the NEW or OLD flag to be more likely to match this
+;; specification, then takes all actors with the same spawn location and opposite flag and merges
+;; their behaviors into the set of behaviors for the "blurred" actors of that location.
+(define (blur-by-relevant-addresses impl-config spec-config)
+  (list
+    (csa#-blur-config impl-config
+                      (choose-id-to-blur impl-config spec-config)
+                      (append (aps#-psm-mon-receptionists spec-config)
+                              (aps#-psm-mon-externals spec-config)))
+    spec-config))
 
-;; (module+ test
-;;   (test-equal? "blur OLD"
-;;     (blur-by-relevant-addresses
-;;      ;; spec config: lots of spawned actors with similar addresses
-;;      '((((addr 2 1) (() (goto A)))
-;;         ((addr 2 0) (() (goto A)))
-;;         ((addr 3 1) (() (goto A)))
-;;         ((addr 3 0) (() (goto A)))
-;;         ((addr 4 1) (() (goto A)))
-;;         ((addr 4 0) (() (goto A))))
-;;        ()
-;;        ())
-;;      ;; spec config: all addresses in the unobs interface
-;;      '(((Nat (addr 2 1)))
-;;        ((Nat (addr 2 1))
-;;         (Nat (addr 2 0))
-;;         (Nat (addr 3 1))
-;;         (Nat (addr 3 0))
-;;         (Nat (addr 4 1))
-;;         (Nat (addr 4 0)))
-;;        (goto A)
-;;        ()
-;;        ()))
-;;     (list
-;;      ;; impl config result
-;;      '((((addr 2 1) (() (goto A)))
-;;         ((addr 3 1) (() (goto A)))
-;;         ((addr 4 1) (() (goto A))))
-;;        (((collective-addr 2) ((() (goto A))))
-;;         ((collective-addr 3) ((() (goto A))))
-;;         ((collective-addr 4) ((() (goto A)))))
-;;        ())
-;;      ;; spec config result
-;;      '(((Nat (addr 2 1)))
-;;        ((Nat (addr 2 1))
-;;         (Nat (collective-addr 2))
-;;         (Nat (addr 3 1))
-;;         (Nat (collective-addr 3))
-;;         (Nat (addr 4 1))
-;;         (Nat (collective-addr 4)))
-;;        (goto A)
-;;        ()
-;;        ())))
-;;   (test-equal? "blur 1"
-;;     (blur-by-relevant-addresses
-;;      ;; spec config: lots of spawned actors with similar addresses
-;;      '((((addr 2 1) (() (goto A)))
-;;         ((addr 2 0) (() (goto A)))
-;;         ((addr 3 1) (() (goto A)))
-;;         ((addr 3 0) (() (goto A)))
-;;         ((addr 4 1) (() (goto A)))
-;;         ((addr 4 0) (() (goto A))))
-;;        ()
-;;        ())
-;;      ;; spec config: all addresses in the unobs interface
-;;      '(((Nat (addr 2 0)))
-;;        ((Nat (addr 2 1))
-;;         (Nat (addr 2 0))
-;;         (Nat (addr 3 1))
-;;         (Nat (addr 3 0))
-;;         (Nat (addr 4 1))
-;;         (Nat (addr 4 0)))
-;;        (goto A)
-;;        ()
-;;        ()))
-;;     (list
-;;      ;; impl config result
-;;      '((((addr 2 0) (() (goto A)))
-;;         ((addr 3 0) (() (goto A)))
-;;         ((addr 4 0) (() (goto A))))
-;;        (((collective-addr 2) ((() (goto A))))
-;;         ((collective-addr 3) ((() (goto A))))
-;;         ((collective-addr 4) ((() (goto A)))))
-;;        ())
-;;      ;; spec config result
-;;      '(((Nat (addr 2 0)))
-;;        ((Nat (collective-addr 2))
-;;         (Nat (addr 2 0))
-;;         (Nat (collective-addr 3))
-;;         (Nat (addr 3 0))
-;;         (Nat (collective-addr 4))
-;;         (Nat (addr 4 0)))
-;;        (goto A)
-;;        ()
-;;        ()))))
+(module+ test
+  (test-equal? "blur OLD"
+    (blur-by-relevant-addresses
+     ;; impl config: lots of spawned actors with similar addresses
+     '((((addr 2 1) (() (goto A)))
+        ((addr 2 0) (() (goto A)))
+        ((addr 3 1) (() (goto A)))
+        ((addr 3 0) (() (goto A)))
+        ((addr 4 1) (() (goto A)))
+        ((addr 4 0) (() (goto A))))
+       ()
+       ()
+       ([Nat (marked (addr 2 1) 1)]
+        [Nat (marked (addr 2 0) 0)]
+        [Nat (marked (addr 3 1) 2)]
+        [Nat (marked (addr 3 0) 3)]
+        [Nat (marked (addr 4 1) 4)]
+        [Nat (marked (addr 4 0) 5)]))
+     ;; PSM: monitor only marker 0
+     '((1) () (goto A) () ()))
+    (list
+     ;; impl config result
+     '((((addr 2 1) (() (goto A)))
+        ((addr 3 1) (() (goto A)))
+        ((addr 4 1) (() (goto A))))
+       (((collective-addr 2) ((() (goto A))))
+        ((collective-addr 3) ((() (goto A))))
+        ((collective-addr 4) ((() (goto A)))))
+       ()
+       ([Nat (marked (addr 2 1) 1)]
+        [Nat (marked (collective-addr 2))]
+        [Nat (marked (addr 3 1))]
+        [Nat (marked (collective-addr 3))]
+        [Nat (marked (addr 4 1))]
+        [Nat (marked (collective-addr 4))]))
+     ;; spec config result
+     `((1) () (goto A) () ())))
+  (test-equal? "blur 1"
+    (blur-by-relevant-addresses
+     ;; impl config: lots of spawned actors with similar addresses
+     '((((addr 2 1) (() (goto A)))
+        ((addr 2 0) (() (goto A)))
+        ((addr 3 1) (() (goto A)))
+        ((addr 3 0) (() (goto A)))
+        ((addr 4 1) (() (goto A)))
+        ((addr 4 0) (() (goto A))))
+       ()
+       ()
+       ([Nat (marked (addr 2 1) 1)]
+        [Nat (marked (addr 2 0) 0)]
+        [Nat (marked (addr 3 1) 2)]
+        [Nat (marked (addr 3 0) 3)]
+        [Nat (marked (addr 4 1) 4)]
+        [Nat (marked (addr 4 0) 5)]))
+     ;; PSM: monitor only marker 0
+     '((0) () (goto A) () ()))
+    (list
+     ;; impl config result
+     '((((addr 2 0) (() (goto A)))
+        ((addr 3 0) (() (goto A)))
+        ((addr 4 0) (() (goto A))))
+       (((collective-addr 2) ((() (goto A))))
+        ((collective-addr 3) ((() (goto A))))
+        ((collective-addr 4) ((() (goto A)))))
+       ()
+       ([Nat (marked (collective-addr 2))]
+        [Nat (marked (addr 2 0) 0)]
+        [Nat (marked (collective-addr 3))]
+        [Nat (marked (addr 3 0))]
+        [Nat (marked (collective-addr 4))]
+        [Nat (marked (addr 4 0))]))
+     ;; spec config result
+     '((0) () (goto A) () ()))))
 
-;; (module+ test
-;;   (test-equal? "check that messages with blurred addresses get merged together"
-;;    (blur-by-relevant-addresses
-;;     (term (()
-;;            ()
-;;            (((addr 2 0) (addr (env Nat) 1) single)
-;;             ((addr 2 0) (addr (env Nat) 2) single)
-;;             ((addr 2 0) (addr (env Nat) 3) single))))
-;;     (aps#-make-no-transition-config '() '(((addr (env Nat) 3)))))
-;;    (list (term (()
-;;                 ()
-;;                 (((addr 2 0) (collective-addr (env Nat)) many)
-;;                  ((addr 2 0) (addr (env Nat) 3) single))))
-;;          (aps#-make-no-transition-config '() '(((addr (env Nat) 3)))))))
+(module+ test
+  (test-equal? "check that messages with blurred addresses get merged together"
+   (blur-by-relevant-addresses
+    (term (()
+           ()
+           (((addr 2 0) (marked (collective-addr (env Nat)) 1) single)
+            ((addr 2 0) (marked (collective-addr (env Nat)) 2) single)
+            ((addr 2 0) (marked (collective-addr (env Nat)) 3) single))
+           ()))
+    (valid-s# `[() (3) (goto A) () ()]))
+   (list (term (()
+                ()
+                (((addr 2 0) (marked (collective-addr (env Nat))) many)
+                 ((addr 2 0) (marked (collective-addr (env Nat)) 3) single))
+                ()))
+         (valid-s# `[() (3) (goto A) () ()]))))
 
-;; ;; Decides whether to blur spawn-addresses with the OLD or NEW flag based on the current impl and spec
-;; ;; configs, returning the flag for addresses that should be blurred.
-;; (define (choose-id-to-blur impl-config spec-config)
-;;   ;; 1. if there are no observable spec receptionists but only actors with just one of the flags have
-;;   ;; addresses from the output commitment set, blur the other flag
-;;   ;;
-;;   ;; 2. if the observed receptionist is atomic and the address with opposite ID as the spec obs
-;;   ;; receptionist exists, return the opposite of the obs receptionist ID
-;;   ;;
-;;   ;; 3. otherwise, just return OLD by default
-;;   (define (other-flag f)
-;;     (match f
-;;        [0 1]
-;;        [1 0]))
-;;   (match (aps#-config-obs-receptionists spec-config)
-;;     [(list)
-;;      (match (csa#-ids-that-know-externals impl-config (aps#-relevant-external-addrs spec-config))
-;;        [(list flag) (other-flag flag)] ; use "other" flag if exactly one flag knows externals
-;;        [_ 0])]
-;;     [(list `[,obs-rec-type ,obs-rec-addr])
-;;      (if (and (csa#-atomic-address? obs-rec-addr)
-;;               (csa#-actor-with-opposite-id-exists? impl-config obs-rec-addr))
-;;          (other-flag (csa#-address-id obs-rec-addr))
-;;          0)]))
+;; Decides whether to blur spawn-addresses with the OLD or NEW flag based on the current impl and spec
+;; configs, returning the flag for addresses that should be blurred.
+(define (choose-id-to-blur impl-config spec-config)
+  ;; 1. if there are no observable spec receptionists but only actors with just one of the flags have
+  ;; addresses from the output commitment set, blur the other flag
+  ;;
+  ;; 2. if the observed receptionist is atomic and the address with opposite ID as the spec obs
+  ;; receptionist exists, return the opposite of the obs receptionist ID
+  ;;
+  ;; 3. otherwise, just return OLD by default
+  (define (other-flag f)
+    (match f
+       [0 1]
+       [1 0]))
+  (match (aps#-psm-mon-receptionists spec-config)
+    [(list)
+     (match (csa#-ids-that-know-markers impl-config (aps#-psm-mon-externals spec-config))
+       [(list flag) (other-flag flag)] ; use "other" flag if exactly one flag knows externals
+       [_ 0])]
+    [(list mon-rec-marker)
+     (define monitored-addr (csa#-config-receptionist-addr-by-marker impl-config mon-rec-marker))
+     (if (and (csa#-atomic-address? monitored-addr)
+              (csa#-actor-with-opposite-id-exists? impl-config monitored-addr))
+         (other-flag (csa#-address-id monitored-addr))
+         0)]))
 
-;; (module+ test
-;;   (test-equal? "choose spawn flag 1"
-;;     (choose-id-to-blur '(([(addr 2 0) (() (goto A))] [(addr 2 1) (() (goto A))]) () ()) '(((Nat (addr 2 1))) () (goto A) () ()))
-;;     0)
-;;   (test-equal? "choose spawn flag 2"
-;;     (choose-id-to-blur '(([(addr 2 0) (() (goto A))] [(addr 2 1) (() (goto A))]) () ()) '(((Nat (addr 2 0))) () (goto A) () ()))
-;;     1)
-;;   (test-equal? "choose spawn flag 3"
-;;     (choose-id-to-blur '(([(addr 2 0) (() (goto A))] [(addr 2 1) (() (goto A))]) () ()) '(() () (goto A) () ()))
-;;     0))
+(module+ test
+  (test-equal? "choose spawn flag: mon-rec exists, is young"
+    (choose-id-to-blur '(([(addr 2 0) (() (goto A))] [(addr 2 1) (() (goto A))])
+                         ()
+                         ()
+                         ([Nat (marked (addr 2 0) 0)]
+                          [Nat (marked (addr 2 1) 1)]))
+                       '[(1) () (goto A) () ()])
+    0)
+  (test-equal? "choose spawn flag: mon-rec exists, is old"
+    (choose-id-to-blur '(([(addr 2 0) (() (goto A))] [(addr 2 1) (() (goto A))])
+                         ()
+                         ()
+                         ([Nat (marked (addr 2 0) 0)]
+                          [Nat (marked (addr 2 1) 1)]))
+                       '[(0) () (goto A) () ()])
+    1)
+  (test-equal? "choose spawn flag: no mon rec, so blur old"
+    (choose-id-to-blur '(([(addr 2 0) (() (goto A))] [(addr 2 1) (() (goto A))]) () () ())
+                       '(() () (goto A) () ()))
+    0))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Widening

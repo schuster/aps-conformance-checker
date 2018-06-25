@@ -8,6 +8,7 @@
  csa#-transition-spawn-locs
  csa#-messages-of-type
  csa#-config-receptionists
+ csa#-config-receptionist-addr-by-marker
  csa#-enabled-internal-actions
  csa#-action-enabled?
  csa#-make-external-trigger
@@ -1951,7 +1952,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Blurring
 
-;; impl-config nat (a#ext ...) -> (List impl-config (Listof a#int))
+;; impl-config nat (a#ext ...) -> impl-config
 ;;
 ;; Blurs all actors in the configuration with the given spawn flag, and removes any markers not in
 ;; monitored-markers. See the discussion of blurring in main.rkt for more details.
@@ -2682,6 +2683,24 @@
     [#f (error 'csa#-config-collective-actor-by-address/fail "Configuration ~s does not have a collective actor with address ~s" config addr)]
     [actor actor]))
 
+(define (csa#-config-receptionist-addr-by-marker config marker)
+  (unmark-addr
+   (findf
+    (lambda (a)
+      (match a
+        [`(marked ,_ ,mk) (equal? mk marker)]
+        [_ #f]))
+    (map receptionist-marked-address (csa#-config-receptionists config)))))
+
+(module+ test
+  (test-equal? "csa#-config-receptionist-addr-by-marker"
+    (csa#-config-receptionist-addr-by-marker
+     `[() () () ([Nat (marked (addr 0 0) 0)]
+                 [String (marked (addr 0 1) 1)]
+                 [String (marked (addr 0 1) 2)])]
+     2)
+    `(addr 0 1)))
+
 (define (csa#-actor-address a)
   (first a))
 
@@ -2791,6 +2810,10 @@
 
 (define (receptionist-marked-address r)
   (second r))
+
+(define (marked-address-markers ma)
+  (match ma
+    [`(marked ,_ ,mks ...) mks]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Boolean Logic
