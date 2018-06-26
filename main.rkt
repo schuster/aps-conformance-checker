@@ -3084,53 +3084,53 @@
      (make-single-actor-config send-in-next-state-actor)
      (make-psm dynamic-never-respond-spec)))
 
-;;   ;;;; Test for external addresses escaping to environment
-;;   (define escape-actor
-;;     (term
-;;      (((Record [a (Addr Nat)] [b (Addr (Addr Nat))]) (addr 0 0))
-;;       (((define-state (Always) (m)
-;;            (begin
-;;              (send (: m b) (: m a))
-;;              (goto Always))))
-;;         (goto Always)))))
+  ;;;; Test for external addresses escaping to environment
+  (define escape-actor
+    (term
+     (((Record [a (Addr Nat)] [b (Addr (Addr Nat))]) (marked (addr 0 0) 0))
+      (((define-state (Always) (m)
+           (begin
+             (send (: m b) (: m a))
+             (goto Always))))
+        (goto Always)))))
 
-;;   (define dynamic-never-respond-spec-escape
-;;     (term
-;;      (((define-state (Always)
-;;          [* -> () (goto Always)]))
-;;       (goto Always)
-;;       ((Record [a (Addr Nat)] [b (Addr (Addr Nat))]) (addr 0 0)))))
-;;   (define obs-escape-spec1
-;;     (term (((define-state (Always)
-;;               [(record [a a] [b b]) -> () (goto Always)]))
-;;            (goto Always)
-;;            ((Record [a (Addr Nat)] [b (Addr (Addr Nat))]) (addr 0 0)))))
-;;   (define obs-escape-spec2
-;;     (term (((define-state (Always)
-;;               [(record [a a] [b b]) -> ([obligation b *]) (goto Always)]))
-;;            (goto Always)
-;;            ((Record [a (Addr Nat)] [b (Addr (Addr Nat))]) (addr 0 0)))))
+  (define dynamic-never-respond-spec-escape
+    (term
+     (((define-state (Always)
+         [* -> () (goto Always)]))
+      (goto Always)
+      0)))
+  (define obs-escape-spec1
+    (term (((define-state (Always)
+              [(record [a a] [b b]) -> () (goto Always)]))
+           (goto Always)
+           0)))
+  (define obs-escape-spec2
+    (term (((define-state (Always)
+              [(record [a a] [b b]) -> ([obligation b *]) (goto Always)]))
+           (goto Always)
+           0)))
 
-;;   (test-valid-actor? escape-actor)
-;;   (test-valid-instance? dynamic-never-respond-spec-escape)
-;;   (test-valid-instance? obs-escape-spec1)
-;;   (test-valid-instance? obs-escape-spec2)
-;;   (test-true "Sending unobs external addr to environment is okay"
-;;     (check-conformance/config
-;;      (make-single-actor-config escape-actor)
-;;      (make-exclusive-spec dynamic-never-respond-spec-escape)))
-;;   (test-exn "Sending extrnal addr to environment is not allowed (1)"
-;;     (lambda (exn) #t)
-;;     (lambda ()
-;;       (check-conformance/config
-;;        (make-single-actor-config escape-actor)
-;;        (make-exclusive-spec obs-escape-spec1))))
-;;   (test-exn "Sending external addr to environment is not allowed (2)"
-;;     (lambda (exn) #t)
-;;     (lambda ()
-;;       (check-conformance/config
-;;        (make-single-actor-config escape-actor)
-;;        (make-exclusive-spec obs-escape-spec2))))
+  (test-valid-actor? escape-actor)
+  (test-valid-instance? dynamic-never-respond-spec-escape)
+  (test-valid-instance? obs-escape-spec1)
+  (test-valid-instance? obs-escape-spec2)
+  (test-true "Sending unobs external addr to environment is okay"
+    (check-conformance/config
+     (make-single-actor-config escape-actor)
+     (make-psm dynamic-never-respond-spec-escape)))
+  (test-exn "Sending extrnal addr to environment is not allowed (1)"
+    (lambda (exn) #t)
+    (lambda ()
+      (check-conformance/config
+       (make-single-actor-config escape-actor)
+       (make-psm obs-escape-spec1))))
+  (test-exn "Sending external addr to environment is not allowed (2)"
+    (lambda (exn) #t)
+    (lambda ()
+      (check-conformance/config
+       (make-single-actor-config escape-actor)
+       (make-psm obs-escape-spec2))))
 
 ;;   ;;;; Fairness for timeouts/externals
 
