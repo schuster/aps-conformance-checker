@@ -3,19 +3,19 @@
 ;; Implements the top-level function, "check-conformance", and includes the core of the
 ;; conformance-checking algorithm
 
-;; (provide
-;;  check-conformance
+(provide
+ check-conformance
 
-;;  ;; Needed only for debugging in other files
-;;  ;; impl-steps-from
-;;  ;; matching-spec-steps
-;;  ;; debug-impl-step
-;;  ;; check-conformance/config
-;;  ;; prune-unsupported
-;;  ;; partition-by-satisfaction
-;;  ;; impl-config-without-state-defs
-;;  ;; spec-config-without-state-defs
-;;  )
+ ;; Needed only for debugging in other files
+ ;; impl-steps-from
+ ;; matching-spec-steps
+ ;; debug-impl-step
+ ;; check-conformance/config
+ ;; prune-unsupported
+ ;; partition-by-satisfaction
+ ;; impl-config-without-state-defs
+ ;; spec-config-without-state-defs
+ )
 
 (require
  ;; See README.md for a brief description of these files
@@ -41,174 +41,175 @@
    (for-syntax syntax/parse)
    "rackunit-helpers.rkt"))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Top-level Algorithm
+;; ---------------------------------------------------------------------------------------------------
+;; Top-level Algorithm
 
-;; ;; Returns the result of running the conformance-check algorithm below on the instantiated program and
-;; ;; specification.
-;; (define/contract (check-conformance program specification
-;;                                     #:use-widen? [use-widen? #t]
-;;                                     #:memoize-eval-handler? [memoize-eval-handler? #t]
-;;                                     #:use-eviction? [use-eviction? #t]
-;;                                     #:stats-directory [stats-directory #f])
-;;   (->* (csa-valid-program? aps-valid-spec?)
-;;        (#:use-widen? boolean?
-;;         #:memoize-eval-handler? boolean?
-;;         #:use-eviction? boolean?
-;;         #:stats-directory (or/c boolean? string?))
-;;        boolean?)
-;;   (parameterize ([USE-WIDEN? use-widen?]
-;;                  [MEMOIZE-EVAL-HANDLER? memoize-eval-handler?]
-;;                  [USE-EVICTION? use-eviction?])
-;;     (printf "OPTIMIZATIONS:\n")
-;;     (printf "Widening: ~s\n" use-widen?)
-;;     (printf "Memoize eval-handler: ~s\n" memoize-eval-handler?)
-;;     (printf "Eviction: ~s\n\n" use-eviction?)
-;;     (match-define (list impl-config spec-config) (instantiate-configs program specification))
-;;     (check-conformance/config impl-config spec-config #:stats-directory stats-directory)))
+;; Returns the result of running the conformance-check algorithm below on the instantiated program and
+;; specification.
+(define/contract (check-conformance program specification
+                                    #:use-widen? [use-widen? #t]
+                                    #:memoize-eval-handler? [memoize-eval-handler? #t]
+                                    #:use-eviction? [use-eviction? #t]
+                                    #:stats-directory [stats-directory #f])
+  (->* (csa-valid-program? aps-valid-spec?)
+       (#:use-widen? boolean?
+        #:memoize-eval-handler? boolean?
+        #:use-eviction? boolean?
+        #:stats-directory (or/c boolean? string?))
+       boolean?)
+  (parameterize ([USE-WIDEN? use-widen?]
+                 [MEMOIZE-EVAL-HANDLER? memoize-eval-handler?]
+                 [USE-EVICTION? use-eviction?])
+    (printf "OPTIMIZATIONS:\n")
+    (printf "Widening: ~s\n" use-widen?)
+    (printf "Memoize eval-handler: ~s\n" memoize-eval-handler?)
+    (printf "Eviction: ~s\n\n" use-eviction?)
+    (match-define (list impl-config spec-config) (instantiate-configs program specification))
+    (check-conformance/config impl-config spec-config #:stats-directory stats-directory)))
 
-;; ;; Given a concrete implementation configuration, a concrete specification configuration, returns #t
-;; ;; if the conformance-check algorithm can prove that the implementation conforms to the specification,
-;; ;; #f otherwise.
-;; ;;
-;; ;; The algorithm works by abstracting the given initial configurations into abstract configurations,
-;; ;; then constructing a graph-like structure that acts as a constructive proof of conformance for the
-;; ;; abstract pair (roughly, every vertex (pair of configurations) in the graph is in the conformance
-;; ;; relation, and every edge points to the pair that supports some necessary dependency of the source
-;; ;; pair. By the soundness theorem for abstract conformance, if conformance holds for the abstract
-;; ;; pairs (i.e. the pairs are in the graph), then it holds for the original concrete pairs, as well.
-;; ;;
-;; ;; To construct this structure, the algorithm first abstractly interprets the implementation and
-;; ;; specification to find configuration pairs in which the specification can simulate the
-;; ;; implementation up to one step (see find-rank1-simulation). This process also uncovers all edges and
-;; ;; vertices that related pairs would rely upon to be part of a full simulation relation. By removing
-;; ;; from the graph all pairs that depend on pairs outside the graph and propagating the results of
-;; ;; those removals backwards until we reach a greatest fixpoint (see prune-unsupported), we end up with
-;; ;; a proof graph whose vertices are all configuration pairs in the simulation.
-;; ;;
-;; ;; Next, we identify the the vertices in the graph whose implementation configurations are not
-;; ;; guaranteed to satisfy all of their commitments in every fair execution (see find-unsatisfying-pairs
-;; ;; below). By removing these nodes and again back-propagating the effects of those removals (with
-;; ;; prune-unsupported again), the resulting graph represents a proof that all of its members are in the
-;; ;; conformance relation.
-;; (define/contract (check-conformance/config initial-impl-config initial-spec-config
-;;                                            #:stats-directory [stats-directory #f])
-;;   (->* (csa-valid-config? aps-valid-config?)
-;;        (#:stats-directory (or/c boolean? string?))
-;;        boolean?)
+;; Given a concrete implementation configuration, a concrete specification configuration, returns #t
+;; if the conformance-check algorithm can prove that the implementation conforms to the specification,
+;; #f otherwise.
+;;
+;; The algorithm works by abstracting the given initial configurations into abstract configurations,
+;; then constructing a graph-like structure that acts as a constructive proof of conformance for the
+;; abstract pair (roughly, every vertex (pair of configurations) in the graph is in the conformance
+;; relation, and every edge points to the pair that supports some necessary dependency of the source
+;; pair. By the soundness theorem for abstract conformance, if conformance holds for the abstract
+;; pairs (i.e. the pairs are in the graph), then it holds for the original concrete pairs, as well.
+;;
+;; To construct this structure, the algorithm first abstractly interprets the implementation and
+;; specification to find configuration pairs in which the specification can simulate the
+;; implementation up to one step (see find-rank1-simulation). This process also uncovers all edges and
+;; vertices that related pairs would rely upon to be part of a full simulation relation. By removing
+;; from the graph all pairs that depend on pairs outside the graph and propagating the results of
+;; those removals backwards until we reach a greatest fixpoint (see prune-unsupported), we end up with
+;; a proof graph whose vertices are all configuration pairs in the simulation.
+;;
+;; Next, we identify the the vertices in the graph whose implementation configurations are not
+;; guaranteed to satisfy all of their commitments in every fair execution (see find-unsatisfying-pairs
+;; below). By removing these nodes and again back-propagating the effects of those removals (with
+;; prune-unsupported again), the resulting graph represents a proof that all of its members are in the
+;; conformance relation.
+(define/contract (check-conformance/config initial-impl-config initial-spec-config
+                                           #:stats-directory [stats-directory #f])
+  (->* (csa-valid-config? aps-valid-psm?)
+       (#:stats-directory (or/c boolean? string?))
+       boolean?)
 
-;;   (reset-statistics)
-;;   (with-handlers
-;;     ([exn:break?
-;;       (lambda (ex)
-;;         (print-statistics)
-;;         (raise ex))])
-;;     (stat-set! STAT-start-time (date->string (seconds->date (current-seconds)) #t))
-;;     ;; this thread will automatically end when the job is terminated, so we don't have to wait for it
-;;     (thread
-;;      (lambda ()
-;;        (when stats-directory
-;;          (unless (directory-exists? stats-directory)
-;;            (make-directory stats-directory))
-;;          (let loop ()
-;;            ;; write to two different files, so that we always have one good file if the job is
-;;            ;; terminated while we're writing to the file
-;;            (sleep 60)
-;;            (with-output-to-file (build-path stats-directory "stats1.txt") print-statistics #:exists 'replace)
-;;            (sleep 60)
-;;            (with-output-to-file (build-path stats-directory "stats2.txt") print-statistics #:exists 'replace)
-;;            (loop)))))
-;;     (define final-result
-;;       (cond
-;;         [(not (spec-interfaces-available? initial-impl-config initial-spec-config)) #f]
-;;         [else
-;;          (match (get-initial-abstract-pairs initial-impl-config initial-spec-config)
-;;            [#f #f]
-;;            [unwidened-initial-pairs
-;;             (define initial-pairs
-;;               (if (USE-WIDEN?)
-;;                   (map (curryr widen-pair #f 0 0 0) unwidened-initial-pairs)
-;;                   unwidened-initial-pairs))
-;;             (match-define (list rank1-pairs
-;;                                 rank1-unrelated-successors
-;;                                 incoming-steps
-;;                                 rank1-related-spec-steps)
-;;               (find-rank1-simulation initial-pairs))
-;;             (stat-set! STAT-simulation-finish-time (date->string (seconds->date (current-seconds)) #t))
-;;             (stat-set! STAT-rank1-simulation-size (set-count rank1-pairs))
-;;             ;; (printf "Finished rank1 simulation at: ~a\n" (stat-value STAT-simulation-finish-time))
-;;             (match-define (list simulation-pairs simulation-related-spec-steps)
-;;               (prune-unsupported rank1-pairs
-;;                                  incoming-steps
-;;                                  rank1-related-spec-steps
-;;                                  rank1-unrelated-successors))
-;;             (stat-set! STAT-simulation-prune-finish-time (date->string (seconds->date (current-seconds)) #t))
-;;             (stat-set! STAT-simulation-size (set-count simulation-pairs))
-;;             ;; (printf "Finished simulation prune at: ~a\n" (stat-value STAT-simulation-prune-finish-time))
-;;             (cond
-;;               [(andmap (curry set-member? simulation-pairs) initial-pairs)
-;;                (match-define (list commitment-satisfying-pairs unsatisfying-pairs)
-;;                  (partition-by-satisfaction simulation-pairs incoming-steps simulation-related-spec-steps))
-;;                (stat-set! STAT-obligation-check-finish-time
-;;                           (date->string (seconds->date (current-seconds)) #t))
-;;                (stat-set! STAT-obl-checked-size (set-count commitment-satisfying-pairs))
-;;                ;; (printf "Finished obligation fulfillment check at: ~a\n" (stat-value STAT-obligation-check-finish-time))
-;;                ;; (printf "Unsatisfying pairs: ~s\n"
-;;                ;;         (for/list ([p unsatisfying-pairs])
-;;                ;;           (cons
-;;                ;;            (impl-config-without-state-defs (config-pair-impl-config p))
-;;                ;;            (spec-config-without-state-defs (config-pair-spec-config p)))))
-;;                (match-define (list conforming-pairs _)
-;;                  (prune-unsupported commitment-satisfying-pairs
-;;                                     incoming-steps
-;;                                     simulation-related-spec-steps
-;;                                     unsatisfying-pairs))
-;;                (stat-set! STAT-obligation-prune-finish-time (date->string (seconds->date (current-seconds)) #t))
-;;                (stat-set! STAT-conformance-size (set-count conforming-pairs))
-;;                ;; (printf "Finished obligation fulfillment prune at: ~a\n"
-;;                ;;         (stat-value STAT-obligation-prune-finish-time))
-;;                (andmap (curry set-member? conforming-pairs) initial-pairs)]
-;;               [else
-;;                ;; (printf "At least one initial configuration pair was not in the simulation\n")
-;;                #f])])]))
-;;     (stat-set! STAT-finish-time (date->string (seconds->date (current-seconds)) #t))
-;;     (print-statistics)
-;;     final-result))
+  (reset-statistics)
+  (with-handlers
+    ([exn:break?
+      (lambda (ex)
+        (print-statistics)
+        (raise ex))])
+    (stat-set! STAT-start-time (date->string (seconds->date (current-seconds)) #t))
+    ;; this thread will automatically end when the job is terminated, so we don't have to wait for it
+    (thread
+     (lambda ()
+       (when stats-directory
+         (unless (directory-exists? stats-directory)
+           (make-directory stats-directory))
+         (let loop ()
+           ;; write to two different files, so that we always have one good file if the job is
+           ;; terminated while we're writing to the file
+           (sleep 60)
+           (with-output-to-file (build-path stats-directory "stats1.txt") print-statistics #:exists 'replace)
+           (sleep 60)
+           (with-output-to-file (build-path stats-directory "stats2.txt") print-statistics #:exists 'replace)
+           (loop)))))
+    (define final-result
+      (cond
+        [(not (mon-recs-available? initial-impl-config initial-spec-config)) #f]
+        [else
+         (match (get-initial-abstract-pairs initial-impl-config initial-spec-config)
+           [#f #f]
+           [unwidened-initial-pairs
+            (define initial-pairs
+              (if (USE-WIDEN?)
+                  (map (curryr widen-pair #f 0 0 0) unwidened-initial-pairs)
+                  unwidened-initial-pairs))
+            (match-define (list rank1-pairs
+                                rank1-unrelated-successors
+                                incoming-steps
+                                rank1-related-spec-steps)
+              (find-rank1-simulation initial-pairs))
+            (stat-set! STAT-simulation-finish-time (date->string (seconds->date (current-seconds)) #t))
+            (stat-set! STAT-rank1-simulation-size (set-count rank1-pairs))
+            ;; (printf "Finished rank1 simulation at: ~a\n" (stat-value STAT-simulation-finish-time))
+            (match-define (list simulation-pairs simulation-related-spec-steps)
+              (prune-unsupported rank1-pairs
+                                 incoming-steps
+                                 rank1-related-spec-steps
+                                 rank1-unrelated-successors))
+            (stat-set! STAT-simulation-prune-finish-time (date->string (seconds->date (current-seconds)) #t))
+            (stat-set! STAT-simulation-size (set-count simulation-pairs))
+            ;; (printf "Finished simulation prune at: ~a\n" (stat-value STAT-simulation-prune-finish-time))
+            (cond
+              [(andmap (curry set-member? simulation-pairs) initial-pairs)
+               (match-define (list commitment-satisfying-pairs unsatisfying-pairs)
+                 (partition-by-satisfaction simulation-pairs incoming-steps simulation-related-spec-steps))
+               (stat-set! STAT-obligation-check-finish-time
+                          (date->string (seconds->date (current-seconds)) #t))
+               (stat-set! STAT-obl-checked-size (set-count commitment-satisfying-pairs))
+               ;; (printf "Finished obligation fulfillment check at: ~a\n" (stat-value STAT-obligation-check-finish-time))
+               ;; (printf "Unsatisfying pairs: ~s\n"
+               ;;         (for/list ([p unsatisfying-pairs])
+               ;;           (cons
+               ;;            (impl-config-without-state-defs (config-pair-impl-config p))
+               ;;            (spec-config-without-state-defs (config-pair-spec-config p)))))
+               (match-define (list conforming-pairs _)
+                 (prune-unsupported commitment-satisfying-pairs
+                                    incoming-steps
+                                    simulation-related-spec-steps
+                                    unsatisfying-pairs))
+               (stat-set! STAT-obligation-prune-finish-time (date->string (seconds->date (current-seconds)) #t))
+               (stat-set! STAT-conformance-size (set-count conforming-pairs))
+               ;; (printf "Finished obligation fulfillment prune at: ~a\n"
+               ;;         (stat-value STAT-obligation-prune-finish-time))
+               (andmap (curry set-member? conforming-pairs) initial-pairs)]
+              [else
+               ;; (printf "At least one initial configuration pair was not in the simulation\n")
+               #f])])]))
+    (stat-set! STAT-finish-time (date->string (seconds->date (current-seconds)) #t))
+    (print-statistics)
+    final-result))
 
-;; ;; Returns #t if all addresses mentioned in observable or unobservable interfaces in the spec are
-;; ;; receptionists; #f otherwise.
-;; (define (spec-interfaces-available? impl-config spec-config)
-;;   (define spec-receptionists (map second (aps-config-receptionists spec-config)))
-;;   (define impl-receptionists (map second (csa-config-receptionists impl-config)))
-;;   (and (andmap (curryr member impl-receptionists) spec-receptionists) #t))
+;; Returns #t if all monitored receptionist markers in the given PSM appear on receptionists in the
+;; given program configuration; #f otherwise.
+(define (mon-recs-available? impl-config psm)
+  ;; #t given here as last argument because member returns the tail of the list when a member is
+  ;; found, not #t
+  (and
+   (for/and ([rec-marker (aps#-psm-mon-receptionists psm)])
+     (for/or ([receptionist (csa-config-receptionists impl-config)])
+       (member rec-marker (csa-receptionist-markers receptionist))))
+   #t))
 
-;; (module+ test
-;;   (test-false "spec address receptionist check 1"
-;;     (spec-interfaces-available? (term ((((addr 1 0) (() (goto A)))) () () ()))
-;;                                 (term (((Nat (addr 1 0))) () (goto A) () ()))))
-;;   (test-false "spec address receptionist check 2"
-;;     (spec-interfaces-available? (term ((((addr 500) (() (goto A)))) () () ()))
-;;                                 (term (((Nat (addr 1 0))) () (goto A) () ()))))
-;;   (test-not-false "spec address receptionist check 3"
-;;     (spec-interfaces-available? (term ((((addr 1 0) (() (goto A)))) () ((Nat (addr 1 0))) ()))
-;;                                 (term (((Nat (addr 1 0))) () (goto A) () ()))))
-;;   (test-not-false "spec address receptionist check 4"
-;;     (spec-interfaces-available? (term ((((addr 1 0) (() (goto A)))) () ((Nat (addr 1 0))) ()))
-;;                                 (term (() () (goto A) () ()))))
-;;   (test-false "spec address receptionist: unobserved addresses 1"
-;;     (spec-interfaces-available? (term ((((addr 1 0) (() (goto A)))) () () ()))
-;;                                 (term (() ((Nat (addr 1 0))) (goto A) () ()))))
-;;   (test-not-false "spec address receptionist: unobserved addresses 2"
-;;     (spec-interfaces-available? (term ((((addr 1 0) (() (goto A)))) () ((Nat (addr 1 0))) ()))
-;;                                 (term (() ((Nat (addr 1 0))) (goto A) () ())))))
+(module+ test
+  (test-false "mon-recs-available?: no receptionists on program"
+    (mon-recs-available? (term ((((addr 1 0) (() (goto A)))) () () ()))
+                         (term ((0) () (goto A) () ()))))
+  (test-false "mon-recs-available?: wrong receptionist"
+    (mon-recs-available? (term ((((addr 500 0) (() (goto A))))
+                                ()
+                                ([Nat (marked (addr 500 0) 500)])
+                                ()))
+                         (term ((0) () (goto A) () ()))))
+  (test-not-false "mon-recs-available?: correct receptionist"
+    (mon-recs-available? (term ((((addr 1 0) (() (goto A)))) () ((Nat (marked (addr 1 0) 0))) ()))
+                         (term ((0) () (goto A) () ()))))
+  (test-not-false "mon-recs-available?: monitoring nothing"
+    (mon-recs-available? (term ((((addr 1 0) (() (goto A)))) () ((Nat (addr 1 0))) ()))
+                         (term (() () (goto A) () ())))))
 
-;; ;; Abstracts and sbc's the initial pair, returning the list of initial abstract pairs, or #f if the
-;; ;; abstraction was not possible for some reason
-;; (define (get-initial-abstract-pairs impl-config spec-config)
-;;   (match (csa#-abstract-config impl-config)
-;;     [#f #f]
-;;     [abstract-impl-config
-;;      (map first (sbc (config-pair abstract-impl-config (aps#-abstract-config spec-config))))]))
+;; Abstracts and sbc's the initial pair, returning the list of initial abstract pairs, or #f if the
+;; abstraction was not possible for some reason
+(define (get-initial-abstract-pairs impl-config spec-config)
+  (match (csa#-abstract-config impl-config)
+    [#f #f]
+    [abstract-impl-config
+     (map first (sbc (config-pair abstract-impl-config spec-config)))]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Simulation

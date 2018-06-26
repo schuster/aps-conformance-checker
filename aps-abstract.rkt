@@ -4,14 +4,10 @@
 
 (provide
  ;; Required by conformance checker
- ;; aps#-config-obs-receptionists
- ;; aps#-config-unobs-receptionists
  aps#-psm-obligations
  aps#-matching-steps
  aps#-resolve-outputs
- ;; aps#-abstract-config
  split-psm
- ;; aps#-blur-config
  canonicalize-pair
  try-rename-marker
  reverse-rename-marker

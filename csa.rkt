@@ -10,6 +10,7 @@
  csa-valid-type?
  csa-valid-config?
  csa-config-receptionists
+ csa-receptionist-markers
  instantiate-prog
  instantiate-prog+bindings)
 
@@ -418,6 +419,14 @@
 
 (define (csa-config-receptionists config)
   (third config))
+
+(define (csa-receptionist-markers rec)
+  (cddr (second rec)))
+
+(module+ test
+  (test-equal? "csa-receptionist-markers"
+    (csa-receptionist-markers `[Nat (marked (addr 0 0) 1 2 3)])
+    `(1 2 3)))
 
 ;; Returns the type given in a spawn expression
 (define-metafunction csa-eval

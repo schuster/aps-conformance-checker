@@ -2,8 +2,8 @@
 
 ;; Defines the commitment-satisfaction-check algorithm
 
-;; (provide
-;;  partition-by-satisfaction)
+(provide
+ partition-by-satisfaction)
 
 (require
  data/queue
