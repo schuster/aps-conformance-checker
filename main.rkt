@@ -1319,17 +1319,17 @@
 ;; Test Helpers
 
 (module+ test
-  ;; (define-simple-check (check-valid-actor? actual)
-  ;;   (redex-match? csa-eval ([τ a] b) actual))
+  (define-simple-check (check-valid-actor? actual)
+    (redex-match? csa-eval ([τ (marked a mk ...)] b) actual))
 
-  ;; (define-syntax (test-valid-actor? stx)
-  ;;   (syntax-parse stx
-  ;;     [(_ name the-term)
-  ;;      #`(test-case name
-  ;;          #,(syntax/loc stx (check-valid-actor? the-term)))]
-  ;;     [(_ the-term)
-  ;;      #`(test-begin
-  ;;          #,(syntax/loc stx (check-valid-actor? the-term)))]))
+  (define-syntax (test-valid-actor? stx)
+    (syntax-parse stx
+      [(_ name the-term)
+       #`(test-case name
+           #,(syntax/loc stx (check-valid-actor? the-term)))]
+      [(_ the-term)
+       #`(test-begin
+           #,(syntax/loc stx (check-valid-actor? the-term)))]))
 
   (define-simple-check (check-valid-instance? actual)
     (redex-match? aps-eval ((Φ ...) (goto φ u ...) mk) actual))
@@ -1369,71 +1369,72 @@
   (test-true "ignore all spec/test"
     (check-conformance/config ignore-all-config (make-psm ignore-all-spec-instance)))
 
-;;   ;;;; Send one message to a statically-known address per request
+  ;;;; Send one message to a statically-known address per request
 
-;;   (define (make-static-response-address type) (term (addr (env ,type) 2)))
-;;   (define static-response-type (term (Union (Ack Nat))))
-;;   (define static-response-address (make-static-response-address static-response-type))
-;;   (define nat-static-response-address (make-static-response-address (term Nat)))
-;;   (define static-response-actor
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
-;;           (begin
-;;            (send response-dest (variant Ack 0))
-;;            (goto Always response-dest))))
-;;        (goto Always ,static-response-address)))))
-;;   (define static-double-response-actor
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
-;;           (begin
-;;            (send response-dest (variant Ack 0))
-;;            (send response-dest (variant Ack 0))
-;;            (goto Always response-dest))))
-;;        (goto Always ,static-response-address)))))
-;;   (define static-response-spec
-;;     (term
-;;      (((define-state (Always response-dest)
-;;          [* -> ([obligation response-dest *]) (goto Always response-dest)]))
-;;       (goto Always ,static-response-address)
-;;       (Nat (addr 0 0)))))
-;;   (define ignore-all-with-addr-spec-instance
-;;     (term
-;;      (((define-state (Always response-dest) [* -> () (goto Always response-dest)]))
-;;       (goto Always ,static-response-address)
-;;       (Nat (addr 0 0)))))
-;;   (define static-double-response-spec
-;;     (term
-;;      (((define-state (Always response-dest)
-;;          [* -> ([obligation response-dest *]
-;;                 [obligation response-dest *])
-;;                (goto Always response-dest)]))
-;;       (goto Always ,static-response-address)
-;;       (Nat (addr 0 0)))))
+  (define static-response-marker 2)
+  (define static-response-type (term (Union (Ack Nat))))
+  (define (make-static-response-address type) `(marked (addr (env ,type) 2) ,static-response-marker))
+  (define static-response-dest (make-static-response-address static-response-type))
+  (define nat-static-response-address (make-static-response-address (term Nat)))
+  (define static-response-actor
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
+          (begin
+           (send response-dest (variant Ack 0))
+           (goto Always response-dest))))
+       (goto Always ,static-response-dest)))))
+  (define static-double-response-actor
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
+          (begin
+           (send response-dest (variant Ack 0))
+           (send response-dest (variant Ack 0))
+           (goto Always response-dest))))
+       (goto Always ,static-response-dest)))))
+  (define static-response-spec
+    (term
+     (((define-state (Always response-dest)
+         [* -> ([obligation response-dest *]) (goto Always response-dest)]))
+      (goto Always ,static-response-marker)
+      0)))
+  (define ignore-all-with-addr-spec-instance
+    (term
+     (((define-state (Always response-dest) [* -> () (goto Always response-dest)]))
+      (goto Always ,static-response-marker)
+      0)))
+  (define static-double-response-spec
+    (term
+     (((define-state (Always response-dest)
+         [* -> ([obligation response-dest *]
+                [obligation response-dest *])
+               (goto Always response-dest)]))
+      (goto Always ,static-response-marker)
+      0)))
 
-;;   (test-valid-actor? static-response-actor)
-;;   (test-valid-actor? static-double-response-actor)
-;;   (test-valid-instance? static-response-spec)
-;;   (test-valid-instance? ignore-all-with-addr-spec-instance)
-;;   (test-valid-instance? static-double-response-spec)
+  (test-valid-actor? static-response-actor)
+  (test-valid-actor? static-double-response-actor)
+  (test-valid-instance? static-response-spec)
+  (test-valid-instance? ignore-all-with-addr-spec-instance)
+  (test-valid-instance? static-double-response-spec)
 
-;;   (test-true "Static response works"
-;;              (check-conformance/config (make-single-actor-config static-response-actor)
-;;                           (make-exclusive-spec static-response-spec)))
-;;   (test-false "Static response actor, ignore all spec"
-;;               (check-conformance/config (make-single-actor-config static-response-actor)
-;;                            (make-exclusive-spec ignore-all-with-addr-spec-instance)))
-;;   (test-false "static double response actor"
-;;               (check-conformance/config (make-single-actor-config static-double-response-actor)
-;;                                         (make-exclusive-spec static-response-spec)))
-;;   (test-false "Static response spec, ignore-all config"
-;;                (check-conformance/config ignore-all-config
-;;                                          (make-exclusive-spec static-response-spec)))
-;;   ;; tests for non-conformance to spec configurations with many-of commitments
-;;   (test-false "Static double response spec, ignore-all config"
-;;     (check-conformance/config ignore-all-config
-;;                               (make-exclusive-spec static-double-response-spec)))
+  (test-true "Static response works"
+    (check-conformance/config (make-single-actor-config static-response-actor)
+                              (make-psm static-response-spec)))
+  (test-false "Static response actor, ignore all spec"
+    (check-conformance/config (make-single-actor-config static-response-actor)
+                              (make-psm ignore-all-with-addr-spec-instance)))
+  (test-false "static double response actor"
+    (check-conformance/config (make-single-actor-config static-double-response-actor)
+                              (make-psm static-response-spec)))
+  (test-false "Static response spec, ignore-all config"
+    (check-conformance/config ignore-all-config
+                              (make-psm static-response-spec)))
+  ;; tests for non-conformance to spec configurations with many-of commitments
+  (test-false "Static double response spec, ignore-all config"
+    (check-conformance/config ignore-all-config
+                              (make-psm static-double-response-spec)))
 
 ;;   ;;;; Pattern matching tests, without dynamic channels
 
