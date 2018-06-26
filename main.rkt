@@ -213,177 +213,175 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Simulation
 
-;; ;; (Setof config-pair) -> (List (Setof config-pair)
-;; ;;                              (Setof config-pair)
-;; ;;                              IncomingDict
-;; ;;                              RelatedSpecStepsDict)
-;; ;;
-;; ;; Finds a set of pairs that are related in the rank-1 conformance simulation by abstractly evaluating
-;; ;; implementation configs and finding matching specification transitions, starting from the given
-;; ;; initial pairs. Returns the set of related pairs along with other data structures that act as a
-;; ;; proof of the pairs' membership. Specifically, it returns:
-;; ;;
-;; ;; related-pairs: the set of pairs found to be in the rank-1 simulation
-;; ;;
-;; ;; unrelated-successors: pairs reachable by from a pair in related-pairs by a matching
-;; ;; impl-step/spec-step transition but are not themselves in the rank-1 simulation.
-;; ;;
-;; ;; incoming-steps: A dictionary from either a related pair or an unrelated successor to the set of
-;; ;; impl/spec steps that lead to it (as described in the "Type" Definitions section above)
-;; ;;
-;; ;; related-spec-steps: A dictionary from a related pair and an implementation step from that pair to
-;; ;; the set of specification steps that match the implementation step. See "Type" Definitions above for
-;; ;; more details.
-;; (define (find-rank1-simulation initial-pairs)
-;;   ;; We use a mutable set for the to-visit worklist rather than a queue for (effectively)
-;;   ;; constant-time membership checks just before adding a new pair
-;;   ;;
-;;   ;; invariant: every item in to-visit should already be widened
-;;   (define to-visit (list->mutable-set initial-pairs))
-;;   (define related-spec-steps (make-hash))
-;;   (define incoming-steps (make-hash (map (lambda (t) (cons t (mutable-set))) initial-pairs)))
+;; (Setof config-pair) -> (List (Setof config-pair)
+;;                              (Setof config-pair)
+;;                              IncomingDict
+;;                              RelatedSpecStepsDict)
+;;
+;; Finds a set of pairs that are related in the rank-1 conformance simulation by abstractly evaluating
+;; implementation configs and finding matching specification transitions, starting from the given
+;; initial pairs. Returns the set of related pairs along with other data structures that act as a
+;; proof of the pairs' membership. Specifically, it returns:
+;;
+;; related-pairs: the set of pairs found to be in the rank-1 simulation
+;;
+;; unrelated-successors: pairs reachable by from a pair in related-pairs by a matching
+;; impl-step/spec-step transition but are not themselves in the rank-1 simulation.
+;;
+;; incoming-steps: A dictionary from either a related pair or an unrelated successor to the set of
+;; impl/spec steps that lead to it (as described in the "Type" Definitions section above)
+;;
+;; related-spec-steps: A dictionary from a related pair and an implementation step from that pair to
+;; the set of specification steps that match the implementation step. See "Type" Definitions above for
+;; more details.
+(define (find-rank1-simulation initial-pairs)
+  ;; We use a mutable set for the to-visit worklist rather than a queue for (effectively)
+  ;; constant-time membership checks just before adding a new pair
+  ;;
+  ;; invariant: every item in to-visit should already be widened
+  (define to-visit (list->mutable-set initial-pairs))
+  (define related-spec-steps (make-hash))
+  (define incoming-steps (make-hash (map (lambda (t) (cons t (mutable-set))) initial-pairs)))
 
-;;   ;; Statistics
-;;   (define visited-impl-configs (mutable-set))
-;;   (define visited-spec-configs (mutable-set))
+  ;; Statistics
+  (define visited-impl-configs (mutable-set))
+  (define visited-spec-configs (mutable-set))
 
-;;   ;; Debugging
-;;   (define log-file (open-log))
-;;   (log-initial-pairs log-file initial-pairs)
+  ;; Debugging
+  (define log-file (open-log))
+  (log-initial-pairs log-file initial-pairs)
 
-;;   (let loop ([related-pairs (set)]
-;;              [unrelated-successors (set)])
-;;     (match (set-dequeue-if-non-empty! to-visit)
-;;       [#f
-;;        (close-log log-file)
-;;        (list related-pairs unrelated-successors incoming-steps related-spec-steps)]
-;;       [pair
-;;        ;; Update statistics
-;;        (stat-set! STAT-visited-pairs-count (add1 (stat-value STAT-visited-pairs-count)))
-;;        (set-add! visited-impl-configs (config-pair-impl-config pair))
-;;        (set-add! visited-spec-configs (config-pair-spec-config pair))
-;;        (stat-set! STAT-unique-impl-configs-count (set-count visited-impl-configs))
-;;        (stat-set! STAT-unique-spec-configs-count (set-count visited-spec-configs))
+  (let loop ([related-pairs (set)]
+             [unrelated-successors (set)])
+    (match (set-dequeue-if-non-empty! to-visit)
+      [#f
+       (close-log log-file)
+       (list related-pairs unrelated-successors incoming-steps related-spec-steps)]
+      [pair
+       ;; Update statistics
+       (stat-set! STAT-visited-pairs-count (add1 (stat-value STAT-visited-pairs-count)))
+       (set-add! visited-impl-configs (config-pair-impl-config pair))
+       (set-add! visited-spec-configs (config-pair-spec-config pair))
+       (stat-set! STAT-unique-impl-configs-count (set-count visited-impl-configs))
+       (stat-set! STAT-unique-spec-configs-count (set-count visited-spec-configs))
 
-;;        ;; Debugging
-;;        (printf "Current time: ~a\n" (date->string (seconds->date (current-seconds)) #t))
-;;        (printf "Pair config #: ~s\n" (stat-value STAT-visited-pairs-count))
-;;        (printf "Unique impl configs so far: ~s\n" (stat-value STAT-unique-impl-configs-count))
-;;        (printf "Unique spec configs so far: ~s\n" (stat-value STAT-unique-spec-configs-count))
-;;        (printf "Worklist size: ~s\n" (set-count to-visit))
-;;        ;; (printf "The impl config: ~s\n"
-;;        ;;         (impl-config-without-state-defs (config-pair-impl-config pair)))
-;;        ;; (printf "The full impl config: ~s\n" (config-pair-impl-config pair))
-;;        ;; (printf "The spec config: ~s\n"
-;;        ;;         (spec-config-without-state-defs (config-pair-spec-config pair)))
-;;        ;; (printf "Incoming so far: ~s\n" (hash-ref incoming-steps pair))
-;;        (flush-output)
+       ;; Debugging
+       (printf "Current time: ~a\n" (date->string (seconds->date (current-seconds)) #t))
+       (printf "Pair config #: ~s\n" (stat-value STAT-visited-pairs-count))
+       (printf "Unique impl configs so far: ~s\n" (stat-value STAT-unique-impl-configs-count))
+       (printf "Unique spec configs so far: ~s\n" (stat-value STAT-unique-spec-configs-count))
+       (printf "Worklist size: ~s\n" (set-count to-visit))
+       ;; (printf "The impl config: ~s\n"
+       ;;         (impl-config-without-state-defs (config-pair-impl-config pair)))
+       ;; (printf "The full impl config: ~s\n" (config-pair-impl-config pair))
+       ;; (printf "The spec config: ~s\n"
+       ;;         (spec-config-without-state-defs (config-pair-spec-config pair)))
+       ;; (printf "Incoming so far: ~s\n" (hash-ref incoming-steps pair))
+       (flush-output)
 
-;;        (log-exploring log-file pair)
+       (log-exploring log-file pair)
 
-;;        (define i (config-pair-impl-config pair))
-;;        (define s (config-pair-spec-config pair))
+       (define i (config-pair-impl-config pair))
+       (define s (config-pair-spec-config pair))
 
-;;        (cond
-;;          ;; Performance improvement: If the spec is a no-transition spec whose obligations have all
-;;          ;; been met, and the impl doesn't even know about the obligation addresses anymore, then the
-;;          ;; impl is guaranteed to conform to the spec. We can ignore any further steps and just call
-;;          ;; this a related pair.
-;;          [(and (aps#-completed-no-transition-config? s)
-;;                (let ([known-externals (externals-in i)])
-;;                  (for/and ([relevant-external (aps#-relevant-external-addrs s)])
-;;                    (not (member relevant-external known-externals)))))
-;;           (loop (set-add related-pairs pair) unrelated-successors)]
-;;          [else
-;;           (match (impl-steps-from i s)
-;;             [#f
-;;              ;; Evaluation led to an unverifiable configuration, so we deem this pair unrelated, add
-;;              ;; it to the unrelated-successors list, and move on to explore the next pair in our
-;;              ;; worklist.
-;;              (loop related-pairs (set-add unrelated-successors pair))]
-;;             [i-steps-with-obs/unobs
-;;              ;; Find the matching s-steps
-;;              (define found-unmatchable-step? #f)
-;;              (widen-printf "Finding matching s-steps for ~s i-steps\n" (length i-steps-with-obs/unobs))
-;;              (for ([i-step-with-obs/unobs i-steps-with-obs/unobs])
-;;                (match-define (list i-step obs? unobs?) i-step-with-obs/unobs)
-;;                ;; Debugging:
-;;                ;; (printf "Impl step: ~s\n" (debug-impl-step i-step))
+       (cond
+         ;; Performance improvement: If the spec is a no-transition spec whose obligations have all
+         ;; been met, and the impl doesn't even know about the obligation addresses anymore, then the
+         ;; impl is guaranteed to conform to the spec. We can ignore any further steps and just call
+         ;; this a related pair.
+         [(and (aps#-completed-no-transition-psm? s)
+               (let ([known-markers (markers-in i)])
+                 (for/and ([relevant-external (aps#-psm-mon-externals s)])
+                   (not (member relevant-external known-markers)))))
+          (loop (set-add related-pairs pair) unrelated-successors)]
+         [else
+          (match (impl-steps-from i s)
+            [#f
+             ;; Evaluation led to an unverifiable configuration, so we deem this pair unrelated, add
+             ;; it to the unrelated-successors list, and move on to explore the next pair in our
+             ;; worklist.
+             (loop related-pairs (set-add unrelated-successors pair))]
+            [i-steps
+             ;; Find the matching s-steps
+             (define found-unmatchable-step? #f)
+             (widen-printf "Finding matching s-steps for ~s i-steps\n" (length i-steps))
+             (for ([i-step i-steps])
+               ;; Debugging:
+               ;; (printf "Impl step: ~s\n" (debug-impl-step i-step))
 
-;;                (define matching-s-steps (matching-spec-steps s i-step obs? unobs?))
-;;                ;; Debugging:
-;;                ;; (printf "Matching spec steps: ~s\n" matching-s-steps)
+               (define matching-s-steps (matching-spec-steps s i-step))
+               ;; Debugging:
+               ;; (printf "Matching spec steps: ~s\n" matching-s-steps)
 
-;;                (log-related-spec-steps log-file (list pair i-step) matching-s-steps)
-;;                (hash-set! related-spec-steps (list pair i-step) matching-s-steps)
-;;                (when (set-empty? matching-s-steps)
-;;                  ;; (printf "Unmatchable impl step: ~s\n" (debug-impl-step i-step))
-;;                  (set! found-unmatchable-step? #t)))
+               (log-related-spec-steps log-file (list pair i-step) matching-s-steps)
+               (hash-set! related-spec-steps (list pair i-step) matching-s-steps)
+               (when (set-empty? matching-s-steps)
+                 ;; (printf "Unmatchable impl step: ~s\n" (debug-impl-step i-step))
+                 (set! found-unmatchable-step? #t)))
 
-;;              ;; Add this pair to either related or unrelated set; add new worklist items
-;;              (cond
-;;                [found-unmatchable-step?
-;;                 ;; Some impl step has no matching spec step, so this pair is unrelated. Therefore we
-;;                 ;; add it to the unrelated-successors list and do not further explore transitions from
-;;                 ;; this pair.
+             ;; Add this pair to either related or unrelated set; add new worklist items
+             (cond
+               [found-unmatchable-step?
+                ;; Some impl step has no matching spec step, so this pair is unrelated. Therefore we
+                ;; add it to the unrelated-successors list and do not further explore transitions from
+                ;; this pair.
 
-;;                 ;; Debugging
-;;                 ;; (displayln "Unrelated pair")
-;;                 (log-unrelated log-file pair)
-;;                 (loop related-pairs (set-add unrelated-successors pair))]
-;;                [else
-;;                 ;; This pair is in the rank-1 simulation (because all of its impl steps have matching
-;;                 ;; spec steps). We have to add it to the related-pairs set, sbc each of the matching
-;;                 ;; destination pairs and add them to the work-list so that we explore this pair's
-;;                 ;; successors, and add the incoming transitions for those destination pairs to
-;;                 ;; incoming-steps.
+                ;; Debugging
+                ;; (displayln "Unrelated pair")
+                (log-unrelated log-file pair)
+                (loop related-pairs (set-add unrelated-successors pair))]
+               [else
+                ;; This pair is in the rank-1 simulation (because all of its impl steps have matching
+                ;; spec steps). We have to add it to the related-pairs set, sbc each of the matching
+                ;; destination pairs and add them to the work-list so that we explore this pair's
+                ;; successors, and add the incoming transitions for those destination pairs to
+                ;; incoming-steps.
 
-;;                 ;; Debugging
-;;                 ;; (displayln "Related pair")
-;;                 (widen-printf "Widening/sbc-ing ~s impl steps\n" (length i-steps-with-obs/unobs))
-;;                 (define i-step-num 0)
-;;                 (for ([i-step-with-obs/unobs i-steps-with-obs/unobs])
-;;                   (match-define (list i-step obs? unobs?) i-step-with-obs/unobs)
-;;                   (set! i-step-num (add1 i-step-num))
-;;                   (for ([s-step (hash-ref related-spec-steps (list pair i-step))])
-;;                     (define successor-pairs
-;;                       (for/list ([config (spec-step-destinations s-step)])
-;;                         (config-pair (impl-step-destination i-step) config)))
+                ;; Debugging
+                ;; (displayln "Related pair")
+                (widen-printf "Widening/sbc-ing ~s impl steps\n" (length i-steps))
+                (define i-step-num 0)
+                (for ([i-step i-steps])
+                  (set! i-step-num (add1 i-step-num))
+                  (for ([s-step (hash-ref related-spec-steps (list pair i-step))])
+                    (define successor-pairs
+                      (for/list ([config (spec-step-destinations s-step)])
+                        (config-pair (impl-step-destination i-step) config)))
 
-;;                     ;; Debugging only
-;;                     ;; (for ([successor-pair successor-pairs])
-;;                     ;;   (printf "pre-sbc: ~s\n" successor-pair)
-;;                     ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
-;;                     (for ([sbc-result (sbc* successor-pairs)])
-;;                       (match-define (list unwidened-sbc-pair rename-map) sbc-result)
-;;                       (define (seen? new-pair)
-;;                         (or (set-member? to-visit new-pair)
-;;                             (set-member? related-pairs new-pair)
-;;                             (set-member? unrelated-successors new-pair)
-;;                             (equal? new-pair pair)))
-;;                       (define sbc-pair
-;;                         (if (and (USE-WIDEN?)
-;;                                  ;; if we've already seen this pair, then we can assume it's already
-;;                                  ;; been widened (this often happens when a blurred actor from a fully
-;;                                  ;; widened config pair takes a transition step)
-;;                                  (not (seen? unwidened-sbc-pair)))
-;;                             (widen-pair unwidened-sbc-pair
-;;                                         i-step-with-obs/unobs
-;;                                         (stat-value STAT-visited-pairs-count)
-;;                                         i-step-num
-;;                                         (length i-steps-with-obs/unobs))
-;;                             (begin
-;;                               (widen-printf "Not widening an already-seen config pair\n")
-;;                               unwidened-sbc-pair)))
-;;                       (log-incoming log-file sbc-pair (list pair i-step s-step rename-map))
-;;                       (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step rename-map))
-;;                       ;; unless it's already in the queue, or we have already explored it (and
-;;                       ;; therefore it's in either the related or unrelated set), add the new pair to
-;;                       ;; the worklist
-;;                       (unless (seen? sbc-pair)
-;;                         (set-add! to-visit sbc-pair)))))
-;;                 (log-related log-file pair)
-;;                 (loop (set-add related-pairs pair) unrelated-successors)])])])])))
+                    ;; Debugging only
+                    ;; (for ([successor-pair successor-pairs])
+                    ;;   (printf "pre-sbc: ~s\n" successor-pair)
+                    ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
+                    (for ([sbc-result (sbc* successor-pairs)])
+                      (match-define (list unwidened-sbc-pair rename-map) sbc-result)
+                      (define (seen? new-pair)
+                        (or (set-member? to-visit new-pair)
+                            (set-member? related-pairs new-pair)
+                            (set-member? unrelated-successors new-pair)
+                            (equal? new-pair pair)))
+                      (define sbc-pair
+                        (if (and (USE-WIDEN?)
+                                 ;; if we've already seen this pair, then we can assume it's already
+                                 ;; been widened (this often happens when a blurred actor from a fully
+                                 ;; widened config pair takes a transition step)
+                                 (not (seen? unwidened-sbc-pair)))
+                            (widen-pair unwidened-sbc-pair
+                                        i-step
+                                        (stat-value STAT-visited-pairs-count)
+                                        i-step-num
+                                        (length i-steps))
+                            (begin
+                              (widen-printf "Not widening an already-seen config pair\n")
+                              unwidened-sbc-pair)))
+                      (log-incoming log-file sbc-pair (list pair i-step s-step rename-map))
+                      (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step rename-map))
+                      ;; unless it's already in the queue, or we have already explored it (and
+                      ;; therefore it's in either the related or unrelated set), add the new pair to
+                      ;; the worklist
+                      (unless (seen? sbc-pair)
+                        (set-add! to-visit sbc-pair)))))
+                (log-related log-file pair)
+                (loop (set-add related-pairs pair) unrelated-successors)])])])])))
 
 ;; i# s# -> (listof i#)
 ;;
