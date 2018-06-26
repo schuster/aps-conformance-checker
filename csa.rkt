@@ -5,6 +5,7 @@
 (provide
  csa-eval
  make-single-actor-config
+ make-single-actor-config/plus
  make-empty-queues-config
  csa-valid-program?
  csa-valid-type?
@@ -258,8 +259,6 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing helpers
 
-;; TODO: these need tests once I figure out how to change their interface for markers
-
 (define (make-single-actor-config actor)
   (term (make-single-actor-config/mf ,actor)))
 
@@ -268,17 +267,60 @@
   [(make-single-actor-config/mf ((τ (marked a mk ...)) b))
    (((a b)) () ((τ (marked a mk ...))) ())])
 
+(module+ test
+  (test-equal? "make-single-actor-config"
+   (make-single-actor-config `[[Nat (marked (addr 0 1) 2)]
+                               [((define-state (A) (m) (goto A))) (goto A)]])
+   `[([(addr 0 1) [((define-state (A) (m) (goto A))) (goto A)]])
+     ()
+     ([Nat (marked (addr 0 1) 2)])
+     ()]))
+
+;; like make-single-actor-config, except also allows more receptionists
+(define (make-single-actor-config/plus actor extra-receptionists)
+  (term (make-single-actor-config/plus/mf ,actor ,extra-receptionists)))
+
+(define-metafunction csa-eval
+  make-single-actor-config/plus/mf : ((τ (marked a mk ...)) b) ([τ (marked a mk ...)] ...) -> i
+  [(make-single-actor-config/plus/mf ((τ (marked a mk ...)) b) (any_rec ...))
+   (((a b)) () ((τ (marked a mk ...)) any_rec ...) ())])
+
+(module+ test
+  (test-equal? "make-single-actor-config/plus"
+    (make-single-actor-config/plus `[[Nat (marked (addr 0 1) 2)]
+                                     [((define-state (A) (m) (goto A))) (goto A)]]
+                                   (list `[Nat (marked (addr 0 1) 3)]))
+   `[([(addr 0 1) [((define-state (A) (m) (goto A))) (goto A)]])
+     ()
+     ([Nat (marked (addr 0 1) 2)]
+      [Nat (marked (addr 0 1) 3)])
+     ()]))
+
 (define (make-empty-queues-config receptionists internal-actors)
   (term (make-empty-queues-config/mf ,receptionists ,internal-actors)))
 
 (define-metafunction csa-eval
-  make-empty-queues-config/mf : (([τ a] b) ...) (([τ a] b) ...) -> i
-  [(make-empty-queues-config/mf (((τ_rec a_rec) b_receptionist) ...)
-                                (((τ_int a_int) b_int) ...))
+  make-empty-queues-config/mf : (([τ (marked a mk ...)] b) ...) (([τ (marked a mk ...)] b) ...) -> i
+  [(make-empty-queues-config/mf (((τ_rec (marked a_rec mk_rec ...)) b_receptionist) ...)
+                                (((τ_int (marked a_int _ ...)) b_int) ...))
    (((a_rec b_receptionist) ... (a_int b_int) ...)
     ()
-    ((τ_rec a_rec) ...)
+    ((τ_rec (marked a_rec mk_rec ...)) ...)
     ())])
+
+(module+ test
+  (test-equal? "make-empty-queues-config"
+    (make-empty-queues-config
+     (list `[[Nat (marked (addr 0 1) 2)]
+             [((define-state (A) (m) (goto A))) (goto A)]])
+     (list `[[String (marked (addr 3 4) 5)]
+             [((define-state (B) (m) (goto B))) (goto B)]
+             ]))
+    `[([(addr 0 1) [((define-state (A) (m) (goto A))) (goto A)]]
+       [(addr 3 4) [((define-state (B) (m) (goto B))) (goto B)]])
+     ()
+     ([Nat (marked (addr 0 1) 2)])
+     ()]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
