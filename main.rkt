@@ -2055,88 +2055,88 @@
               (check-conformance/config (make-single-actor-config record-req-wrong-resp-actor)
                            (make-psm record-req-resp-spec)))
 
-;;   ;;;; Let
-;;   (define static-response-let-actor
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
-;;           (let ([new-r response-dest])
-;;             (begin
-;;               (send new-r (variant Ack 0))
-;;               (goto Always new-r)))))
-;;        (goto Always ,static-response-address)))))
-;;   (define static-double-response-let-actor
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
-;;           (let ([new-r response-dest])
-;;             (begin
-;;               (send new-r (variant Ack 0))
-;;               (send new-r (variant Ack 0))
-;;               (goto Always new-r)))))
-;;        (goto Always ,static-response-address)))))
+  ;;;; Let
+  (define static-response-let-actor
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
+          (let ([new-r response-dest])
+            (begin
+              (send new-r (variant Ack 0))
+              (goto Always new-r)))))
+       (goto Always ,static-response-dest)))))
+  (define static-double-response-let-actor
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
+          (let ([new-r response-dest])
+            (begin
+              (send new-r (variant Ack 0))
+              (send new-r (variant Ack 0))
+              (goto Always new-r)))))
+       (goto Always ,static-response-dest)))))
 
-;;   (test-valid-actor? static-response-let-actor)
-;;   (test-valid-actor? static-double-response-let-actor)
+  (test-valid-actor? static-response-let-actor)
+  (test-valid-actor? static-double-response-let-actor)
 
-;;   (test-true "Let 1"
-;;              (check-conformance/config (make-single-actor-config static-response-let-actor)
-;;                           (make-exclusive-spec static-response-spec)))
-;;   (test-false "Let 2"
-;;               (check-conformance/config (make-single-actor-config static-double-response-let-actor)
-;;                            (make-exclusive-spec static-response-spec)))
+  (test-true "Let 1"
+    (check-conformance/config (make-single-actor-config static-response-let-actor)
+                              (make-psm static-response-spec)))
+  (test-false "Let 2"
+    (check-conformance/config (make-single-actor-config static-double-response-let-actor)
+                              (make-psm static-response-spec)))
 
-;;   ;; Check that = gives both results
-;;   (define equal-actor-wrong1
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (A [dest (Addr ,static-response-type)]) (m)
-;;           (begin
-;;             (send dest (variant Ack 0))
-;;             (case (= m 0)
-;;               [(True) (goto A dest)]
-;;               [(False) (goto B)])))
-;;         (define-state (B) (m) (goto B)))
-;;        (goto A ,static-response-address)))))
-;;   (define equal-actor-wrong2
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (A [dest (Addr ,static-response-type)]) (m)
-;;           (begin
-;;             (send dest (variant Ack 0))
-;;             (case (= m 0)
-;;               [(True) (goto B)]
-;;               [(False) (goto A dest)])))
-;;         (define-state (B) (m) (goto B)))
-;;        (goto A ,static-response-address)))))
-;;     (define equal-actor
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (A [dest (Addr ,static-response-type)]) (m)
-;;           (begin
-;;             (send dest (variant Ack 0))
-;;             (case (= m 0)
-;;               [(True) (goto B dest)]
-;;               [(False) (goto A dest)])))
-;;         (define-state (B [dest (Addr ,static-response-type)]) (m)
-;;           (begin
-;;             (send dest (variant Ack 0))
-;;             (goto B dest))))
-;;        (goto A ,static-response-address)))))
+  ;; Check that = gives both results
+  (define equal-actor-wrong1
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (A [dest (Addr ,static-response-type)]) (m)
+          (begin
+            (send dest (variant Ack 0))
+            (case (= m 0)
+              [(True) (goto A dest)]
+              [(False) (goto B)])))
+        (define-state (B) (m) (goto B)))
+       (goto A ,static-response-dest)))))
+  (define equal-actor-wrong2
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (A [dest (Addr ,static-response-type)]) (m)
+          (begin
+            (send dest (variant Ack 0))
+            (case (= m 0)
+              [(True) (goto B)]
+              [(False) (goto A dest)])))
+        (define-state (B) (m) (goto B)))
+       (goto A ,static-response-dest)))))
+    (define equal-actor
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (A [dest (Addr ,static-response-type)]) (m)
+          (begin
+            (send dest (variant Ack 0))
+            (case (= m 0)
+              [(True) (goto B dest)]
+              [(False) (goto A dest)])))
+        (define-state (B [dest (Addr ,static-response-type)]) (m)
+          (begin
+            (send dest (variant Ack 0))
+            (goto B dest))))
+       (goto A ,static-response-dest)))))
 
-;;   (test-valid-actor? equal-actor-wrong1)
-;;   (test-valid-actor? equal-actor-wrong2)
-;;   (test-valid-actor? equal-actor)
+  (test-valid-actor? equal-actor-wrong1)
+  (test-valid-actor? equal-actor-wrong2)
+  (test-valid-actor? equal-actor)
 
-;;   (test-false "Equal actor wrong 1"
-;;    (check-conformance/config (make-single-actor-config equal-actor-wrong1)
-;;             (make-exclusive-spec static-response-spec)))
-;;   (test-false "Equal actor wrong 2"
-;;    (check-conformance/config (make-single-actor-config equal-actor-wrong2)
-;;             (make-exclusive-spec static-response-spec)))
-;;   (test-true "Equal actor"
-;;    (check-conformance/config (make-single-actor-config equal-actor)
-;;                 (make-exclusive-spec static-response-spec)))
+  (test-false "Equal actor wrong 1"
+    (check-conformance/config (make-single-actor-config equal-actor-wrong1)
+                              (make-psm static-response-spec)))
+  (test-false "Equal actor wrong 2"
+    (check-conformance/config (make-single-actor-config equal-actor-wrong2)
+                              (make-psm static-response-spec)))
+  (test-true "Equal actor"
+    (check-conformance/config (make-single-actor-config equal-actor)
+                              (make-psm static-response-spec)))
 
 ;;   ;;;; For loops
 ;;   (define loop-do-nothing-actor
