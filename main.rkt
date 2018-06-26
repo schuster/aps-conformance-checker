@@ -1065,173 +1065,174 @@
                   ()
                   ())))))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Pair-removal back-propagation
+;; ---------------------------------------------------------------------------------------------------
+;; Pair-removal back-propagation
 
 
-;; ;; (Setof config-pair) IncomingDict RelatedSpecStepsDict (Setof config-pair) ->
-;; ;;   (Setof config-pair) RelatedSpecStepsDict
-;; ;;
-;; ;; Removes from all-pairs those pairs whose proof of membership in a simulation (i.e. their matching
-;; ;; transitions in init-related-spec-steps) depends on a transition to a pair known to not be in the
-;; ;; relation (we call these "unsupported pairs"). The algorithm propagates the effects of these
-;; ;; removals backwards through the proof structure and removes further unsupported pairs until a
-;; ;; greatest fixpoint is reached, yielding a set of pairs whose members are all in the full simulation
-;; ;; relation.
-;; ;;
-;; ;; all-pairs: The initial set of pairs, assumed to all be in the rank-1 simulation
-;; ;;
-;; ;; incoming-steps: A dictionary from either a related pair or an unrelated successor to the set of
-;; ;; impl/spec steps that lead to it (as described in the "Type" Definitions section above). Must
-;; ;; include entries for all pairs in both all-pairs and init-unrelated-successors.
-;; ;;
-;; ;; init-related-spec-steps: A dictionary from a related pair and an implementation step from that pair
-;; ;; to the set of specification steps that match the implementation step. Must have an entry for every
-;; ;; possible implementation step from a pair in all-pairs, and there must be at least one matching spec
-;; ;; step per entry. See "Type" Definitions above for more details.
-;; ;;
-;; ;; init-unrelated-successors: A set of config-pairs that are known to *not* be in the rank-1 simulation. This list must include all
-;; ;;
-;; ;; Returns:
-;; ;;
-;; ;; simulation-pairs: The subset of all-pairs that the function was able to show are in the simulation.
-;; ;;
-;; ;; simulation-related-spec-steps: The RelatedSpecStepsDict that is a sub-dictionary of
-;; ;; init-related-spec-steps (i.e. the sets are subsets of those from init-related-spec-steps). This
-;; ;; dictionary consitutes a proof that all members of simulation-pairs are in the simulation relation.
-;; (define (prune-unsupported all-pairs incoming-steps init-related-spec-steps init-unrelated-successors)
-;;   ;; The function implements a worklist algorithm, with init-unrelated-successors forming the initial
-;;   ;; worklist items. The objective is to remove unsupported items from remaining-pairs and
-;;   ;; related-spec-steps so that at the end of the algorithm, they comprise a globally consistent
-;;   ;; proof.
-;;   (define unrelated-successors (apply queue (set->list init-unrelated-successors)))
-;;   (define remaining-pairs (set-copy all-pairs))
-;;   (define related-spec-steps (hash-copy init-related-spec-steps))
+;; (Setof config-pair) IncomingDict RelatedSpecStepsDict (Setof config-pair) ->
+;;   (Setof config-pair) RelatedSpecStepsDict
+;;
+;; Removes from all-pairs those pairs whose proof of membership in a simulation (i.e. their matching
+;; transitions in init-related-spec-steps) depends on a transition to a pair known to not be in the
+;; relation (we call these "unsupported pairs"). The algorithm propagates the effects of these
+;; removals backwards through the proof structure and removes further unsupported pairs until a
+;; greatest fixpoint is reached, yielding a set of pairs whose members are all in the full simulation
+;; relation.
+;;
+;; all-pairs: The initial set of pairs, assumed to all be in the rank-1 simulation
+;;
+;; incoming-steps: A dictionary from either a related pair or an unrelated successor to the set of
+;; impl/spec steps that lead to it (as described in the "Type" Definitions section above). Must
+;; include entries for all pairs in both all-pairs and init-unrelated-successors.
+;;
+;; init-related-spec-steps: A dictionary from a related pair and an implementation step from that pair
+;; to the set of specification steps that match the implementation step. Must have an entry for every
+;; possible implementation step from a pair in all-pairs, and there must be at least one matching spec
+;; step per entry. See "Type" Definitions above for more details.
+;;
+;; init-unrelated-successors: A set of config-pairs that are known to *not* be in the rank-1
+;; simulation. This list must include all
+;;
+;; Returns:
+;;
+;; simulation-pairs: The subset of all-pairs that the function was able to show are in the simulation.
+;;
+;; simulation-related-spec-steps: The RelatedSpecStepsDict that is a sub-dictionary of
+;; init-related-spec-steps (i.e. the sets are subsets of those from init-related-spec-steps). This
+;; dictionary consitutes a proof that all members of simulation-pairs are in the simulation relation.
+(define (prune-unsupported all-pairs incoming-steps init-related-spec-steps init-unrelated-successors)
+  ;; The function implements a worklist algorithm, with init-unrelated-successors forming the initial
+  ;; worklist items. The objective is to remove unsupported items from remaining-pairs and
+  ;; related-spec-steps so that at the end of the algorithm, they comprise a globally consistent
+  ;; proof.
+  (define unrelated-successors (apply queue (set->list init-unrelated-successors)))
+  (define remaining-pairs (set-copy all-pairs))
+  (define related-spec-steps (hash-copy init-related-spec-steps))
 
-;;   ;; Loop invariant: For every pair in remaining-pairs and every impl-step possible from that pair,
-;;   ;; related-spec-steps(pair, impl-step) = a non-empty set of matching specification transitions such
-;;   ;; that the sbc-derivatives of (impl-step.destination, spec-step.destination) are all in
-;;   ;; remaining-pairs or unrelated-successors.
-;;   ;;
-;;   ;; Termination argument: Every iteration of the loop processes one worklist item. We never process a
-;;   ;; worklist item more than once (because they only come from remaining-pairs, and when an item is
-;;   ;; queued into the worklist it is permanently removed from remaining-pairs). The total set of items
-;;   ;; that might enter the worklist (all-pairs plus init-related-successors) is finite, so the queue is
-;;   ;; eventually emptied and the loop terminates.
-;;   (let loop ()
-;;     (match (dequeue-if-non-empty! unrelated-successors)
-;;       [#f (list (set-immutable-copy remaining-pairs) related-spec-steps)]
-;;       [unrelated-pair
-;;        (for ([transition (hash-ref incoming-steps unrelated-pair)])
-;;          (match-define (list predecessor i-step s-step _) transition)
-;;          ;; Only check for lack of support for pairs still in remaining pairs
-;;          (when (set-member? remaining-pairs predecessor)
-;;            (define spec-steps (hash-ref related-spec-steps (list predecessor i-step)))
-;;            ;; Proceed to remove this spec step only if we have not already discovered that it is
-;;            ;; unsupported (we may have found some other sbc-derivative of the same step that also led
-;;            ;; to an unsupported pair)
-;;            (when (set-member? spec-steps s-step)
-;;              (set-remove! spec-steps s-step)
-;;              (when (set-empty? spec-steps)
-;;                ;; There are no matching spec steps for this impl step, so remove this pair from the
-;;                ;; relation and add it to the worklist
-;;                ;; (printf "Pruning pair: ~s ~s\n"
-;;                ;;         (impl-config-without-state-defs (config-pair-impl-config predecessor))
-;;                ;;         (spec-config-without-state-defs (config-pair-spec-config predecessor)))
-;;                ;; (printf "Because of impl step: ~s\n" (debug-impl-step i-step))
-;;                (set-remove! remaining-pairs predecessor)
-;;                (enqueue! unrelated-successors predecessor)))))
-;;        (loop)])))
+  ;; Loop invariant: For every pair in remaining-pairs and every impl-step possible from that pair,
+  ;; related-spec-steps(pair, impl-step) = a non-empty set of matching specification transitions such
+  ;; that the sbc-derivatives of (impl-step.destination, spec-step.destination) are all in
+  ;; remaining-pairs or unrelated-successors.
+  ;;
+  ;; Termination argument: Every iteration of the loop processes one worklist item. We never process a
+  ;; worklist item more than once (because they only come from remaining-pairs, and when an item is
+  ;; queued into the worklist it is permanently removed from remaining-pairs). The total set of items
+  ;; that might enter the worklist (all-pairs plus init-related-successors) is finite, so the queue is
+  ;; eventually emptied and the loop terminates.
+  (let loop ()
+    (match (dequeue-if-non-empty! unrelated-successors)
+      [#f (list (set-immutable-copy remaining-pairs) related-spec-steps)]
+      [unrelated-pair
+       (for ([transition (hash-ref incoming-steps unrelated-pair)])
+         (match-define (list predecessor i-step s-step _) transition)
+         ;; Only check for lack of support for pairs still in remaining pairs
+         (when (set-member? remaining-pairs predecessor)
+           (define spec-steps (hash-ref related-spec-steps (list predecessor i-step)))
+           ;; Proceed to remove this spec step only if we have not already discovered that it is
+           ;; unsupported (we may have found some other sbc-derivative of the same step that also led
+           ;; to an unsupported pair)
+           (when (set-member? spec-steps s-step)
+             (set-remove! spec-steps s-step)
+             (when (set-empty? spec-steps)
+               ;; There are no matching spec steps for this impl step, so remove this pair from the
+               ;; relation and add it to the worklist
+               ;; (printf "Pruning pair: ~s ~s\n"
+               ;;         (impl-config-without-state-defs (config-pair-impl-config predecessor))
+               ;;         (spec-config-without-state-defs (config-pair-spec-config predecessor)))
+               ;; (printf "Because of impl step: ~s\n" (debug-impl-step i-step))
+               (set-remove! remaining-pairs predecessor)
+               (enqueue! unrelated-successors predecessor)))))
+       (loop)])))
 
-;; (module+ test
-;;   (require "hash-helpers.rkt")
+(module+ test
+  (require "hash-helpers.rkt")
 
-;;   ;; Because prune-unsupported does not care about the actual content of the impl or spec
-;;   ;; configurations, we replace them here with letters (A, B, C, etc. for impls and X, Y, Z, etc. for
-;;   ;; specs) for simplification
-;;   (define ax-pair (config-pair 'A 'X))
-;;   (define by-pair (config-pair 'B 'Y))
-;;   (define bz-pair (config-pair 'B 'Z))
-;;   (define cw-pair (config-pair 'C 'W))
+  ;; Because prune-unsupported does not care about the actual content of the impl or spec
+  ;; configurations, we replace them here with letters (A, B, C, etc. for impls and X, Y, Z, etc. for
+  ;; specs) for simplification
+  (define ax-pair (config-pair 'A 'X))
+  (define by-pair (config-pair 'B 'Y))
+  (define bz-pair (config-pair 'B 'Z))
+  (define cw-pair (config-pair 'C 'W))
 
-;;   (define aa-step (impl-step '(timeout (addr 0 0)) null null 'A))
-;;   (define xx-step (spec-step (list 'X) null))
-;;   (define ab-step (impl-step '(timeout (addr 0 0)) null null 'B))
-;;   (define xy-step (spec-step (list 'Y) null))
-;;   (define xz-step (spec-step (list 'Z) null))
-;;   (define bc-step (impl-step '(timeout (addr 0 0)) null null 'C))
-;;   (define yw-step (spec-step (list 'W) null))
+  (define aa-step (impl-step '(timeout (addr 0 0)) null null 'A))
+  (define xx-step (spec-step (list 'X) null))
+  (define ab-step (impl-step '(timeout (addr 0 0)) null null 'B))
+  (define xy-step (spec-step (list 'Y) null))
+  (define xz-step (spec-step (list 'Z) null))
+  (define bc-step (impl-step '(timeout (addr 0 0)) null null 'C))
+  (define yw-step (spec-step (list 'W) null))
 
-;;   (test-equal? "Remove no pairs, because no list"
-;;     (prune-unsupported
-;;      (mutable-set ax-pair)
-;;      ;; incoming-steps
-;;      (mutable-hash [ax-pair (mutable-set (list ax-pair aa-step xx-step (hash)))])
-;;      ;; related spec steps
-;;      (mutable-hash [(list ax-pair aa-step) (mutable-set xx-step)])
-;;      ;; unrelated sucessors
-;;      null)
-;;     (list
-;;      (set ax-pair)
-;;      (mutable-hash [(list ax-pair aa-step) (mutable-set xx-step)])))
+  (test-equal? "Remove no pairs, because no list"
+    (prune-unsupported
+     (mutable-set ax-pair)
+     ;; incoming-steps
+     (mutable-hash [ax-pair (mutable-set (list ax-pair aa-step xx-step (hash)))])
+     ;; related spec steps
+     (mutable-hash [(list ax-pair aa-step) (mutable-set xx-step)])
+     ;; unrelated sucessors
+     null)
+    (list
+     (set ax-pair)
+     (mutable-hash [(list ax-pair aa-step) (mutable-set xx-step)])))
 
-;;   (test-equal? "Remove no pairs, because unrelated-matches contained only a redundant support"
-;;     (prune-unsupported
-;;      (set ax-pair bz-pair)
-;;      (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
-;;                    [bz-pair (mutable-set (list ax-pair ab-step xz-step (hash)))]
-;;                    [ax-pair (mutable-set)])
-;;      (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step xz-step)])
-;;      (list by-pair))
-;;     (list
-;;      (set ax-pair bz-pair)
-;;      (mutable-hash [(list ax-pair ab-step) (mutable-set xz-step)])))
+  (test-equal? "Remove no pairs, because unrelated-matches contained only a redundant support"
+    (prune-unsupported
+     (set ax-pair bz-pair)
+     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
+                   [bz-pair (mutable-set (list ax-pair ab-step xz-step (hash)))]
+                   [ax-pair (mutable-set)])
+     (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step xz-step)])
+     (list by-pair))
+    (list
+     (set ax-pair bz-pair)
+     (mutable-hash [(list ax-pair ab-step) (mutable-set xz-step)])))
 
-;;   (test-equal? "Remove last remaining pair"
-;;     (prune-unsupported
-;;      (mutable-set ax-pair)
-;;      (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
-;;                    [ax-pair (mutable-set)])
-;;      (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step)])
-;;      (list by-pair))
-;;     (list
-;;      (set)
-;;      (mutable-hash [(list ax-pair ab-step) (mutable-set)])))
+  (test-equal? "Remove last remaining pair"
+    (prune-unsupported
+     (mutable-set ax-pair)
+     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
+                   [ax-pair (mutable-set)])
+     (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step)])
+     (list by-pair))
+    (list
+     (set)
+     (mutable-hash [(list ax-pair ab-step) (mutable-set)])))
 
-;;   (test-equal? "Remove a redundant support"
-;;     (prune-unsupported
-;;      (mutable-set ax-pair bz-pair by-pair)
-;;      ;; incoming-steps
-;;      (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
-;;                    [bz-pair (mutable-set (list ax-pair ab-step xz-step (hash)))]
-;;                    [ax-pair (mutable-set)]
-;;                    [cw-pair (mutable-set (list by-pair bc-step yw-step (hash)))])
-;;      ;; matching spec steps
-;;      (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step xz-step)]
-;;                    [(list by-pair bc-step) (mutable-set yw-step)])
-;;      ;; unrelated successors
-;;      (list cw-pair))
-;;     (list
-;;      (set ax-pair bz-pair)
-;;      (mutable-hash [(list ax-pair ab-step) (mutable-set xz-step)]
-;;                    [(list by-pair bc-step) (mutable-set)])))
+  (test-equal? "Remove a redundant support"
+    (prune-unsupported
+     (mutable-set ax-pair bz-pair by-pair)
+     ;; incoming-steps
+     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
+                   [bz-pair (mutable-set (list ax-pair ab-step xz-step (hash)))]
+                   [ax-pair (mutable-set)]
+                   [cw-pair (mutable-set (list by-pair bc-step yw-step (hash)))])
+     ;; matching spec steps
+     (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step xz-step)]
+                   [(list by-pair bc-step) (mutable-set yw-step)])
+     ;; unrelated successors
+     (list cw-pair))
+    (list
+     (set ax-pair bz-pair)
+     (mutable-hash [(list ax-pair ab-step) (mutable-set xz-step)]
+                   [(list by-pair bc-step) (mutable-set)])))
 
-;;     (test-equal? "Remove a non-redundant support"
-;;       (prune-unsupported
-;;        (mutable-set ax-pair by-pair)
-;;        ;; incoming-steps
-;;        (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
-;;                      [ax-pair (mutable-set)]
-;;                      [cw-pair (mutable-set (list by-pair bc-step yw-step (hash)))])
-;;        ;; matching spec steps
-;;        (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step)]
-;;                      [(list by-pair bc-step) (mutable-set yw-step)])
-;;        ;; unrelated successors
-;;        (list cw-pair))
-;;       (list
-;;        (set)
-;;        (mutable-hash [(list ax-pair ab-step) (mutable-set)]
-;;                      [(list by-pair bc-step) (mutable-set)]))))
+    (test-equal? "Remove a non-redundant support"
+      (prune-unsupported
+       (mutable-set ax-pair by-pair)
+       ;; incoming-steps
+       (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
+                     [ax-pair (mutable-set)]
+                     [cw-pair (mutable-set (list by-pair bc-step yw-step (hash)))])
+       ;; matching spec steps
+       (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step)]
+                     [(list by-pair bc-step) (mutable-set yw-step)])
+       ;; unrelated successors
+       (list cw-pair))
+      (list
+       (set)
+       (mutable-hash [(list ax-pair ab-step) (mutable-set)]
+                     [(list by-pair bc-step) (mutable-set)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Debugging
