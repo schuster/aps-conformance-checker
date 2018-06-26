@@ -1356,13 +1356,11 @@
        (((define-state (Always) (m) (goto Always)))
         (goto Always))))))
   (define ignore-all-config (make-ignore-all-config 'Nat))
-  (define (make-ignore-all-spec-instance addr-type)
+  (define ignore-all-spec-instance
     (term
      (((define-state (Always) [* -> () (goto Always)]))
       (goto Always)
       0)))
-  (define ignore-all-spec-instance
-    (make-ignore-all-spec-instance 'Nat))
   (check-not-false (redex-match csa-eval i ignore-all-config))
   (test-valid-instance? ignore-all-spec-instance)
 
