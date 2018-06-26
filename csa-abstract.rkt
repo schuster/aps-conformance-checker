@@ -36,7 +36,7 @@
  ;; Required by APS#
  csa#-internal-address?
  csa#-output-address
- csa#-output-marker
+ csa#-output-markers
  csa#-output-type
  csa#-output-message
  csa#-output-multiplicity
@@ -150,7 +150,7 @@
       (loop-context E#))
   (trigger# (timeout a#)
             (internal-receive         a#     v# m)
-            (external-receive (marked a# mk) v#)))
+            (external-receive (marked a# mk ...) v#)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Test Data
@@ -347,7 +347,7 @@
      (eval-timeout config addr trigger abort)]
     [`(internal-receive ,addr ,message ,mult)
      (eval-message config addr message trigger abort)]
-    [`(external-receive (marked ,addr ,_) ,message)
+    [`(external-receive (marked ,addr ,_ ...) ,message)
      (eval-message config addr message trigger abort)]))
 
 (define (eval-timeout config addr trigger abort)
@@ -2726,20 +2726,22 @@
 
 (define csa#-output-address car)
 
-(define (csa#-output-marker o)
+(define (csa#-output-markers o)
   (match-define `(marked ,_ ,markers ...) (csa#-output-address o))
-  (match markers
-    [(list mk) mk]
-    [_ (error 'csa#-output-marker "Unexpected number of markers on output address: expected 1, got ~s" (length markers))]))
+  markers)
 
 (module+ test
-  (test-equal? "csa#-output-marker"
-    (csa#-output-marker `[(marked (addr (env Nat) 0) 1) Nat abs-nat single])
-    1)
+  (test-equal? "csa#-output-markers"
+    (csa#-output-markers `[(marked (addr (env Nat) 0) 1) Nat abs-nat single])
+    (list 1))
 
-  (test-exn "Error for csa#-output-marker"
-    (lambda (exn) #t)
-    (lambda () (csa#-output-marker `[(marked (addr (env Nat) 0) 1 2) Nat abs-nat single]))))
+  (test-equal? "csa#-output-markers 2"
+    (csa#-output-markers `[(marked (addr (env Nat) 0)) Nat abs-nat single])
+    null)
+
+  (test-equal? "csa#-output-markers 3"
+    (csa#-output-markers `[(marked (addr (env Nat) 0) 1 2 3) Nat abs-nat single])
+    (list 1 2 3)))
 
 (define (csa#-output-type o)
   (match (address-location (unmark-addr (csa#-output-address o)))

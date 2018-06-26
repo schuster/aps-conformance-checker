@@ -755,8 +755,13 @@
    (match-trigger/j _ (internal-receive _ _ _) free ())]
 
   [(side-condition ,(not (member (term mk) (term (mk_mon-recs ...)))))
-   -----------------------------------------------------------------------
+   -------------------------------------------------------------------------------------------
    (match-trigger/j (mk_mon-recs ...) (external-receive (marked _ mk) _) free ())]
+
+  ;; external receive on receptionist without a marker is unobserved
+  [
+   ----------------------------------------------------------------------------
+   (match-trigger/j (mk_mon-recs ...) (external-receive (marked _) _) free ())]
 
   [(aps#-match/j v# p any_bindings)
    --------------------------------------------------------------------------------------
@@ -769,6 +774,10 @@
 
   (test-equal? "External-receive on unmonitored marker matches free transition"
    (match-trigger (list 1) '(external-receive (marked (addr 0 0) 2) abs-nat) 'free)
+   null)
+
+  (test-equal? "External-receive on receptionist without a marker matches free transition"
+   (match-trigger (list 1) '(external-receive (marked (addr 0 0)) abs-nat) 'free)
    null)
 
   (test-false "External receive on monitored receptionist does not match free transition"
@@ -1231,11 +1240,11 @@
   (match psms
     [(list) (list `[() ()])]
     [(list psm remaining-psms ...)
-     (define marker (csa#-output-marker output))
+     (define markers (csa#-output-markers output))
      (define message (csa#-output-message output))
      (define quantity (csa#-output-multiplicity output))
      (append*
-      (for/list ([resolved-psms-and-fulfillments (resolve-output psm marker message quantity)])
+      (for/list ([resolved-psms-and-fulfillments (resolve-output psm markers message quantity)])
         (match-define (list resolved-psms fulfillments) resolved-psms-and-fulfillments)
         ;; returns a list of resolve-results
         (for/list ([remaining-resolve-result (resolve-output/many-psms remaining-psms output)])
@@ -1244,8 +1253,7 @@
                 (append fulfillments new-fulfillments)))))]))
 
 (module+ test
-  (test-equal?
-      "resolve-output/many-psms: Outputs to unmonitored addresses cause no change"
+  (test-equal? "resolve-output/many-psms: Outputs to unmonitored addresses cause no change"
     (resolve-output/many-psms
      (list `(() () (goto S1) ((define-state (S1))) ())
            `(() () (goto S2) ((define-state (S2))) ()))
@@ -1253,6 +1261,13 @@
        (variant A (addr 1 0) (addr 2 0)) single])
     (list `[,(list `(() () (goto S1) ((define-state (S1))) ())
                    `(() () (goto S2) ((define-state (S2))) ()))
+            ()]))
+
+  (test-equal? "resolve-output/many-psms: Outputs with no markers cause no change"
+    (resolve-output/many-psms
+     (list `(() (2) (goto S1) ((define-state (S1))) ()))
+     `[(marked (addr Nat 1)) abs-nat single])
+    (list `[,(list `(() (2) (goto S1) ((define-state (S1))) ()))
             ()]))
 
   (test-equal? "resolve-output/many-psms: Resolve against two PSMs that both monitor (e.g. for when transition is both obs and unobs)"
@@ -1270,43 +1285,46 @@
 ;; Returns a set of tuples each containing a list of PSMs and a set of obligations
 ;; such that the input PSM can take an output step with the given message to the given
 ;; PSMs and fulfill the resturned obligations to match the message.
-(define (resolve-output psm marker message quantity)
-  (cond
-    [(member marker (aps#-psm-mon-externals psm))
-     (match quantity
-       ['single
-        (define config-list-pattern-pairs
-          (match (resolve-with-obligation psm marker message)
-            [(list)
-             ;; if we can't find a match with existing patterns, try the free-output patterns
-             (match (resolve-with-free-obl-patterns psm marker message)
+(define (resolve-output psm markers message quantity)
+  (match markers
+    [(list marker)
+     (cond
+       [(member marker (aps#-psm-mon-externals psm))
+        (match quantity
+          ['single
+           (define config-list-pattern-pairs
+             (match (resolve-with-obligation psm marker message)
                [(list)
-                ;; if free-output patterns also don't match, try the other free-transition
-                ;; patterns as a last resort
-                (resolve-with-free-transition psm marker message)]
-               [results results])]
-            [results results]))
-        (for/list ([clpp config-list-pattern-pairs])
-          (match-define (list configs pattern) clpp)
-          (list configs `([,marker ,pattern])))]
-       ['many
-        ;; have to use free-output patterns if output may have been sent more than once (e.g. in
-        ;; a loop)
-        (map
-         (lambda (resolve-result)
-           (match-define `[,psms ,_] resolve-result)
-           ;; many-of outputs don't fulfill an obligation, because they *might* not
-           ;; happen. Macro-steps only records the minimal set of fulfillments
-           (list psms null))
-         (resolve-with-free-obl-patterns psm marker message))])]
-    [else
-     (list `[,(list psm) ()])]))
+                ;; if we can't find a match with existing patterns, try the free-output patterns
+                (match (resolve-with-free-obl-patterns psm marker message)
+                  [(list)
+                   ;; if free-output patterns also don't match, try the other free-transition
+                   ;; patterns as a last resort
+                   (resolve-with-free-transition psm marker message)]
+                  [results results])]
+               [results results]))
+           (for/list ([clpp config-list-pattern-pairs])
+             (match-define (list configs pattern) clpp)
+             (list configs `([,marker ,pattern])))]
+          ['many
+           ;; have to use free-output patterns if output may have been sent more than once (e.g. in
+           ;; a loop)
+           (map
+            (lambda (resolve-result)
+              (match-define `[,psms ,_] resolve-result)
+              ;; many-of outputs don't fulfill an obligation, because they *might* not
+              ;; happen. Macro-steps only records the minimal set of fulfillments
+              (list psms null))
+            (resolve-with-free-obl-patterns psm marker message))])]
+       [else
+        (list `[,(list psm) ()])])]
+    [(list) (list `[,(list psm) ()])]))
 
 (module+ test
   (test-equal? "resolve-output 1"
     (resolve-output
      (make-dummy-spec `(1) `([1 *]))
-     1
+     (list 1)
      `abs-nat
      `single)
     (list `[(,(make-dummy-spec `(1) `()))
@@ -1315,8 +1333,17 @@
   (test-equal? "resolve-output unobserved address"
     (resolve-output
      `[() () (goto A) ((define-state (A))) ()]
-     1
+     (list 1)
      `(marked (addr 1 0) 2)
+     `single)
+    (list `[,(list `(() () (goto A) ((define-state (A))) ()))
+            ()]))
+
+  (test-equal? "resolve-output output without a marker on destination"
+    (resolve-output
+     `[() () (goto A) ((define-state (A))) ()]
+     (list)
+     `abs-nat
      `single)
     (list `[,(list `(() () (goto A) ((define-state (A))) ()))
             ()])))
