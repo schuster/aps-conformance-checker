@@ -3194,43 +3194,46 @@
      (make-single-actor-config never-respond-with-self-actor)
      (make-psm new-self-obligations-spec)))
 
-;;   ;;;; "Free" forks inside for loops should not cause infinite loop
-;;   (define forks-in-for-loop-actor
-;;     (term
-;;      (((Addr (Addr (Addr Nat))) (addr 0 0))
-;;       (((define-state (Always) (m) (goto Always)
-;;           [(timeout 0)
-;;            (begin
-;;              (for/fold ([dummy 0])
-;;                        ([item (list 1 2 3)])
-;;                (begin
-;;                  (send (addr (env (Addr (Addr Nat))) 1)
-;;                        (spawn this-loc (Addr Nat)
-;;                               (goto A)
-;;                               (define-state (A) (r)
-;;                                 (begin
-;;                                   (send r 1)
-;;                                   (goto A)))))
-;;                  0))
-;;             (goto Always))]))
-;;        (goto Always)))))
+  ;; NOTE: it looks like forks should *not* be allowed in loops, but I'm keeping this test around just
+  ;; in case it turns out I need a way to add those back in
+  ;;
+  ;;;; "Free" forks inside for loops should not cause infinite loop
+  ;; (define forks-in-for-loop-actor
+  ;;   (term
+  ;;    (((Addr (Addr (Addr Nat))) (addr 0 0))
+  ;;     (((define-state (Always) (m) (goto Always)
+  ;;         [(timeout 0)
+  ;;          (begin
+  ;;            (for/fold ([dummy 0])
+  ;;                      ([item (list 1 2 3)])
+  ;;              (begin
+  ;;                (send (addr (env (Addr (Addr Nat))) 1)
+  ;;                      (spawn this-loc (Addr Nat)
+  ;;                             (goto A)
+  ;;                             (define-state (A) (r)
+  ;;                               (begin
+  ;;                                 (send r 1)
+  ;;                                 (goto A)))))
+  ;;                0))
+  ;;           (goto Always))]))
+  ;;      (goto Always)))))
 
-;;   (define forks-in-loop-spec
-;;     (term
-;;      (((define-state (Always r)
-;;          [* -> () (goto Always r)]
-;;          [free -> ([obligation r (delayed-fork
-;;                                    (goto A)
-;;                                    (define-state (A)
-;;                                      [r2 -> ([obligation r2 *]) (goto A)]))])
-;;                 (goto Always r)]))
-;;       (goto Always (addr (env (Addr (Addr Nat))) 1))
-;;       ((Addr (Addr (Addr Nat))) (addr 0 0)))))
+  ;; (define forks-in-loop-spec
+  ;;   (term
+  ;;    (((define-state (Always r)
+  ;;        [* -> () (goto Always r)]
+  ;;        [free -> ([obligation r (delayed-fork
+  ;;                                  (goto A)
+  ;;                                  (define-state (A)
+  ;;                                    [r2 -> ([obligation r2 *]) (goto A)]))])
+  ;;               (goto Always r)]))
+  ;;     (goto Always (addr (env (Addr (Addr Nat))) 1))
+  ;;     ((Addr (Addr (Addr Nat))) (addr 0 0)))))
 
-;;   (test-valid-actor? forks-in-for-loop-actor)
-;;   (test-valid-instance? forks-in-loop-spec)
-;;   (test-true "Forks in for loops are okay"
-;;     (check-conformance/config
-;;      (make-single-actor-config forks-in-for-loop-actor)
-;;      (make-exclusive-spec forks-in-loop-spec)))
+  ;; (test-valid-actor? forks-in-for-loop-actor)
+  ;; (test-valid-instance? forks-in-loop-spec)
+  ;; (test-true "Forks in for loops are okay"
+  ;;   (check-conformance/config
+  ;;    (make-single-actor-config forks-in-for-loop-actor)
+  ;;    (make-exclusive-spec forks-in-loop-spec)))
   )
