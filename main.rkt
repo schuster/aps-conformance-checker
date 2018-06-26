@@ -2943,42 +2943,42 @@
      (make-single-actor-config worker-spawner)
      (make-psm worker-spawner-spec)))
 
-;;   ;;;; Type Coercions
+  ;;;; Type Coercions
 
-;;   (define ping-coercion-spawner
-;;     (term
-;;      (((Addr (Addr (Union [Ping (Addr (Union [Pong]))]))) (addr 0 0))
-;;       (((define-state (Always) (dest)
-;;           (begin
-;;             (send dest
-;;                  (spawn 1
-;;                         (Union [Ping (Addr (Union [Pong]))] [InternalOnly])
-;;                         (goto Ready)
-;;                         (define-state (Ready) (msg)
-;;                           (begin
-;;                             (case msg
-;;                               [(Ping response-dest) (send response-dest (variant Pong))]
-;;                               [(InternalOnly) (variant Pong)])
-;;                             (goto Ready)))))
-;;             (goto Always))))
-;;        (goto Always)))))
+  (define ping-coercion-spawner
+    (term
+     (((Addr (Addr (Union [Ping (Addr (Union [Pong]))]))) (marked (addr 0 0) 0))
+      (((define-state (Always) (dest)
+          (begin
+            (send dest
+                 (spawn 1
+                        (Union [Ping (Addr (Union [Pong]))] [InternalOnly])
+                        (goto Ready)
+                        (define-state (Ready) (msg)
+                          (begin
+                            (case msg
+                              [(Ping response-dest) (send response-dest (variant Pong))]
+                              [(InternalOnly) (variant Pong)])
+                            (goto Ready)))))
+            (goto Always))))
+       (goto Always)))))
 
-;;   (define ping-coercion-spawner-spec
-;;     (term
-;;      (((define-state (Always)
-;;          [r -> ([obligation r (delayed-fork
-;;                                (goto Ready)
-;;                                (define-state (Ready)
-;;                                  [(variant Ping r) -> ([obligation r (variant Pong)]) (goto Ready)]))])
-;;             (goto Always)]))
-;;       (goto Always)
-;;       ((Addr (Addr (Union [Ping (Addr (Union [Pong]))]))) (addr 0 0)))))
+  (define ping-coercion-spawner-spec
+    (term
+     (((define-state (Always)
+         [r -> ([obligation r (delayed-fork
+                               (goto Ready)
+                               (define-state (Ready)
+                                 [(variant Ping r) -> ([obligation r (variant Pong)]) (goto Ready)]))])
+            (goto Always)]))
+      (goto Always)
+      0)))
 
-;;   ;; make sure that
-;;   (test-true "Exposed addresses only expose types according to the type of the address they were exposed through"
-;;     (check-conformance/config
-;;      (make-single-actor-config ping-coercion-spawner)
-;;      (make-exclusive-spec ping-coercion-spawner-spec)))
+  ;; make sure that
+  (test-true "Exposed addresses only expose types according to the type of the address they were exposed through"
+    (check-conformance/config
+     (make-single-actor-config ping-coercion-spawner)
+     (make-psm ping-coercion-spawner-spec)))
 
 ;;   ;;;; Widening
 
