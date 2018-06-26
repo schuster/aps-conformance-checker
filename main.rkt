@@ -2292,47 +2292,47 @@
     (check-conformance/config (make-single-actor-config spawn-timeout-sender-actor)
                               (make-psm timeout-spec)))
 
-;;   ;; Multiple Disjoint Actors
-;;   (define static-response-actor2
-;;     (term
-;;      ((Nat (addr 1 0))
-;;       (((define-state (Always2 [response-dest (Addr ,static-response-type)]) (m)
-;;              (begin
-;;                (send response-dest (variant Ack 0))
-;;                (goto Always2 response-dest))))
-;;        (goto Always2 ,static-response-address)))))
-;;   (define other-static-response-actor
-;;     (term
-;;      ((Nat (addr 1 0))
-;;       (((define-state (Always2 [response-dest (Addr ,static-response-type)]) (m)
-;;              (begin
-;;                (send response-dest (variant Ack 0))
-;;                (goto Always2 response-dest))))
-;;        (goto Always2 (addr (env ,static-response-type) 3))))))
-;;   (define static-response-with-extra-spec
-;;     (term
-;;      (((define-state (Always response-dest)
-;;          [* -> ([obligation response-dest *]) (goto Always response-dest)]
-;;          [free -> ([obligation response-dest *]) (goto Always response-dest)]))
-;;       (goto Always ,static-response-address)
-;;       (Nat (addr 0 0)))))
+  ;; Multiple Disjoint Actors
+  (define static-response-actor2
+    (term
+     ((Nat (marked (addr 1 0) 1))
+      (((define-state (Always2 [response-dest (Addr ,static-response-type)]) (m)
+             (begin
+               (send response-dest (variant Ack 0))
+               (goto Always2 response-dest))))
+       (goto Always2 ,static-response-dest)))))
+  (define other-static-response-actor
+    (term
+     ((Nat (marked (addr 1 0) 1))
+      (((define-state (Always2 [response-dest (Addr ,static-response-type)]) (m)
+             (begin
+               (send response-dest (variant Ack 0))
+               (goto Always2 response-dest))))
+       (goto Always2 (marked (addr (env ,static-response-type) 3) 3))))))
+  (define static-response-with-extra-spec
+    (term
+     (((define-state (Always response-dest)
+         [* -> ([obligation response-dest *]) (goto Always response-dest)]
+         [free -> ([obligation response-dest *]) (goto Always response-dest)]))
+      (goto Always ,static-response-marker)
+      0)))
 
-;;   (test-valid-actor? static-response-actor2)
-;;   (test-valid-actor? other-static-response-actor)
-;;   (test-valid-instance? static-response-with-extra-spec)
+  (test-valid-actor? static-response-actor2)
+  (test-valid-actor? other-static-response-actor)
+  (test-valid-instance? static-response-with-extra-spec)
 
-;;   (test-false "Multi actor test 1"
-;;               (check-conformance/config
-;;                 (make-empty-queues-config (list static-response-actor static-response-actor2) null)
-;;                 (make-spec static-response-spec (list '(Nat (addr 1 0))))))
-;;   (test-true "Multi actor test 2"
-;;              (check-conformance/config
-;;               (make-empty-queues-config (list static-response-actor static-response-actor2) null)
-;;               (make-spec static-response-with-extra-spec (list '(Nat (addr 1 0))))))
-;;   (test-true "Multi actor test 3"
-;;              (check-conformance/config
-;;                (make-empty-queues-config (list static-response-actor other-static-response-actor) null)
-;;                (make-spec static-response-spec (list '(Nat (addr 1 0))))))
+  (test-false "Multi actor test 1"
+              (check-conformance/config
+                (make-empty-queues-config (list static-response-actor static-response-actor2) null)
+                (make-psm static-response-spec)))
+  (test-true "Multi actor test 2"
+             (check-conformance/config
+              (make-empty-queues-config (list static-response-actor static-response-actor2) null)
+              (make-psm static-response-with-extra-spec)))
+  (test-true "Multi actor test 3"
+             (check-conformance/config
+               (make-empty-queues-config (list static-response-actor other-static-response-actor) null)
+               (make-psm static-response-spec)))
 
 ;;   ;; Actors working together
 ;;   (define statically-delegating-responder-actor
