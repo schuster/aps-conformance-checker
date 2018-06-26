@@ -1489,67 +1489,67 @@
     (check-conformance/config (make-single-actor-config reverse-pattern-matching-actor)
                               (make-psm pattern-match-spec)))
 
-;;   ;;;; "Or" pattern matching
-;;   (define or-pattern-match-spec
-;;     (term
-;;      (((define-state (Matching r)
-;;          [* -> ([obligation r (or (variant A *) (variant B *))]) (goto Matching r)]))
-;;       (goto Matching ,(make-static-response-address `(Union [A Nat] [B Nat])))
-;;       ((Union [A Nat] [B Nat]) (addr 0 0)))))
+  ;;;; "Or" pattern matching
+  (define or-pattern-match-spec
+    (term
+     (((define-state (Matching r)
+         [* -> ([obligation r (or (variant A *) (variant B *))]) (goto Matching r)]))
+      (goto Matching ,static-response-marker)
+      0)))
 
-;;   (define or-wrong-pattern-match-spec
-;;     (term
-;;      (((define-state (Matching r)
-;;          [* -> ([obligation r (or (variant A *) (variant C *))]) (goto Matching r)]))
-;;       (goto Matching ,(make-static-response-address `(Union [A Nat] [B Nat])))
-;;       ((Union [A Nat] [B Nat]) (addr 0 0)))))
+  (define or-wrong-pattern-match-spec
+    (term
+     (((define-state (Matching r)
+         [* -> ([obligation r (or (variant A *) (variant C *))]) (goto Matching r)]))
+      (goto Matching ,static-response-marker)
+      0)))
 
-;;   (test-valid-instance? or-pattern-match-spec)
-;;   (test-valid-instance? or-wrong-pattern-match-spec)
-;;   (test-true "Pattern match with or"
-;;     (check-conformance/config (make-single-actor-config pattern-matching-actor)
-;;                               (make-exclusive-spec or-pattern-match-spec)))
-;;   (test-false "Pattern match with wrong or pattern"
-;;     (check-conformance/config (make-single-actor-config pattern-matching-actor)
-;;                               (make-exclusive-spec or-wrong-pattern-match-spec)))
+  (test-valid-instance? or-pattern-match-spec)
+  (test-valid-instance? or-wrong-pattern-match-spec)
+  (test-true "Pattern match with or"
+    (check-conformance/config (make-single-actor-config pattern-matching-actor)
+                              (make-psm or-pattern-match-spec)))
+  (test-false "Pattern match with wrong or pattern"
+    (check-conformance/config (make-single-actor-config pattern-matching-actor)
+                              (make-psm or-wrong-pattern-match-spec)))
 
-;;   (define send-message-then-another
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (Init [r (Addr (Union [A] [B]))]) (m)
-;;           (begin
-;;            (send r (variant A))
-;;            (goto SendOther r)))
-;;         (define-state (SendOther [r (Addr (Union [A] [B]))]) (m)
-;;           (begin
-;;            (send r (variant A))
-;;            (goto Done))
-;;           [(timeout 5)
-;;            (begin
-;;             (send r (variant B))
-;;             (goto Done))])
-;;         (define-state (Done) (m) (goto Done)))
-;;        (goto Init (addr (env (Union [A] [B])) 0))))))
+  (define send-message-then-another
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (Init [r (Addr (Union [A] [B]))]) (m)
+          (begin
+           (send r (variant A))
+           (goto SendOther r)))
+        (define-state (SendOther [r (Addr (Union [A] [B]))]) (m)
+          (begin
+           (send r (variant A))
+           (goto Done))
+          [(timeout 5)
+           (begin
+            (send r (variant B))
+            (goto Done))])
+        (define-state (Done) (m) (goto Done)))
+       (goto Init (marked (addr (env (Union [A] [B])) 0) 1))))))
 
-;;   (define overlapping-patterns-spec
-;;     (term
-;;      (((define-state (Init r)
-;;          [* -> ([obligation r (or (variant A) (variant B))]
-;;                 [obligation r (variant A)])
-;;             (goto NoMoreSends)])
-;;        (define-state (NoMoreSends)
-;;          [* -> () (goto NoMoreSends)]))
-;;       (goto Init (addr (env (Union [A] [B])) 0))
-;;       (Nat (addr 0 0)))))
+  (define overlapping-patterns-spec
+    (term
+     (((define-state (Init r)
+         [* -> ([obligation r (or (variant A) (variant B))]
+                [obligation r (variant A)])
+            (goto NoMoreSends)])
+       (define-state (NoMoreSends)
+         [* -> () (goto NoMoreSends)]))
+      (goto Init 1)
+      0)))
 
-;;   ;; Non-deterministic/overlap pattern-matching is unsupported: we just pick for each output the first
-;;   ;; pattern that can possibly match
-;;   (test-valid-actor? send-message-then-another)
-;;   (test-valid-instance? overlapping-patterns-spec)
-;;   (test-true "Overlapping output patterns are okay"
-;;     (check-conformance/config
-;;      (make-single-actor-config send-message-then-another)
-;;      (make-exclusive-spec overlapping-patterns-spec)))
+  ;; Non-deterministic/overlap pattern-matching is unsupported: we just pick for each output the first
+  ;; pattern that can possibly match
+  (test-valid-actor? send-message-then-another)
+  (test-valid-instance? overlapping-patterns-spec)
+  (test-true "Overlapping output patterns are okay"
+    (check-conformance/config
+     (make-single-actor-config send-message-then-another)
+     (make-psm overlapping-patterns-spec)))
 
 ;;   ;;;; Dynamic request/response
 
