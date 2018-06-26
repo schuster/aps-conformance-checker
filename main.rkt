@@ -2334,32 +2334,32 @@
                (make-empty-queues-config (list static-response-actor other-static-response-actor) null)
                (make-psm static-response-spec)))
 
-;;   ;; Actors working together
-;;   (define statically-delegating-responder-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (A [responder (Addr (Addr Nat))]) (m)
-;;           (begin
-;;             (send responder m)
-;;             (goto A responder))))
-;;        (goto A (addr 1 0))))))
+  ;; Actors working together
+  (define statically-delegating-responder-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (A [responder (Addr (Addr Nat))]) (m)
+          (begin
+            (send responder m)
+            (goto A responder))))
+       (goto A (marked (addr 1 0)))))))
 
-;;   (define request-response-actor2
-;;     (term
-;;      (((Addr Nat) (addr 1 0))
-;;       (((define-state (Always) (response-target)
-;;           (begin
-;;             (send response-target 0)
-;;             (goto Always))))
-;;        (goto Always)))))
+  (define request-response-actor2
+    (term
+     (((Addr Nat) (marked (addr 1 0) 1))
+      (((define-state (Always) (response-target)
+          (begin
+            (send response-target 0)
+            (goto Always))))
+       (goto Always)))))
 
-;;   (test-valid-actor? statically-delegating-responder-actor)
-;;   (test-valid-actor? request-response-actor2)
+  (test-valid-actor? statically-delegating-responder-actor)
+  (test-valid-actor? request-response-actor2)
 
-;;   (test-true "Multiple actors 3"
-;;              (check-conformance/config
-;;               (make-empty-queues-config (list request-response-actor2 statically-delegating-responder-actor) null)
-;;               (make-exclusive-spec request-response-spec)))
+  (test-true "Multiple actors 3"
+             (check-conformance/config
+              (make-empty-queues-config (list request-response-actor2 statically-delegating-responder-actor) null)
+              (make-psm request-response-spec)))
 
 
 ;;   ;;;; Self Reveal
