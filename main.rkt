@@ -1705,77 +1705,77 @@
     (check-conformance/config (make-single-actor-config delayed-send-with-timeout-actor)
                               (make-psm request-response-spec)))
 
-;;   (define (make-self-send-response-actor addr-number)
-;;     (term
-;;      (((Union [FromEnv (Addr Nat)] [FromSelf (Addr Nat)]) (addr self-send-loc ,addr-number))
-;;       (((define-state (Always) (msg)
-;;           (case msg
-;;             [(FromEnv response-target)
-;;              (begin
-;;                (send (addr self-send-loc ,addr-number) (variant FromSelf response-target))
-;;                (goto Always))]
-;;             [(FromSelf response-target)
-;;              (begin
-;;                (send response-target 0)
-;;                (goto Always))])))
-;;        (goto Always)))))
+  (define (make-self-send-response-actor addr-number)
+    (term
+     (((Union [FromEnv (Addr Nat)]) (marked (addr self-send-loc ,addr-number) ,addr-number))
+      (((define-state (Always) (msg)
+          (case msg
+            [(FromEnv response-target)
+             (begin
+               (send (marked (addr self-send-loc ,addr-number)) (variant FromSelf response-target))
+               (goto Always))]
+            [(FromSelf response-target)
+             (begin
+               (send response-target 0)
+               (goto Always))])))
+       (goto Always)))))
 
-;;   (define from-env-request-response-spec
-;;     (term
-;;      (((define-state (Always)
-;;          [(variant FromEnv response-target) -> ([obligation response-target *]) (goto Always)]))
-;;       (goto Always)
-;;       ((Union [FromEnv (Addr Nat)]) (addr self-send-loc 0)))))
+  (define from-env-request-response-spec
+    (term
+     (((define-state (Always)
+         [(variant FromEnv response-target) -> ([obligation response-target *]) (goto Always)]))
+      (goto Always)
+      0)))
 
-;;   (define from-env-wrapper
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (Always [sender (Addr (Union [FromEnv (Addr Nat)]))]) (msg)
-;;           (begin
-;;             (send sender (variant FromEnv msg))
-;;             (goto Always sender))))
-;;        (goto Always (addr self-send-loc 0))))))
+  (define from-env-wrapper
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (Always [sender (Addr (Union [FromEnv (Addr Nat)]))]) (msg)
+          (begin
+            (send sender (variant FromEnv msg))
+            (goto Always sender))))
+       (goto Always (marked (addr self-send-loc 0)))))))
 
-;;   (test-valid-actor? (make-self-send-response-actor 0))
-;;   (test-valid-instance? from-env-request-response-spec)
-;;   (test-true "Can self-send, then send out to satisfy dynamic request/response"
-;;     (check-conformance/config (make-single-actor-config (make-self-send-response-actor 0))
-;;                               (make-exclusive-spec from-env-request-response-spec)))
-;;   (test-true "From-env wrapper with self-send sender"
-;;     (check-conformance/config (make-empty-queues-config (list from-env-wrapper)
-;;                                                         (list (make-self-send-response-actor 1)))
-;;                               (make-exclusive-spec request-response-spec)))
+  (test-valid-actor? (make-self-send-response-actor 0))
+  (test-valid-instance? from-env-request-response-spec)
+  (test-true "Can self-send, then send out to satisfy dynamic request/response"
+    (check-conformance/config (make-single-actor-config (make-self-send-response-actor 0))
+                              (make-psm from-env-request-response-spec)))
+  (test-true "From-env wrapper with self-send sender"
+    (check-conformance/config (make-empty-queues-config (list from-env-wrapper)
+                                                        (list (make-self-send-response-actor 1)))
+                              (make-psm request-response-spec)))
 
-;;   ;; When given two choices to/from same state, have to take the one where the outputs match the
-;;   ;; commitments
-;;   (define reply-once-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (A) (r)
-;;           (begin
-;;             (send r 0)
-;;             (goto B)))
-;;         (define-state (B) (r) (goto B)))
-;;        (goto A)))))
-;;   (define maybe-reply-spec
-;;     (term
-;;      (((define-state (A)
-;;          [r -> ([obligation r *]) (goto B)]
-;;          [r -> () (goto B)])
-;;        (define-state (B)
-;;          [* -> () (goto B)]))
-;;       (goto A)
-;;       ((Addr Nat) (addr 0 0)))))
+  ;; When given two choices to/from same state, have to take the one where the outputs match the
+  ;; commitments
+  (define reply-once-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (A) (r)
+          (begin
+            (send r 0)
+            (goto B)))
+        (define-state (B) (r) (goto B)))
+       (goto A)))))
+  (define maybe-reply-spec
+    (term
+     (((define-state (A)
+         [r -> ([obligation r *]) (goto B)]
+         [r -> () (goto B)])
+       (define-state (B)
+         [* -> () (goto B)]))
+      (goto A)
+      0)))
 
-;;   (test-valid-actor? reply-once-actor)
-;;   (test-valid-instance? maybe-reply-spec)
-;;   (test-true "reply-once actor, maybe-reply spec"
-;;     (check-conformance/config (make-single-actor-config reply-once-actor)
-;;                               (make-exclusive-spec maybe-reply-spec)))
+  (test-valid-actor? reply-once-actor)
+  (test-valid-instance? maybe-reply-spec)
+  (test-true "reply-once actor, maybe-reply spec"
+    (check-conformance/config (make-single-actor-config reply-once-actor)
+                              (make-psm maybe-reply-spec)))
 
 ;;   ;;;; Non-deterministic branching in spec
 
-;;   (define zero-nonzero-response-address (make-static-response-address `(Union [NonZero] [Zero])))
+;;   (define zero-nonzero-response-address (make-static-response-dest `(Union [NonZero] [Zero])))
 ;;   (define zero-nonzero-spec
 ;;     (term
 ;;      (((define-state (S1 r)
