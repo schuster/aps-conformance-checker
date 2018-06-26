@@ -1998,8 +1998,8 @@
   (redex-let aps# ([s# psm])
     (term s#)))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Debugging
+;; ---------------------------------------------------------------------------------------------------
+;; Debugging
 
 (define (spec-config-without-state-defs config)
   (match-define `[,mon-recs ,mon-exts ,goto ,_ ,obls] config)
