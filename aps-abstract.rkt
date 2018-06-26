@@ -17,8 +17,6 @@
  reverse-rename-marker
  aps#-config-has-commitment?
  aps#-completed-no-transition-psm?
- ;; needed for widening
- ;; aps#-config<=
  evict-pair
 
  ;; Required only for testing
@@ -1957,82 +1955,6 @@
        (match-define (list new-impl-config _) (csa#-evict i addr))
        (list new-impl-config s)])))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Widening helpers
-
-;; ;; s# s# -> Boolean
-;; ;;
-;; ;; A spec config s1 is <= s2 if they are identical except for their unobserved interface, which must
-;; ;; have (at most) strictly grown in s2 compared to s1
-;; (define (aps#-config<= s1 s2)
-;;   (match-let ([(list `(,obs1 ,unobs1 ,goto1 ,states1 ,obligations1)
-;;                      `(,obs2 ,unobs2 ,goto2 ,states2 ,obligations2))
-;;                (list s1 s2)])
-;;     (and (equal? (list obs1 goto1 states1 obligations1)
-;;                  (list obs2 goto2 states2 obligations2))
-;;          (receptionists<= unobs1 unobs2))))
-
-;; (module+ test
-;;   (test-true "config<= for identical configs"
-;;     (aps#-config<=
-;;      `(([Nat (addr 1 0)])
-;;        ()
-;;        (goto A)
-;;        ()
-;;        ())
-;;      `(([Nat (addr 1 0)])
-;;        ()
-;;        (goto A)
-;;        ()
-;;        ())))
-;;   (test-true "config<= for configs with <= unobs interfaces"
-;;     (aps#-config<=
-;;      `(([Nat (addr 1 0)])
-;;        ([(Union [A]) (addr 2 0)])
-;;        (goto S)
-;;        ()
-;;        ())
-;;      `(([Nat (addr 1 0)])
-;;        ([(Union [A] [B]) (addr 2 0)])
-;;        (goto S)
-;;        ()
-;;        ())))
-;;   (test-false "config<= for configs with incomparable unobs interfaces"
-;;     (aps#-config<=
-;;      `(([Nat (addr 1 0)])
-;;        ([(Union [A]) (addr 2 0)])
-;;        (goto S)
-;;        ()
-;;        ())
-;;      `(([Nat (addr 1 0)])
-;;        ([Nat (addr 1 0)])
-;;        (goto S)
-;;        ()
-;;        ()))))
-
-;; ;; (τa ...) (τa ...) -> Boolean
-;; ;;
-;; ;; An interface i1 is <= i2 if i2 contains all addresses from i1 and has a >= type for each address
-;; (define (receptionists<= i1 i2)
-;;   (for/and ([typed-addr1 i1])
-;;     (match (findf (lambda (typed-addr2) (equal? (second typed-addr1) (second typed-addr2))) i2)
-;;       [#f #f]
-;;       [(list type2 _) (type<= (first typed-addr1) type2)])))
-
-;; (module+ test
-;;   (test-true "receptionists<= for equal interfaces"
-;;     (receptionists<= `([Nat (addr 1 0)]) `([Nat (addr 1 0)])))
-;;   (test-false "receptionists<= for interfaces with different addresses"
-;;     (receptionists<= `([Nat (addr 1 0)]) `([Nat (addr 2 0)])))
-;;   (test-true "receptionists<= where one interface has a new address"
-;;     (receptionists<= `([Nat (addr 1 0)])
-;;                      `([Nat (addr 1 0)] [Nat (addr 2 0)])))
-;;   (test-true "receptionists<= where one interface expands the type"
-;;     (receptionists<= `([(Union [A])     (addr 1 0)])
-;;                      `([(Union [A] [B]) (addr 1 0)])))
-;;   (test-false "receptionists<= where one interface shrinks the type"
-;;     (receptionists<= `([(Union [A] [B]) (addr 1 0)])
-;;                      `([(Union [A])     (addr 1 0)]))))
 (module+ test
   (define evict-test-config
     `[([(addr 1 0)

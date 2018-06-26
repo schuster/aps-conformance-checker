@@ -1460,9 +1460,9 @@
 
 ;; converts an output (which includes the marker on an address) to a packet (which does not)
 (define (output->packet output)
-  `[(unmark-addr (csa#-output-address output))
-    (csa#-output-message output)
-    (csa#-output-multiplicity output)])
+  `[,(unmark-addr (csa#-output-address output))
+    ,(csa#-output-message output)
+    ,(csa#-output-multiplicity output)])
 
 ;; Abstractly adds the set of new packets to the packet set in the given config.
 (define (merge-messages-into-config config new-packets)
@@ -3548,6 +3548,8 @@
 
 ;; i# a# -> (list i# ρ#) Evicts the given address from the given config, returning the new
 ;; configuration and receptionists added
+;;
+;; REFACTOR: I don't think I need to return the receptionists anymore
 (define (csa#-evict i addr)
   (match-define (list remaining-actors remaining-blurred-actors evicted-behavior)
     (cond
@@ -3732,7 +3734,7 @@
     (for/list ([spawn spawns])
       (match-define `[,addr [,spawn-state-defs ,spawn-goto]] spawn)
       `[,(pseudo-blur addr) [,(pseudo-blur spawn-state-defs) ,(pseudo-blur spawn-goto)]]))
-  (csa#-transition-effect trigger `(,state-defs ,(pseudo-blur goto-exp)) new-sends new-spawns))
+  (csa#-transition-effect trigger `(,state-defs ,(pseudo-blur goto-exp)) new-sends new-spawns unused-marker))
 
 ;; Does the marker-removal/assimilation mentioned in comments for pseudo-blur-transition-result, on an
 ;; arbitrary expression/term
@@ -4651,9 +4653,9 @@
 ;; Debug helpers
 
 (define (impl-config-without-state-defs config)
-  (redex-let csa# ([(((any_addr (_ any_exp)) ...) ((any_addr-b ((_ any_exp-b) ...)) ...) any_msg)
+  (redex-let csa# ([(((any_addr (_ any_exp)) ...) ((any_addr-b ((_ any_exp-b) ...)) ...) any_msg any_recs)
                     config])
-    (term (((any_addr any_exp) ...) ((any_addr-b (any_exp-b ...)) ...) any_msg))))
+    (term (((any_addr any_exp) ...) ((any_addr-b (any_exp-b ...)) ...) any_msg any_recs))))
 
 (define (impl-config-goto config)
   ;; NOTE: only suports single-actor impls for now

@@ -408,7 +408,7 @@
          (apply-transition impl-config effect))))))
 
 ;; i# csa#-transition-effect -> impl-step
-(define (apply-transition config effect observed? unobserved?)
+(define (apply-transition config effect)
   ;; REFACTOR: inline this whole method
   (define transition (csa#-apply-transition config effect))
   (impl-step (csa#-transition-trigger transition)
@@ -418,8 +418,7 @@
 
 ;; i# s# -> (Listof trigger#)
 ;;
-;; Returns a list of all possible triggers from the given config pair, where the booleans associated
-;; with each indicate whether the trigger can be observed, and the second whether it can be unobserved
+;; Returns a list of all possible triggers from the given config pair
 (define (impl-triggers-from impl-config spec-config)
   (append
    (external-triggers-for-receptionists (csa#-config-receptionists impl-config))
@@ -549,53 +548,54 @@
      (set-remove! s e)
      e]))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Split/Blur/Canonicalize (SBC)
+;; ---------------------------------------------------------------------------------------------------
+;; Split/Blur/Canonicalize (SBC)
 
-;; ;; Performs the SBC (split/blur/canonicalize) operation on a config pair, returning its derivative
-;; ;; pairs along with an address-rename map with each pair. SBC entails the following:
-;; ;;
-;; ;; 1. For each address in the output commitment map that is *not* an argument to the current state,
-;; ;; split those commitments off into a new specification with a dummy FSM.
-;; ;;
-;; ;; 2. For each specification resulting from step 1, blur the implementation configuration according
-;; ;; to the addresses relevant to that spec. This means merging external addresses not used in the spec
-;; ;; into a single abstract value and choosing some subset of actors (up to some statically known
-;; ;; number) to remain precise while merging the others together.
-;; ;;
-;; ;; 3. Canonicalize the addresses in both configurations. That is, rename them to some canonical naming
-;; ;; so that we avoid the orbit problem with other similar pairs that we have already explored (or that
-;; ;; we will explore).
-;; ;;
-;; ;; SBC keeps our explored state-space finite. By creating a new spec for each no-longer-used
-;; ;; commitment address, we ensure that the number of adddresses in a spec config is no more than max(1,
-;; ;; maxStateParams), where maxStateParams is the maximum number of formal parameters for any state in
-;; ;; the original (static) specification. Blurring the implementation configuration according to the
-;; ;; new spec component keeps the state-space of the impl configs finite. Finally, canonicalize ensures
-;; ;; that the address values do not keep increasing towards infinity and instead stay within a bounded
-;; ;; space.
-;; (define (sbc pair)
-;;   ;; NOTE: eviction is added here now as well, as part of the general T transform
-;;   (match-define (list evicted-i evicted-s)
-;;     (if (USE-EVICTION?)
-;;         (evict-pair (config-pair-impl-config pair) (config-pair-spec-config pair))
-;;         (list (config-pair-impl-config pair) (config-pair-spec-config pair))))
-;;   (display-step-line "Splitting a specification config")
-;;   (define spec-config-components (split-spec evicted-s))
-;;   (define blur-results
-;;     (for/list ([spec-config-component spec-config-components])
-;;       (display-step-line "Blurring an implementation config")
-;;       (blur-by-relevant-addresses evicted-i spec-config-component)))
-;;   (for/list ([blur-result blur-results])
-;;     (match-define (list blurred-impl blurred-spec) blur-result)
-;;     (display-step-line "Canonicalizing the pair, adding to queue")
-;;     (match-define (list canonicalized-impl canonicalized-spec rename-map)
-;;       (canonicalize-pair blurred-impl blurred-spec))
-;;     (list (config-pair canonicalized-impl canonicalized-spec) rename-map)))
+;; Performs the SBC (split/blur/canonicalize) operation on a config pair, returning its derivative
+;; pairs along with an address-rename map with each pair. SBC entails the following:
+;;
+;; 1. For each address in the output commitment map that is *not* an argument to the current state,
+;; split those commitments off into a new specification with a dummy FSM.
+;;
+;; 2. For each specification resulting from step 1, blur the implementation configuration according
+;; to the addresses relevant to that spec. This means merging external addresses not used in the spec
+;; into a single abstract value and choosing some subset of actors (up to some statically known
+;; number) to remain precise while merging the others together.
+;;
+;; 3. Canonicalize the addresses in both configurations. That is, rename them to some canonical naming
+;; so that we avoid the orbit problem with other similar pairs that we have already explored (or that
+;; we will explore).
+;;
+;; SBC keeps our explored state-space finite. By creating a new spec for each no-longer-used
+;; commitment address, we ensure that the number of adddresses in a spec config is no more than max(1,
+;; maxStateParams), where maxStateParams is the maximum number of formal parameters for any state in
+;; the original (static) specification. Blurring the implementation configuration according to the
+;; new spec component keeps the state-space of the impl configs finite. Finally, canonicalize ensures
+;; that the address values do not keep increasing towards infinity and instead stay within a bounded
+;; space.
+(define (sbc pair)
+  ;; NOTE: eviction is added here now as well, as part of the general T transform
+  (match-define (list evicted-i evicted-s)
+    (if (USE-EVICTION?)
+        (evict-pair (config-pair-impl-config pair) (config-pair-spec-config pair))
+        (list (config-pair-impl-config pair) (config-pair-spec-config pair))))
+  (display-step-line "Splitting a specification config")
+  (define spec-config-components (split-psm evicted-s))
+  ;; NOTE: unmark is built into blur here to avoid the performance penalty in traversing the AST twice
+  (define blur-results
+    (for/list ([spec-config-component spec-config-components])
+      (display-step-line "Blurring an implementation config")
+      (blur-by-relevant-addresses evicted-i spec-config-component)))
+  (for/list ([blur-result blur-results])
+    (match-define (list blurred-impl blurred-spec) blur-result)
+    (display-step-line "Canonicalizing the pair, adding to queue")
+    (match-define (list canonicalized-impl canonicalized-spec addr-map marker-map)
+      (canonicalize-pair blurred-impl blurred-spec))
+    (list (config-pair canonicalized-impl canonicalized-spec) addr-map marker-map)))
 
-;; ;; Calls sbc on every pair and merges the results into one long list.
-;; (define (sbc* pairs)
-;;   (append* (map sbc pairs)))
+;; Calls sbc on every pair and merges the results into one long list.
+(define (sbc* pairs)
+  (append* (map sbc pairs)))
 
 ;; impl-config spec-config -> (List impl-config spec-config)
 ;;
@@ -753,324 +753,319 @@
                        '(() () (goto A) () ()))
     0))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Widening
+;; ---------------------------------------------------------------------------------------------------
+;; Widening
 
-;; ;; config-pair (#f or (list i-step Boolean Boolean) Num Num Num -> config-pair
-;; (define (widen-pair the-pair previous-step-with-obs/unobs pair-number i-step-number i-step-total)
-;;   (widen-printf "Starting widen for pair ~s, i-step ~s of ~s\n" pair-number i-step-number i-step-total)
-;;   (widen-printf "The impl config: ~s\n"
-;;                 (impl-config-without-state-defs (config-pair-impl-config the-pair)))
-;;   (widen-printf "The spec config: ~s\n"
-;;                 (spec-config-without-state-defs (config-pair-spec-config the-pair)))
+;; config-pair (#f or (list i-step Boolean Boolean) Num Num Num -> config-pair
+(define (widen-pair the-pair previous-step pair-number i-step-number i-step-total)
+  (widen-printf "Starting widen for pair ~s, i-step ~s of ~s\n" pair-number i-step-number i-step-total)
+  (widen-printf "The impl config: ~s\n"
+                (impl-config-without-state-defs (config-pair-impl-config the-pair)))
+  (widen-printf "The spec config: ~s\n"
+                (spec-config-without-state-defs (config-pair-spec-config the-pair)))
 
-;;   ;; Algorithm:
-;;   ;;
-;;   ;; * Evaluate a subset of handlers (determined by those that were changed in the previous
-;;   ;; transition) of this configuration and add each result (goto, spawns, internal messages, external
-;;   ;; messages) to a worklist. A single handler may have many possible results because of the
-;;   ;; non-determinism of the abstract interpretation.
-;;   ;;
-;;   ;; * In the worklist loop, determine whether the action of the transition is repeatable, whether
-;;   ;; there exists a spec step that leads to the exact same spec config (modulo additions to the
-;;   ;; observed or unobserved interface), and whether this transition *might* lead to a greater one
-;;   ;; (using various heuristics). If not, throw this worklist item away (after marking it as applied),
-;;   ;; and move on to the next loop iteration.
-;;   ;;
-;;   ;; * Otherwise, sbc the resulting impl and spec configs, apply the effects to the new impl config
-;;   ;; again (must be possible because we already checked for repeatability), match it to the spec again
-;;   ;; (should be the same spec step), sbc the results, and check whether *that* sbc'ed result is at
-;;   ;; least as large as the previous configuration pair. Clear the work queue and instead fill it with
-;;   ;; transitions we already said we'd check from previous config pairs along with transitions
-;;   ;; resulting from any triggers that this transition might have changed.
-;;   ;;
-;;   ;; * When the worklist is empty, return the final "base" configuration pair as the widened pair.
+  ;; Algorithm:
+  ;;
+  ;; * Evaluate a subset of handlers (determined by those that were changed in the previous
+  ;; transition) of this configuration and add each result (goto, spawns, internal messages, external
+  ;; messages) to a worklist. A single handler may have many possible results because of the
+  ;; non-determinism of the abstract interpretation.
+  ;;
+  ;; * In the worklist loop, determine whether the action of the transition is repeatable, whether
+  ;; there exists a spec step that leads to the exact same spec config, and whether this transition
+  ;; *might* lead to a greater one (using various heuristics). If not, throw this worklist item away
+  ;; (after marking it as applied), and move on to the next loop iteration.
+  ;;
+  ;; * Otherwise, sbc the resulting impl and spec configs, apply the effects to the new impl config
+  ;; again (must be possible because we already checked for repeatability), match it to the spec again
+  ;; (should be the same spec step), sbc the results, and check whether *that* sbc'ed result is at
+  ;; least as large as the previous configuration pair. Clear the work queue and instead fill it with
+  ;; transitions we already said we'd check from previous config pairs along with transitions
+  ;; resulting from any triggers that this transition might have changed.
+  ;;
+  ;; * When the worklist is empty, return the final "base" configuration pair as the widened pair.
 
-;;   (define original-i (config-pair-impl-config the-pair))
-;;   (define original-s (config-pair-spec-config the-pair))
-;;   ;; We only want to try widening from the triggers that might actually lead to a bigger state;
-;;   ;; otherwise we're wasting our time.
-;;   ;;
-;;   ;; NOTE: this needs to be a list, not a set, so that we can ensure the step taken before widen can
-;;   ;; be repeated *first*. This is important because if that step spawned something, we want to spawn
-;;   ;; it again immediately to blur it; otherwise, we might change its state with one transition and
-;;   ;; *then* try to blur it, which might be invalid (e.g. if the original spawn had some messages sent
-;;   ;; to it but the original one did not)
-;;   (define triggers-to-try
-;;     (let ([updated-triggers
-;;            (filter
-;;             (lambda (trigger)
-;;               (if previous-step-with-obs/unobs
-;;                   (trigger-updated-by-step? (first trigger) (first previous-step-with-obs/unobs) #f)
-;;                   #t))
-;;             (impl-triggers-from original-i original-s))])
-;;       ;; previous trigger may not be valid in this state because of a new spec
-;;       (define previous-trigger-with-obs/unobs
-;;         (if previous-step-with-obs/unobs
-;;             `[,(impl-step-trigger (first previous-step-with-obs/unobs))
-;;               (second previous-step-with-obs/unobs)
-;;               (third previous-step-with-obs/unobs)]
-;;             #f))
-;;       (if (and previous-step-with-obs/unobs (member previous-trigger-with-obs/unobs updated-triggers))
-;;           (cons previous-trigger-with-obs/unobs updated-triggers)
-;;           updated-triggers)))
-;;   (define possible-transitions (apply queue (impl-transition-effects-from the-pair triggers-to-try)))
-;;   (widen-printf "Starting widen with ~s transitions\n" (queue-length possible-transitions))
-;;   (define processed-transitions (mutable-set))
+  (define original-i (config-pair-impl-config the-pair))
+  (define original-s (config-pair-spec-config the-pair))
+  ;; We only want to try widening from the triggers that might actually lead to a bigger state;
+  ;; otherwise we're wasting our time.
+  ;;
+  ;; NOTE: this needs to be a list, not a set, so that we can ensure the step taken before widen can
+  ;; be repeated *first*. This is important because if that step spawned something, we want to spawn
+  ;; it again immediately to blur it; otherwise, we might change its state with one transition and
+  ;; *then* try to blur it, which might be invalid (e.g. if the original spawn had some messages sent
+  ;; to it but the original one did not)
+  (define triggers-to-try
+    (let ([updated-triggers
+           (filter
+            (lambda (trigger)
+              (if previous-step
+                  (trigger-updated-by-step? trigger previous-step #f)
+                  #t))
+            (impl-triggers-from original-i original-s))])
+      ;; previous trigger may not be valid in this state because of a new spec
+      (define previous-trigger
+        (if previous-step
+            (impl-step-trigger previous-step)
+            #f))
+      (if (and previous-step (member previous-trigger updated-triggers))
+          (cons previous-trigger updated-triggers)
+          updated-triggers)))
+  (define possible-transitions (apply queue (impl-transition-effects-from the-pair triggers-to-try)))
+  (widen-printf "Starting widen with ~s transitions\n" (queue-length possible-transitions))
+  (define processed-transitions (mutable-set))
 
-;;   ;; for debugging
-;;   (define init-loop-count (stat-value STAT-widen-loop-count))
-;;   (define init-maybe-good-count (stat-value STAT-widen-maybe-good-count))
-;;   (define init-attempt-count (stat-value STAT-widen-attempt-count))
-;;   (define init-use-count (stat-value STAT-widen-use-count))
+  ;; for debugging
+  (define init-loop-count (stat-value STAT-widen-loop-count))
+  (define init-maybe-good-count (stat-value STAT-widen-maybe-good-count))
+  (define init-attempt-count (stat-value STAT-widen-attempt-count))
+  (define init-use-count (stat-value STAT-widen-use-count))
 
-;;   (let worklist-loop ([widened-pair the-pair])
-;;     (match (dequeue-if-non-empty! possible-transitions)
-;;       [#f
-;;        (widen-printf "Finished widen. Final config: ~s\n"
-;;                      (impl-config-without-state-defs (config-pair-impl-config widened-pair)))
-;;        widened-pair]
-;;       [transition-result-with-obs/unobs
-;;        (stat-set! STAT-widen-loop-count (add1 (stat-value STAT-widen-loop-count)))
-;;        (cond
-;;          [(set-member? processed-transitions transition-result-with-obs/unobs)
-;;           ;; Skip this transition if we already processed it
-;;           (widen-printf "Skipping transition\n")
-;;           ;; (widen-printf "Trigger: ~s\n" (csa#-transition-effect-trigger (first transition-result-with-obs/unobs)))
-;;           ;; (widen-printf "Outputs: ~s\n" (csa#-transition-effect-sends (first transition-result-with-obs/unobs)))
+  (let worklist-loop ([widened-pair the-pair])
+    (match (dequeue-if-non-empty! possible-transitions)
+      [#f
+       (widen-printf "Finished widen. Final config: ~s\n"
+                     (impl-config-without-state-defs (config-pair-impl-config widened-pair)))
+       widened-pair]
+      [transition-result
+       (stat-set! STAT-widen-loop-count (add1 (stat-value STAT-widen-loop-count)))
+       (cond
+         [(set-member? processed-transitions transition-result)
+          ;; Skip this transition if we already processed it
+          (widen-printf "Skipping transition\n")
+          ;; (widen-printf "Trigger: ~s\n" (csa#-transition-effect-trigger transition-result))
+          ;; (widen-printf "Outputs: ~s\n" (csa#-transition-effect-sends transition-result))
 
-;;           (worklist-loop widened-pair)]
-;;          [else
-;;           (stat-set! STAT-widen-maybe-good-count (add1 (stat-value STAT-widen-maybe-good-count)))
-;;           (widen-printf "Trying transition for pair ~s, i-step ~s of ~s\n" pair-number i-step-number i-step-total)
-;;           (widen-printf "Loop count = ~s, maybe count = ~s, attempt count = ~s, use count = ~s, ~s remaining transitions\n"
-;;                         (- (stat-value STAT-widen-loop-count) init-loop-count)
-;;                         (- (stat-value STAT-widen-maybe-good-count) init-maybe-good-count)
-;;                         (- (stat-value STAT-widen-attempt-count) init-attempt-count)
-;;                         (- (stat-value STAT-widen-use-count) init-use-count)
-;;                         (queue-length possible-transitions))
-;;           (widen-printf "Trigger: ~s\n" (csa#-transition-effect-trigger (first transition-result-with-obs/unobs)))
-;;           (widen-printf "Outputs: ~s\n" (csa#-transition-effect-sends (first transition-result-with-obs/unobs)))
+          (worklist-loop widened-pair)]
+         [else
+          (stat-set! STAT-widen-maybe-good-count (add1 (stat-value STAT-widen-maybe-good-count)))
+          (widen-printf "Trying transition for pair ~s, i-step ~s of ~s\n" pair-number i-step-number i-step-total)
+          (widen-printf "Loop count = ~s, maybe count = ~s, attempt count = ~s, use count = ~s, ~s remaining transitions\n"
+                        (- (stat-value STAT-widen-loop-count) init-loop-count)
+                        (- (stat-value STAT-widen-maybe-good-count) init-maybe-good-count)
+                        (- (stat-value STAT-widen-attempt-count) init-attempt-count)
+                        (- (stat-value STAT-widen-use-count) init-use-count)
+                        (queue-length possible-transitions))
+          (widen-printf "Trigger: ~s\n" (csa#-transition-effect-trigger transition-result))
+          (widen-printf "Outputs: ~s\n" (csa#-transition-effect-sends transition-result))
 
-;;           (set-add! processed-transitions transition-result-with-obs/unobs)
-;;           (match-define (list transition-result obs? unobs?) transition-result-with-obs/unobs)
-;;           (define i (config-pair-impl-config widened-pair))
-;;           (cond
-;;             ;; To avoid running the apply-and-sbc process too many times (a major bottleneck of the
-;;             ;; checker), we first do some basic checks on the transition to see if it's even worth
-;;             ;; exploring
-;;             [(csa#-transition-maybe-good-for-widen? i transition-result)
-;;              (stat-set! STAT-widen-attempt-count (add1 (stat-value STAT-widen-attempt-count)))
-;;              (define trigger (csa#-transition-effect-trigger transition-result))
-;;              ;; can ignore the obs/unobs here; they're the same as the ones passed in
-;;              (match-define (list new-i-step _ _) (apply-transition i transition-result obs? unobs?))
-;;              (match (first-spec-step-to-same-state (config-pair-spec-config widened-pair) new-i-step obs? unobs?)
-;;                [#f
-;;                 (widen-printf "Transition has no spec transition to same state\n")
-;;                 (worklist-loop widened-pair)]
-;;                [new-s
-;;                 (stat-set! STAT-widen-spec-match-count (add1 (stat-value STAT-widen-spec-match-count)))
-;;                 ;; If there's a possible way for a spec to match this step, then apply the transition
-;;                 ;; once more to get "many-of" instances of new spawns and messages, so we have the
-;;                 ;; best chance of this configuration being greater than its predecessor.
-;;                 ;;
-;;                 ;; We can ignore the rename-map: the spec doesn't change, so the rename-map doesn't
-;;                 ;; change, either.
-;;                 (define once-applied-pair
-;;                   (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
-;;                 (cond
-;;                   [(csa#-action-enabled? (config-pair-impl-config once-applied-pair) trigger)
-;;                    (match-define (list repeated-i-step _ _) ; again, ignore obs/unobs
-;;                      (apply-transition (config-pair-impl-config once-applied-pair)
-;;                                        transition-result
-;;                                        obs? unobs?))
-;;                    (define repeated-s
-;;                      (first-spec-step-to-same-state (config-pair-spec-config once-applied-pair)
-;;                                                     repeated-i-step
-;;                                                     obs? unobs?))
-;;                    (define twice-applied-pair
-;;                      (first
-;;                       (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
-;;                    (widen-printf "After first apply, no sbc: ~s\n" (impl-config-without-state-defs (impl-step-destination new-i-step)))
-;;                    (widen-printf "Twice-applied, sbc'ed:     ~s\n" (impl-config-without-state-defs (config-pair-impl-config twice-applied-pair)))
-;;                    (cond
-;;                      ;; OPTIMIZE: check first if the transitioned actor is even in the same state
-;;                      [(csa#-config<? i (config-pair-impl-config twice-applied-pair))
-;;                       (stat-set! STAT-widen-use-count (add1 (stat-value STAT-widen-use-count)))
-;;                       (widen-printf "Widen: applied a transition for pair ~s, i-step ~s of ~s. Loop count = ~s, use count = ~s\n"
-;;                                     pair-number i-step-number i-step-total (- (stat-value STAT-widen-loop-count) init-loop-count) (- (stat-value STAT-widen-use-count) init-use-count)
-;;                                     ;; (debug-transition-result transition-result)
-;;                                     ;; (impl-config-without-state-defs (config-pair-impl-config new-widened-pair))
-;;                                     )
-;;                       (define twice-i (config-pair-impl-config twice-applied-pair))
-;;                       (define twice-s (config-pair-spec-config twice-applied-pair))
-;;                       (widen-printf "Newly widened impl config: ~s\n" (impl-config-without-state-defs twice-i))
-;;                       (widen-printf "Newly widened spec config: ~s\n" (spec-config-without-state-defs twice-s))
-;;                       (widen-printf "Remaining transitions: ~s\n" (queue-length possible-transitions))
-;;                       ;; We just throw away any remaining transitions, because the transitions from
-;;                       ;; this configuration supercede those from a different one
-;;                       (for ([trigger (impl-triggers-from twice-i twice-s)])
-;;                         (when (and (not (member trigger triggers-to-try))
-;;                                    (trigger-updated-by-step? (first trigger) new-i-step i))
-;;                           (set! triggers-to-try (cons trigger triggers-to-try))))
-;;                       (set! possible-transitions
-;;                             (apply queue (impl-transition-effects-from twice-applied-pair triggers-to-try)))
-;;                       (widen-printf "New queue has ~s transitions\n" (queue-length possible-transitions))
-;;                       (worklist-loop twice-applied-pair)]
-;;                      [else
-;;                       (widen-printf "Transition is not valid for widen\n")
-;;                       (worklist-loop widened-pair)])]
-;;                   [else
-;;                    (widen-printf "Transition is not repeatable\n")
-;;                    (worklist-loop widened-pair)])])]
-;;             [else
-;;              (widen-printf "Transition failed maybe-good-for-widen\n")
-;;              (worklist-loop widened-pair)])])])))
+          (set-add! processed-transitions transition-result)
+          (define i (config-pair-impl-config widened-pair))
+          (cond
+            ;; To avoid running the apply-and-sbc process too many times (a major bottleneck of the
+            ;; checker), we first do some basic checks on the transition to see if it's even worth
+            ;; exploring
+            [(csa#-transition-maybe-good-for-widen? i transition-result)
+             (stat-set! STAT-widen-attempt-count (add1 (stat-value STAT-widen-attempt-count)))
+             (define trigger (csa#-transition-effect-trigger transition-result))
+             (match-define new-i-step (apply-transition i transition-result))
+             (match (first-spec-step-to-same-state (config-pair-spec-config widened-pair) new-i-step)
+               [#f
+                (widen-printf "Transition has no spec transition to same state\n")
+                (worklist-loop widened-pair)]
+               [new-s
+                (stat-set! STAT-widen-spec-match-count (add1 (stat-value STAT-widen-spec-match-count)))
+                ;; If there's a possible way for a spec to match this step, then apply the transition
+                ;; once more to get "many-of" instances of new spawns and messages, so we have the
+                ;; best chance of this configuration being greater than its predecessor.
+                ;;
+                ;; We can ignore the rename-map: the spec doesn't change, so the rename-map doesn't
+                ;; change, either.
+                (define once-applied-pair
+                  (first (first (sbc (config-pair (impl-step-destination new-i-step) new-s)))))
+                (cond
+                  [(csa#-action-enabled? (config-pair-impl-config once-applied-pair) trigger)
+                   (match-define repeated-i-step
+                     (apply-transition (config-pair-impl-config once-applied-pair) transition-result))
+                   (define repeated-s
+                     (first-spec-step-to-same-state (config-pair-spec-config once-applied-pair)
+                                                    repeated-i-step))
+                   (define twice-applied-pair
+                     (first
+                      (first (sbc (config-pair (impl-step-destination repeated-i-step) repeated-s)))))
+                   (widen-printf "After first apply, no sbc: ~s\n" (impl-config-without-state-defs (impl-step-destination new-i-step)))
+                   (widen-printf "Twice-applied, sbc'ed:     ~s\n" (impl-config-without-state-defs (config-pair-impl-config twice-applied-pair)))
+                   (cond
+                     ;; OPTIMIZE: check first if the transitioned actor is even in the same state
+                     [(csa#-config<? i (config-pair-impl-config twice-applied-pair))
+                      (stat-set! STAT-widen-use-count (add1 (stat-value STAT-widen-use-count)))
+                      (widen-printf "Widen: applied a transition for pair ~s, i-step ~s of ~s. Loop count = ~s, use count = ~s\n"
+                                    pair-number i-step-number i-step-total (- (stat-value STAT-widen-loop-count) init-loop-count) (- (stat-value STAT-widen-use-count) init-use-count)
+                                    ;; (debug-transition-result transition-result)
+                                    ;; (impl-config-without-state-defs (config-pair-impl-config new-widened-pair))
+                                    )
+                      (define twice-i (config-pair-impl-config twice-applied-pair))
+                      (define twice-s (config-pair-spec-config twice-applied-pair))
+                      (widen-printf "Newly widened impl config: ~s\n" (impl-config-without-state-defs twice-i))
+                      (widen-printf "Newly widened spec config: ~s\n" (spec-config-without-state-defs twice-s))
+                      (widen-printf "Remaining transitions: ~s\n" (queue-length possible-transitions))
+                      ;; We just throw away any remaining transitions, because the transitions from
+                      ;; this configuration supercede those from a different one
+                      (for ([trigger (impl-triggers-from twice-i twice-s)])
+                        (when (and (not (member trigger triggers-to-try))
+                                   (trigger-updated-by-step? trigger new-i-step i))
+                          (set! triggers-to-try (cons trigger triggers-to-try))))
+                      (set! possible-transitions
+                            (apply queue (impl-transition-effects-from twice-applied-pair triggers-to-try)))
+                      (widen-printf "New queue has ~s transitions\n" (queue-length possible-transitions))
+                      (worklist-loop twice-applied-pair)]
+                     [else
+                      (widen-printf "Transition is not valid for widen\n")
+                      (worklist-loop widened-pair)])]
+                  [else
+                   (widen-printf "Transition is not repeatable\n")
+                   (worklist-loop widened-pair)])])]
+            [else
+             (widen-printf "Transition failed maybe-good-for-widen\n")
+             (worklist-loop widened-pair)])])])))
 
-;; (module+ test
-;;   (define init-widen-impl-config
-;;     (term
-;;      (
-;;       (
-;;        ;; single atomic actor
-;;        [(addr child-loc 0)
-;;         (((define-state (B) (m) (goto B))) (goto B))]
-;;        [(addr 1 0)
-;;         (((define-state (A) (m)
-;;             (let ([child (spawn child-loc Nat (goto B)
-;;                                 (define-state (B) (m) (goto B)))])
-;;               (begin
-;;                 (send child abs-nat)
-;;                 (goto A)))))
-;;          (goto A))])
-;;       ()
-;;       ([(addr child-loc 0) abs-nat single]))))
+(require redex)
+(module+ test
+  (define init-widen-impl-config
+    (term
+     (
+      (
+       ;; single atomic actor
+       [(addr child-loc 0)
+        (((define-state (B) (m) (goto B))) (goto B))]
+       [(addr 1 0)
+        (((define-state (A) (m)
+            (let ([child (spawn child-loc Nat (goto B)
+                                (define-state (B) (m) (goto B)))])
+              (begin
+                (send child abs-nat)
+                (goto A)))))
+         (goto A))])
+      ()
+      ([(addr child-loc 0) abs-nat single])
+      ([Nat (marked (addr 1 0) 0)]))))
 
-;;   (define expected-widened-config
-;;     (term
-;;      ((;; a one-of of the spawned child
-;;        [(addr child-loc 0)
-;;         (((define-state (B) (m) (goto B))) (goto B))]
-;;        [(addr 1 0)
-;;         (((define-state (A) (m)
-;;             (let ([child (spawn child-loc Nat (goto B)
-;;                                 (define-state (B) (m) (goto B)))])
-;;               (begin
-;;                 (send child abs-nat)
-;;                 (goto A)))))
-;;          (goto A))])
-;;       (
-;;        ;; a single collective actor
-;;        (
-;;         ;; a#int-collective
-;;         (collective-addr child-loc)
-;;         (
-;;          ;; just one b#
-;;          (((define-state (B) (m) (goto B))) (goto B)))
-;;         ))
-;;       (
-;;        ;; the messages
-;;        ((addr child-loc 0) abs-nat single)
-;;        ((collective-addr child-loc) abs-nat many)))))
+  (define expected-widened-config
+    (term
+     ((;; a one-of of the spawned child
+       [(addr child-loc 0)
+        (((define-state (B) (m) (goto B))) (goto B))]
+       [(addr 1 0)
+        (((define-state (A) (m)
+            (let ([child (spawn child-loc Nat (goto B)
+                                (define-state (B) (m) (goto B)))])
+              (begin
+                (send child abs-nat)
+                (goto A)))))
+         (goto A))])
+      (
+       ;; a single collective actor
+       (
+        ;; a#int-collective
+        (collective-addr child-loc)
+        (
+         ;; just one b#
+         (((define-state (B) (m) (goto B))) (goto B)))
+        ))
+      (
+       ;; the messages
+       ((addr child-loc 0) abs-nat single)
+       ((collective-addr child-loc) abs-nat many))
+      (
+       ;; the receptionists
+       [Nat (marked (addr 1 0) 0)]))))
 
-;;   (define widen-spec
-;;     ;; Just a spec that observes only inputs and says nothing ever happens
-;;     (term
-;;      (((Nat (addr 1 0)))
-;;       ()
-;;       (goto SpecA)
-;;       ((define-state (SpecA) [* -> () (goto SpecA)]))
-;;       ())))
+  (define widen-spec
+    ;; Just a spec that observes only inputs and says nothing ever happens
+    (term
+     ((0)
+      ()
+      (goto SpecA)
+      ((define-state (SpecA) [* -> () (goto SpecA)]))
+      ())))
 
-;;   (test-true "Init widen config is valid"     (redex-match? csa# i# init-widen-impl-config))
-;;   (test-true "Expected widen config is valid" (redex-match? csa# i# expected-widened-config))
-;;   (test-true "Valid spec for widen test" (redex-match? aps# s# widen-spec))
-;;   (test-equal? "Basic widening test"
-;;     (widen-pair (config-pair init-widen-impl-config widen-spec) #f 0 0 0)
-;;     (config-pair expected-widened-config widen-spec)))
+  (test-true "Init widen config is valid"     (redex-match? csa# i# init-widen-impl-config))
+  (test-true "Expected widen config is valid" (redex-match? csa# i# expected-widened-config))
+  (test-true "Valid spec for widen test" (redex-match? aps# s# widen-spec))
+  (test-equal? "Basic widening test"
+    (widen-pair (config-pair init-widen-impl-config widen-spec) #f 0 0 0)
+    (config-pair expected-widened-config widen-spec)))
 
-;; (define (trigger-updated-by-step? trigger i-step prev-i)
-;;   (csa#-trigger-updated-by-step? trigger
-;;                                  (impl-step-trigger i-step)
-;;                                  prev-i
-;;                                  (impl-step-spawn-locs i-step)))
+(define (trigger-updated-by-step? trigger i-step prev-i)
+  (csa#-trigger-updated-by-step? trigger
+                                 (impl-step-trigger i-step)
+                                 prev-i
+                                 (impl-step-spawn-locs i-step)))
 
-;; ;; config-pair (List-of (list trigger Boolean Boolean)) -> (Listof (List csa#-transition-effect Boolean Boolean))
-;; (define (impl-transition-effects-from the-pair triggers-with-obs/unobs)
-;;   (match-define (config-pair i s) the-pair)
-;;   (let/cc return-continuation
-;;     (define (abort) (return-continuation null))
-;;     (widen-printf "Widen: getting effects from ~s triggers\n" (length triggers-with-obs/unobs))
-;;     (define trigger-count 0)
-;;     (define final-results
-;;      (append*
-;;       (for/list ([trigger-with-obs/unobs triggers-with-obs/unobs])
-;;         (match-define (list trigger obs? unobs?) trigger-with-obs/unobs)
-;;         (set! trigger-count (add1 trigger-count))
-;;         (widen-printf "Eval trigger (~s of ~s): ~s\n" trigger-count (length triggers-with-obs/unobs) trigger)
-;;         (flush-output)
-;;         (define results (map (curryr list obs? unobs?) (csa#-eval-trigger i trigger abort)))
-;;         (widen-printf "Finished trigger, ~s transitions\n" (length results))
-;;         results)))
-;;     (widen-printf "Widen: Found ~s transitions\n" (length final-results))
-;;     final-results))
+;; config-pair (List-of trigger) -> (Listof csa#-transition-effect)
+(define (impl-transition-effects-from the-pair triggers)
+  (match-define (config-pair i s) the-pair)
+  (let/cc return-continuation
+    (define (abort) (return-continuation null))
+    (widen-printf "Widen: getting effects from ~s triggers\n" (length triggers))
+    (define trigger-count 0)
+    (define final-results
+     (append*
+      (for/list ([trigger triggers])
+        (set! trigger-count (add1 trigger-count))
+        (widen-printf "Eval trigger (~s of ~s): ~s\n" trigger-count (length triggers) trigger)
+        (flush-output)
+        (define results (csa#-eval-trigger i trigger abort))
+        (widen-printf "Finished trigger, ~s transitions\n" (length results))
+        results)))
+    (widen-printf "Widen: Found ~s transitions\n" (length final-results))
+    final-results))
 
-;; ;; Returns the first spec step from this spec config that both matches the i-step and ends up in a
-;; ;; configuration identical to the original one (with the exception of the unobserved interface, which
-;; ;; is allowed to get bigger in the abstract interpretation sense)
-;; (define (first-spec-step-to-same-state spec-config i-step obs? unobs?)
-;;   (define matching-configs-after-split
-;;     (for/list ([step (matching-spec-steps spec-config i-step obs? unobs?)])
-;;       (first (split-spec (first (spec-step-destinations step))))))
-;;   (findf (curry aps#-config<= spec-config) matching-configs-after-split))
+;; Returns the first spec step from this spec config that both matches the i-step and ends up in a
+;; configuration identical to the original one
+(define (first-spec-step-to-same-state spec-config i-step)
+  (define matching-configs-after-split
+    (for/list ([step (matching-spec-steps spec-config i-step)])
+      (first (split-psm (first (spec-step-destinations step))))))
+  (findf (curry equal? spec-config) matching-configs-after-split))
 
-;; (module+ test
-;;   (define first-spec-step-test-config
-;;     (redex-let aps# ([s#
-;;                       `(([Nat (addr 1 0)])
-;;                         ([Nat (addr 1 0)])
-;;                         (goto A)
-;;                         ((define-state (A)
-;;                            [* -> () (goto A)]
-;;                            [free -> () (goto B)])
-;;                          (define-state (B)
-;;                            [* -> () (goto A)]))
-;;                         ())])
-;;       (term s#)))
+(module+ test
+  (define first-spec-step-test-config
+    (redex-let aps# ([s#
+                      `((0)
+                        ()
+                        (goto A)
+                        ((define-state (A)
+                           [* -> () (goto A)]
+                           [free -> () (goto B)])
+                         (define-state (B)
+                           [* -> () (goto A)]))
+                        ())])
+      (term s#)))
 
-;;   (test-equal? "first-spec-step-to-same-state"
-;;     (first-spec-step-to-same-state
-;;      first-spec-step-test-config
-;;      (impl-step `(external-receive (addr 1 0) abs-nat)
-;;                 null
-;;                 null
-;;                 ;; impl config
-;;                 `(([(addr 1 0) (() (goto S))])
-;;                   ()
-;;                   ()))
-;;      #f #t)
-;;     first-spec-step-test-config)
+  (test-equal? "first-spec-step-to-same-state"
+    (first-spec-step-to-same-state
+     first-spec-step-test-config
+     (impl-step `(external-receive (marked (addr 1 0) 1) abs-nat)
+                null
+                null
+                ;; impl config
+                `(([(addr 1 0) (() (goto S))])
+                  ()
+                  ()
+                  ())))
+    first-spec-step-test-config)
 
-;;   (test-false "first-spec-step-to-same-state: no step"
-;;     (first-spec-step-to-same-state
-;;      ;; spec config:
-;;      `(([Nat (addr 1 0)])
-;;        ([Nat (addr 1 0)])
-;;        (goto A)
-;;        ((define-state (A)
-;;           [* -> () (goto B)]
-;;           [free -> () (goto B)])
-;;         (define-state (B)
-;;           [* -> () (goto A)]))
-;;        ())
-;;      (impl-step `(external-receive (addr 1 0) abs-nat)
-;;                 null
-;;                 null
-;;                 ;; impl config
-;;                 `(([(addr 1 0) (() (goto S))])
-;;                   ()
-;;                   ()))
-;;      #t #f)))
+  (test-false "first-spec-step-to-same-state: no step"
+    (first-spec-step-to-same-state
+     ;; spec config:
+     `((0)
+       ()
+       (goto A)
+       ((define-state (A)
+          [* -> () (goto B)]
+          [free -> () (goto B)])
+        (define-state (B)
+          [* -> () (goto A)]))
+       ())
+     (impl-step `(external-receive (marked (addr 1 0) 0) abs-nat)
+                null
+                null
+                ;; impl config
+                `(([(addr 1 0) (() (goto S))])
+                  ()
+                  ()
+                  ())))))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Pair-removal back-propagation
