@@ -1315,59 +1315,59 @@
     (s-exp->fasl `(related ,pair) log-file)
     (flush-output log-file)))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Test Helpers
+;; ---------------------------------------------------------------------------------------------------
+;; Test Helpers
 
-;; (module+ test
-;;   (define-simple-check (check-valid-actor? actual)
-;;     (redex-match? csa-eval ([τ a] b) actual))
+(module+ test
+  ;; (define-simple-check (check-valid-actor? actual)
+  ;;   (redex-match? csa-eval ([τ a] b) actual))
 
-;;   (define-syntax (test-valid-actor? stx)
-;;     (syntax-parse stx
-;;       [(_ name the-term)
-;;        #`(test-case name
-;;            #,(syntax/loc stx (check-valid-actor? the-term)))]
-;;       [(_ the-term)
-;;        #`(test-begin
-;;            #,(syntax/loc stx (check-valid-actor? the-term)))]))
+  ;; (define-syntax (test-valid-actor? stx)
+  ;;   (syntax-parse stx
+  ;;     [(_ name the-term)
+  ;;      #`(test-case name
+  ;;          #,(syntax/loc stx (check-valid-actor? the-term)))]
+  ;;     [(_ the-term)
+  ;;      #`(test-begin
+  ;;          #,(syntax/loc stx (check-valid-actor? the-term)))]))
 
-;;   (define-simple-check (check-valid-instance? actual)
-;;     (redex-match? aps-eval ((Φ ...) (goto φ u ...) [τ a]) actual))
+  (define-simple-check (check-valid-instance? actual)
+    (redex-match? aps-eval ((Φ ...) (goto φ u ...) mk) actual))
 
-;;   (define-syntax (test-valid-instance? stx)
-;;     (syntax-parse stx
-;;       [(_ name the-term)
-;;        #`(test-case name
-;;            #,(syntax/loc stx (check-valid-instance? the-term)))]
-;;       [(_ the-term)
-;;        #`(test-begin
-;;            #,(syntax/loc stx (check-valid-instance? the-term)))])))
+  (define-syntax (test-valid-instance? stx)
+    (syntax-parse stx
+      [(_ name the-term)
+       #`(test-case name
+           #,(syntax/loc stx (check-valid-instance? the-term)))]
+      [(_ the-term)
+       #`(test-begin
+           #,(syntax/loc stx (check-valid-instance? the-term)))])))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Top-level tests
+;; ---------------------------------------------------------------------------------------------------
+;; Top-level tests
 
-;; (module+ test
-;;   ;;;; Ignore everything
+(module+ test
+  ;;;; Ignore everything
 
-;;   (define (make-ignore-all-config addr-type)
-;;     (make-single-actor-config
-;;      (term
-;;       ((,addr-type (addr 0 0))
-;;        (((define-state (Always) (m) (goto Always)))
-;;         (goto Always))))))
-;;   (define ignore-all-config (make-ignore-all-config 'Nat))
-;;   (define (make-ignore-all-spec-instance addr-type)
-;;     (term
-;;      (((define-state (Always) [* -> () (goto Always)]))
-;;       (goto Always)
-;;       (,addr-type (addr 0 0)))))
-;;   (define ignore-all-spec-instance
-;;     (make-ignore-all-spec-instance 'Nat))
-;;   (check-not-false (redex-match csa-eval i ignore-all-config))
-;;   (test-valid-instance? ignore-all-spec-instance)
+  (define (make-ignore-all-config addr-type)
+    (make-single-actor-config
+     (term
+      ((,addr-type (marked (addr 0 0) 0))
+       (((define-state (Always) (m) (goto Always)))
+        (goto Always))))))
+  (define ignore-all-config (make-ignore-all-config 'Nat))
+  (define (make-ignore-all-spec-instance addr-type)
+    (term
+     (((define-state (Always) [* -> () (goto Always)]))
+      (goto Always)
+      0)))
+  (define ignore-all-spec-instance
+    (make-ignore-all-spec-instance 'Nat))
+  (check-not-false (redex-match csa-eval i ignore-all-config))
+  (test-valid-instance? ignore-all-spec-instance)
 
-;;   (test-true "ignore all spec/test"
-;;     (check-conformance/config ignore-all-config (make-exclusive-spec ignore-all-spec-instance)))
+  (test-true "ignore all spec/test"
+    (check-conformance/config ignore-all-config (make-psm ignore-all-spec-instance)))
 
 ;;   ;;;; Send one message to a statically-known address per request
 
@@ -3230,4 +3230,5 @@
 ;;   (test-true "Forks in for loops are okay"
 ;;     (check-conformance/config
 ;;      (make-single-actor-config forks-in-for-loop-actor)
-;;      (make-exclusive-spec forks-in-loop-spec))))
+;;      (make-exclusive-spec forks-in-loop-spec)))
+  )

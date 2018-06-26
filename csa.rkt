@@ -264,9 +264,9 @@
   (term (make-single-actor-config/mf ,actor)))
 
 (define-metafunction csa-eval
-  make-single-actor-config/mf : ((τ a) b) -> i
-  [(make-single-actor-config/mf ((τ a) b))
-   (((a b)) () ((τ a)) ())])
+  make-single-actor-config/mf : ((τ (marked a mk ...)) b) -> i
+  [(make-single-actor-config/mf ((τ (marked a mk ...)) b))
+   (((a b)) () ((τ (marked a mk ...))) ())])
 
 (define (make-empty-queues-config receptionists internal-actors)
   (term (make-empty-queues-config/mf ,receptionists ,internal-actors)))
