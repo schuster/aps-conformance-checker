@@ -1551,160 +1551,159 @@
      (make-single-actor-config send-message-then-another)
      (make-psm overlapping-patterns-spec)))
 
-;;   ;;;; Dynamic request/response
+  ;;;; Dynamic request/response
 
-;;   (define request-response-spec
-;;     (term
-;;      (((define-state (Always)
-;;          [response-target -> ([obligation response-target *]) (goto Always)]))
-;;       (goto Always)
-;;       ((Addr Nat) (addr 0 0)))))
+  (define request-response-spec
+    (term
+     (((define-state (Always)
+         [response-target -> ([obligation response-target *]) (goto Always)]))
+      (goto Always)
+      0)))
 
-;;   (define request-same-response-addr-spec
-;;     (term
-;;      (((define-state (Init)
-;;          [response-target -> ([obligation response-target *]) (goto HaveAddr response-target)])
-;;        (define-state (HaveAddr response-target)
-;;          [new-response-target -> ([obligation response-target *]) (goto HaveAddr response-target)]))
-;;       (goto Init)
-;;       ((Addr Nat) (addr 0 0)))))
-;;   (define request-response-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (Always [i Nat]) (response-target)
-;;           (begin
-;;            (send response-target i)
-;;            (goto Always i))))
-;;        (goto Always 0)))))
-;;   (define respond-to-first-addr-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (Init) (response-target)
-;;           (begin
-;;            (send response-target 0)
-;;            (goto HaveAddr 1 response-target)))
-;;         (define-state (HaveAddr [i Nat] [response-target (Addr Nat)]) (new-response-target)
-;;           (begin
-;;            (send response-target i)
-;;            (goto HaveAddr i response-target))))
-;;        (goto Init)))))
-;;   (define respond-to-first-addr-actor2
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (Always [original-addr (Union (NoAddr) (Original (Addr Nat)))]) (response-target)
-;;           (begin
-;;            (case original-addr
-;;              [(NoAddr)
-;;               (begin
-;;                (send response-target 0)
-;;                (goto Always (variant Original response-target)))]
-;;              [(Original o)
-;;               (begin
-;;                (send o 0)
-;;                (goto Always original-addr))]))))
-;;        (goto Always (variant NoAddr))))))
-;;   (define delay-saving-address-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (Init) (response-target)
-;;           (begin
-;;            (send response-target 0)
-;;            (goto HaveAddr 1 response-target)))
-;;         (define-state (HaveAddr [i Nat] [response-target (Addr Nat)]) (new-response-target)
-;;           (begin
-;;            (send response-target i)
-;;            (goto HaveAddr i new-response-target))))
-;;        (goto Init)))))
-;;   (define double-response-actor
-;;     `(((Addr Nat) (addr 0 0))
-;;       (((define-state (Always [i Nat]) (response-dest)
-;;           (begin
-;;            (send response-dest i)
-;;            (send response-dest i)
-;;            (goto Always i))))
-;;        (goto Always 0))))
-;;   (define respond-once-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (Init) (response-target)
-;;           (begin
-;;            (send response-target 0)
-;;            (goto NoMore)))
-;;         (define-state (NoMore) (new-response-target)
-;;           (goto NoMore)))
-;;        (goto Init)))))
-;;   (define delayed-send-no-timeout-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (NoAddr) (response-target)
-;;           (goto HaveAddr response-target))
-;;         (define-state (HaveAddr [response-target (Addr Nat)]) (new-response-target)
-;;           (begin
-;;            (send response-target 1)
-;;            (goto HaveAddr new-response-target))))
-;;        (goto NoAddr)))))
-;;   (define delayed-send-with-timeout-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (NoAddr) (response-target)
-;;           (goto HaveAddr response-target))
-;;         (define-state (HaveAddr [response-target (Addr Nat)]) (new-response-target)
-;;           (begin
-;;            (send response-target 1)
-;;            (goto HaveAddr new-response-target))
-;;           [(timeout 5)
-;;            (begin
-;;             (send response-target 2)
-;;             (goto NoAddr))]))
-;;        (goto NoAddr)))))
+  (define request-same-response-addr-spec
+    (term
+     (((define-state (Init)
+         [response-target -> ([obligation response-target *]) (goto HaveAddr response-target)])
+       (define-state (HaveAddr response-target)
+         [new-response-target -> ([obligation response-target *]) (goto HaveAddr response-target)]))
+      (goto Init)
+      0)))
+  (define request-response-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (Always [i Nat]) (response-target)
+          (begin
+           (send response-target i)
+           (goto Always i))))
+       (goto Always 0)))))
+  (define respond-to-first-addr-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (Init) (response-target)
+          (begin
+           (send response-target 0)
+           (goto HaveAddr 1 response-target)))
+        (define-state (HaveAddr [i Nat] [response-target (Addr Nat)]) (new-response-target)
+          (begin
+           (send response-target i)
+           (goto HaveAddr i response-target))))
+       (goto Init)))))
+  (define respond-to-first-addr-actor2
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (Always [original-addr (Union (NoAddr) (Original (Addr Nat)))]) (response-target)
+          (begin
+           (case original-addr
+             [(NoAddr)
+              (begin
+               (send response-target 0)
+               (goto Always (variant Original response-target)))]
+             [(Original o)
+              (begin
+               (send o 0)
+               (goto Always original-addr))]))))
+       (goto Always (variant NoAddr))))))
+  (define delay-saving-address-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (Init) (response-target)
+          (begin
+           (send response-target 0)
+           (goto HaveAddr 1 response-target)))
+        (define-state (HaveAddr [i Nat] [response-target (Addr Nat)]) (new-response-target)
+          (begin
+           (send response-target i)
+           (goto HaveAddr i new-response-target))))
+       (goto Init)))))
+  (define double-response-actor
+    `(((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (Always [i Nat]) (response-dest)
+          (begin
+           (send response-dest i)
+           (send response-dest i)
+           (goto Always i))))
+       (goto Always 0))))
+  (define respond-once-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (Init) (response-target)
+          (begin
+           (send response-target 0)
+           (goto NoMore)))
+        (define-state (NoMore) (new-response-target)
+          (goto NoMore)))
+       (goto Init)))))
+  (define delayed-send-no-timeout-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (NoAddr) (response-target)
+          (goto HaveAddr response-target))
+        (define-state (HaveAddr [response-target (Addr Nat)]) (new-response-target)
+          (begin
+           (send response-target 1)
+           (goto HaveAddr new-response-target))))
+       (goto NoAddr)))))
+  (define delayed-send-with-timeout-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (NoAddr) (response-target)
+          (goto HaveAddr response-target))
+        (define-state (HaveAddr [response-target (Addr Nat)]) (new-response-target)
+          (begin
+           (send response-target 1)
+           (goto HaveAddr new-response-target))
+          [(timeout 5)
+           (begin
+            (send response-target 2)
+            (goto NoAddr))]))
+       (goto NoAddr)))))
 
-;;   (test-valid-instance? request-response-spec)
-;;   (test-valid-instance? request-same-response-addr-spec)
-;;   (test-valid-actor? request-response-actor)
-;;   (test-valid-actor? respond-to-first-addr-actor)
-;;   (test-valid-actor? respond-to-first-addr-actor2)
-;;   (test-valid-actor? double-response-actor)
-;;   (test-valid-actor? delay-saving-address-actor)
-;;   (test-valid-actor? respond-once-actor)
-;;   (test-valid-actor? delayed-send-no-timeout-actor)
-;;   (test-valid-actor? delayed-send-with-timeout-actor)
-;;   (test-true "request/response 1"
-;;              (check-conformance/config (make-single-actor-config request-response-actor)
-;;                           (make-exclusive-spec request-response-spec)))
-
-;;   (test-false "request/response 2"
-;;               (check-conformance/config (make-single-actor-config respond-to-first-addr-actor)
-;;                            (make-exclusive-spec request-response-spec)))
-;;   (test-false "request/response 3"
-;;                (check-conformance/config (make-single-actor-config respond-to-first-addr-actor2)
-;;                             (make-exclusive-spec request-response-spec)))
-;;   (test-false "request/response 4"
-;;                (check-conformance/config (make-single-actor-config request-response-actor)
-;;                             (make-exclusive-spec request-same-response-addr-spec)))
-;;   (test-false "ignore all actor does not satisfy request/response"
-;;               (check-conformance/config (make-ignore-all-config (term (Addr Nat)))
-;;                            (make-exclusive-spec request-response-spec)))
-;;   (test-false "Respond-once actor does not satisfy request/response"
-;;               (check-conformance/config (make-single-actor-config respond-once-actor)
-;;                            (make-exclusive-spec request-response-spec)))
-;;   (test-true "check-conf misc. 1"
-;;     (check-conformance/config (make-single-actor-config respond-to-first-addr-actor)
-;;                               (make-exclusive-spec request-same-response-addr-spec)))
-;;   (test-true "check-conf misc. 2"
-;;     (check-conformance/config (make-single-actor-config respond-to-first-addr-actor2)
-;;                               (make-exclusive-spec request-same-response-addr-spec)))
-;;   (test-false "check-conf misc. 3"
-;;     (check-conformance/config (make-single-actor-config double-response-actor)
-;;                               (make-exclusive-spec request-response-spec)))
-;;   (test-false "check-conf misc. 4"
-;;     (check-conformance/config (make-single-actor-config delay-saving-address-actor)
-;;                               (make-exclusive-spec request-response-spec)))
-;;   (test-false "Send only on next receive does not satisfy request/response"
-;;                (check-conformance/config (make-single-actor-config delayed-send-no-timeout-actor)
-;;                             (make-exclusive-spec request-response-spec)))
-;;   (test-true "check-conf misc. 5"
-;;     (check-conformance/config (make-single-actor-config delayed-send-with-timeout-actor)
-;;                               (make-exclusive-spec request-response-spec)))
+  (test-valid-instance? request-response-spec)
+  (test-valid-instance? request-same-response-addr-spec)
+  (test-valid-actor? request-response-actor)
+  (test-valid-actor? respond-to-first-addr-actor)
+  (test-valid-actor? respond-to-first-addr-actor2)
+  (test-valid-actor? double-response-actor)
+  (test-valid-actor? delay-saving-address-actor)
+  (test-valid-actor? respond-once-actor)
+  (test-valid-actor? delayed-send-no-timeout-actor)
+  (test-valid-actor? delayed-send-with-timeout-actor)
+  (test-true "request/response 1"
+    (check-conformance/config (make-single-actor-config request-response-actor)
+                              (make-psm request-response-spec)))
+  (test-false "request/response 2"
+    (check-conformance/config (make-single-actor-config respond-to-first-addr-actor)
+                              (make-psm request-response-spec)))
+  (test-false "request/response 3"
+    (check-conformance/config (make-single-actor-config respond-to-first-addr-actor2)
+                              (make-psm request-response-spec)))
+  (test-false "request/response 4"
+    (check-conformance/config (make-single-actor-config request-response-actor)
+                              (make-psm request-same-response-addr-spec)))
+  (test-false "ignore all actor does not satisfy request/response"
+    (check-conformance/config (make-ignore-all-config (term (Addr Nat)))
+                              (make-psm request-response-spec)))
+  (test-false "Respond-once actor does not satisfy request/response"
+    (check-conformance/config (make-single-actor-config respond-once-actor)
+                              (make-psm request-response-spec)))
+  (test-true "check-conf misc. 1"
+    (check-conformance/config (make-single-actor-config respond-to-first-addr-actor)
+                              (make-psm request-same-response-addr-spec)))
+  (test-true "check-conf misc. 2"
+    (check-conformance/config (make-single-actor-config respond-to-first-addr-actor2)
+                              (make-psm request-same-response-addr-spec)))
+  (test-false "check-conf misc. 3"
+    (check-conformance/config (make-single-actor-config double-response-actor)
+                              (make-psm request-response-spec)))
+  (test-false "check-conf misc. 4"
+    (check-conformance/config (make-single-actor-config delay-saving-address-actor)
+                              (make-psm request-response-spec)))
+  (test-false "Send only on next receive does not satisfy request/response"
+    (check-conformance/config (make-single-actor-config delayed-send-no-timeout-actor)
+                              (make-psm request-response-spec)))
+  (test-true "check-conf misc. 5"
+    (check-conformance/config (make-single-actor-config delayed-send-with-timeout-actor)
+                              (make-psm request-response-spec)))
 
 ;;   (define (make-self-send-response-actor addr-number)
 ;;     (term
