@@ -2361,89 +2361,87 @@
               (make-empty-queues-config (list request-response-actor2 statically-delegating-responder-actor) null)
               (make-psm request-response-spec)))
 
+  ;;;; Self Reveal
+  (define self-reveal-response-addr `(marked (addr (env (Addr (Addr Nat))) 0) 2))
+  (define self-reveal-spec
+    (term
+     (((define-state (Init r)
+         [free -> ([obligation r self]) (goto Running)])
+       (define-state (Running)
+         [r -> ([obligation r *]) (goto Running)]))
+      (goto Init 2))))
 
-;;   ;;;; Self Reveal
-;;   (define self-reveal-response-addr `(addr (env (Addr (Addr Nat))) 0))
-;;   (define self-reveal-spec
-;;     (term
-;;      (((define-state (Init r)
-;;          [free -> ([obligation r self]) (goto Running)])
-;;        (define-state (Running)
-;;          [r -> ([obligation r *]) (goto Running)]))
-;;       (goto Init ,self-reveal-response-addr))))
+  (define self-reveal-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
+          (goto Init r)
+          [(timeout 5)
+           (begin
+             (send r (marked (addr 0 0)))
+             (goto Running))])
+        (define-state (Running) (r)
+          (begin
+            (send r 1)
+            (goto Running))))
+       (goto Init ,self-reveal-response-addr)))))
 
-;;   (define self-reveal-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
-;;           (goto Init r)
-;;           [(timeout 5)
-;;            (begin
-;;              (send r (addr 0 0))
-;;              (goto Running))])
-;;         (define-state (Running) (r)
-;;           (begin
-;;             (send r 1)
-;;             (goto Running))))
-;;        (goto Init ,self-reveal-response-addr)))))
+  (define reveal-wrong-address-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
+          (goto Init r)
+          [(timeout 5)
+           (begin
+             (send r (marked (addr 2 0)))
+             (goto Running))])
+        (define-state (Running) (r)
+          (begin
+            (send r 1)
+            (goto Running))))
+       (goto Init ,self-reveal-response-addr)))))
+  (define to-reveal-ignore-all-actor
+    (term
+     (((Addr Nat) (marked (addr 2 0) 2))
+      (((define-state (IgnoreAll) (r) (goto IgnoreAll)))
+       (goto IgnoreAll)))))
 
-;;   (define reveal-wrong-address-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
-;;           (goto Init r)
-;;           [(timeout 5)
-;;            (begin
-;;              (send r (addr 2 0))
-;;              (goto Running))])
-;;         (define-state (Running) (r)
-;;           (begin
-;;             (send r 1)
-;;             (goto Running))))
-;;        (goto Init ,self-reveal-response-addr)))))
-;;   (define to-reveal-ignore-all-actor
-;;     (term
-;;      (((Addr Nat) (addr 2 0))
-;;       (((define-state (IgnoreAll) (r) (goto IgnoreAll)))
-;;        (goto IgnoreAll)))))
+  (define reveal-self-double-output-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
+          (goto Init r)
+          [(timeout 5)
+           (begin
+             (send r (marked (addr 0 0)))
+             (goto Running))])
+        (define-state (Running) (r)
+          (begin
+            (send r 1)
+            (send r 1)
+            (goto Running))))
+       (goto Init ,self-reveal-response-addr)))))
 
-;;   (define reveal-self-double-output-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
-;;           (goto Init r)
-;;           [(timeout 5)
-;;            (begin
-;;              (send r (addr 0 0))
-;;              (goto Running))])
-;;         (define-state (Running) (r)
-;;           (begin
-;;             (send r 1)
-;;             (send r 1)
-;;             (goto Running))))
-;;        (goto Init ,self-reveal-response-addr)))))
+  (test-valid-actor? self-reveal-actor)
+  (test-valid-actor? reveal-wrong-address-actor)
+  (test-valid-actor? to-reveal-ignore-all-actor)
+  (test-valid-actor? reveal-self-double-output-actor)
 
-;;   (test-valid-actor? self-reveal-actor)
-;;   (test-valid-actor? reveal-wrong-address-actor)
-;;   (test-valid-actor? to-reveal-ignore-all-actor)
-;;   (test-valid-actor? reveal-self-double-output-actor)
-;;   ;; (test-valid-instance? self-reveal-spec)
+  (test-true "Reveal self works"
+             (check-conformance/config
+              (make-single-actor-config self-reveal-actor)
+              (make-anonymous-psm self-reveal-spec)))
 
-;;   (test-true "Reveal self works"
-;;              (check-conformance/config
-;;               (make-single-actor-config self-reveal-actor)
-;;               (make-unrevealed-exclusive-spec self-reveal-spec)))
+  (test-false "Catch self-reveal of wrong address"
+              (check-conformance/config
+               (make-empty-queues-config null
+                                         (list reveal-wrong-address-actor to-reveal-ignore-all-actor))
+               (make-anonymous-psm self-reveal-spec)))
 
-;;   (test-false "Catch self-reveal of wrong address"
-;;               (check-conformance/config
-;;                (make-empty-queues-config null
-;;                                          (list reveal-wrong-address-actor to-reveal-ignore-all-actor))
-;;                (make-unrevealed-exclusive-spec self-reveal-spec)))
-
-;;   (test-false "Catch self-reveal of actor that doesn't follow its behavior"
-;;               (check-conformance/config
-;;                (make-single-actor-config reveal-self-double-output-actor)
-;;                (make-unrevealed-exclusive-spec self-reveal-spec)))
+  (test-false "Catch self-reveal of actor that doesn't follow its behavior"
+              (check-conformance/config
+               (make-single-actor-config reveal-self-double-output-actor)
+               (make-anonymous-psm self-reveal-spec)))
 
 ;;   ;;;; Spawn
 ;;   (define echo-spawning-actor
