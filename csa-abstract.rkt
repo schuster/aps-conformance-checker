@@ -2313,8 +2313,8 @@
 
 ;; i# (Listof (List a#int b#)) -> i#
 (define (config-add-blurred-behaviors config new-addr-behavior-pairs)
-  (match-define `(,atomics ,collectives ,messages) config)
-  `(,atomics ,(add-blurred-behaviors collectives new-addr-behavior-pairs) ,messages))
+  (match-define `(,atomics ,collectives ,messages ,recs) config)
+  `(,atomics ,(add-blurred-behaviors collectives new-addr-behavior-pairs) ,messages ,recs))
 
 ;; β# (Listof (List a#int b#)) -> β#
 ;;
@@ -2353,16 +2353,19 @@
   (define behavior3-greater
     (term (((define-state (C [x (List Nat)]) (r) (begin (send r abs-nat) (goto C x))))
            (goto C (list-val abs-nat)))))
+  (define add-blurred-behaviors-config1
+    (term (() (((collective-addr 1) (,behavior1))) () ())))
 
   (test-begin
     (check-true (redex-match? csa# b# behavior1))
     (check-true (redex-match? csa# b# behavior2))
-    (check-true (redex-match? csa# b# behavior3)))
+    (check-true (redex-match? csa# b# behavior3))
+    (check-true (redex-match? csa# i# add-blurred-behaviors-config1)))
 
   (test-equal? "config-add-blurred-behaviors same behavior"
-    (config-add-blurred-behaviors (term (() (((collective-addr 1) (,behavior1))) ()))
+    (config-add-blurred-behaviors add-blurred-behaviors-config1
                                   (list (term ((collective-addr 1) ,behavior1))))
-    (term (() (((collective-addr 1) (,behavior1))) ())))
+    (term (() (((collective-addr 1) (,behavior1))) () ())))
 
   (test-equal? "add-blurred-behaviors"
     (add-blurred-behaviors (term (((collective-addr 1) (,behavior1 ,behavior2))
