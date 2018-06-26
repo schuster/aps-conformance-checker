@@ -3172,27 +3172,27 @@
      (make-single-actor-config send-after-timeout-actor)
      (make-psm reply-to-first-request-spec)))
 
-;;   ;;;; New "self" obligation on every step, never fulfilled
+  ;;;; New "self" obligation on every step, never fulfilled
 
-;;   (define never-respond-with-self-actor
-;;     (term
-;;      (((Addr (Addr Nat)) (addr 0 0))
-;;       (((define-state (Always) (r) (goto Always)))
-;;        (goto Always)))))
+  (define never-respond-with-self-actor
+    (term
+     (((Addr (Addr Nat)) (marked (addr 0 0) 0))
+      (((define-state (Always) (r) (goto Always)))
+       (goto Always)))))
 
-;;   (define new-self-obligations-spec
-;;     (term
-;;      (((define-state (Always)
-;;          [r -> ([obligation r self]) (goto Always)]))
-;;       (goto Always)
-;;       ((Addr (Addr Nat)) (addr 0 0)))))
+  (define new-self-obligations-spec
+    (term
+     (((define-state (Always)
+         [r -> ([obligation r self]) (goto Always)]))
+      (goto Always)
+      0)))
 
-;;   (test-valid-actor? never-respond-with-self-actor)
-;;   (test-valid-instance? new-self-obligations-spec)
-;;   (test-false "New self obligation on every message, never fulfilled"
-;;     (check-conformance/config
-;;      (make-single-actor-config never-respond-with-self-actor)
-;;      (make-exclusive-spec new-self-obligations-spec)))
+  (test-valid-actor? never-respond-with-self-actor)
+  (test-valid-instance? new-self-obligations-spec)
+  (test-false "New self obligation on every message, never fulfilled"
+    (check-conformance/config
+     (make-single-actor-config never-respond-with-self-actor)
+     (make-psm new-self-obligations-spec)))
 
 ;;   ;;;; "Free" forks inside for loops should not cause infinite loop
 ;;   (define forks-in-for-loop-actor
