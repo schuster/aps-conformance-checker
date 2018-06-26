@@ -2664,284 +2664,284 @@
      (make-single-actor-config spawn-self-revealing-echo)
      (make-psm child-self-reveal-spec)))
 
-;;   ;;;; Blur Tests
+  ;;;; Blur Tests
 
-;;   (define send-to-blurred-internal-actor-and-response
-;;     ;; Third time through, send to that actor
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (Always [static-output (Addr ,static-response-type)]
-;;                               [saved-internal (Union [None]
-;;                                                      [First (Addr (Addr ,static-response-type))]
-;;                                                      [Second (Addr (Addr ,static-response-type))])]) (m)
-;;           (let ([new-child
-;;                  (spawn child-loc
-;;                         (Addr ,static-response-type)
-;;                         (goto InternalAlways)
-;;                         (define-state (InternalAlways) (m)
-;;                           (begin
-;;                             (send m (variant Ack 1))
-;;                           (goto InternalAlways))))])
-;;             (begin
-;;               (send static-output (variant Ack 0))
-;;               (case saved-internal
-;;                 [(None) (goto Always static-output (variant First new-child))]
-;;                 [(First saved) (goto Always static-output (variant Second saved))]
-;;                 [(Second saved)
-;;                  (begin
-;;                    ;; at this point, "saved" should have already been blurred out
-;;                    (send saved static-output)
-;;                    (goto Always static-output (variant Second saved)))])))))
-;;        (goto Always ,static-response-address (variant None))))))
+  (define send-to-blurred-internal-actor-and-response
+    ;; Third time through, send to that actor
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (Always [static-output (Addr ,static-response-type)]
+                              [saved-internal (Union [None]
+                                                     [First (Addr (Addr ,static-response-type))]
+                                                     [Second (Addr (Addr ,static-response-type))])]) (m)
+          (let ([new-child
+                 (spawn child-loc
+                        (Addr ,static-response-type)
+                        (goto InternalAlways)
+                        (define-state (InternalAlways) (m)
+                          (begin
+                            (send m (variant Ack 1))
+                          (goto InternalAlways))))])
+            (begin
+              (send static-output (variant Ack 0))
+              (case saved-internal
+                [(None) (goto Always static-output (variant First new-child))]
+                [(First saved) (goto Always static-output (variant Second saved))]
+                [(Second saved)
+                 (begin
+                   ;; at this point, "saved" should have already been blurred out
+                   (send saved static-output)
+                   (goto Always static-output (variant Second saved)))])))))
+       (goto Always ,static-response-dest (variant None))))))
 
-;;   (test-valid-actor? send-to-blurred-internal-actor-and-response)
+  (test-valid-actor? send-to-blurred-internal-actor-and-response)
 
-;;   (test-false "Sending precise address to blurred sending actor causes non-conformance"
-;;     (check-conformance/config
-;;      (make-single-actor-config send-to-blurred-internal-actor-and-response)
-;;      (make-exclusive-spec static-response-spec)))
+  (test-false "Sending precise address to blurred sending actor causes non-conformance"
+    (check-conformance/config
+     (make-single-actor-config send-to-blurred-internal-actor-and-response)
+     (make-psm static-response-spec)))
 
-;;   (define send-to-blurred-internal-actor
-;;     ;; Third time through, send to that actor
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (Always [static-output (Addr ,static-response-type)]
-;;                               [saved-internal (Union [None]
-;;                                                      [First (Addr (Addr ,static-response-type))]
-;;                                                      [Second (Addr (Addr ,static-response-type))])]) (m)
-;;           (let ([new-child
-;;                  (spawn child-loc
-;;                         (Addr ,static-response-type)
-;;                         (goto InternalAlways)
-;;                         (define-state (InternalAlways) (m)
-;;                           (begin
-;;                             (send m (variant Ack 1))
-;;                           (goto InternalAlways))))])
-;;             (case saved-internal
-;;               [(None) (goto Always static-output (variant First new-child))]
-;;               [(First saved) (goto Always static-output (variant Second saved))]
-;;               [(Second saved)
-;;                (begin
-;;                  ;; at this point, "saved" should have already been blurred out
-;;                  (send saved static-output)
-;;                  (goto Always static-output (variant Second saved)))]))))
-;;        (goto Always ,static-response-address (variant None))))))
+  (define send-to-blurred-internal-actor
+    ;; Third time through, send to that actor
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (Always [static-output (Addr ,static-response-type)]
+                              [saved-internal (Union [None]
+                                                     [First (Addr (Addr ,static-response-type))]
+                                                     [Second (Addr (Addr ,static-response-type))])]) (m)
+          (let ([new-child
+                 (spawn child-loc
+                        (Addr ,static-response-type)
+                        (goto InternalAlways)
+                        (define-state (InternalAlways) (m)
+                          (begin
+                            (send m (variant Ack 1))
+                          (goto InternalAlways))))])
+            (case saved-internal
+              [(None) (goto Always static-output (variant First new-child))]
+              [(First saved) (goto Always static-output (variant Second saved))]
+              [(Second saved)
+               (begin
+                 ;; at this point, "saved" should have already been blurred out
+                 (send saved static-output)
+                 (goto Always static-output (variant Second saved)))]))))
+       (goto Always ,static-response-dest (variant None))))))
 
-;;   (define never-send-spec
-;;     (term
-;;      (((define-state (Always r)
-;;          [* -> () (goto Always r)]))
-;;       (goto Always ,static-response-address)
-;;       (Nat (addr 0 0)))))
-;;   (define send-whenever-spec
-;;     (term
-;;      (((define-state (Always r)
-;;          [* -> () (goto Always r)]
-;;          [free -> ([obligation r *]) (goto Always r)]))
-;;       (goto Always ,static-response-address)
-;;       (Nat (addr 0 0)))))
+  (define never-send-spec
+    (term
+     (((define-state (Always r)
+         [* -> () (goto Always r)]))
+      (goto Always ,static-response-marker)
+      0)))
+  (define send-whenever-spec
+    (term
+     (((define-state (Always r)
+         [* -> () (goto Always r)]
+         [free -> ([obligation r *]) (goto Always r)]))
+      (goto Always ,static-response-marker)
+      0)))
 
-;;   (test-valid-actor? send-to-blurred-internal-actor)
-;;   (test-valid-instance? send-whenever-spec)
-;;   (test-valid-instance? never-send-spec)
-;;   (test-true "Sending message to blurred-internal matches send-whenever spec"
-;;     (check-conformance/config
-;;      (make-single-actor-config send-to-blurred-internal-actor)
-;;      (make-exclusive-spec send-whenever-spec)))
-;;   (test-false "Sending message to blurred-internal does not match never-send spec"
-;;     (check-conformance/config
-;;      (make-single-actor-config send-to-blurred-internal-actor)
-;;      (make-exclusive-spec never-send-spec)))
+  (test-valid-actor? send-to-blurred-internal-actor)
+  (test-valid-instance? send-whenever-spec)
+  (test-valid-instance? never-send-spec)
+  (test-true "Sending message to blurred-internal matches send-whenever spec"
+    (check-conformance/config
+     (make-single-actor-config send-to-blurred-internal-actor)
+     (make-psm send-whenever-spec)))
+  (test-false "Sending message to blurred-internal does not match never-send spec"
+    (check-conformance/config
+     (make-single-actor-config send-to-blurred-internal-actor)
+     (make-psm never-send-spec)))
 
-;;   (define self-send-responder-spawner
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (Always) (dest)
-;;           (begin
-;;             (spawn child-loc
-;;                    (Addr Nat)
-;;                    (begin
-;;                      (send self 1)
-;;                      (goto AboutToSend dest))
-;;                    (define-state (AboutToSend [dest (Addr Nat)]) (m)
-;;                      (begin
-;;                        (send dest 1)
-;;                        (goto Done)))
-;;                    (define-state (Done) (m) (goto Done)))
-;;             (goto Always))))
-;;        (goto Always)))))
+  (define self-send-responder-spawner
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (Always) (dest)
+          (begin
+            (spawn child-loc
+                   (Addr Nat)
+                   (begin
+                     (send self 1)
+                     (goto AboutToSend dest))
+                   (define-state (AboutToSend [dest (Addr Nat)]) (m)
+                     (begin
+                       (send dest 1)
+                       (goto Done)))
+                   (define-state (Done) (m) (goto Done)))
+            (goto Always))))
+       (goto Always)))))
 
-;;   (test-valid-actor? self-send-responder-spawner)
-;;   (test-true "Child can wait at least one handler-cycle before sending to destination"
-;;     (check-conformance/config
-;;      (make-single-actor-config self-send-responder-spawner)
-;;      (make-exclusive-spec request-response-spec)))
+  (test-valid-actor? self-send-responder-spawner)
+  (test-true "Child can wait at least one handler-cycle before sending to destination"
+    (check-conformance/config
+     (make-single-actor-config self-send-responder-spawner)
+     (make-psm request-response-spec)))
 
-;;   ;; Actor that creates a worker to handle each new request, where the worker then sends the result
-;;   ;; back to another statically-known actor for sending back to the client
-;;   (define forwarding-type (term (Record [result Nat] [dest (Addr Nat)])))
-;;   (define (make-down-and-back-server child-behavior)
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (Always [forwarding-server (Addr ,forwarding-type)]) (dest)
-;;           (begin
-;;             (spawn child-loc ,@child-behavior)
-;;             (goto Always forwarding-server))))
-;;        (goto Always (addr 1 0))))))
+  ;; Actor that creates a worker to handle each new request, where the worker then sends the result
+  ;; back to another statically-known actor for sending back to the client
+  (define forwarding-type (term (Record [result Nat] [dest (Addr Nat)])))
+  (define (make-down-and-back-server child-behavior)
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (Always [forwarding-server (Addr ,forwarding-type)]) (dest)
+          (begin
+            (spawn child-loc ,@child-behavior)
+            (goto Always forwarding-server))))
+       (goto Always (marked (addr 1 0)))))))
 
-;;   (define timeout-forwarding-child
-;;     (term
-;;      (Nat
-;;       (goto AboutToSend forwarding-server)
-;;       (define-state (AboutToSend [forwarding-server (Addr ,forwarding-type)]) (dummy)
-;;         (goto AboutToSend forwarding-server)
-;;         [(timeout 0)
-;;          (begin
-;;            (send forwarding-server (record [result 1] [dest dest]))
-;;            (goto Done))])
-;;       (define-state (Done) (dummy) (goto Done)))))
+  (define timeout-forwarding-child
+    (term
+     (Nat
+      (goto AboutToSend forwarding-server)
+      (define-state (AboutToSend [forwarding-server (Addr ,forwarding-type)]) (dummy)
+        (goto AboutToSend forwarding-server)
+        [(timeout 0)
+         (begin
+           (send forwarding-server (record [result 1] [dest dest]))
+           (goto Done))])
+      (define-state (Done) (dummy) (goto Done)))))
 
-;;   (define self-send-forwarding-child
-;;     (term
-;;      (Nat
-;;       (begin
-;;         (send self 1)
-;;         (goto AboutToSend forwarding-server))
-;;       (define-state (AboutToSend [forwarding-server (Addr ,forwarding-type)]) (trigger)
-;;         (begin
-;;           (send forwarding-server (record [result 1] [dest dest]))
-;;           (goto Done)))
-;;       (define-state (Done) (dummy) (goto Done)))))
+  (define self-send-forwarding-child
+    (term
+     (Nat
+      (begin
+        (send self 1)
+        (goto AboutToSend forwarding-server))
+      (define-state (AboutToSend [forwarding-server (Addr ,forwarding-type)]) (trigger)
+        (begin
+          (send forwarding-server (record [result 1] [dest dest]))
+          (goto Done)))
+      (define-state (Done) (dummy) (goto Done)))))
 
-;;   (define forwarding-server
-;;     (term
-;;      (((Record [result Nat] [dest (Addr Nat)]) (addr 1 0))
-;;       (((define-state (ServerAlways) (rec)
-;;           (begin
-;;             (send (: rec dest) (: rec result))
-;;             (goto ServerAlways))))
-;;        (goto ServerAlways)))))
+  (define forwarding-server
+    (term
+     (((Record [result Nat] [dest (Addr Nat)]) (marked (addr 1 0) 1))
+      (((define-state (ServerAlways) (rec)
+          (begin
+            (send (: rec dest) (: rec result))
+            (goto ServerAlways))))
+       (goto ServerAlways)))))
 
-;;   (test-valid-actor? (make-down-and-back-server timeout-forwarding-child))
-;;   (test-valid-actor? forwarding-server)
+  (test-valid-actor? (make-down-and-back-server timeout-forwarding-child))
+  (test-valid-actor? forwarding-server)
 
-;;   (test-true "Down-and-back server with timeout child fulfills the dynamic request/response spec"
-;;     (check-conformance/config
-;;      (make-empty-queues-config (list (make-down-and-back-server timeout-forwarding-child))
-;;                                (list forwarding-server))
-;;      (make-exclusive-spec request-response-spec)))
+  (test-true "Down-and-back server with timeout child fulfills the dynamic request/response spec"
+    (check-conformance/config
+     (make-empty-queues-config (list (make-down-and-back-server timeout-forwarding-child))
+                               (list forwarding-server))
+     (make-psm request-response-spec)))
 
-;;   (test-true "Down-and-back server with self-send child fulfills the dynamic request/response spec"
-;;     (check-conformance/config
-;;      (make-empty-queues-config (list (make-down-and-back-server self-send-forwarding-child))
-;;                                (list forwarding-server))
-;;      (make-exclusive-spec request-response-spec)))
+  (test-true "Down-and-back server with self-send child fulfills the dynamic request/response spec"
+    (check-conformance/config
+     (make-empty-queues-config (list (make-down-and-back-server self-send-forwarding-child))
+                               (list forwarding-server))
+     (make-psm request-response-spec)))
 
-;;   (define create-later-send-children-actor
-;;     (term
-;;      (((Addr (Addr Nat)) (addr 1 0))
-;;       (((define-state (Always [r (Addr Nat)]) (other-dest)
-;;           (begin
-;;             (send other-dest
-;;                   (spawn child-loc Nat
-;;                          (goto Child1)
-;;                          (define-state (Child1) (dummy)
-;;                            (goto Child2))
-;;                          (define-state (Child2) (dummy)
-;;                            (begin
-;;                              (send r (variant Ack 1))
-;;                              (goto Child2)))))
-;;             (goto Always r))))
-;;        (goto Always ,static-response-address)))))
+  (define create-later-send-children-actor
+    (term
+     (((Addr (Addr Nat)) (marked (addr 1 0) 1))
+      (((define-state (Always [r (Addr Nat)]) (other-dest)
+          (begin
+            (send other-dest
+                  (spawn child-loc Nat
+                         (goto Child1)
+                         (define-state (Child1) (dummy)
+                           (goto Child2))
+                         (define-state (Child2) (dummy)
+                           (begin
+                             (send r (variant Ack 1))
+                             (goto Child2)))))
+            (goto Always r))))
+       (goto Always ,static-response-dest)))))
 
-;;   (test-valid-actor? create-later-send-children-actor)
-;;   (test-false "Child that sends response in second state does not match never-send"
-;;     ;; tests that all reachable states of a blurred child are executed
-;;     (check-conformance/config
-;;      (make-single-actor-config create-later-send-children-actor)
-;;      (make-exclusive-spec never-send-spec)))
+  (test-valid-actor? create-later-send-children-actor)
+  (test-false "Child that sends response in second state does not match never-send"
+    ;; tests that all reachable states of a blurred child are executed
+    (check-conformance/config
+     (make-single-actor-config create-later-send-children-actor)
+     (make-psm never-send-spec)))
 
-;;   ;; step 1: spawn the forwarder; save it
-;;   ;; step 2: spawn the new agent (spec follows it)
-;;   ;; step 3: new agent uses forwarder to fulfill its dynamic request/response (can't do static yet)
-;;   (define conflicts-only-test-actor
-;;     (term
-;;      (((Addr (Addr (Addr Nat))) (addr 0 0))
-;;       (((define-state (Always [maybe-forwarder (Union [None] [Forwarder (Addr (Addr Nat))])]) (dest)
-;;           (let ([forwarder
-;;                  (case maybe-forwarder
-;;                    [(None)
-;;                     ;; The forwarder actor takes any address it's given and sends a message to it
-;;                     (spawn forwarder-loc (Addr Nat)
-;;                                   (goto Forwarding)
-;;                                   (define-state (Forwarding) (r)
-;;                                     (begin
-;;                                       (send r 1)
-;;                                       (goto Forwarding))))]
-;;                    [(Forwarder the-addr) the-addr])])
-;;             (begin
-;;               (send dest
-;;                     ;; the per-request child is sent back to the client. When the client sends a
-;;                     ;; message to the child, the message is sent to the forwarder, who sends a message
-;;                     ;; on it
-;;                     (spawn surfaced-loc
-;;                            (Addr Nat)
-;;                            (goto Responding)
-;;                            (define-state (Responding) (r)
-;;                              (begin
-;;                                (send forwarder r)
-;;                                (goto Responding)))))
-;;               (goto Always (variant Forwarder forwarder))))))
-;;        (goto Always (variant None))))))
+  ;; step 1: spawn the forwarder; save it
+  ;; step 2: spawn the new agent (spec follows it)
+  ;; step 3: new agent uses forwarder to fulfill its dynamic request/response (can't do static yet)
+  (define conflicts-only-test-actor
+    (term
+     (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
+      (((define-state (Always [maybe-forwarder (Union [None] [Forwarder (Addr (Addr Nat))])]) (dest)
+          (let ([forwarder
+                 (case maybe-forwarder
+                   [(None)
+                    ;; The forwarder actor takes any address it's given and sends a message to it
+                    (spawn forwarder-loc (Addr Nat)
+                                  (goto Forwarding)
+                                  (define-state (Forwarding) (r)
+                                    (begin
+                                      (send r 1)
+                                      (goto Forwarding))))]
+                   [(Forwarder the-addr) the-addr])])
+            (begin
+              (send dest
+                    ;; the per-request child is sent back to the client. When the client sends a
+                    ;; message to the child, the message is sent to the forwarder, who sends a message
+                    ;; on it
+                    (spawn surfaced-loc
+                           (Addr Nat)
+                           (goto Responding)
+                           (define-state (Responding) (r)
+                             (begin
+                               (send forwarder r)
+                               (goto Responding)))))
+              (goto Always (variant Forwarder forwarder))))))
+       (goto Always (variant None))))))
 
-;;   (test-true "Only spawned actors with conflicts are blurred out"
-;;     (check-conformance/config
-;;      (make-single-actor-config conflicts-only-test-actor)
-;;      (make-exclusive-spec echo-spawn-spec)))
+  (test-true "Only spawned actors with conflicts are blurred out"
+    (check-conformance/config
+     (make-single-actor-config conflicts-only-test-actor)
+     (make-psm echo-spawn-spec)))
 
-;;   ;; Master creates workers, each worker reveals itself after timeout, sends response to next message
-;;   ;; and dies. The worker is stateful, so this models an error I found in the authN example
-;;   (define worker-spawner
-;;     (term
-;;      (((Addr (Addr (Addr Nat))) (addr 0 0))
-;;       (((define-state (MasterLoop) (child-dest)
-;;          (begin
-;;            (spawn child-loc
-;;                   (Addr Nat)
-;;                   (goto Init)
-;;                   (define-state (Init) (m)
-;;                     (goto Init)
-;;                     [(timeout 0)
-;;                      (begin
-;;                        (send child-dest self)
-;;                        (goto Running))])
-;;                   (define-state (Running) (m)
-;;                     (begin
-;;                       (send m 0)
-;;                       (goto Done)))
-;;                   (define-state (Done) (m)
-;;                     (goto Done)))
-;;            (goto MasterLoop))))
-;;        (goto MasterLoop)))))
-;;   (define worker-spawner-spec
-;;     (term
-;;      (((define-state (Always)
-;;          [r -> ([obligation r (delayed-fork
-;;                                (goto Running)
-;;                                (define-state (Running)
-;;                                  [nr -> ([obligation nr *]) (goto Done)])
-;;                                (define-state (Done)
-;;                                  [nr -> () (goto Done)]))])
-;;             (goto Always)]))
-;;       (goto Always)
-;;       ((Addr (Addr (Addr Nat))) (addr 0 0)))))
+  ;; Master creates workers, each worker reveals itself after timeout, sends response to next message
+  ;; and dies. The worker is stateful, so this models an error I found in the authN example
+  (define worker-spawner
+    (term
+     (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
+      (((define-state (MasterLoop) (child-dest)
+         (begin
+           (spawn child-loc
+                  (Addr Nat)
+                  (goto Init)
+                  (define-state (Init) (m)
+                    (goto Init)
+                    [(timeout 0)
+                     (begin
+                       (send child-dest self)
+                       (goto Running))])
+                  (define-state (Running) (m)
+                    (begin
+                      (send m 0)
+                      (goto Done)))
+                  (define-state (Done) (m)
+                    (goto Done)))
+           (goto MasterLoop))))
+       (goto MasterLoop)))))
+  (define worker-spawner-spec
+    (term
+     (((define-state (Always)
+         [r -> ([obligation r (delayed-fork
+                               (goto Running)
+                               (define-state (Running)
+                                 [nr -> ([obligation nr *]) (goto Done)])
+                               (define-state (Done)
+                                 [nr -> () (goto Done)]))])
+            (goto Always)]))
+      (goto Always)
+      0)))
 
-;;   (test-valid-actor? worker-spawner)
-;;   (test-valid-instance? worker-spawner-spec)
-;;   (test-true "Stateful generated worker satisfies spec"
-;;     (check-conformance/config
-;;      (make-single-actor-config worker-spawner)
-;;      (make-exclusive-spec worker-spawner-spec)))
+  (test-valid-actor? worker-spawner)
+  (test-valid-instance? worker-spawner-spec)
+  (test-true "Stateful generated worker satisfies spec"
+    (check-conformance/config
+     (make-single-actor-config worker-spawner)
+     (make-psm worker-spawner-spec)))
 
 ;;   ;;;; Type Coercions
 
