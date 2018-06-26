@@ -1796,9 +1796,14 @@
 (define-metafunction csa#
   abstract-actor : (a b) (a_internals ...) -> [a# b#]
   [(abstract-actor (a_this ((Q ...) e)) (a ...))
-   ((abstract-e a_this (a ...))
+   (a_this ; used to be: (abstract-e a_this (a ...))
     (((abstract-Q Q (a ...)) ...)
      (abstract-e e (a ...))))])
+
+(module+ test
+  (test-equal? "abstract-actor"
+    (term (abstract-actor [(addr 0 0) [((define-state (A) (m) (goto A))) (goto A)]] ()))
+    (term [(addr 0 0) [((define-state (A) (m) (goto A))) (goto A)]])))
 
 (define-metafunction csa#
   abstract-Q : Q (a_internals ...) -> Q#
