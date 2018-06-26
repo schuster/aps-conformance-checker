@@ -354,7 +354,8 @@
                     ;;   (printf "pre-sbc: ~s\n" successor-pair)
                     ;;   (printf "post-sbc: ~s\n" (sbc successor-pair)))
                     (for ([sbc-result (sbc* successor-pairs)])
-                      (match-define (list unwidened-sbc-pair rename-map) sbc-result)
+                      (match-define (list unwidened-sbc-pair addr-rename-map marker-rename-map)
+                        sbc-result)
                       (define (seen? new-pair)
                         (or (set-member? to-visit new-pair)
                             (set-member? related-pairs new-pair)
@@ -374,8 +375,12 @@
                             (begin
                               (widen-printf "Not widening an already-seen config pair\n")
                               unwidened-sbc-pair)))
-                      (log-incoming log-file sbc-pair (list pair i-step s-step rename-map))
-                      (dict-of-sets-add! incoming-steps sbc-pair (list pair i-step s-step rename-map))
+                      (log-incoming log-file
+                                    sbc-pair
+                                    (list pair i-step s-step addr-rename-map marker-rename-map))
+                      (dict-of-sets-add! incoming-steps
+                                         sbc-pair
+                                         (list pair i-step s-step addr-rename-map marker-rename-map))
                       ;; unless it's already in the queue, or we have already explored it (and
                       ;; therefore it's in either the related or unrelated set), add the new pair to
                       ;; the worklist
