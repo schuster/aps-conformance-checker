@@ -1773,57 +1773,57 @@
     (check-conformance/config (make-single-actor-config reply-once-actor)
                               (make-psm maybe-reply-spec)))
 
-;;   ;;;; Non-deterministic branching in spec
+  ;;;; Non-deterministic branching in spec
 
-;;   (define zero-nonzero-response-address (make-static-response-dest `(Union [NonZero] [Zero])))
-;;   (define zero-nonzero-spec
-;;     (term
-;;      (((define-state (S1 r)
-;;          [* -> ([obligation r (variant Zero)])    (goto S1 r)]
-;;          [* -> ([obligation r (variant NonZero)]) (goto S1 r)]))
-;;       (goto S1 ,zero-nonzero-response-address)
-;;       (Nat (addr 0 0)))))
-;;   (define zero-spec
-;;     (term
-;;      (((define-state (S1 r)
-;;          [* -> ([obligation r (variant Zero)]) (goto S1 r)]))
-;;       (goto S1 ,zero-nonzero-response-address)
-;;       (Nat (addr 0 0)))))
-;;   (define primitive-branch-actor
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (S1 [dest (Addr (Union [NonZero] [Zero]))]) (i)
-;;           (begin
-;;             (case (< 0 i)
-;;               [(True) (send dest (variant NonZero))]
-;;               [(False) (send dest (variant Zero))])
-;;             (goto S1 dest))))
-;;        (goto S1 ,zero-nonzero-response-address)))))
+  (define zero-nonzero-response-address (make-static-response-dest `(Union [NonZero] [Zero])))
+  (define zero-nonzero-spec
+    (term
+     (((define-state (S1 r)
+         [* -> ([obligation r (variant Zero)])    (goto S1 r)]
+         [* -> ([obligation r (variant NonZero)]) (goto S1 r)]))
+      (goto S1 ,static-response-marker)
+      0)))
+  (define zero-spec
+    (term
+     (((define-state (S1 r)
+         [* -> ([obligation r (variant Zero)]) (goto S1 r)]))
+      (goto S1 ,static-response-marker)
+      0)))
+  (define primitive-branch-actor
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (S1 [dest (Addr (Union [NonZero] [Zero]))]) (i)
+          (begin
+            (case (< 0 i)
+              [(True) (send dest (variant NonZero))]
+              [(False) (send dest (variant Zero))])
+            (goto S1 dest))))
+       (goto S1 ,zero-nonzero-response-address)))))
 
-;;   (test-valid-instance? static-response-spec)
-;;   (test-valid-instance? zero-nonzero-spec)
-;;   (test-valid-instance? zero-spec)
-;;   (test-valid-actor? primitive-branch-actor)
+  (test-valid-instance? static-response-spec)
+  (test-valid-instance? zero-nonzero-spec)
+  (test-valid-instance? zero-spec)
+  (test-valid-actor? primitive-branch-actor)
 
-;;   (test-true "Zero/NonZero"
-;;     (check-conformance/config (make-single-actor-config primitive-branch-actor)
-;;                               (make-exclusive-spec zero-nonzero-spec)))
-;;   (test-false "Zero"
-;;     (check-conformance/config (make-single-actor-config primitive-branch-actor)
-;;                               (make-exclusive-spec zero-spec)))
+  (test-true "Zero/NonZero"
+    (check-conformance/config (make-single-actor-config primitive-branch-actor)
+                              (make-psm zero-nonzero-spec)))
+  (test-false "Zero"
+    (check-conformance/config (make-single-actor-config primitive-branch-actor)
+                              (make-psm zero-spec)))
 
-;;   ;;;; Optional Commitments
-;;   (define optional-commitment-spec
-;;     (term
-;;      (((define-state (Always r)
-;;          [* -> ([obligation r *]) (goto Always r)]
-;;          [* -> () (goto Always r)]))
-;;       (goto Always (addr (env Nat) 0))
-;;       (Nat (addr 0 0)))))
+  ;;;; Optional Commitments
+  (define optional-commitment-spec
+    (term
+     (((define-state (Always r)
+         [* -> ([obligation r *]) (goto Always r)]
+         [* -> () (goto Always r)]))
+      (goto Always 1)
+      0)))
 
-;;   (test-valid-instance? optional-commitment-spec)
-;;   (test-true "optional commitment spec"
-;;     (check-conformance/config ignore-all-config (make-exclusive-spec optional-commitment-spec)))
+  (test-valid-instance? optional-commitment-spec)
+  (test-true "optional commitment spec"
+    (check-conformance/config ignore-all-config (make-psm optional-commitment-spec)))
 
 ;;   ;;;; Stuck states in concrete evaluation
 
