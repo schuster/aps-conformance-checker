@@ -2980,51 +2980,51 @@
      (make-single-actor-config ping-coercion-spawner)
      (make-psm ping-coercion-spawner-spec)))
 
-;;   ;;;; Widening
+  ;;;; Widening
 
-;;   ;; A counterexample that shows why widening with a spawn that didn't exist before is unsound: On
-;;   ;; receiving an external message, the main actor spawns a child. The child, on timeout, sends a
-;;   ;; message back to its parent, and the parent sends a message to fulfill the obligation. If the
-;;   ;; external message is never sent, the obligation is never fulfilled.
-;;   (define new-spawn-impl-config
-;;     (term (([(addr 1 0)
-;;              (((define-state (Start [target (Addr Nat)]) (m)
-;;                  (case m
-;;                    [(FromEnv)
-;;                     (let ([parent (addr 1 0)])
-;;                       (begin
-;;                         (spawn child-loc
-;;                                (Addr (Union [FromChild]))
-;;                                (goto Waiting)
-;;                                (define-state (Waiting) (m)
-;;                                  (goto Waiting)
-;;                                  [(timeout 5)
-;;                                   (begin
-;;                                     (send parent (variant FromChild))
-;;                                     (goto Done))])
-;;                                (define-state (Done) (m) (goto Done)))
-;;                         (goto Start target)))]
-;;                    [(FromChild)
-;;                     (begin
-;;                       (send target 1)
-;;                       (goto ParentDone))]))
-;;                (define-state (ParentDone) (m) (goto ParentDone)))
-;;               (goto Start (addr (env Nat) 2)))])
-;;            ()
-;;            (((Union [FromEnv]) (addr 1 0)))
-;;            ((Nat (addr (env Nat) 2))))))
-;;   ;; Spec with no real transitions, but a commitment on address 2
-;;   (define new-spawn-spec-config
-;;     (term ((((Union [FromEnv]) (addr 1 0)))
-;;            ()
-;;            (goto Always)
-;;            ((define-state (Always)
-;;               [* -> () (goto Always)]))
-;;            (((addr (env Nat) 2) *)))))
-;;   (check-true (redex-match? csa-eval i new-spawn-impl-config))
-;;   (check-true (redex-match? aps-eval s new-spawn-spec-config))
-;;   (test-false "Widen new-spawn counterexample"
-;;     (check-conformance/config new-spawn-impl-config new-spawn-spec-config))
+  ;; A counterexample that shows why widening with a spawn that didn't exist before is unsound: On
+  ;; receiving an external message, the main actor spawns a child. The child, on timeout, sends a
+  ;; message back to its parent, and the parent sends a message to fulfill the obligation. If the
+  ;; external message is never sent, the obligation is never fulfilled.
+  (define new-spawn-impl-config
+    (term (([(addr 1 0)
+             (((define-state (Start [target (Addr Nat)]) (m)
+                 (case m
+                   [(FromEnv)
+                    (let ([parent (marked (addr 1 0))])
+                      (begin
+                        (spawn child-loc
+                               (Addr (Union [FromChild]))
+                               (goto Waiting)
+                               (define-state (Waiting) (m)
+                                 (goto Waiting)
+                                 [(timeout 5)
+                                  (begin
+                                    (send parent (variant FromChild))
+                                    (goto Done))])
+                               (define-state (Done) (m) (goto Done)))
+                        (goto Start target)))]
+                   [(FromChild)
+                    (begin
+                      (send target 1)
+                      (goto ParentDone))]))
+               (define-state (ParentDone) (m) (goto ParentDone)))
+              (goto Start (marked (addr (env Nat) 2) 2)))])
+           ()
+           (((Union [FromEnv]) (marked (addr 1 0) 1)))
+           ((Nat (marked (addr (env Nat) 2) 2))))))
+  ;; Spec with no real transitions, but a commitment on address 2
+  (define new-spawn-spec-config
+    (term ((1)
+           (2)
+           (goto Always)
+           ((define-state (Always)
+              [* -> () (goto Always)]))
+           ([2 *]))))
+  (check-true (redex-match? csa-eval i new-spawn-impl-config))
+  (check-true (redex-match? aps-eval s new-spawn-spec-config))
+  (test-false "Widen new-spawn counterexample"
+    (check-conformance/config new-spawn-impl-config new-spawn-spec-config))
 
 ;;   ;;;; Loop Spawns
 
