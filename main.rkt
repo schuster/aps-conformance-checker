@@ -1130,7 +1130,7 @@
       [#f (list (set-immutable-copy remaining-pairs) related-spec-steps)]
       [unrelated-pair
        (for ([transition (hash-ref incoming-steps unrelated-pair)])
-         (match-define (list predecessor i-step s-step _) transition)
+         (match-define (list predecessor i-step s-step _ _) transition)
          ;; Only check for lack of support for pairs still in remaining pairs
          (when (set-member? remaining-pairs predecessor)
            (define spec-steps (hash-ref related-spec-steps (list predecessor i-step)))
@@ -1173,7 +1173,7 @@
     (prune-unsupported
      (mutable-set ax-pair)
      ;; incoming-steps
-     (mutable-hash [ax-pair (mutable-set (list ax-pair aa-step xx-step (hash)))])
+     (mutable-hash [ax-pair (mutable-set (list ax-pair aa-step xx-step (hash) (hash)))])
      ;; related spec steps
      (mutable-hash [(list ax-pair aa-step) (mutable-set xx-step)])
      ;; unrelated sucessors
@@ -1185,8 +1185,8 @@
   (test-equal? "Remove no pairs, because unrelated-matches contained only a redundant support"
     (prune-unsupported
      (set ax-pair bz-pair)
-     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
-                   [bz-pair (mutable-set (list ax-pair ab-step xz-step (hash)))]
+     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash) (hash)))]
+                   [bz-pair (mutable-set (list ax-pair ab-step xz-step (hash) (hash)))]
                    [ax-pair (mutable-set)])
      (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step xz-step)])
      (list by-pair))
@@ -1197,7 +1197,7 @@
   (test-equal? "Remove last remaining pair"
     (prune-unsupported
      (mutable-set ax-pair)
-     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
+     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash) (hash)))]
                    [ax-pair (mutable-set)])
      (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step)])
      (list by-pair))
@@ -1209,10 +1209,10 @@
     (prune-unsupported
      (mutable-set ax-pair bz-pair by-pair)
      ;; incoming-steps
-     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
-                   [bz-pair (mutable-set (list ax-pair ab-step xz-step (hash)))]
+     (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash) (hash)))]
+                   [bz-pair (mutable-set (list ax-pair ab-step xz-step (hash) (hash)))]
                    [ax-pair (mutable-set)]
-                   [cw-pair (mutable-set (list by-pair bc-step yw-step (hash)))])
+                   [cw-pair (mutable-set (list by-pair bc-step yw-step (hash) (hash)))])
      ;; matching spec steps
      (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step xz-step)]
                    [(list by-pair bc-step) (mutable-set yw-step)])
@@ -1227,9 +1227,9 @@
       (prune-unsupported
        (mutable-set ax-pair by-pair)
        ;; incoming-steps
-       (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash)))]
+       (mutable-hash [by-pair (mutable-set (list ax-pair ab-step xy-step (hash) (hash)))]
                      [ax-pair (mutable-set)]
-                     [cw-pair (mutable-set (list by-pair bc-step yw-step (hash)))])
+                     [cw-pair (mutable-set (list by-pair bc-step yw-step (hash) (hash)))])
        ;; matching spec steps
        (mutable-hash [(list ax-pair ab-step) (mutable-set xy-step)]
                      [(list by-pair bc-step) (mutable-set yw-step)])
