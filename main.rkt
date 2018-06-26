@@ -2443,109 +2443,110 @@
                (make-single-actor-config reveal-self-double-output-actor)
                (make-anonymous-psm self-reveal-spec)))
 
-;;   ;;;; Spawn
-;;   (define echo-spawning-actor
-;;     (term
-;;      (((Addr (Addr (Addr Nat))) (addr 0 0))
-;;       (((define-state (Always) (response-target)
-;;           (begin
-;;             (let ([child
-;;                    (spawn
-;;                     echo-spawn
-;;                     (Addr Nat)
-;;                     (goto EchoResponse)
-;;                     (define-state (EchoResponse) (echo-target)
-;;                       (begin
-;;                         (send echo-target 1)
-;;                         (goto EchoResponse))))])
-;;               (begin
-;;                 (send response-target child)
-;;                 (goto Always))))))
-;;        (goto Always)))))
+  ;;;; Spawn
+  (define echo-spawning-actor
+    (term
+     (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
+      (((define-state (Always) (response-target)
+          (begin
+            (let ([child
+                   (spawn
+                    echo-spawn
+                    (Addr Nat)
+                    (goto EchoResponse)
+                    (define-state (EchoResponse) (echo-target)
+                      (begin
+                        (send echo-target 1)
+                        (goto EchoResponse))))])
+              (begin
+                (send response-target child)
+                (goto Always))))))
+       (goto Always)))))
 
-;;   (define double-response-spawning-actor
-;;     (term
-;;      (((Addr (Addr (Addr Nat))) (addr 0 0))
-;;       (((define-state (Always) (response-target)
-;;           (begin
-;;             (let ([child
-;;                    (spawn
-;;                     double-response-spawn
-;;                     (Addr Nat)
-;;                     (goto DoubleResponse)
-;;                     (define-state (DoubleResponse) (echo-target)
-;;                       (begin
-;;                         (send echo-target 1)
-;;                         (send echo-target 1)
-;;                         (goto DoubleResponse))))])
-;;               (begin
-;;                 (send response-target child)
-;;                 (goto Always))))))
-;;        (goto Always)))))
+  (define double-response-spawning-actor
+    (term
+     (((Addr (Addr (Addr Nat))) (marked (addr 0 0)))
+      (((define-state (Always) (response-target)
+          (begin
+            (let ([child
+                   (spawn
+                    double-response-spawn
+                    (Addr Nat)
+                    (goto DoubleResponse)
+                    (define-state (DoubleResponse) (echo-target)
+                      (begin
+                        (send echo-target 1)
+                        (send echo-target 1)
+                        (goto DoubleResponse))))])
+              (begin
+                (send response-target child)
+                (goto Always))))))
+       (goto Always)))))
 
-;;   (define echo-spawn-spec
-;;     (term
-;;      (((define-state (Always)
-;;          [r -> ([obligation r (delayed-fork
-;;                                (goto EchoResponse)
-;;                                (define-state (EchoResponse)
-;;                                  [er -> ([obligation er *]) (goto EchoResponse)]))])
-;;                (goto Always)]))
-;;       (goto Always)
-;;       ((Addr (Addr (Addr Nat))) (addr 0 0)))))
+  (define echo-spawn-spec
+    (term
+     (((define-state (Always)
+         [r -> ([obligation r (delayed-fork
+                               (goto EchoResponse)
+                               (define-state (EchoResponse)
+                                 [er -> ([obligation er *]) (goto EchoResponse)]))])
+               (goto Always)]))
+      (goto Always)
+      0)))
 
-;;   (test-valid-actor? echo-spawning-actor)
-;;   (test-valid-actor? double-response-spawning-actor)
-;;   (test-valid-instance? echo-spawn-spec)
+  (test-valid-actor? echo-spawning-actor)
+  (test-valid-actor? double-response-spawning-actor)
+  (test-valid-instance? echo-spawn-spec)
 
-;;   (test-true "Spawned echo matches dynamic response spec"
-;;              (check-conformance/config
-;;               (make-single-actor-config echo-spawning-actor)
-;;               (make-exclusive-spec echo-spawn-spec)))
+  (test-true
+      "Spawned echo matches dynamic response spec"
+             (check-conformance/config
+              (make-single-actor-config echo-spawning-actor)
+              (make-psm echo-spawn-spec)))
 
-;;   (test-false "Spawned double-response actor does not match dynamic response spec"
-;;               (check-conformance/config
-;;                (make-single-actor-config double-response-spawning-actor)
-;;                (make-exclusive-spec echo-spawn-spec)))
+  (test-false "Spawned double-response actor does not match dynamic response spec"
+              (check-conformance/config
+               (make-single-actor-config double-response-spawning-actor)
+               (make-psm echo-spawn-spec)))
 
-;;   ;; Check that spec-fork addresses are added to unobs interface
-;;   (define unobs-fork-response-addr1 `(addr (env (Addr Nat)) 1))
-;;   (define unobs-fork-response-addr2 `(addr (env Nat) 2))
-;;   (define unobs-fork-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (Always [child-response (Addr (Addr Nat))] [never-use (Addr Nat)]) (m)
-;;           (let ([new-child
-;;                  (spawn
-;;                   child-loc
-;;                   (Addr Nat)
-;;                   (goto ChildAlways)
-;;                   (define-state (ChildAlways) (m)
-;;                     (begin
-;;                       (send never-use 1)
-;;                       (goto ChildAlways))))])
-;;             (begin
-;;               (send child-response new-child)
-;;               (goto Always child-response never-use)))))
-;;        (goto Always ,unobs-fork-response-addr1 ,unobs-fork-response-addr2)))))
+  ;; Check that spec-fork addresses are added to unobs interface
+  (define unobs-fork-response-addr1 `(marked (addr (env (Addr Nat)) 1) 1))
+  (define unobs-fork-response-addr2 `(marked (addr (env Nat) 2) 2))
+  (define unobs-fork-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (Always [child-response (Addr (Addr Nat))] [never-use (Addr Nat)]) (m)
+          (let ([new-child
+                 (spawn
+                  child-loc
+                  (Addr Nat)
+                  (goto ChildAlways)
+                  (define-state (ChildAlways) (m)
+                    (begin
+                      (send never-use 1)
+                      (goto ChildAlways))))])
+            (begin
+              (send child-response new-child)
+              (goto Always child-response never-use)))))
+       (goto Always ,unobs-fork-response-addr1 ,unobs-fork-response-addr2)))))
 
-;;   (define unobs-fork-spec
-;;     (term
-;;      (((define-state (Always child-response never-use)
-;;          [* -> ([obligation child-response
-;;                             (delayed-fork (goto ChildAlways)
-;;                                           (define-state (ChildAlways)
-;;                                             [* -> () (goto ChildAlways)]))])
-;;             (goto Always child-response never-use)]))
-;;       (goto Always ,unobs-fork-response-addr1 ,unobs-fork-response-addr2)
-;;       (Nat (addr 0 0)))))
+  (define unobs-fork-spec
+    (term
+     (((define-state (Always child-response never-use)
+         [* -> ([obligation child-response
+                            (delayed-fork (goto ChildAlways)
+                                          (define-state (ChildAlways)
+                                            [* -> () (goto ChildAlways)]))])
+            (goto Always child-response never-use)]))
+      (goto Always 1 2)
+      0)))
 
-;;   (test-valid-actor? unobs-fork-actor)
-;;   (test-valid-instance? unobs-fork-spec)
-;;   (test-false "Forked specified actor in unobs interface can cause non-conformance"
-;;     (check-conformance/config
-;;      (make-single-actor-config unobs-fork-actor)
-;;      (make-exclusive-spec unobs-fork-spec)))
+  (test-valid-actor? unobs-fork-actor)
+  (test-valid-instance? unobs-fork-spec)
+  (test-false "Forked specified actor in unobs interface can cause non-conformance"
+    (check-conformance/config
+     (make-single-actor-config unobs-fork-actor)
+     (make-psm unobs-fork-spec)))
 
 ;;   ;;;; Initial spec address must have actor in the implmentation
 ;;   (define no-matching-address-spec
