@@ -3460,7 +3460,9 @@
       ;; μ#
       ([,evictable-addr1 (marked (addr 4 0)) single]
        [(addr (4-EVICT (Addr Nat) ()) 0) (marked (collective-addr (env Nat)) 3) single]
-       [,non-evictable2-addr (marked ,collective-evictable-addr1) many])))
+       [,non-evictable2-addr (marked ,collective-evictable-addr1) many])
+      ;; ρ#
+      ([Nat (marked ,non-evictable1-addr 1)])))
 
   (define expected-precise-evicted-config
     `(([(addr 1 1) (() (goto S))]
@@ -3475,7 +3477,13 @@
       (,collective-evictable1)
       ;; μ#
       ([(addr (4-EVICT (Addr Nat) ()) 0) (marked (collective-addr (env Nat)) 3) single]
-       [,non-evictable2-addr (marked ,collective-evictable-addr1) many])))
+       [,non-evictable2-addr (marked ,collective-evictable-addr1) many])
+      ;; ρ#
+      ([Nat (marked ,non-evictable1-addr 1)]
+       [String (marked (addr 2 0))]
+       [String (marked (addr 3 0))]
+       [Nat (marked (addr 1 0))]
+       [Nat (marked (addr 4 0))])))
 
     (define expected-blurred-evicted-config
       `((,non-evictable1
@@ -3487,7 +3495,12 @@
         ;; μ#
         ([,evictable-addr1 (marked (addr 4 0)) single]
          [(addr (4-EVICT (Addr Nat) ()) 0) (marked (collective-addr (env Nat)) 3) single]
-         [,non-evictable2-addr (marked (collective-addr (env (Addr Nat)))) many])))
+         [,non-evictable2-addr (marked (collective-addr (env (Addr Nat)))) many])
+        ;; ρ#
+        ([Nat (marked ,non-evictable1-addr 1)]
+         [String (marked (addr 2 0))]
+         [String (marked (addr 3 0))]
+         [Nat (marked (addr 1 0))])))
 
   (test-equal? "Addresses to evict"
     (csa#-addrs-to-evict evict-test-config)
@@ -3573,14 +3586,21 @@
               ([packet evicted-packets])
       (merge-receptionists receptionists
                            (internal-addr-types (csa#-message-packet-value packet) evicted-type))))
+  (define all-new-receptionists
+    (merge-receptionists
+     (merge-receptionists state-def-captured-receptionists state-arg-captured-receptionists)
+     message-captured-receptionists))
+  (define updated-receptionists
+    (merge-receptionists
+     (remove-receptionist (csa#-config-receptionists i) addr)
+     all-new-receptionists))
   (list (rename-address `(,remaining-actors
                           ,remaining-blurred-actors
-                          ,non-evicted-packets)
+                          ,non-evicted-packets
+                          ,updated-receptionists)
                         addr
                         `(collective-addr (env ,evicted-type)))
-        (merge-receptionists
-         (merge-receptionists state-def-captured-receptionists state-arg-captured-receptionists)
-         message-captured-receptionists)))
+        all-new-receptionists))
 
 (module+ test
   (test-equal? "csa#-evict atomic address"
@@ -3597,6 +3617,10 @@
           `([String (marked (addr 2 0))]
             [String (marked (addr 3 0))]
             [Nat (marked (addr 1 0))]))))
+
+(define (remove-receptionist receptionists addr-to-remove)
+  (filter (lambda (rec) (not (equal? (unmark-addr (second rec)) addr-to-remove)))
+          receptionists))
 
 (define (sexp-by-path sexp path)
   (match path

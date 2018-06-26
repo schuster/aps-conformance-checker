@@ -17,9 +17,9 @@
  reverse-rename-marker
  aps#-config-has-commitment?
  aps#-completed-no-transition-psm?
- ;; evict-pair
  ;; needed for widening
  ;; aps#-config<=
+ evict-pair
 
  ;; Required only for testing
  aps#
@@ -1939,68 +1939,23 @@
     (lambda (exn) #t)
     (lambda () (reverse-rename-marker (term ([1 3] [2 4])) 2))))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Eviction
+;; ---------------------------------------------------------------------------------------------------
+;; Eviction
 
-;; (define (evict-pair i s)
-;;   ;; TODO: add the rename map stuff (although technically it's not needed, since the only changed
-;;   ;; addresses are no longer in the resulting configuration
-;;   (for/fold ([pair (list i s)])
-;;             ;; need to check for obs externals, obs internal
-;;             ([addr (csa#-addrs-to-evict i)])
-;;     (match (aps#-config-obs-receptionists s)
-;;       [(list `(,_ (? (curry equal? addr)))) pair]
-;;       [_
-;;        (match-define (list new-impl-config new-unobs-receptionists)
-;;          (csa#-evict i addr))
-;;        (define all-unobs-receptionists
-;;          (merge-receptionists
-;;           (remove-receptionist (aps#-config-unobs-receptionists s) addr)
-;;           new-unobs-receptionists))
-;;        (define new-spec-config
-;;          `(,(aps#-config-obs-receptionists s)
-;;            ,all-unobs-receptionists
-;;            ,(aps#-config-current-state s)
-;;            ,(aps#-config-state-defs s)
-;;            ,(aps#-config-commitment-map s)))
-;;        (list new-impl-config new-spec-config)])))
-
-;; (module+ test
-;;   (test-equal? "evict-pair"
-;;     (evict-pair
-;;      `[([(addr 1 0)
-;;          [((define-state (A) (m)
-;;              (begin (addr (EVICT Nat ()) 0)
-;;                     (goto A))))
-;;           (goto A)]]
-;;         [(addr (EVICT Nat ()) 0)
-;;          [((define-state (B [x (Addr String)]) (m) (goto B x)))
-;;           (goto B (addr 2 0))]])
-;;        ()
-;;        ()]
-;;      `[()
-;;        ((Nat (addr 1 0)) (Nat (addr (EVICT Nat ()) 0)))
-;;        (goto A)
-;;        ()
-;;        ()])
-;;     (list
-;;      `[([(addr 1 0)
-;;          [((define-state (A) (m)
-;;              (begin (collective-addr (env Nat))
-;;                     (goto A))))
-;;           (goto A)]])
-;;        ()
-;;        ()]
-;;      `[()
-;;        ((Nat (addr 1 0))
-;;         (String (addr 2 0)))
-;;        (goto A)
-;;        ()
-;;        ()])))
-
-;; (define (remove-receptionist receptionists addr-to-remove)
-;;   (filter (lambda (rec) (not (equal? (second rec) addr-to-remove)))
-;;           receptionists))
+(define (evict-pair i s)
+  ;; TODO: add the rename map stuff (although technically it's not needed, since the only changed
+  ;; addresses are no longer in the resulting configuration
+  (for/fold ([pair (list i s)])
+            ;; need to check for obs externals, obs internal
+            ([addr (csa#-addrs-to-evict i)])
+    ;; if the PSM monitors a receptionist for this address, don't evict it
+    (define mon-receptionist-addrs
+      (map (curry csa#-config-receptionist-addr-by-marker i) (aps#-psm-mon-receptionists s)))
+    (cond
+      [(member addr mon-receptionist-addrs) pair]
+      [else
+       (match-define (list new-impl-config _) (csa#-evict i addr))
+       (list new-impl-config s)])))
 
 ;; ;; ---------------------------------------------------------------------------------------------------
 ;; ;; Widening helpers
@@ -2078,6 +2033,38 @@
 ;;   (test-false "receptionists<= where one interface shrinks the type"
 ;;     (receptionists<= `([(Union [A] [B]) (addr 1 0)])
 ;;                      `([(Union [A])     (addr 1 0)]))))
+(module+ test
+  (define evict-test-config
+    `[([(addr 1 0)
+        [((define-state (A) (m)
+            (begin (marked (addr (EVICT Nat ()) 0))
+                   (goto A))))
+         (goto A)]]
+       [(addr (EVICT Nat ()) 0)
+        [((define-state (B [x (Addr String)]) (m) (goto B x)))
+         (goto B (marked (addr 2 0)))]])
+      ()
+      ()
+      ([Nat (marked (addr 1 0))]
+       [Nat (marked (addr (EVICT Nat ()) 0) 1)])])
+
+  (test-equal? "evict-pair"
+    (evict-pair evict-test-config `[() () (goto A) () ()])
+    (list
+     `[([(addr 1 0)
+         [((define-state (A) (m)
+             (begin (marked (collective-addr (env Nat)))
+                    (goto A))))
+          (goto A)]])
+       ()
+       ()
+       ([Nat (marked (addr 1 0))]
+        [String (marked (addr 2 0))])]
+     `[() () (goto A) () ()]))
+
+  (test-equal? "don't evict a monitored receptionist"
+    (evict-pair evict-test-config `[(1) () (goto A) () ()])
+    (list evict-test-config `[(1) () (goto A) () ()])))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing Helpers
