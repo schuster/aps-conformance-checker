@@ -2214,83 +2214,83 @@
     (check-conformance/config (make-single-actor-config send-after-loop-actor)
                               (make-psm request-response-spec)))
 
-;;   ;;;; Timeouts
+  ;;;; Timeouts
 
-;;   (define timeout-response-address (make-static-response-address `(Union [GotTimeout] [GotMessage])))
-;;   (define timeout-spec
-;;     (term
-;;      (((define-state (A r)
-;;          [* -> ([obligation r (variant GotMessage)]) (goto A r)]
-;;          [free -> ([obligation r (variant GotTimeout)]) (goto A r)]))
-;;       (goto A ,timeout-response-address)
-;;       (Nat (addr 0 0)))))
-;;   (define got-message-only-spec
-;;     (term
-;;      (((define-state (A r)
-;;          [* -> ([obligation r (variant GotMessage)]) (goto A r)]))
-;;       (goto A ,timeout-response-address)
-;;       (Nat (addr 0 0)))))
-;;   (define timeout-and-send-actor
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
-;;           (begin
-;;             (send r (variant GotMessage))
-;;             (goto A r))
-;;           [(timeout 5)
-;;            (begin
-;;              (send r (variant GotTimeout))
-;;              (goto A r))]))
-;;        (goto A ,timeout-response-address)))))
-;;   (define timeout-to-send-actor
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
-;;           (goto SendOnTimeout r))
-;;         (define-state (SendOnTimeout [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
-;;           (begin
-;;             (send r (variant GotMessage))
-;;             (goto SendOnTimeout r))
-;;           [(timeout 5)
-;;            (begin
-;;              (send r (variant GotMessage))
-;;              (goto A r))]))
-;;        (goto A ,timeout-response-address)))))
-;;   (define spawn-timeout-sender-actor
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
-;;           (begin
-;;             (spawn 3 Nat (goto B)
-;;                    (define-state (B) (m)
-;;                      (goto B)
-;;                      [(timeout 5)
-;;                       (begin
-;;                         (send r (variant GotMessage))
-;;                         (goto Done))])
-;;                    (define-state (Done) (m)
-;;                      (goto Done)))
-;;             (goto A r))))
-;;        (goto A ,timeout-response-address)))))
+  (define timeout-response-address (make-static-response-dest `(Union [GotTimeout] [GotMessage])))
+  (define timeout-spec
+    (term
+     (((define-state (A r)
+         [* -> ([obligation r (variant GotMessage)]) (goto A r)]
+         [free -> ([obligation r (variant GotTimeout)]) (goto A r)]))
+      (goto A ,static-response-marker)
+      0)))
+  (define got-message-only-spec
+    (term
+     (((define-state (A r)
+         [* -> ([obligation r (variant GotMessage)]) (goto A r)]))
+      (goto A ,static-response-marker)
+      0)))
+  (define timeout-and-send-actor
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
+          (begin
+            (send r (variant GotMessage))
+            (goto A r))
+          [(timeout 5)
+           (begin
+             (send r (variant GotTimeout))
+             (goto A r))]))
+       (goto A ,timeout-response-address)))))
+  (define timeout-to-send-actor
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
+          (goto SendOnTimeout r))
+        (define-state (SendOnTimeout [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
+          (begin
+            (send r (variant GotMessage))
+            (goto SendOnTimeout r))
+          [(timeout 5)
+           (begin
+             (send r (variant GotMessage))
+             (goto A r))]))
+       (goto A ,timeout-response-address)))))
+  (define spawn-timeout-sender-actor
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
+          (begin
+            (spawn 3 Nat (goto B)
+                   (define-state (B) (m)
+                     (goto B)
+                     [(timeout 5)
+                      (begin
+                        (send r (variant GotMessage))
+                        (goto Done))])
+                   (define-state (Done) (m)
+                     (goto Done)))
+            (goto A r))))
+       (goto A ,timeout-response-address)))))
 
-;;   (test-valid-instance? timeout-spec)
-;;   (test-valid-instance? got-message-only-spec)
-;;   (test-valid-actor? timeout-and-send-actor)
-;;   (test-valid-actor? timeout-to-send-actor)
-;;   (test-valid-actor? spawn-timeout-sender-actor)
-;;   (test-true "Timeout and send vs. timeout spec"
-;;     (check-conformance/config (make-single-actor-config timeout-and-send-actor)
-;;                               (make-exclusive-spec timeout-spec)))
-;;   (test-false "Timeout and send vs. got-messaage-only spec"
-;;     (check-conformance/config (make-single-actor-config timeout-and-send-actor)
-;;                               (make-exclusive-spec got-message-only-spec)))
-;;   (test-false "Timeout to send vs. timeout spec"
-;;     (check-conformance/config (make-single-actor-config timeout-to-send-actor)
-;;                               (make-exclusive-spec timeout-spec)))
-;;   ;; we would expect this to pass, except the abstraction is too coarse
-;;   (test-false "Spawn timeout sender"
-;;     (check-conformance/config (make-single-actor-config spawn-timeout-sender-actor)
-;;                               (make-exclusive-spec timeout-spec)))
+  (test-valid-instance? timeout-spec)
+  (test-valid-instance? got-message-only-spec)
+  (test-valid-actor? timeout-and-send-actor)
+  (test-valid-actor? timeout-to-send-actor)
+  (test-valid-actor? spawn-timeout-sender-actor)
+  (test-true "Timeout and send vs. timeout spec"
+    (check-conformance/config (make-single-actor-config timeout-and-send-actor)
+                              (make-psm timeout-spec)))
+  (test-false "Timeout and send vs. got-messaage-only spec"
+    (check-conformance/config (make-single-actor-config timeout-and-send-actor)
+                              (make-psm got-message-only-spec)))
+  (test-false "Timeout to send vs. timeout spec"
+    (check-conformance/config (make-single-actor-config timeout-to-send-actor)
+                              (make-psm timeout-spec)))
+  ;; we would expect this to pass, except the abstraction is too coarse
+  (test-false "Spawn timeout sender"
+    (check-conformance/config (make-single-actor-config spawn-timeout-sender-actor)
+                              (make-psm timeout-spec)))
 
 ;;   ;; Multiple Disjoint Actors
 ;;   (define static-response-actor2
