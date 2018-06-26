@@ -1373,9 +1373,9 @@
 
   (define static-response-marker 2)
   (define static-response-type (term (Union (Ack Nat))))
-  (define (make-static-response-address type) `(marked (addr (env ,type) 2) ,static-response-marker))
-  (define static-response-dest (make-static-response-address static-response-type))
-  (define nat-static-response-address (make-static-response-address (term Nat)))
+  (define (make-static-response-dest type) `(marked (addr (env ,type) 2) ,static-response-marker))
+  (define static-response-dest (make-static-response-dest static-response-type))
+  (define nat-static-response-dest (make-static-response-dest (term Nat)))
   (define static-response-actor
     (term
      ((Nat (marked (addr 0 0) 0))
@@ -1436,58 +1436,58 @@
     (check-conformance/config ignore-all-config
                               (make-psm static-double-response-spec)))
 
-;;   ;;;; Pattern matching tests, without dynamic channels
+  ;;;; Pattern matching tests, without dynamic channels
 
-;;   (define pattern-match-type `(Union [A Nat] [B Nat]))
-;;   (define pattern-match-spec
-;;     (term
-;;      (((define-state (Matching r)
-;;          [(variant A *) -> ([obligation r (variant A *)]) (goto Matching r)]
-;;          [(variant B *) -> ([obligation r (variant B *)]) (goto Matching r)]))
-;;       (goto Matching ,(make-static-response-address pattern-match-type))
-;;       ((Union [A Nat] [B Nat]) (addr 0 0)))))
+  (define pattern-match-type `(Union [A Nat] [B Nat]))
+  (define pattern-match-spec
+    (term
+     (((define-state (Matching r)
+         [(variant A *) -> ([obligation r (variant A *)]) (goto Matching r)]
+         [(variant B *) -> ([obligation r (variant B *)]) (goto Matching r)]))
+      (goto Matching ,static-response-marker)
+      0)))
 
-;;   (define pattern-matching-actor
-;;     (term
-;;      (((Union [A Nat] [B Nat]) (addr 0 0))
-;;       (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
-;;           (case m
-;;             [(A x) (begin (send r (variant A x)) (goto Always r))]
-;;             [(B y) (begin (send r (variant B 0)) (goto Always r))])))
-;;        (goto Always ,(make-static-response-address `(Union [A Nat] [B Nat])))))))
+  (define pattern-matching-actor
+    (term
+     (((Union [A Nat] [B Nat]) (marked (addr 0 0) 0))
+      (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
+          (case m
+            [(A x) (begin (send r (variant A x)) (goto Always r))]
+            [(B y) (begin (send r (variant B 0)) (goto Always r))])))
+       (goto Always ,(make-static-response-dest `(Union [A Nat] [B Nat])))))))
 
-;;   (define reverse-pattern-matching-actor
-;;     (term
-;;      (((Union [A Nat] [B Nat]) (addr 0 0))
-;;       (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
-;;           (case m
-;;             [(A x) (begin (send r (variant B 0)) (goto Always r))]
-;;             [(B y) (begin (send r (variant A y)) (goto Always r))])))
-;;        (goto Always ,(make-static-response-address `(Union [A Nat] [B Nat])))))))
+  (define reverse-pattern-matching-actor
+    (term
+     (((Union [A Nat] [B Nat]) (marked (addr 0 0) 0))
+      (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
+          (case m
+            [(A x) (begin (send r (variant B 0)) (goto Always r))]
+            [(B y) (begin (send r (variant A y)) (goto Always r))])))
+       (goto Always ,(make-static-response-dest `(Union [A Nat] [B Nat])))))))
 
-;;   (define partial-pattern-matching-actor
-;;     (term
-;;      (((Union [A Nat] [B Nat]) (addr 0 0))
-;;       (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
-;;           (case m
-;;             [(A x) (begin (send r (variant A 0)) (goto Always r))]
-;;             [(B y) (goto Always r)])))
-;;        (goto Always ,(make-static-response-address `(Union [A Nat] [B Nat])))))))
+  (define partial-pattern-matching-actor
+    (term
+     (((Union [A Nat] [B Nat]) (marked (addr 0 0) 0))
+      (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
+          (case m
+            [(A x) (begin (send r (variant A 0)) (goto Always r))]
+            [(B y) (goto Always r)])))
+       (goto Always ,(make-static-response-dest `(Union [A Nat] [B Nat])))))))
 
-;;   (test-valid-instance? pattern-match-spec)
-;;   (test-valid-actor? pattern-matching-actor)
-;;   (test-valid-actor? reverse-pattern-matching-actor)
-;;   (test-valid-actor? partial-pattern-matching-actor)
+  (test-valid-instance? pattern-match-spec)
+  (test-valid-actor? pattern-matching-actor)
+  (test-valid-actor? reverse-pattern-matching-actor)
+  (test-valid-actor? partial-pattern-matching-actor)
 
-;;   (test-true "Pattern matching"
-;;     (check-conformance/config (make-single-actor-config pattern-matching-actor)
-;;                               (make-exclusive-spec pattern-match-spec)))
-;;   (test-false "Send on A but not B; should send on both"
-;;               (check-conformance/config (make-single-actor-config partial-pattern-matching-actor)
-;;                            (make-exclusive-spec pattern-match-spec)))
-;;   (test-false "Pattern matching discriminates different patterns"
-;;     (check-conformance/config (make-single-actor-config reverse-pattern-matching-actor)
-;;                               (make-exclusive-spec  pattern-match-spec)))
+  (test-true "Pattern matching"
+    (check-conformance/config (make-single-actor-config pattern-matching-actor)
+                              (make-psm pattern-match-spec)))
+  (test-false "Send on A but not B; should send on both"
+              (check-conformance/config (make-single-actor-config partial-pattern-matching-actor)
+                           (make-psm pattern-match-spec)))
+  (test-false "Pattern matching discriminates different patterns"
+    (check-conformance/config (make-single-actor-config reverse-pattern-matching-actor)
+                              (make-psm pattern-match-spec)))
 
 ;;   ;;;; "Or" pattern matching
 ;;   (define or-pattern-match-spec
