@@ -3061,28 +3061,28 @@
      (make-single-actor-config loop-spawn-actor)
      (make-psm dynamic-never-respond-spec)))
 
-;;   ;;;; Test for dead-observable optimization (this had a bug at one point)
-;;   (define send-in-next-state-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (NoAddr) (response-target)
-;;           (goto HaveAddr response-target))
-;;         (define-state (HaveAddr [response-target (Addr Nat)]) (x)
-;;           (begin
-;;             (send response-target 0)
-;;             (goto Done))
-;;           [(timeout 0)
-;;            (begin
-;;              (send response-target 0)
-;;              (goto Done))])
-;;         (define-state (Done) (x) (goto Done)))
-;;        (goto NoAddr)))))
+  ;;;; Test for dead-observable optimization (this had a bug at one point)
+  (define send-in-next-state-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (NoAddr) (response-target)
+          (goto HaveAddr response-target))
+        (define-state (HaveAddr [response-target (Addr Nat)]) (x)
+          (begin
+            (send response-target 0)
+            (goto Done))
+          [(timeout 0)
+           (begin
+             (send response-target 0)
+             (goto Done))])
+        (define-state (Done) (x) (goto Done)))
+       (goto NoAddr)))))
 
-;;   (test-valid-actor? send-in-next-state-actor)
-;;   (test-false "Dead-observable optimization does not kick in if address still exists"
-;;     (check-conformance/config
-;;      (make-single-actor-config send-in-next-state-actor)
-;;      (make-exclusive-spec dynamic-never-respond-spec)))
+  (test-valid-actor? send-in-next-state-actor)
+  (test-false "Dead-observable optimization does not kick in if address still exists"
+    (check-conformance/config
+     (make-single-actor-config send-in-next-state-actor)
+     (make-psm dynamic-never-respond-spec)))
 
 ;;   ;;;; Test for external addresses escaping to environment
 ;;   (define escape-actor
