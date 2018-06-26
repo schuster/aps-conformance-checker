@@ -2138,81 +2138,81 @@
     (check-conformance/config (make-single-actor-config equal-actor)
                               (make-psm static-response-spec)))
 
-;;   ;;;; For loops
-;;   (define loop-do-nothing-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (A) (m)
-;;           (begin
-;;             (for/fold ([folded-result 0])
-;;                       ([i (list 1 2 3)])
-;;               i)
-;;             (goto A))))
-;;        (goto A)))))
-;;   (define loop-send-unobs-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (A [r (Addr Nat)]) (m)
-;;           (begin
-;;             (for/fold ([folded-result 0])
-;;                       ([i (list 1 2 3)])
-;;               (send r i))
-;;             (goto A r))))
-;;        (goto A ,nat-static-response-address)))))
-;;   (define send-before-loop-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (A) (r)
-;;           (begin
-;;             (send r 0)
-;;             (for/fold ([folded-result 0])
-;;                       ([i (list 1 2 3)])
-;;               i)
-;;             (goto A))))
-;;        (goto A)))))
-;;   (define send-inside-loop-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (A) (r)
-;;           (begin
-;;             (for/fold ([folded-result 0])
-;;                       ([r (list r)])
-;;               (send r 0))
-;;             (goto A))))
-;;        (goto A)))))
-;;   (define send-after-loop-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (A) (r)
-;;           (begin
-;;             (for/fold ([folded-result 0])
-;;                       ([i (list 1 2 3)])
-;;               i)
-;;             (send r 0)
-;;             (goto A))))
-;;        (goto A)))))
+  ;;;; For loops
+  (define loop-do-nothing-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (A) (m)
+          (begin
+            (for/fold ([folded-result 0])
+                      ([i (list 1 2 3)])
+              i)
+            (goto A))))
+       (goto A)))))
+  (define loop-send-unobs-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (A [r (Addr Nat)]) (m)
+          (begin
+            (for/fold ([folded-result 0])
+                      ([i (list 1 2 3)])
+              (send r i))
+            (goto A r))))
+       (goto A ,nat-static-response-dest)))))
+  (define send-before-loop-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (A) (r)
+          (begin
+            (send r 0)
+            (for/fold ([folded-result 0])
+                      ([i (list 1 2 3)])
+              i)
+            (goto A))))
+       (goto A)))))
+  (define send-inside-loop-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (A) (r)
+          (begin
+            (for/fold ([folded-result 0])
+                      ([r (list r)])
+              (send r 0))
+            (goto A))))
+       (goto A)))))
+  (define send-after-loop-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (A) (r)
+          (begin
+            (for/fold ([folded-result 0])
+                      ([i (list 1 2 3)])
+              i)
+            (send r 0)
+            (goto A))))
+       (goto A)))))
 
-;;   (test-valid-actor? loop-do-nothing-actor)
-;;   (test-valid-actor? loop-send-unobs-actor)
-;;   (test-valid-actor? send-before-loop-actor)
-;;   (test-valid-actor? send-inside-loop-actor)
-;;   (test-valid-actor? send-after-loop-actor)
+  (test-valid-actor? loop-do-nothing-actor)
+  (test-valid-actor? loop-send-unobs-actor)
+  (test-valid-actor? send-before-loop-actor)
+  (test-valid-actor? send-inside-loop-actor)
+  (test-valid-actor? send-after-loop-actor)
 
-;;   (test-true "loop do nothing"
-;;     (check-conformance/config (make-single-actor-config loop-do-nothing-actor)
-;;                               (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
-;;   (test-true "loop send unobs"
-;;     (check-conformance/config (make-single-actor-config loop-send-unobs-actor)
-;;                               (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
-;;   (test-true "send before loop"
-;;     (check-conformance/config (make-single-actor-config send-before-loop-actor)
-;;                               (make-exclusive-spec request-response-spec)))
-;;   (test-false "send inside loop"
-;;     (check-conformance/config (make-single-actor-config send-inside-loop-actor)
-;;                               (make-exclusive-spec request-response-spec)))
-;;   (test-true "send after loop"
-;;     (check-conformance/config (make-single-actor-config send-after-loop-actor)
-;;                               (make-exclusive-spec request-response-spec)))
+  (test-true "loop do nothing"
+    (check-conformance/config (make-single-actor-config loop-do-nothing-actor)
+                              (make-psm ignore-all-spec-instance)))
+  (test-true "loop send unobs"
+    (check-conformance/config (make-single-actor-config loop-send-unobs-actor)
+                              (make-psm ignore-all-spec-instance)))
+  (test-true "send before loop"
+    (check-conformance/config (make-single-actor-config send-before-loop-actor)
+                              (make-psm request-response-spec)))
+  (test-false "send inside loop"
+    (check-conformance/config (make-single-actor-config send-inside-loop-actor)
+                              (make-psm request-response-spec)))
+  (test-true "send after loop"
+    (check-conformance/config (make-single-actor-config send-after-loop-actor)
+                              (make-psm request-response-spec)))
 
 ;;   ;;;; Timeouts
 
