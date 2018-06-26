@@ -1825,41 +1825,41 @@
   (test-true "optional commitment spec"
     (check-conformance/config ignore-all-config (make-psm optional-commitment-spec)))
 
-;;   ;;;; Stuck states in concrete evaluation
+  ;;;; Stuck states in concrete evaluation
 
-;;   (define nat-to-nat-spec
-;;     (term
-;;      (((define-state (Always response-dest)
-;;          [* -> ([obligation response-dest *]) (goto Always response-dest)]))
-;;       (goto Always ,nat-static-response-address)
-;;       (Nat (addr 0 0)))))
-;;   (define div-by-one-actor
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (Always [response-dest (Addr Nat)]) (n)
-;;           (begin
-;;             (send response-dest (/ n 1))
-;;             (goto Always response-dest))))
-;;        (goto Always ,nat-static-response-address)))))
-;;   (define div-by-zero-actor
-;;     (term
-;;      ((Nat (addr 0 0))
-;;       (((define-state (Always [response-dest (Addr Nat)]) (n)
-;;           (begin
-;;             (send response-dest (/ n 0))
-;;             (goto Always response-dest))))
-;;        (goto Always ,nat-static-response-address)))))
+  (define nat-to-nat-spec
+    (term
+     (((define-state (Always response-dest)
+         [* -> ([obligation response-dest *]) (goto Always response-dest)]))
+      (goto Always ,static-response-marker)
+      0)))
+  (define div-by-one-actor
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (Always [response-dest (Addr Nat)]) (n)
+          (begin
+            (send response-dest (/ n 1))
+            (goto Always response-dest))))
+       (goto Always ,nat-static-response-dest)))))
+  (define div-by-zero-actor
+    (term
+     ((Nat (marked (addr 0 0) 0))
+      (((define-state (Always [response-dest (Addr Nat)]) (n)
+          (begin
+            (send response-dest (/ n 0))
+            (goto Always response-dest))))
+       (goto Always ,nat-static-response-dest)))))
 
-;;   (test-valid-instance? nat-to-nat-spec)
-;;   (test-valid-actor? div-by-zero-actor)
-;;   (test-valid-actor? div-by-one-actor)
+  (test-valid-instance? nat-to-nat-spec)
+  (test-valid-actor? div-by-zero-actor)
+  (test-valid-actor? div-by-one-actor)
 
-;;   (test-true "Div by one vs. nat-to-nat spec"
-;;              (check-conformance/config (make-single-actor-config div-by-one-actor)
-;;                           (make-exclusive-spec nat-to-nat-spec)))
-;;   (test-true "Div by zero vs. nat-to-nat spec"
-;;               (check-conformance/config (make-single-actor-config div-by-zero-actor)
-;;                            (make-exclusive-spec nat-to-nat-spec)))
+  (test-true "Div by one vs. nat-to-nat spec"
+             (check-conformance/config (make-single-actor-config div-by-one-actor)
+                          (make-psm nat-to-nat-spec)))
+  (test-true "Div by zero vs. nat-to-nat spec"
+              (check-conformance/config (make-single-actor-config div-by-zero-actor)
+                           (make-psm nat-to-nat-spec)))
 
 ;;   ;;;; Unobservable communication
 
