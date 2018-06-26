@@ -1568,7 +1568,7 @@
     [`abs-nat `abs-nat]
     [`abs-string `abs-string]
     [`(marked (addr ,_ ,_) ,_ ...) exp]
-    [`(collective-addr ,_) exp]
+    [`(marked (collective-addr ,_) ,_ ...) exp]
     [`(spawn ,loc ,type ,init ,states ...)
      (define non-self-bindings (shadow (list 'self)))
      (if (empty? non-self-bindings)
@@ -1637,6 +1637,9 @@
                 (term (variant Foo abs-nat)))
   (check-equal? (csa#-subst-n `(marked (addr 1 0)) (list `[x abs-nat]))
                 `(marked (addr 1 0)))
+  (test-equal? "try subst into marked collective address"
+    (csa#-subst-n `(marked (collective-addr (env Nat)) 2) (list `[x abs-nat]))
+    `(marked (collective-addr (env Nat)) 2))
   (test-equal? "spawn subst 1"
     (csa#-subst-n `(spawn loc
                           Nat
