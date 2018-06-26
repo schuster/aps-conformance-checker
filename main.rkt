@@ -2548,121 +2548,121 @@
      (make-single-actor-config unobs-fork-actor)
      (make-psm unobs-fork-spec)))
 
-;;   ;;;; Initial spec address must have actor in the implmentation
-;;   (define no-matching-address-spec
-;;     (term
-;;      (((define-state (DoAnything)
-;;          [* -> () (goto DoAnything)]))
-;;       (goto DoAnything)
-;;       (Nat (addr 500 0)))))
-;;   (test-valid-instance? no-matching-address-spec)
+  ;;;; Initial spec address must have actor in the implmentation
+  (define no-matching-address-spec
+    (term
+     (((define-state (DoAnything)
+         [* -> () (goto DoAnything)]))
+      (goto DoAnything)
+      500)))
+  (test-valid-instance? no-matching-address-spec)
 
-;;   (test-false "Spec config address must have matching actor in implementation configuration"
-;;    (check-conformance/config
-;;     (make-single-actor-config static-response-actor)
-;;     (make-exclusive-spec no-matching-address-spec)))
+  (test-false "Spec config address must have matching actor in implementation configuration"
+   (check-conformance/config
+    (make-single-actor-config static-response-actor)
+    (make-psm no-matching-address-spec)))
 
-;;   (define spawn-and-retain
-;;     (term
-;;      (((Addr (Addr (Addr Nat))) (addr 0 0))
-;;       (((define-state (Always [maybe-child (Union [NoChild] [Child (Addr (Addr Nat))])]) (dest)
-;;           (let ([new-child
-;;                  (spawn
-;;                   echo-spawn
-;;                   (Addr Nat)
-;;                   (goto EchoResponse)
-;;                   (define-state (EchoResponse) (echo-target)
-;;                     (begin
-;;                       (send echo-target 1)
-;;                       (goto EchoResponse))))])
-;;             (case maybe-child
-;;               [(NoChild)
-;;                (begin
-;;                  (send dest new-child)
-;;                  (goto Always (variant Child new-child)))]
-;;               [(Child old-child)
-;;                (begin
-;;                  (send dest old-child)
-;;                  (goto Always (variant Child old-child)))]))))
-;;        (goto Always (variant NoChild))))))
+  (define spawn-and-retain
+    (term
+     (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
+      (((define-state (Always [maybe-child (Union [NoChild] [Child (Addr (Addr Nat))])]) (dest)
+          (let ([new-child
+                 (spawn
+                  echo-spawn
+                  (Addr Nat)
+                  (goto EchoResponse)
+                  (define-state (EchoResponse) (echo-target)
+                    (begin
+                      (send echo-target 1)
+                      (goto EchoResponse))))])
+            (case maybe-child
+              [(NoChild)
+               (begin
+                 (send dest new-child)
+                 (goto Always (variant Child new-child)))]
+              [(Child old-child)
+               (begin
+                 (send dest old-child)
+                 (goto Always (variant Child old-child)))]))))
+       (goto Always (variant NoChild))))))
 
-;;   (define spawn-and-retain-but-send-new
-;;     (term
-;;      (((Addr (Addr (Addr Nat))) (addr 0 0))
-;;       (((define-state (Always [maybe-child (Union [NoChild] [Child (Addr (Addr Nat))])]) (dest)
-;;           (let ([new-child
-;;                  (spawn
-;;                   echo-spawn
-;;                   (Addr Nat)
-;;                   (goto EchoResponse)
-;;                   (define-state (EchoResponse) (echo-target)
-;;                     (begin
-;;                       (send echo-target 1)
-;;                       (goto EchoResponse))))])
-;;             (case maybe-child
-;;               [(NoChild)
-;;                (begin
-;;                  (send dest new-child)
-;;                  (goto Always (variant Child new-child)))]
-;;               [(Child old-child)
-;;                (begin
-;;                  (send dest new-child)
-;;                  (goto Always (variant Child old-child)))]))))
-;;        (goto Always (variant NoChild))))))
+  (define spawn-and-retain-but-send-new
+    (term
+     (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
+      (((define-state (Always [maybe-child (Union [NoChild] [Child (Addr (Addr Nat))])]) (dest)
+          (let ([new-child
+                 (spawn
+                  echo-spawn
+                  (Addr Nat)
+                  (goto EchoResponse)
+                  (define-state (EchoResponse) (echo-target)
+                    (begin
+                      (send echo-target 1)
+                      (goto EchoResponse))))])
+            (case maybe-child
+              [(NoChild)
+               (begin
+                 (send dest new-child)
+                 (goto Always (variant Child new-child)))]
+              [(Child old-child)
+               (begin
+                 (send dest new-child)
+                 (goto Always (variant Child old-child)))]))))
+       (goto Always (variant NoChild))))))
 
-;;   (test-valid-actor? spawn-and-retain)
-;;   (test-valid-actor? spawn-and-retain-but-send-new)
+  (test-valid-actor? spawn-and-retain)
+  (test-valid-actor? spawn-and-retain-but-send-new)
 
-;;   (test-true "Both an old and new version of spawned echo child match stateless spec"
-;;     (check-conformance/config
-;;      (make-single-actor-config spawn-and-retain)
-;;      (make-exclusive-spec echo-spawn-spec)))
+  (test-true "Both an old and new version of spawned echo child match stateless spec"
+    (check-conformance/config
+     (make-single-actor-config spawn-and-retain)
+     (make-psm echo-spawn-spec)))
 
-;;   (test-true "Always sending new version of child matches echo-spawn"
-;;     (check-conformance/config
-;;      (make-single-actor-config spawn-and-retain-but-send-new)
-;;      (make-exclusive-spec echo-spawn-spec)))
+  (test-true "Always sending new version of child matches echo-spawn"
+    (check-conformance/config
+     (make-single-actor-config spawn-and-retain-but-send-new)
+     (make-psm echo-spawn-spec)))
 
-;;   (define spawn-self-revealing-echo
-;;     (term
-;;      (((Addr (Addr (Addr Nat))) (addr 0 0))
-;;       (((define-state (Always) (response-target)
-;;           (begin
-;;             (spawn
-;;              echo-spawn
-;;              (Addr Nat)
-;;              (goto Init response-target)
-;;              (define-state (Init [self-target (Addr (Addr (Addr Nat)))]) (response-target)
-;;                (goto Init self-target)
-;;                [(timeout 0)
-;;                 (begin
-;;                   (send self-target self)
-;;                   (goto EchoResponse))])
-;;              (define-state (EchoResponse) (echo-target)
-;;                (begin
-;;                  (send echo-target 1)
-;;                  (goto EchoResponse))))
-;;             (goto Always))))
-;;        (goto Always)))))
+  (define spawn-self-revealing-echo
+    (term
+     (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
+      (((define-state (Always) (response-target)
+          (begin
+            (spawn
+             echo-spawn
+             (Addr Nat)
+             (goto Init response-target)
+             (define-state (Init [self-target (Addr (Addr (Addr Nat)))]) (response-target)
+               (goto Init self-target)
+               [(timeout 0)
+                (begin
+                  (send self-target self)
+                  (goto EchoResponse))])
+             (define-state (EchoResponse) (echo-target)
+               (begin
+                 (send echo-target 1)
+                 (goto EchoResponse))))
+            (goto Always))))
+       (goto Always)))))
 
-;;   (define child-self-reveal-spec
-;;     (term
-;;      (((define-state (Always)
-;;          [r -> ([fork (goto Init r)
-;;                       (define-state (Init r)
-;;                         [free -> ([obligation r self]) (goto EchoResponse)])
-;;                       (define-state (EchoResponse)
-;;                         [er -> ([obligation er *]) (goto EchoResponse)])])
-;;             (goto Always)]))
-;;       (goto Always)
-;;       ((Addr (Addr (Addr Nat))) (addr 0 0)))))
+  (define child-self-reveal-spec
+    (term
+     (((define-state (Always)
+         [r -> ([fork (goto Init r)
+                      (define-state (Init r)
+                        [free -> ([obligation r self]) (goto EchoResponse)])
+                      (define-state (EchoResponse)
+                        [er -> ([obligation er *]) (goto EchoResponse)])])
+            (goto Always)]))
+      (goto Always)
+      0)))
 
-;;   (test-valid-actor? spawn-self-revealing-echo)
-;;   (test-valid-instance? child-self-reveal-spec)
-;;   (test-true "Spawned child can reveal self"
-;;     (check-conformance/config
-;;      (make-single-actor-config spawn-self-revealing-echo)
-;;      (make-exclusive-spec child-self-reveal-spec)))
+  (test-valid-actor? spawn-self-revealing-echo)
+  (test-valid-instance? child-self-reveal-spec)
+  (test-true "Spawned child can reveal self"
+    (check-conformance/config
+     (make-single-actor-config spawn-self-revealing-echo)
+     (make-psm child-self-reveal-spec)))
 
 ;;   ;;;; Blur Tests
 
