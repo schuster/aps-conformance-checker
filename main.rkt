@@ -3026,40 +3026,40 @@
   (test-false "Widen new-spawn counterexample"
     (check-conformance/config new-spawn-impl-config new-spawn-spec-config))
 
-;;   ;;;; Loop Spawns
+  ;;;; Loop Spawns
 
-;;   (define loop-spawn-actor
-;;     (term
-;;      (((Addr Nat) (addr 0 0))
-;;       (((define-state (Always) (response-target)
-;;           (begin
-;;             (for/fold ([x 0])
-;;                       ([y (list 1)])
-;;               (spawn child
-;;                      Nat
-;;                      (goto ChildAlways)
-;;                      (define-state (ChildAlways) (x)
-;;                        (goto ChildAlways)
-;;                        ([timeout 0]
-;;                         (begin
-;;                           (send response-target 0)
-;;                           (goto ChildAlways))))))
-;;             (goto Always))))
-;;        (goto Always)))))
+  (define loop-spawn-actor
+    (term
+     (((Addr Nat) (marked (addr 0 0) 0))
+      (((define-state (Always) (response-target)
+          (begin
+            (for/fold ([x 0])
+                      ([y (list 1)])
+              (spawn child
+                     Nat
+                     (goto ChildAlways)
+                     (define-state (ChildAlways) (x)
+                       (goto ChildAlways)
+                       ([timeout 0]
+                        (begin
+                          (send response-target 0)
+                          (goto ChildAlways))))))
+            (goto Always))))
+       (goto Always)))))
 
-;;   (define dynamic-never-respond-spec
-;;     (term
-;;      (((define-state (Always)
-;;          [r -> () (goto Always)]))
-;;       (goto Always)
-;;       ((Addr Nat) (addr 0 0)))))
+  (define dynamic-never-respond-spec
+    (term
+     (((define-state (Always)
+         [r -> () (goto Always)]))
+      (goto Always)
+      0)))
 
-;;   (test-valid-actor? loop-spawn-actor)
-;;   (test-valid-instance? dynamic-never-respond-spec)
-;;   (test-false "Loop spawn actor sends too many responses"
-;;     (check-conformance/config
-;;      (make-single-actor-config loop-spawn-actor)
-;;      (make-exclusive-spec dynamic-never-respond-spec)))
+  (test-valid-actor? loop-spawn-actor)
+  (test-valid-instance? dynamic-never-respond-spec)
+  (test-false "Loop spawn actor sends too many responses"
+    (check-conformance/config
+     (make-single-actor-config loop-spawn-actor)
+     (make-psm dynamic-never-respond-spec)))
 
 ;;   ;;;; Test for dead-observable optimization (this had a bug at one point)
 ;;   (define send-in-next-state-actor
