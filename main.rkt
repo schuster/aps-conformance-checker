@@ -1859,159 +1859,164 @@
               (check-conformance/config (make-single-actor-config div-by-zero-actor)
                            (make-psm nat-to-nat-spec)))
 
-;;   ;;;; Unobservable communication
+  ;;;; Unobservable communication
 
-;;   ;; wildcard unobservables are ignored for the purpose of output commitments
-;;   (test-true "request/response actor vs. ignore-all spec"
-;;              (check-conformance/config (make-single-actor-config request-response-actor)
-;;                           (make-exclusive-spec (make-ignore-all-spec-instance '(Addr Nat)))))
+  ;; wildcard unobservables are ignored for the purpose of output commitments
+  (test-true "request/response actor vs. ignore-all spec"
+    (check-conformance/config (make-single-actor-config request-response-actor)
+                              (make-psm ignore-all-spec-instance)))
 
-;;   ;; 1. In dynamic req/resp, allowing unobserved perspective to send same messages does not affect
-;;   ;; conformance
-;;   (test-true "request response actor and spec, with unobs communication"
-;;              (check-conformance/config (make-single-actor-config request-response-actor)
-;;                           (make-spec request-response-spec (list '((Addr Nat) (addr 0 0))))))
+  ;; 1. In dynamic req/resp, allowing unobserved perspective to send same messages does not affect
+  ;; conformance
+  (test-true "request response actor and spec, with unobs communication"
+    (check-conformance/config (make-single-actor-config/plus request-response-actor
+                                                             (list `[(Addr Nat) (marked (addr 0 0) 1)]))
+                              (make-psm request-response-spec)))
 
-;;   ;; 2. Allowing same messages from unobs perspective violates conformance for static req/resp.
-;;   (test-false "static response with unobs communication"
-;;               (check-conformance/config (make-single-actor-config static-response-actor)
-;;                            (make-spec static-response-spec (list '(Nat (addr 0 0))))))
+  ;; 2. Allowing same messages from unobs perspective violates conformance for static req/resp.
+  (test-false "static response with unobs communication"
+    (check-conformance/config (make-single-actor-config/plus static-response-actor
+                                                             (list `[Nat (marked (addr 0 0) 1)]))
+                              (make-psm static-response-spec)))
 
-;;   ;; 3. Conformance regained for static req/resp when add an unobs transition
-;;   (define static-response-spec-with-unobs
-;;     (term
-;;      (((define-state (Always response-dest)
-;;          [*     -> ([obligation response-dest *]) (goto Always response-dest)]
-;;          [free -> ([obligation response-dest *]) (goto Always response-dest)]))
-;;       (goto Always ,static-response-address)
-;;       (Nat (addr 0 0)))))
-;;   (test-valid-instance? static-response-spec-with-unobs)
+  ;; 3. Conformance regained for static req/resp when add an unobs transition
+  (define static-response-spec-with-unobs
+    (term
+     (((define-state (Always response-dest)
+         [*     -> ([obligation response-dest *]) (goto Always response-dest)]
+         [free -> ([obligation response-dest *]) (goto Always response-dest)]))
+      (goto Always ,static-response-marker)
+      0)))
+  (test-valid-instance? static-response-spec-with-unobs)
 
-;;   (test-true "static response with unobs, incl in spec"
-;;              (check-conformance/config (make-single-actor-config static-response-actor)
-;;                           (make-spec static-response-spec-with-unobs (list '(Nat (addr 0 0))))))
+  (test-true "static response with unobs, incl in spec"
+    (check-conformance/config (make-single-actor-config/plus static-response-actor (list '(Nat (marked (addr 0 0) 1))))
+                              (make-psm static-response-spec-with-unobs)))
 
-;;   ;; 4. unobs causes a particular behavior (like connected/error in TCP)
-;;   (define obs-unobs-static-response-address
-;;     (make-static-response-address (term (Union (TurningOn) (TurningOff)))))
-;;   (define unobs-toggle-spec
-;;     (term (((define-state (Off r)
-;;               [* -> ([obligation r (variant TurningOn)]) (goto On r)])
-;;             (define-state (On r)
-;;               [* -> () (goto On r)]
-;;               [free -> ([obligation r (variant TurningOff)]) (goto Off r)]))
-;;            (goto Off ,obs-unobs-static-response-address)
-;;            ((Union [FromObserver]) (addr 0 0)))))
-;;   (define unobs-toggle-actor
-;;     (term
-;;      (((Union [FromObserver] [FromUnobservedEnvironment]) (addr 0 0))
-;;       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
-;;           (case m
-;;             [(FromObserver)
-;;              (begin
-;;                (send r (variant TurningOn))
-;;                (goto On r))]
-;;             [(FromUnobservedEnvironment) (goto Off r)]))
-;;         (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
-;;           (case m
-;;             [(FromObserver) (goto On r)]
-;;             [(FromUnobservedEnvironment)
-;;              (begin
-;;                (send r (variant TurningOff))
-;;                (goto Off r))])))
-;;        (goto Off ,obs-unobs-static-response-address)))))
-;;   (define unobs-toggle-actor-wrong1
-;;     (term
-;;      (((Union [FromObserver] [FromUnobservedEnvironment]) (addr 0 0))
-;;       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
-;;           (case m
-;;             [(FromObserver)
-;;              (begin
-;;                (send r (variant TurningOn))
-;;                ;; Going to Off instead of On
-;;                (goto Off r))]
-;;             [(FromUnobservedEnvironment) (goto Off r)]))
-;;         (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
-;;           (case m
-;;             [(FromObserver) (goto On r)]
-;;             [(FromUnobservedEnvironment)
-;;              (begin
-;;                (send r (variant TurningOff))
-;;                (goto Off r))])))
-;;        (goto Off ,obs-unobs-static-response-address)))))
-;;   (define unobs-toggle-actor-wrong2
-;;     (term
-;;      (((Union [FromObserver] [FromUnobservedEnvironment]) (addr 0 0))
-;;       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
-;;           (case m
-;;             [(FromObserver)
-;;              (begin
-;;                (send r (variant TurningOn))
-;;                (goto On r))]
-;;             [(FromUnobservedEnvironment) (goto On r)]))
-;;         (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
-;;           (case m
-;;             [(FromObserver) (goto On r)]
-;;             [(FromUnobservedEnvironment)
-;;              (begin
-;;                (send r (variant TurningOff))
-;;                (goto Off r))])))
-;;        (goto Off ,obs-unobs-static-response-address)))))
-;;   (define unobs-toggle-actor-wrong3
-;;     (term
-;;      (((Union [FromObserver] [FromUnobservedEnvironment]) (addr 0 0))
-;;       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
-;;           (case m
-;;             [(FromObserver)
-;;              (begin
-;;                (send r (variant TurningOn))
-;;                (goto On r))]
-;;             [(FromUnobservedEnvironment) (goto Off r)]))
-;;         (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
-;;           (case m
-;;             [(FromObserver) (goto On r)]
-;;             [(FromUnobservedEnvironment)
-;;              (begin
-;;                (send r (variant TurningOff))
-;;                (goto On r))])))
-;;        (goto Off ,obs-unobs-static-response-address)))))
-;;   (define unobs-toggle-actor-wrong4
-;;     (term
-;;      (((Union [FromObserver] [FromUnobservedEnvironment]) (addr 0 0))
-;;       (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
-;;           (case m
-;;             [(FromObserver) (goto Off r)]
-;;             [(FromUnobservedEnvironment)
-;;              (begin
-;;                (send r (variant TurningOn))
-;;                (goto On r))]))
-;;         (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
-;;           (case m
-;;             [(FromObserver) (goto On r)]
-;;             [(FromUnobservedEnvironment)
-;;              (begin
-;;                (send r (variant TurningOff))
-;;                (goto Off r))])))
-;;        (goto Off ,obs-unobs-static-response-address)))))
+  ;; 4. unobs causes a particular behavior (like connected/error in TCP)
+  (define obs-unobs-static-response-dest
+    (make-static-response-dest (term (Union (TurningOn) (TurningOff)))))
+  (define unobs-toggle-spec
+    (term (((define-state (Off r)
+              [* -> ([obligation r (variant TurningOn)]) (goto On r)])
+            (define-state (On r)
+              [* -> () (goto On r)]
+              [free -> ([obligation r (variant TurningOff)]) (goto Off r)]))
+           (goto Off ,static-response-marker)
+           0)))
+  (define unobs-toggle-actor
+    (term
+     (((Union [FromObserver]) (marked (addr 0 0) 0))
+      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+          (case m
+            [(FromObserver)
+             (begin
+               (send r (variant TurningOn))
+               (goto On r))]
+            [(FromUnobservedEnvironment) (goto Off r)]))
+        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+          (case m
+            [(FromObserver) (goto On r)]
+            [(FromUnobservedEnvironment)
+             (begin
+               (send r (variant TurningOff))
+               (goto Off r))])))
+       (goto Off ,obs-unobs-static-response-dest)))))
+  (define unobs-toggle-actor-wrong1
+    (term
+     (((Union [FromObserver]) (marked (addr 0 0) 0))
+      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+          (case m
+            [(FromObserver)
+             (begin
+               (send r (variant TurningOn))
+               ;; Going to Off instead of On
+               (goto Off r))]
+            [(FromUnobservedEnvironment) (goto Off r)]))
+        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+          (case m
+            [(FromObserver) (goto On r)]
+            [(FromUnobservedEnvironment)
+             (begin
+               (send r (variant TurningOff))
+               (goto Off r))])))
+       (goto Off ,obs-unobs-static-response-dest)))))
+  (define unobs-toggle-actor-wrong2
+    (term
+     (((Union [FromObserver]) (marked (addr 0 0) 0))
+      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+          (case m
+            [(FromObserver)
+             (begin
+               (send r (variant TurningOn))
+               (goto On r))]
+            [(FromUnobservedEnvironment) (goto On r)]))
+        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+          (case m
+            [(FromObserver) (goto On r)]
+            [(FromUnobservedEnvironment)
+             (begin
+               (send r (variant TurningOff))
+               (goto Off r))])))
+       (goto Off ,obs-unobs-static-response-dest)))))
+  (define unobs-toggle-actor-wrong3
+    (term
+     (((Union [FromObserver]) (marked (addr 0 0) 0))
+      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+          (case m
+            [(FromObserver)
+             (begin
+               (send r (variant TurningOn))
+               (goto On r))]
+            [(FromUnobservedEnvironment) (goto Off r)]))
+        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+          (case m
+            [(FromObserver) (goto On r)]
+            [(FromUnobservedEnvironment)
+             (begin
+               (send r (variant TurningOff))
+               (goto On r))])))
+       (goto Off ,obs-unobs-static-response-dest)))))
+  (define unobs-toggle-actor-wrong4
+    (term
+     (((Union [FromObserver]) (marked (addr 0 0) 0))
+      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+          (case m
+            [(FromObserver) (goto Off r)]
+            [(FromUnobservedEnvironment)
+             (begin
+               (send r (variant TurningOn))
+               (goto On r))]))
+        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+          (case m
+            [(FromObserver) (goto On r)]
+            [(FromUnobservedEnvironment)
+             (begin
+               (send r (variant TurningOff))
+               (goto Off r))])))
+       (goto Off ,obs-unobs-static-response-dest)))))
 
-;;   (test-valid-instance? unobs-toggle-spec)
-;;   (test-valid-actor? unobs-toggle-actor)
-;;   (test-valid-actor? unobs-toggle-actor-wrong1)
-;;   (test-valid-actor? unobs-toggle-actor-wrong2)
-;;   (test-valid-actor? unobs-toggle-actor-wrong3)
-;;   (test-valid-actor? unobs-toggle-actor-wrong4)
+  (test-valid-instance? unobs-toggle-spec)
+  (test-valid-actor? unobs-toggle-actor)
+  (test-valid-actor? unobs-toggle-actor-wrong1)
+  (test-valid-actor? unobs-toggle-actor-wrong2)
+  (test-valid-actor? unobs-toggle-actor-wrong3)
+  (test-valid-actor? unobs-toggle-actor-wrong4)
 
-;;   (test-true "Obs/Unobs test"
-;;              (check-conformance/config (make-single-actor-config unobs-toggle-actor)
-;;                           (make-spec unobs-toggle-spec (list '((Union [FromUnobservedEnvironment]) (addr 0 0))))))
+  (test-true "Obs/Unobs test"
+    (check-conformance/config
+     (make-single-actor-config/plus
+      unobs-toggle-actor
+      (list '((Union [FromUnobservedEnvironment]) (marked (addr 0 0) 1))))
+     (make-psm unobs-toggle-spec)))
 
-;;   (for ([actor (list unobs-toggle-actor-wrong1
-;;                      unobs-toggle-actor-wrong2
-;;                      unobs-toggle-actor-wrong3
-;;                      unobs-toggle-actor-wrong4)])
-;;     (test-false "Obs/Unobs bug-finding test(s)"
-;;                 (check-conformance/config (make-single-actor-config actor)
-;;                           (make-spec unobs-toggle-spec (list '((Union [FromUnobservedEnvironment]) (addr 0 0)))))))
+  (for ([actor (list unobs-toggle-actor-wrong1
+                     unobs-toggle-actor-wrong2
+                     unobs-toggle-actor-wrong3
+                     unobs-toggle-actor-wrong4)])
+    (test-false "Obs/Unobs bug-finding test(s)"
+      (check-conformance/config (make-single-actor-config/plus actor (list '((Union [FromUnobservedEnvironment]) (marked (addr 0 0) 1))))
+                          (make-psm unobs-toggle-spec))))
 
 ;;   ;;;; Records
 
