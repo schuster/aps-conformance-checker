@@ -2018,42 +2018,42 @@
       (check-conformance/config (make-single-actor-config/plus actor (list '((Union [FromUnobservedEnvironment]) (marked (addr 0 0) 1))))
                           (make-psm unobs-toggle-spec))))
 
-;;   ;;;; Records
+  ;;;; Records
 
-;;   (define record-req-resp-spec
-;;     (term
-;;      (((define-state (Always)
-;;          [(record [dest dest] [msg (variant A)]) -> ([obligation dest (variant A)]) (goto Always)]
-;;          [(record [dest dest] [msg (variant B)]) -> ([obligation dest (variant B)]) (goto Always)]))
-;;       (goto Always)
-;;       ((Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]) (addr 0 0)))))
-;;   (define record-req-resp-actor
-;;     (term
-;;      (((Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]) (addr 0 0))
-;;       (((define-state (Always) (m)
-;;           (begin
-;;             (send (: m dest) (: m msg))
-;;             (goto Always))))
-;;        (goto Always)))))
-;;   (define record-req-wrong-resp-actor
-;;     (term
-;;      (((Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]) (addr 0 0))
-;;       (((define-state (Always) (m)
-;;           (begin
-;;             (send (: m dest) (variant A))
-;;             (goto Always))))
-;;        (goto Always)))))
+  (define record-req-resp-spec
+    (term
+     (((define-state (Always)
+         [(record [dest dest] [msg (variant A)]) -> ([obligation dest (variant A)]) (goto Always)]
+         [(record [dest dest] [msg (variant B)]) -> ([obligation dest (variant B)]) (goto Always)]))
+      (goto Always)
+      0)))
+  (define record-req-resp-actor
+    (term
+     (((Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]) (marked (addr 0 0) 0))
+      (((define-state (Always) (m)
+          (begin
+            (send (: m dest) (: m msg))
+            (goto Always))))
+       (goto Always)))))
+  (define record-req-wrong-resp-actor
+    (term
+     (((Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]) (marked (addr 0 0) 0))
+      (((define-state (Always) (m)
+          (begin
+            (send (: m dest) (variant A))
+            (goto Always))))
+       (goto Always)))))
 
-;;   (test-valid-instance? record-req-resp-spec)
-;;   (test-valid-actor? record-req-resp-actor)
-;;   (test-valid-actor? record-req-wrong-resp-actor)
+  (test-valid-instance? record-req-resp-spec)
+  (test-valid-actor? record-req-resp-actor)
+  (test-valid-actor? record-req-wrong-resp-actor)
 
-;;   (test-true "record 1"
-;;              (check-conformance/config (make-single-actor-config record-req-resp-actor)
-;;                           (make-exclusive-spec record-req-resp-spec)))
-;;   (test-false "record 2"
-;;               (check-conformance/config (make-single-actor-config record-req-wrong-resp-actor)
-;;                            (make-exclusive-spec record-req-resp-spec)))
+  (test-true "record 1"
+             (check-conformance/config (make-single-actor-config record-req-resp-actor)
+                          (make-psm record-req-resp-spec)))
+  (test-false "record 2"
+              (check-conformance/config (make-single-actor-config record-req-wrong-resp-actor)
+                           (make-psm record-req-resp-spec)))
 
 ;;   ;;;; Let
 ;;   (define static-response-let-actor
