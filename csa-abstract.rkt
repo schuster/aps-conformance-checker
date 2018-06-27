@@ -842,7 +842,7 @@
          (define quantity (if (in-loop-context?) 'many 'single))
          (match-define `(,sends ,spawns ,unused-marker) effects)
          (match-define `[,maybe-marked-message ,new-unused-marker]
-           (if (internal-output? `[,v-addr ,v-message ,quantity])
+           (if (or (internal-output? `[,v-addr ,v-message ,quantity]) (in-loop-context?))
                `[,v-message ,unused-marker]
                (mark v-message unused-marker)))
          (value-result maybe-marked-message
@@ -1272,6 +1272,22 @@
      (list
       (machine-state `abs-nat `(() () ,INIT-HANDLER-MARKER))
       (machine-state `abs-nat `(([(marked (addr 1 0)) abs-nat many]) () ,INIT-HANDLER-MARKER)))))
+
+  (test-case "Messages sent in loops to environment are not marked"
+    (check-same-items?
+     (first
+      (eval-machine
+       `(for/fold ([dummy abs-nat])
+                  ([item (list-val abs-nat)])
+          (begin
+            (send (marked (collective-addr (env Nat))) (marked (addr 2 0)))
+            abs-nat
+            ))
+       empty-effects
+       #f))
+     (list
+      (machine-state `abs-nat `(() () ,INIT-HANDLER-MARKER))
+      (machine-state `abs-nat `(([(marked (collective-addr (env Nat))) (marked (addr 2 0)) many]) () ,INIT-HANDLER-MARKER)))))
 
   ;; NOTE: these are the old tests for checking sorting of loop-sent messages, which I don't do
   ;; anymore. Keeping them around in case I change my mind
