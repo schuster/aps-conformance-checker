@@ -15,7 +15,7 @@
 
 (define chat-program (desugar (quote
 
-(program (receptionists [auth AuthCommand]) (externals)
+(program (receptionists [auth AuthCommand] [unobs-auth AuthCommand]) (externals)
   (define-constant pw-table (hash ["joe" "abc"] ["sally" "xyz"] ["john" "def"]))
 
   (define-type RoomCommand
@@ -123,8 +123,9 @@
          (send callback (hash-keys rooms))
          (goto Always rooms)])))
 
-  (actors [server (spawn server ChatServer)]
-          [auth (spawn auth Authenticator pw-table server)])))))
+  (let-actors ([server (spawn server ChatServer)]
+               [auth (spawn auth Authenticator pw-table server)])
+    auth auth)))))
 
 (module+ test
   (require
@@ -141,7 +142,8 @@
    "../csa.rkt")
 
   (define (start-prog)
-    (csa-run chat-program))
+    (define-values (auth other-auth) (csa-run chat-program))
+    auth)
 
   (define (connect-to-server auth username password)
     (define auth-callback (make-async-channel))
@@ -315,8 +317,8 @@
        (goto ServerAlways)])))
 
 (define chat-spec
-  `(specification (receptionists [auth ,desugared-auth-command]) (externals)
-     (obs-rec auth ,desugared-auth-command ,desugared-auth-command)
+  `(specification (receptionists [auth ,desugared-auth-command] [unobs-auth AuthCommand]) (externals)
+     (mon-receptionist auth)
      (goto AuthAlways)
      (define-state (AuthAlways)
        [(variant LogIn * * callback) ->
