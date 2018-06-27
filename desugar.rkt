@@ -36,8 +36,8 @@
 (define (ExternalsKeyword? x)
   (equal? x 'externals))
 
-(define (ActorsKeyword? x)
-  (equal? x 'actors))
+(define (LetActorsKeyword? x)
+  (equal? x 'let-actors))
 
 (define (Location? x)
   #t)
@@ -54,13 +54,13 @@
    (ElseKeyword (else-kw))
    (ReceptionistsKeyword (receptionists-kw))
    (ExternalsKeyword (externals-kw))
-   (ActorsKeyword (actors-kw))
+   (LetActorsKeyword (let-actors-kw))
    (Location (l)))
   (Prog (P)
         (program-kw (receptionists-kw [x1 τ1] ...) (externals-kw [x2 τ2] ...)
                     PI ...
                     ;; NOTE: e should be a spawn expression
-                    (actors-kw [x3 e] ...)))
+                    (let-actors-kw ([x3 e] ...) x4 ...)))
   (ProgItem (PI)
             ad
             fd
@@ -175,8 +175,8 @@
     (unparse-csa/wrapped-calls
      (wrap-function-calls
       (with-output-language (csa/surface Prog)
-        `(program (receptionists) (externals) (actors [a (f (g 1) 2)])))))
-    `(program (receptionists) (externals) (actors [a (app f (app g 1) 2)]))))
+        `(program (receptionists) (externals) (let-actors ([a (f (g 1) 2)]) a)))))
+    `(program (receptionists) (externals) (let-actors ([a (app f (app g 1) 2)]) a))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Multi-body shrinking
@@ -263,7 +263,7 @@
                     [(A) 1 2]
                     [(B) 7])
                   (let () 3 4))
-          (actors [a (let* () 5 6)]))))))
+          (let-actors ([a (let* () 5 6)]) a))))))
    `(program (receptionists) (externals)
      (define-function (f)
              (begin
@@ -271,7 +271,7 @@
                  [(A) (begin 1 2)]
                  [(B) 7])
                (let () (begin 3 4))))
-     (actors [a (let* () (begin 5 6))]))))
+     (let-actors ([a (let* () (begin 5 6))]) a))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; for -> for/fold
@@ -296,10 +296,10 @@
   (define desugared-code (unparse-csa/desugared-for
                  (desugar-for
                   (with-output-language (csa/single-exp-bodies Prog)
-                    `(program (receptionists) (externals) (actors [a (for ([i (list 1 2 3)]) i)]))))))
+                    `(program (receptionists) (externals) (let-actors ([a (for ([i (list 1 2 3)]) i)]) a))))))
   (test-not-false "desugar for"
    (redex:redex-match L
-                      (program (receptionists) (externals) (actors [a (for/fold ([variable-not-otherwise-mentioned 0]) ([i (list 1 2 3)]) (begin i 0))]))
+                      (program (receptionists) (externals) (let-actors ([a (for/fold ([variable-not-otherwise-mentioned 0]) ([i (list 1 2 3)]) (begin i 0))]) a))
                       desugared-code)))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -327,12 +327,13 @@
     (desugar-cond
      (with-output-language (csa/desugared-for Prog)
        `(program (receptionists) (externals)
-         (actors
-          [a (cond
-               [(< a b) 0]
-               [(< b c) 1]
-               [else 2])])))))
-   `(program (receptionists) (externals) (actors [a (if (< a b) 0 (if (< b c) 1 2))]))))
+         (let-actors
+          ([a (cond
+                [(< a b) 0]
+                [(< b c) 1]
+                [else 2])])
+          a)))))
+   `(program (receptionists) (externals) (let-actors ([a (if (< a b) 0 (if (< b c) 1 2))]) a))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Desugar if
@@ -356,8 +357,8 @@
    (unparse-csa/desugared-if
     (desugar-if
      (with-output-language (csa/desugared-cond Prog)
-       `(program (receptionists) (externals) (actors [a (if (< a b) 1 0)])))))
-   `(program (receptionists) (externals) (actors [a (case (< a b) [(True) 1] [(False) 0])]))))
+       `(program (receptionists) (externals) (let-actors ([a (if (< a b) 1 0)]) a)))))
+   `(program (receptionists) (externals) (let-actors ([a (case (< a b) [(True) 1] [(False) 0])]) a))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Desugar let*
@@ -379,19 +380,21 @@
 
 (module+ test
   (test-equal? "desugar let*"
-   (unparse-csa/desugared-let*
-    (desugar-let*
-     (parse-csa/desugared-if
-      `(program (receptionists) (externals)
-        (actors [a (let* ([a 1]
-                             [b (+ a 2)]
-                             [c (+ a b)])
-                        (+ c 5))])))))
-   `(program (receptionists) (externals)
-     (actors [a (let ([a 1])
-                     (let ([b (+ a 2)])
-                       (let ([c (+ a b)])
-                         (+ c 5))))]))))
+    (unparse-csa/desugared-let*
+     (desugar-let*
+      (parse-csa/desugared-if
+        `(program (receptionists) (externals)
+                  (let-actors ([a (let* ([a 1]
+                                         [b (+ a 2)]
+                                         [c (+ a b)])
+                                    (+ c 5))])
+                              a)))))
+    `(program (receptionists) (externals)
+              (let-actors ([a (let ([a 1])
+                                (let ([b (+ a 2)])
+                                  (let ([c (+ a b)])
+                                    (+ c 5))))])
+                          a))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Variant desugaring
@@ -408,7 +411,7 @@
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
           (define-variant ,T (,V [,x ,[τ]] ...) ...)
           ,PI ...
-          (,actors-kw [,x3 ,e3] ...))
+          (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))
          (define constructor-defs
            (map
             (lambda (name field-list types)
@@ -418,7 +421,7 @@
          (Prog (with-output-language (csa/desugared-let* Prog)
                  `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                    ,PI ...
-                   (,actors-kw [,x3 ,e3] ...)))
+                   (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...)))
                (append items-to-add
                        (append
                         constructor-defs
@@ -427,17 +430,17 @@
                           `(define-type ,T (Union [,V ,τ ...] ...)))))))]
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                       ,[PI1] ,PI* ...
-                      (,actors-kw [,x3 ,e3] ...))
+                      (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))
          (Prog (with-output-language (csa/desugared-let* Prog)
                  `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                    ,PI* ...
-                   (,actors-kw [,x3 ,e3] ...)))
+                   (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...)))
                (append items-to-add (list PI1)))]
         [(,program-kw (,receptionists-kw [,x1 ,[τ1]] ...) (,externals-kw [,x2 ,[τ2]] ...)
-                      (,actors-kw [,x3 ,[e3]] ...))
+                      (,let-actors-kw ([,x3 ,[e3]] ...) ,x4 ...))
          `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                        ,items-to-add ...
-                       (,actors-kw [,x3 ,e3] ...))])
+                       (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))])
   (Prog P null))
 
 (module+ test
@@ -447,17 +450,19 @@
      (with-output-language (csa/desugared-let* Prog)
        `(program (receptionists) (externals)
          (define-variant List (Null) (Cons [element Nat] [list List]))
-         (actors
-          [a (case (app Null)
-               [(Null) 0]
-               [(Cons element rest) element])])))))
+         (let-actors
+          ([a (case (app Null)
+                [(Null) 0]
+                [(Cons element rest) element])])
+          a)))))
    `(program (receptionists) (externals)
      (define-function (Null) (variant Null))
      (define-function (Cons [element Nat] [list List]) (variant Cons element list))
      (define-type List (Union (Null) (Cons Nat List)))
-     (actors [a (case (app Null)
-                     [(Null) 0]
-                     [(Cons element rest) element])]))))
+     (let-actors ([a (case (app Null)
+                       [(Null) 0]
+                       [(Cons element rest) element])])
+                 a))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Record type inlining
@@ -476,11 +481,11 @@
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
           (define-record ,T [,x ,[τ]] ...)
           ,PI ...
-          (,actors-kw [,x3 ,e3] ...))
+          (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))
          (Prog (with-output-language (csa/desugared-variants Prog)
                  `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                    ,PI ...
-                   (,actors-kw [,x3 ,e3] ...)))
+                   (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...)))
                (append items-to-add
                        (list
                         (with-output-language (csa/inlined-records ProgItem)
@@ -489,17 +494,17 @@
                           `(define-function (,T [,x ,τ] ...) (record [,x ,x] ...))))))]
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw  [,x2 ,τ2] ...)
           ,[PI1] ,PI* ...
-          (,actors-kw [,x3 ,e3] ...))
+          (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))
          (Prog (with-output-language (csa/desugared-variants Prog)
                  `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                    ,PI* ...
-                   (,actors-kw [,x3 ,e3] ...)))
+                   (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...)))
                (append items-to-add (list PI1)))]
         [(,program-kw (,receptionists-kw [,x1 ,[τ1]] ...) (,externals-kw [,x2 ,[τ2]] ...)
-          (,actors-kw [,x3 ,[e3]] ...))
+                      (,let-actors-kw ([,x3 ,[e3]] ...) ,x4 ...))
          `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
            ,items-to-add ...
-           (,actors-kw [,x3 ,e3] ...))])
+           (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))])
   (Prog P null))
 
 (module+ test
@@ -510,14 +515,14 @@
        `(program (receptionists) (externals)
          (define-record A [x Nat] [y Nat])
          (define-record B [z A])
-         (actors [a (app B (app A 5 4))])))))
+         (let-actors ([a (app B (app A 5 4))]) a)))))
 
    `(program (receptionists) (externals)
      (define-type A (Record [x Nat] [y Nat]))
      (define-function (A [x Nat] [y Nat]) (record [x x] [y y]))
      (define-type B (Record [z A]))
      (define-function (B [z A]) (record [z z]))
-     (actors [a (app B (app A 5 4))]))))
+     (let-actors ([a (app B (app A 5 4))]) a))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Inlined Types
@@ -539,27 +544,27 @@
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
           (define-type ,T ,[τ])
           ,PI ...
-          (,actors-kw [,x3 ,e3] ...))
+          (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))
          ;; TODO: do something more defensive for hash overwrites
          (hash-set! aliases-so-far T τ)
          (Prog (with-output-language (csa/inlined-records Prog)
                  `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                    ,PI ...
-                   (,actors-kw [,x3 ,e3] ...)))
+                   (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...)))
                items-to-add)]
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
           ,[PI1] ,PI* ...
-          (,actors-kw [,x3 ,e3] ...))
+          (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))
          (Prog (with-output-language (csa/inlined-records Prog)
                  `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                    ,PI* ...
-                   (,actors-kw [,x3 ,e3] ...)))
+                   (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...)))
                (append items-to-add (list PI1)))]
         [(,program-kw (,receptionists-kw [,x1 ,[τ1]] ...) (,externals-kw [,x2 ,[τ2]] ...)
-          (,actors-kw [,x3 ,[e3]] ...))
+                      (,let-actors-kw ([,x3 ,[e3]] ...) ,x4 ...))
          `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
            ,items-to-add ...
-           (,actors-kw [,x3 ,e3] ...))])
+           (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))])
   (Type : Type (τ) -> Type ()
         [,T
          ;; Return this type by default, because it might be the name of a recursive type
@@ -575,11 +580,11 @@
         (define-type MyT Nat)
         (define-actor MyT (A) ()
           (goto S1))
-        (actors [a (spawn 1 A)])))))
+        (let-actors ([a (spawn 1 A)]) a)))))
    `(program (receptionists) (externals)
      (define-actor Nat (A) ()
              (goto S1))
-     (actors [a (spawn 1 A)]))))
+     (let-actors ([a (spawn 1 A)]) a))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Inlined Program Functions
@@ -604,36 +609,36 @@
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
           (define-function (,f [,x ,τ] ...) ,[e])
           ,PI ...
-          (,actors-kw [,x3 ,e3] ...))
+          (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))
          (hash-set! func-defs f (func-record x e))
          (Prog (with-output-language (csa/inlined-types Prog)
                  `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                    ,PI ...
-                   (,actors-kw [,x3 ,e3] ...)))
+                   (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...)))
                items-to-add)]
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
           (define-constant ,x ,[e])
           ,PI ...
-          (,actors-kw [,x3 ,e3] ...))
+          (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))
          (hash-set! const-defs x e)
          (Prog (with-output-language (csa/inlined-types Prog)
                  `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                    ,PI ...
-                   (,actors-kw [,x3 ,e3] ...)))
+                   (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...)))
                items-to-add)]
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
           ,[PI1] ,PI* ...
-          (,actors-kw [,x3 ,e3] ...))
+          (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))
          (Prog (with-output-language (csa/inlined-types Prog)
                  `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                    ,PI* ...
-                   (,actors-kw [,x3 ,e3] ...)))
+                   (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...)))
                (append items-to-add (list PI1)))]
         [(,program-kw (,receptionists-kw [,x1 ,[τ1]] ...) (,externals-kw [,x2 ,[τ2]] ...)
-          (,actors-kw [,x3 ,[e3]] ...))
+                      (,let-actors-kw ([,x3 ,[e3]] ...) ,x4 ...))
          `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
            ,items-to-add ...
-           (,actors-kw [,x3 ,e3] ...))])
+           (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))])
   (Exp : Exp (e) -> Exp ()
        [(app ,f ,[e*] ...)
         (match (hash-ref func-defs f #f)
@@ -656,8 +661,8 @@
       `(program (receptionists) (externals)
         (define-function (double [x Nat]) (+ x x))
         (define-constant c 5)
-        (actors [a (app double c)])))))
-   `(program (receptionists) (externals) (actors [a (let ([x 5]) (+ x x))])))
+        (let-actors ([a (app double c)]) a)))))
+   `(program (receptionists) (externals) (let-actors ([a (let ([x 5]) (+ x x))]) a)))
 
   (test-equal? "inline program defs 2"
    (unparse-csa/inlined-program-definitions
@@ -666,11 +671,12 @@
       `(program (receptionists) (externals)
         (define-function (double [x Nat]) (+ x x))
         (define-function (quadruple [x Nat]) (app double (app double x)))
-        (actors [a (app quadruple 5)])))))
+        (let-actors ([a (app quadruple 5)]) a)))))
    `(program (receptionists) (externals)
-     (actors [a
-                   (let ([x 5])
-                     (let ([x (let ([x x]) (+ x x))]) (+ x x)))])))
+      (let-actors ([a (let ([x 5])
+                        (let ([x (let ([x x]) (+ x x))])
+                          (+ x x)))])
+                  a)))
 
   (test-equal? "inline program defs 3"
    (unparse-csa/inlined-program-definitions
@@ -681,13 +687,13 @@
           ((define-function (double [x Nat]) (+ x x))
            (define-function (quadruple [x Nat]) (app double (app double x))))
           (app quadruple 5))
-        (actors [a (spawn 1 A)])))))
+        (let-actors ([a (spawn 1 A)]) a)))))
    `(program (receptionists) (externals)
      (define-actor Nat (A)
              ((define-function (double [x Nat]) (+ x x))
               (define-function (quadruple [x Nat]) (app double (app double x))))
              (app quadruple 5))
-     (actors [a (spawn 1 A)]))))
+     (let-actors ([a (spawn 1 A)]) a))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Actor func/const definition inlining
@@ -744,7 +750,7 @@
                   (define-function (bar [x Nat] [y Nat]) (- x y)))
 
                  (app foo (app bar 3 w)))
-         (actors [a (spawn 1 A)])))))
+         (let-actors ([a (spawn 1 A)]) a)))))
    `(program (receptionists) (externals)
      (define-actor Nat (A)
              (let ([x
@@ -752,7 +758,7 @@
                           [y 4])
                       (- x y))])
                (+ x 2)))
-     (actors [a (spawn 1 A)])))
+     (let-actors ([a (spawn 1 A)]) a)))
 
   (test-equal? "inline actor defs 2"
    (unparse-csa/inlined-actor-definitions
@@ -763,12 +769,12 @@
                 ((define-function (double [x Nat]) (+ x x))
                  (define-function (quadruple [x Nat]) (app double (app double x))))
                 (app quadruple 5))
-        (actors [a (spawn 1 A)])))))
+        (let-actors ([a (spawn 1 A)]) a)))))
    `(program (receptionists) (externals)
      (define-actor Nat (A)
        (let ([x 5])
          (let ([x (let ([x x]) (+ x x))]) (+ x x))))
-     (actors [a (spawn 1 A)]))))
+     (let-actors ([a (spawn 1 A)]) a))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Inlined Actors
@@ -778,9 +784,9 @@
   (Prog (P)
     (- (program-kw (receptionists-kw [x1 τ1] ...) (externals-kw [x2 τ2] ...)
                    PI ...
-                   (actors-kw [x3 e] ...)))
+                   (let-actors-kw ([x3 e] ...) x4 ...)))
     (+ (program-kw (receptionists-kw [x1 τ1] ...) (externals-kw [x2 τ2] ...)
-                   (actors-kw [x3 e] ...))))
+                   (let-actors-kw ([x3 e] ...) x4 ...))))
   (ProgItem (P)
             (- ad))
   (Exp (e)
@@ -794,16 +800,16 @@
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
           (define-actor ,[τ0] (,a [,x ,[τ]] ...)  ,[Exp : e0 defs-so-far -> e] ,[StateDef : S0 defs-so-far -> S] ...)
           ,PI* ...
-          (,actors-kw [,x3 ,e3] ...))
+          (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))
          (Prog (with-output-language (csa/inlined-actor-definitions Prog)
                  `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                    ,PI* ...
-                   (,actors-kw [,x3 ,e3] ...)))
+                   (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...)))
                (hash-set defs-so-far a (actor-record τ0 x τ e S)))]
         [(,program-kw (,receptionists-kw [,x1 ,[τ1]] ...) (,externals-kw [,x2 ,[τ2]] ...)
-          (,actors-kw [,x3 ,[Exp : e0 defs-so-far -> e]] ...))
+                      (,let-actors-kw ([,x3 ,[Exp : e0 defs-so-far -> e]] ...) ,x4 ...))
          `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
-           (,actors-kw [,x3 ,e] ...))])
+                       (,let-actors-kw ([,x3 ,e] ...) ,x4 ...))])
   (StateDef : StateDef (S defs-so-far) -> StateDef ()
     [(define-state (,s [,x ,[τ]] ...) (,x2) ,[Exp : e0 defs-so-far -> e])
      `(define-state (,s [,x ,τ] ...) (,x2) ,e)]
@@ -886,14 +892,14 @@
                  (goto S1)
                  (define-state (S1) (m)
                    (goto S1)))
-         (actors [a (spawn 1 A 5)])))))
+         (let-actors ([a (spawn 1 A 5)]) a)))))
    `(program (receptionists) (externals)
-     (actors [a (let ([x 5])
-                     (spawn
-                      1
-                      Nat
-                      (goto S1)
-                      (define-state (S1) (m) (goto S1))))])))
+             (let-actors ([a (let ([x 5])
+                               (spawn
+                                1
+                                Nat
+                                (goto S1)
+                                (define-state (S1) (m) (goto S1))))]) a)))
 
   (test-equal? "inline actors 2"
    (unparse-csa/inlined-actors
@@ -910,30 +916,31 @@
              (begin
                (spawn 1 A 3)
                (goto S2))))
-         (actors [a (spawn 2 B 5)])))))
+         (let-actors ([a (spawn 2 B 5)]) a)))))
    `(program (receptionists) (externals)
-     (actors [a (let ([y 5])
-                     (spawn
-                      2
-                      Nat
-                      (goto S2)
-                      (define-state (S2) (m)
-                        (begin
-                          (let ([x 3])
-                            (spawn
-                             1
-                             Nat
-                             (goto S1)
-                             (define-state (S1) (m)
-                               (goto S1))))
-                          (goto S2)))))])))
+             (let-actors ([a (let ([y 5])
+                               (spawn
+                                2
+                                Nat
+                                (goto S2)
+                                (define-state (S2) (m)
+                                  (begin
+                                    (let ([x 3])
+                                      (spawn
+                                       1
+                                       Nat
+                                       (goto S1)
+                                       (define-state (S1) (m)
+                                         (goto S1))))
+                                    (goto S2)))))])
+                         a)))
 
   (test-equal? "inline actors with externals"
     (unparse-csa/inlined-actors
      (inline-actors
       (with-output-language (csa/inlined-actor-definitions Prog)
-        `(program (receptionists [rec1 (Record)]) (externals [ext1 Nat]) (actors)))))
-    `(program (receptionists [rec1 (Record)]) (externals [ext1 Nat]) (actors))))
+        `(program (receptionists [rec1 (Record)]) (externals [ext1 Nat]) (let-actors ())))))
+    `(program (receptionists [rec1 (Record)]) (externals [ext1 Nat]) (let-actors ()))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Fixed timeout syntax
@@ -963,7 +970,7 @@
 
 (module+ test
   (test-false "Invalid program" (valid-program? '(foobar)))
-  (test-true "Valid program" (valid-program? '(program (receptionists) (externals) (actors)))))
+  (test-true "Valid program" (valid-program? '(program (receptionists) (externals) (let-actors ())))))
 
 (define/contract (desugar program)
   (-> valid-program? any/c)
