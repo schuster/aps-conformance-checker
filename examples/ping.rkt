@@ -10,13 +10,12 @@
     (define-state (Always) (response-addr)
       (send response-addr (Pong))
       (goto Always)))
-  (actors [ping-server (spawn 0 PingServer)]))))
+  (let-actors ([ping-server (spawn 0 PingServer)]) ping-server))))
 
 (define ping-spec
   (quasiquote
    (specification (receptionists [ping-server (Addr (Union [Pong]))]) (externals)
-     [ping-server (Addr (Union [Pong]))]
-     ()
+     (mon-receptionist ping-server)
      (goto Always)
      (define-state (Always)
        [r -> ([obligation r *]) (goto Always)]))))
@@ -24,8 +23,7 @@
 (define no-send-ping-spec
   (quasiquote
    (specification (receptionists [ping-server (Addr (Union [Pong]))]) (externals)
-     [ping-server (Addr (Union [Pong]))]
-     ()
+     (mon-receptionist ping-server)
      (goto Always)
      (define-state (Always)
        [r -> () (goto Always)]))))

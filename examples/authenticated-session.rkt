@@ -197,11 +197,12 @@
 
   (define-constant pw-table (hash ["joe" "abc"] ["sally" "xyz"]))
 
-  (actors [server (spawn 1 Server)]
-          [guard (spawn 2 ServiceGuard server pw-table)]
-          ;; Add this to do the worker test instead
-          ;; [worker (spawn 3 HandshakeWorker 1 reply-to server pw-table)]
-          )))))
+  (let-actors ([server (spawn 1 Server)]
+               [guard (spawn 2 ServiceGuard server pw-table)]
+               ;; Add this to do the worker test instead
+               ;; [worker (spawn 3 HandshakeWorker 1 reply-to server pw-table)]
+               )
+    guard)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Desugared Types
@@ -268,7 +269,7 @@
 
 (define authN-specification
   `(specification (receptionists [guard ,desugared-GetSessionType]) (externals)
-     (obs-rec guard ,desugared-GetSessionType)
+     (mon-receptionist guard)
      (goto Ready)
      (define-state (Ready)
        [(variant GetSession * reply-to) ->
@@ -282,12 +283,12 @@
 (define worker-specification
   `(specification (receptionists [worker ,desugared-AuthenticateType])
                   (externals [reply-to ,desugared-GetSessionResultType])
-     (obs-rec worker ,desugared-AuthenticateType)
+     (mon-receptionist worker)
      ,@worker-spec-behavior))
 
 (define server-specification
   `(specification (receptionists [server ,desugared-SessionCommand]) (externals)
-     (obs-rec server ,desugared-SessionCommand)
+     (mon-receptionist server)
      ,@server-spec-behavior))
 
 ;; ---------------------------------------------------------------------------------------------------
