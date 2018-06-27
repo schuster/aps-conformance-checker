@@ -25,7 +25,7 @@
 (define ensime-program
   (desugar
   (quasiquote
-(program (receptionists [project ProjectActorInput]) (externals)
+(program (receptionists [project ProjectInput]) (externals)
 
 (define-type Boolean (Union [True] [False]))
 
@@ -274,12 +274,13 @@
        (send scalac (RefactorReq p t i s))
        (goto HandleRequests)])))
 
-(actors [docs (spawn docs-loc DocResolver)]
-        [indexer (spawn indexer-loc Indexer)]
-        [debugger (spawn debugger-loc DebugActor)]
-        [javac (spawn javac-loc JavaAnalyzer)]
-        [scalac (spawn scala-loc Analyzer)]
-        [project (spawn project-loc Project docs indexer debugger javac scalac)])))))
+(let-actors ([docs (spawn docs-loc DocResolver)]
+             [indexer (spawn indexer-loc Indexer)]
+             [debugger (spawn debugger-loc DebugActor)]
+             [javac (spawn javac-loc JavaAnalyzer)]
+             [scalac (spawn scala-loc Analyzer)]
+             [project (spawn project-loc Project docs indexer debugger javac scalac)])
+  project)))))
 
 (module+ test
   (require
@@ -496,7 +497,7 @@
 
 (define ensime-project-spec
   `(specification (receptionists [project ,desugared-project-input]) (externals)
-     (obs-rec project ,desugared-project-input)
+     (mon-receptionist project)
      (goto AwaitingConnectionInfoReq)
      (define-state (AwaitingConnectionInfoReq)
        [(variant ConnectionInfoReq s) -> ([obligation s (variant ConnectionInfo)]) (goto HandleRequests)]
