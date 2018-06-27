@@ -923,7 +923,6 @@
              (widen-printf "Transition failed maybe-good-for-widen\n")
              (worklist-loop widened-pair)])])])))
 
-(require redex)
 (module+ test
   (define init-widen-impl-config
     (term
