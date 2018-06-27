@@ -33,15 +33,13 @@
         (send responder r)
         (goto Always)))
 
-    (actors [responder (spawn 2 Responder)]
-            [input (spawn 1 InputWorker responder)])))
+    (let-actors ([responder (spawn 2 Responder)]
+                 [input (spawn 1 InputWorker responder)])
+      input)))
 
 (define dynamic-response-spec
-  `(specification
-    (receptionists [input ,request-type])
-    (externals)
-    [input ,request-type]
-    ()
+  `(specification (receptionists [input ,request-type]) (externals)
+    (mon-receptionist input)
     (goto Always)
     (define-state (Always)
       [r -> ([obligation r (variant A)]) (goto Always)]
