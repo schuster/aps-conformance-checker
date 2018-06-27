@@ -74,7 +74,7 @@
 
 (define pots-program (desugar
 `(program
- (receptionists [controller ControllerMessage])
+ (receptionists [controller ,desugared-seizable-peer-message] [controller-unobs ControllerMessage])
  (externals [lim LimMessage] [analyzer AnalyzerMessage])
 
 (define-record SeizablePeer
@@ -354,17 +354,18 @@
       [(Valid a) (goto WaitOnHook have-tone?)]
       [(GetMoreDigits) (goto WaitOnHook have-tone?)])))
 
-(actors [controller (spawn 1 PotsController 1 lim analyzer)]))))
+(let-actors ([controller (spawn 1 PotsController 1 lim analyzer)]) controller controller))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Specifications
 
 ;; Specification from POV of another phone
 (define pots-spec
-  `(specification (receptionists [controller ,desugared-controller-message-type])
+  `(specification (receptionists [controller ,desugared-controller-message-type]
+                                 [controller-unobs ,desugared-controller-message-type])
                   (externals [lim ,desugared-lim-message-type]
                              [analyzer ,desugared-analyzer-message-type])
-     (obs-rec controller ,desugared-seizable-peer-message ,desugared-controller-message-type)
+     (mon-receptionist controller)
      (goto Idle)
 
      (define-state (Idle)
@@ -432,7 +433,7 @@
   (test-case "Basic call test"
     (define lim (make-async-channel))
     (define analyzer (make-async-channel))
-    (define controller (csa-run pots-program lim analyzer))
+    (match-define-values (controller _) (csa-run pots-program lim analyzer))
     ;; pick up the phone
     (async-channel-put controller (variant OffHook))
     ;; wait for dial tone
