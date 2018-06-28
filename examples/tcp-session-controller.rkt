@@ -66,6 +66,76 @@
     [PeerClosed]
     [ErrorClosed]))
 
+;; ---------------------------------------------------------------------------------------------------
+;; Desugared Types
+
+(define desugared-tcp-packet-type
+  `(Record
+    [source-port Nat]
+    [destination-port Nat]
+    [seq Nat]
+    [ack Nat]
+    [ack-flag (Union [Ack] [NoAck])]
+    [rst (Union [Rst] [NoRst])]
+    [syn (Union [Syn] [NoSyn])]
+    [fin (Union [Fin] [NoFin])]
+    [window Nat]
+    [payload (List Nat)]))
+
+(define desugared-tcp-output
+  `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
+
+(define desugared-socket-address
+  `(Record [ip Nat] [port Nat]))
+
+(define desugared-session-id
+  `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
+
+(define desugared-write-response
+  `(Union
+    [CommandFailed]
+    [WriteAck]))
+
+(define desugared-session-command
+  `(Union
+    (Register (Addr ,desugared-tcp-session-event))
+    (Write (List Nat) (Addr ,desugared-write-response))
+    (Close (Addr (Union [CommandFailed] [Closed])))
+    (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+    (Abort (Addr (Union [CommandFailed] [Aborted])))))
+
+(define desugared-session-input
+  `(Union
+    (OrderedTcpPacket ,desugared-tcp-packet-type)
+    (Register (Addr ,desugared-tcp-session-event))
+    (Write (List Nat) (Addr ,desugared-write-response))
+    (Close (Addr (Union [CommandFailed] [Closed])))
+    (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+    (Abort (Addr (Union [CommandFailed] [Aborted])))
+    (InternalAbort)
+    (TheFinSeq Nat)
+    (RegisterTimeout)
+    (TimeWaitTimeout)))
+
+(define desugared-connection-status
+  `(Union
+    [CommandFailed]
+    [Connected ,desugared-session-id
+               (Addr ,desugared-session-command)]))
+
+(define desugared-receive-buffer-command
+  `(Union (Resume)))
+
+(define desugared-send-buffer-command
+  `(Union
+    [SendSyn]
+    [SendRst]
+    [SendText (List Nat)]
+    [SendFin]))
+
+;; ---------------------------------------------------------------------------------------------------
+;; The Program
+
 (define remote-ip 500) ; we're faking IPs with natural numbers, so the actual number doesn't matter
 (define remote-port 80)
 (define local-port 55555)
@@ -706,26 +776,36 @@
 
 (define tcp-program
   (desugar
-   `(program (receptionists [session TcpSessionInput])
+   `(program (receptionists
+              [session (Union (OrderedTcpPacket ,desugared-tcp-packet-type))]
+              [session-unobs (Union
+                              (Register (Addr ,desugared-tcp-session-event))
+                              (Write (List Nat) (Addr ,desugared-write-response))
+                              (Close (Addr (Union [CommandFailed] [Closed])))
+                              (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+                              (Abort (Addr (Union [CommandFailed] [Aborted])))
+                              (InternalAbort)
+                              (TheFinSeq Nat))])
              (externals [receive-buffer ReceiveBufferCommand]
                         [send-buffer SendBufferCommand]
                         [status-updates ConnectionStatus]
                         [close-notifications (Union [SessionCloseNotification SessionId])])
              ,@tcp-definitions
-             (actors [session (spawn 1
-                                     TcpSession
-                                     (record [remote-address (record [ip ,remote-ip] [port ,remote-port])]
-                                             [local-port ,local-port])
-                                     ,local-iss
-                                     (variant ActiveOpen)
-                                     receive-buffer
-                                     send-buffer
-                                     status-updates
-                                     close-notifications
-                                     ,wait-time-in-milliseconds
-                                     ,max-retries
-                                     ,max-segment-lifetime
-                                     ,user-response-wait-time)]))))
+             (let-actors ([session (spawn 1
+                                          TcpSession
+                                          (record [remote-address (record [ip ,remote-ip] [port ,remote-port])]
+                                                  [local-port ,local-port])
+                                          ,local-iss
+                                          (variant ActiveOpen)
+                                          receive-buffer
+                                          send-buffer
+                                          status-updates
+                                          close-notifications
+                                          ,wait-time-in-milliseconds
+                                          ,max-retries
+                                          ,max-segment-lifetime
+                                          ,user-response-wait-time)])
+                         session session))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing
@@ -848,8 +928,9 @@
     (define send-buffer (make-async-channel))
     (define status-updates (make-async-channel))
     (define close-notifications (make-async-channel))
-    (values receive-buffer send-buffer status-updates close-notifications
-      (csa-run tcp-program receive-buffer send-buffer status-updates close-notifications)))
+    (match-define-values (session _)
+      (csa-run tcp-program receive-buffer send-buffer status-updates close-notifications))
+    (values receive-buffer send-buffer status-updates close-notifications session))
 
   ;; Test data
 
@@ -1207,70 +1288,6 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Specification
 
-(define desugared-tcp-packet-type
-  `(Record
-    [source-port Nat]
-    [destination-port Nat]
-    [seq Nat]
-    [ack Nat]
-    [ack-flag (Union [Ack] [NoAck])]
-    [rst (Union [Rst] [NoRst])]
-    [syn (Union [Syn] [NoSyn])]
-    [fin (Union [Fin] [NoFin])]
-    [window Nat]
-    [payload (List Nat)]))
-
-(define desugared-tcp-output
-  `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
-
-(define desugared-socket-address
-  `(Record [ip Nat] [port Nat]))
-
-(define desugared-session-id
-  `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
-
-(define desugared-write-response
-  `(Union
-    [CommandFailed]
-    [WriteAck]))
-
-(define desugared-session-command
-  `(Union
-    (Register (Addr ,desugared-tcp-session-event))
-    (Write (List Nat) (Addr ,desugared-write-response))
-    (Close (Addr (Union [CommandFailed] [Closed])))
-    (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
-    (Abort (Addr (Union [CommandFailed] [Aborted])))))
-
-(define desugared-session-input
-  `(Union
-    (OrderedTcpPacket ,desugared-tcp-packet-type)
-    (Register (Addr ,desugared-tcp-session-event))
-    (Write (List Nat) (Addr ,desugared-write-response))
-    (Close (Addr (Union [CommandFailed] [Closed])))
-    (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
-    (Abort (Addr (Union [CommandFailed] [Aborted])))
-    (InternalAbort)
-    (TheFinSeq Nat)
-    (RegisterTimeout)
-    (TimeWaitTimeout)))
-
-(define desugared-connection-status
-  `(Union
-    [CommandFailed]
-    [Connected ,desugared-session-id
-               (Addr ,desugared-session-command)]))
-
-(define desugared-receive-buffer-command
-  `(Union (Resume)))
-
-(define desugared-send-buffer-command
-  `(Union
-    [SendSyn]
-    [SendRst]
-    [SendText (List Nat)]
-    [SendFin]))
-
 ;; patterns to be used in the spec
 (define-syntax (make-packet-pattern stx)
   (syntax-parse stx
@@ -1292,21 +1309,22 @@
                            [payload *])))]))
 
 (define session-wire-spec
-  `(specification (receptionists [session ,desugared-session-input])
+  `(specification (receptionists
+                   [session (Union (OrderedTcpPacket ,desugared-tcp-packet-type))]
+                   [session-unobs (Union
+                                   (Register (Addr ,desugared-tcp-session-event))
+                                   (Write (List Nat) (Addr ,desugared-write-response))
+                                   (Close (Addr (Union [CommandFailed] [Closed])))
+                                   (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+                                   (Abort (Addr (Union [CommandFailed] [Aborted])))
+                                   (InternalAbort)
+                                   (TheFinSeq Nat))])
                   (externals [receive-buffer ,desugared-receive-buffer-command]
                              [send-buffer ,desugared-send-buffer-command]
                              [status-updates ,desugared-connection-status]
                              [close-notifications
                               (Union [SessionCloseNotification ,desugared-session-id])])
-     (obs-rec session (Union (OrderedTcpPacket ,desugared-tcp-packet-type))
-                      (Union
-                       (Register (Addr ,desugared-tcp-session-event))
-                       (Write (List Nat) (Addr ,desugared-write-response))
-                       (Close (Addr (Union [CommandFailed] [Closed])))
-                       (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
-                       (Abort (Addr (Union [CommandFailed] [Aborted])))
-                       (InternalAbort)
-                       (TheFinSeq Nat)))
+     (mon-receptionist session)
      (goto SynSent send-buffer)
      (define-state (SynSent send-buffer)
        ;; APS PROTOCOL BUG: to replicate, remove from ANY of the following states the clause that
