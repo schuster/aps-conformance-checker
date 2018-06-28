@@ -845,7 +845,7 @@
            (if (or (internal-output? `[,v-addr ,v-message ,quantity]) (in-loop-context?))
                `[,v-message ,unused-marker]
                (mark v-message unused-marker)))
-         (value-result maybe-marked-message
+         (value-result `(variant Unit)
                        `(,(add-output sends (term [,v-addr ,maybe-marked-message ,quantity]))
                          ,spawns
                          ,new-unused-marker)))
@@ -1264,14 +1264,14 @@
     (check-same-items?
      (first
       (eval-machine
-       `(for/fold ([dummy abs-nat])
+       `(for/fold ([dummy (variant Unit)])
                   ([item (list-val abs-nat)])
           (send (marked (addr 1 0)) item))
        empty-effects
        #f))
      (list
-      (machine-state `abs-nat `(() () ,INIT-HANDLER-MARKER))
-      (machine-state `abs-nat `(([(marked (addr 1 0)) abs-nat many]) () ,INIT-HANDLER-MARKER)))))
+      (machine-state `(variant Unit) `(() () ,INIT-HANDLER-MARKER))
+      (machine-state `(variant Unit) `(([(marked (addr 1 0)) abs-nat many]) () ,INIT-HANDLER-MARKER)))))
 
   (test-case "Messages sent in loops to environment are not marked"
     (check-same-items?
