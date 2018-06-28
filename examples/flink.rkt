@@ -6,7 +6,8 @@
 (provide
  task-manager-program
  task-manager-spec
- job-manager-program
+ job-manager-program-client-pov
+ job-manager-program-tm-pov
  job-manager-client-pov-spec
  job-manager-tm-pov-spec
  )
@@ -317,7 +318,8 @@
     (timeout 0
       (send job-manager (RegisterTaskManager my-id 2 self))
       (goto AwaitingRegistration (list))))
-  (define-state/timeout (AwaitingRegistration [idle-runners (List (Addr TaskRunnerInput))]) (m)
+  (define-state ;;  /timeout ; no timeout anymore; see comment below
+    (AwaitingRegistration [idle-runners (List (Addr TaskRunnerInput))]) (m)
     (case m
       [(AcknowledgeRegistration) (goto Running idle-runners (list))]
       [(RegisterRunner runner) (goto AwaitingRegistration (cons runner idle-runners))]
@@ -331,9 +333,15 @@
        ;; might happen if we got disconnected but the runners were still running
        (goto AwaitingRegistration idle-runners)]
       [(JobManagerTerminated) (goto AwaitingRegistration idle-runners)])
-    (timeout 5000
-      (send job-manager (RegisterTaskManager my-id 2 self))
-      (goto AwaitingRegistration idle-runners)))
+    ;; NOTE: this resend now breaks conformance, because the address it sends has a different marker
+    ;; than the one sent during the Init state, so the PSM doesn't monitor it. Weakening the spec to
+    ;; account for this (with free transitions) would effectively erase the distinction between
+    ;; states, so I'm removing the timeout instead. Will mention this in the eval chapter.
+    ;;
+    ;; (timeout 5000
+    ;;   (send job-manager (RegisterTaskManager my-id 2 self))
+    ;;   (goto AwaitingRegistration idle-runners))
+    )
   ;; TODO: fix type on idle-runners
   (define-state (Running [idle-runners (List (Addr TaskRunnerInput))]
                          [busy-runners (List BusyRunner)]) (m)
@@ -823,31 +831,47 @@
   (desugar
    `(program (receptionists [task-runner Nat]) (externals [job-manager Nat] [task-manager Nat])
              ,@flink-definitions
-             (actors [task-runner (spawn task-runner-loc TaskRunner job-manager task-manager)]))))
+             (let-actors ([task-runner (spawn task-runner-loc TaskRunner job-manager task-manager)])
+                         task-runner))))
 
 (define task-manager-program
   (desugar
    `(program (receptionists)
              (externals [job-manager ,desugared-tm-to-jm-type])
              ,@flink-definitions
-             (actors [creator (spawn creator-loc TaskManagerCreator job-manager)]))))
+             (let-actors ([creator (spawn creator-loc TaskManagerCreator job-manager)])))))
 
-(define job-manager-program
+(define job-manager-program-client-pov
   (desugar
-   `(program (receptionists [job-manager Nat]) (externals)
+   `(program (receptionists [job-manager ,desugared-job-manager-command]
+                            [job-manager-unobs (Union [TaskManagerTerminated Nat])])
+             (externals)
              ,@flink-definitions
-             (actors [job-manager (spawn jm-loc JobManager)]
-                     [task-managers-creator
-                      (spawn creator-loc TaskManagersCreator (list 1 2) job-manager)]))))
+             (let-actors ([job-manager (spawn jm-loc JobManager)]
+                          [task-managers-creator
+                           (spawn creator-loc TaskManagersCreator (list 1 2) job-manager)])
+               job-manager job-manager))))
+
+(define job-manager-program-tm-pov
+  (desugar
+   `(program (receptionists [job-manager ,desugared-tm-to-jm-type]
+                            [job-manager-unobs (Union ,@(cdr desugared-job-manager-command) [TaskManagerTerminated Nat])])
+             (externals)
+             ,@flink-definitions
+             (let-actors ([job-manager (spawn jm-loc JobManager)]
+                          [task-managers-creator
+                           (spawn creator-loc TaskManagersCreator (list 1 2) job-manager)])
+               job-manager job-manager))))
 
 (define single-tm-job-manager-program
   (desugar
    `(program (receptionists [job-manager Nat] [task-manager1 Nat]) (externals)
              ,@flink-definitions
-             (actors [job-manager (spawn jm-loc JobManager)]
-                     [task-manager1 (spawn task-manager1-loc TaskManager 1 job-manager)]
-                     [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager1)]
-                     [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager1)]))))
+             (let-actors ([job-manager (spawn jm-loc JobManager)]
+                          [task-manager1 (spawn task-manager1-loc TaskManager 1 job-manager)]
+                          [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager1)]
+                          [task-runner2 (spawn runner2-loc TaskRunner job-manager task-manager1)])
+                         job-manager task-manager1))))
 
 (module+ test
   (require
@@ -982,7 +1006,8 @@
       (desugar
        `(program (receptionists [task-manager Nat]) (externals [job-manager Nat])
                  ,@flink-definitions
-                 (actors [task-manager (spawn task-manager-loc TaskManager 1 job-manager)]))))
+                 (let-actors ([task-manager (spawn task-manager-loc TaskManager 1 job-manager)])
+                             task-manager))))
     (define jm (make-async-channel))
     (define task-manager (csa-run task-manager-only-program jm))
     (check-unicast-match jm (csa-variant RegisterTaskManager 1 2 _))
@@ -1024,7 +1049,7 @@
     (check-unicast jm (variant Failure (JobTaskId 1 3))))
 
   (test-case "Job manager runs a job to completion"
-    (define jm (csa-run job-manager-program))
+    (define-values (jm-client jm-tm) (csa-run job-manager-program-client-pov))
     ;; 1. Wait for the task managers to register with the job manager
     (sleep 3)
     ;; 2. Submit the job
@@ -1038,12 +1063,12 @@
                            (Task 7 (Reduce 5 6)))
                      7))
     (define client (make-async-channel))
-    (async-channel-put jm (SubmitJob job client))
+    (async-channel-put jm-client (SubmitJob job client))
     ;; 3. Wait for response
     (check-unicast client (JobResultSuccess (hash "a" 5 "b" 5 "c" 2)) #:timeout 30))
 
   (test-case "Job manager runs multiple jobs to completion (more tasks than task runners)"
-    (define jm (csa-run job-manager-program))
+    (define-values (jm-client jm-tm) (csa-run job-manager-program-client-pov))
     ;; 1. Wait for the task managers to register with the job manager
     (sleep 3)
     ;; 2. Submit the jobs
@@ -1063,8 +1088,8 @@
                             (Task 3 (Reduce 1 2)))
                       3))
     (define client2 (make-async-channel))
-    (async-channel-put jm (SubmitJob job1 client1))
-    (async-channel-put jm (SubmitJob job2 client2))
+    (async-channel-put jm-client (SubmitJob job1 client1))
+    (async-channel-put jm-client (SubmitJob job2 client2))
     ;; 3. Wait for response
     (check-unicast client1 (JobResultSuccess (hash "a" 5 "b" 5 "c" 2)) #:timeout 30)
     (check-unicast client2 (JobResultSuccess (hash "x" 3 "y" 5 "z" 4)) #:timeout 30))
@@ -1108,7 +1133,7 @@
     (check-unicast client (JobResultSuccess (hash "a" 5 "b" 5 "c" 2)) #:timeout 30))
 
   (test-case "Cancelling a job sends cancel result to canceller and client, client gets no result"
-    (define jm (csa-run job-manager-program))
+    (define-values (jm-client jm-tm) (csa-run job-manager-program-client-pov))
     (sleep 1) ; wait for the registrations to go through
     (define job (Job 1
                      (list (Task 1 (Map (list "a" "b" "c" "a" "b" "c")))
@@ -1116,23 +1141,23 @@
                            (Task 5 (Reduce 1 2)))
                      5))
     (define client (make-async-channel))
-    (async-channel-put jm (SubmitJob job client))
+    (async-channel-put jm-client (SubmitJob job client))
     (sleep 1)
     (define canceller (make-async-channel))
-    (async-channel-put jm (CancelJob 1 canceller))
+    (async-channel-put jm-client (CancelJob 1 canceller))
     (check-unicast canceller (CancellationSuccess))
     (check-unicast client (JobResultFailure))
     (check-no-message client #:timeout 10))
 
   (test-case "Cancelling a non-existent job sends back cancel-failure"
-    (define jm (csa-run job-manager-program))
+    (define-values (jm-client jm-tm) (csa-run job-manager-program-client-pov))
     (sleep 1) ; wait for the registrations to go through
     (define canceller (make-async-channel))
-    (async-channel-put jm (CancelJob 1 canceller))
+    (async-channel-put jm-client (CancelJob 1 canceller))
     (check-unicast canceller (CancellationFailure)))
 
   (test-case "Cancelling a job after completion ends with CancellationFailure"
-    (define jm (csa-run job-manager-program))
+    (define-values (jm-client jm-tm) (csa-run job-manager-program-client-pov))
     ;; 1. Wait for the task managers to register with the job manager
     (sleep 3)
     ;; 2. Submit the job
@@ -1142,21 +1167,29 @@
                            (Task 5 (Reduce 1 2)))
                      5))
     (define client (make-async-channel))
-    (async-channel-put jm (SubmitJob job client))
+    (async-channel-put jm-client (SubmitJob job client))
     ;; 3. Wait for response
     (check-unicast client (JobResultSuccess (hash "a" 3 "b" 3 "c" 2)) #:timeout 30)
     (define canceller (make-async-channel))
-    (async-channel-put jm (CancelJob 1 canceller))
-    (check-unicast canceller (CancellationFailure))))
+    (async-channel-put jm-client (CancelJob 1 canceller))
+    (check-unicast canceller (CancellationFailure)))
+  )
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Specification
 
-(define task-manager-spec-behavior
-  ;; APS PROTOCOL BUG: to replicate, set the initial state as (Registered job-manager) instead of
-  ;; Unregistered
-  `((goto Unregistered job-manager)
-    (define-state (Unregistered job-manager)
+(define task-manager-spec
+  `(specification (receptionists) (externals [job-manager ,desugared-tm-to-jm-type])
+     no-mon-receptionist
+     (goto Init job-manager)
+     (define-state (Init job-manager)
+       [free ->
+              ([obligation job-manager
+                           (variant RegisterTaskManager * * self)])
+              ;; APS PROTOCOL BUG: to replicate, set the next state as (Registered job-manager)
+              ;; instead of Unregistered
+              (goto Unregistered job-manager)])
+     (define-state (Unregistered job-manager)
       [(variant JobManagerTerminated) -> () (goto Unregistered job-manager)]
       [(variant AcknowledgeRegistration) -> () (goto Registered job-manager)]
       [(variant SubmitTask * ack-dest) ->
@@ -1166,7 +1199,9 @@
        ([obligation ack-dest (variant Failure *)])
        (goto Unregistered job-manager)]
       [free ->
-             ([obligation job-manager (variant RegisterTaskManager * * self)])
+             ;; NOTE: this used to have "self" at the end of the pattern, but can't do that now that
+             ;; markers distringuish the different copies of each address
+             ([obligation job-manager (variant RegisterTaskManager * * *)])
              (goto Unregistered job-manager)]
       ;; These two messages might still happen during Unregistered because the runners are
       ;; cancelled later
@@ -1192,17 +1227,6 @@
              ([obligation job-manager (variant RequestNextInputSplit * *)])
              (goto Registered job-manager)])))
 
-(define task-manager-spec
-  `(specification (receptionists) (externals [job-manager ,desugared-tm-to-jm-type])
-     no-obs-rec
-     (goto Init job-manager)
-     (define-state (Init job-manager)
-       [free ->
-              ([obligation job-manager
-                           (variant RegisterTaskManager * * (fork ,@task-manager-spec-behavior))])
-              (goto Done)])
-     (define-state (Done))))
-
 (define send-job-result-anytime-behavior
   `((goto SendAnytime dest)
     (define-state (SendAnytime dest)
@@ -1210,8 +1234,10 @@
       [free -> ([obligation dest (variant JobResultFailure)]) (goto SendAnytime dest)])))
 
 (define job-manager-client-pov-spec
-  `(specification (receptionists [job-manager ,desugared-job-manager-command]) (externals)
-     (obs-rec job-manager ,desugared-job-manager-command (Union [TaskManagerTerminated Nat]))
+  `(specification (receptionists [job-manager ,desugared-job-manager-command]
+                                 [job-manager-unobs (Union [TaskManagerTerminated Nat])])
+                  (externals)
+     (mon-receptionist job-manager)
      (goto Running)
      (define-state (Running)
        [(variant CancelJob * dest) ->
@@ -1231,9 +1257,10 @@
       [free -> ([obligation tm (variant CancelTask * *)]) (goto SubmitOrCancelAnytime tm)])))
 
 (define job-manager-tm-pov-spec
-  `(specification (receptionists [job-manager ,desugared-job-manager-input]) (externals)
-     (obs-rec job-manager ,desugared-tm-to-jm-type
-                          (Union ,@(cdr desugared-job-manager-command) [TaskManagerTerminated Nat]))
+  `(specification (receptionists [job-manager ,desugared-tm-to-jm-type]
+                                 [job-manager-unobs (Union ,@(cdr desugared-job-manager-command) [TaskManagerTerminated Nat])])
+                  (externals)
+     (mon-receptionist job-manager)
      (goto Running)
      (define-state (Running)
        [(variant RequestNextInputSplit * dest) ->
@@ -1247,7 +1274,7 @@
     (check-conformance task-manager-program task-manager-spec))
 
   (test-true "Job manager conforms to its client POV spec"
-    (check-conformance job-manager-program job-manager-client-pov-spec))
+    (check-conformance job-manager-program-client-pov job-manager-client-pov-spec))
 
   (test-true "Job manager conforms to its TaskManager POV spec"
-    (check-conformance job-manager-program job-manager-tm-pov-spec)))
+    (check-conformance job-manager-program-tm-pov job-manager-tm-pov-spec)))
