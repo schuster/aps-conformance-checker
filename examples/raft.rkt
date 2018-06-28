@@ -151,8 +151,9 @@
 ;; TODO: write a check that alerts for any underscores in the spec (b/c those are invalid)
 (define raft-spec
   (term
-   (specification (receptionists [raft-server ,full-raft-actor-type]) (externals)
-     (obs-rec raft-server ,desugared-raft-message-type ,unobserved-interface-type)
+   (specification (receptionists [raft-server ,desugared-raft-message-type] [raft-server-unobs ,unobserved-interface-type])
+                  (externals)
+     (mon-receptionist raft-server)
      (goto Init)
      (define-state (Init)
        [free -> () (goto Running)]
@@ -191,7 +192,7 @@
 
 (define raft-actor-prog (desugar (term
 (program
- (receptionists [raft-server ,full-raft-actor-type])
+ (receptionists [raft-server ,desugared-raft-message-type] [raft-server-unobs ,unobserved-interface-type])
  (externals [timer-manager TimerMessage] [application String])
 
 (define-type Unit (Record))
@@ -1245,7 +1246,8 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; The main program expression
 
-(actors [raft-server (spawn 1 RaftActor timer-manager application)])))))
+(let-actors ([raft-server (spawn 1 RaftActor timer-manager application)])
+            raft-server raft-server)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Conformance check

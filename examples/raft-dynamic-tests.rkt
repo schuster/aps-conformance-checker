@@ -34,7 +34,8 @@
     (make-RaftActor-with-outputs (make-async-channel) (make-async-channel)))
 
   (define (make-RaftActor-with-outputs timer-manager applications)
-    (csa-run raft-actor-prog timer-manager applications))
+    (match-define-values (server _) (csa-run raft-actor-prog timer-manager applications))
+    server)
 
   (define (make-initialized-follower)
     (define timer-manager (make-async-channel))
