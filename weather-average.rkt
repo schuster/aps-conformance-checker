@@ -27,7 +27,7 @@
 
 (define weather-program
  (desugar
-  `(program (receptionists [manager ,ManagerMessage]) (externals)
+  `(program (receptionists [user-api ,ManagerUserAPI] [sys-api ,ManagerSysAPI]) (externals)
 
 (define-actor
 ;; Processor's declared type
@@ -91,7 +91,7 @@
          (send p (variant Shutdown)))
        (goto Managing (list))])))
 
-(actors [manager (spawn M Manager)]))))
+(let-actors ([manager (spawn M Manager)]) manager manager))))
 
 (module+ test
   (require
@@ -104,7 +104,7 @@
    "main.rkt")
 
   (test-case "General test for the processor"
-    (define manager (csa-run weather-program))
+    (match-define-values (manager _) (csa-run weather-program))
     ;; 1. Get a new processor
     (define client (make-async-channel))
     (define mdest (make-async-channel))
@@ -177,8 +177,8 @@
       ))
 
   (define manager-spec
-    `(specification (receptionists [manager ,ManagerMessage]) (externals)
-       (obs-rec manager ,ManagerUserAPI ,ManagerSysAPI)
+    `(specification (receptionists [user-api ,ManagerUserAPI] [sys-api ,ManagerSysAPI]) (externals)
+       (mon-receptionist user-api)
        (goto Managing)
        (define-state (Managing)
          [(variant MakeProc resp mdest) -> () (goto Managing)]
