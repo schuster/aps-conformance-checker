@@ -1289,6 +1289,18 @@
       (machine-state `abs-nat `(() () ,INIT-HANDLER-MARKER))
       (machine-state `abs-nat `(([(marked (collective-addr (env Nat))) (marked (addr 2 0)) many]) () ,INIT-HANDLER-MARKER)))))
 
+  (test-case "Messages sent to internal actors are not marked"
+    (check-same-items?
+     (first
+      (eval-machine
+       `(begin
+          (send (marked (addr 0 0)) (marked (addr 2 0)))
+          abs-nat)
+       empty-effects
+       #f))
+     (list
+      (machine-state `abs-nat `(([(marked (addr 0 0)) (marked (addr 2 0)) single]) () ,INIT-HANDLER-MARKER)))))
+
   ;; NOTE: these are the old tests for checking sorting of loop-sent messages, which I don't do
   ;; anymore. Keeping them around in case I change my mind
   ;;
