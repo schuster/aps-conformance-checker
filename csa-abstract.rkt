@@ -696,7 +696,12 @@
     [`(= ,e1 ,e2)
      (eval-and-then* (list e1 e2) effects
        (lambda (vs effects)
-         (value-result `(variant True) `(variant False) effects))
+         (match-define (list v1 v2) vs)
+         ;; don't care about whether they're comparable to *each other*, just need to check that
+         ;; neither value contains an address
+         (if (and (address-free? v1) (address-free? v2))
+             (value-result `(variant True) `(variant False) effects)
+             (one-stuck-result `(= ,v1 ,v2) effects)))
        (lambda (stucks) `(= ,@stucks)))]
     ;; Lists and Hashes
     [`(,(and op (or 'list 'cons 'list-as-variant 'list-ref 'remove 'length 'append 'list-copy 'take 'drop 'hash-ref 'hash-keys 'hash-values 'hash-set 'hash-remove 'hash-has-key? 'hash-empty?))
@@ -734,18 +739,22 @@
              (normalize-collection `(list-val ,@(list-values v1) ,@(list-values v2)))
              effects)]
            [`(hash-ref (hash-val ,_ ,vals) ,k)
-            (apply value-result
-                   `(variant Nothing)
-                   (append (for/list ([val vals]) `(variant Just ,val))
-                           (list effects)))]
+            (if (address-free? k)
+                (apply value-result
+                       `(variant Nothing)
+                       (append (for/list ([val vals]) `(variant Just ,val))
+                               (list effects)))
+                (one-stuck-result `(hash-ref ,(first vs) ,k) effects))]
            [`(hash-keys (hash-val ,keys ,_))
             (value-result `(list-val ,@keys) effects)]
            [`(hash-values (hash-val ,_ ,values))
             (value-result `(list-val ,@values) effects)]
            [`(hash-set (hash-val ,keys ,vals) ,key ,val)
-            (value-result
-             (normalize-collection `(hash-val ,(cons key keys) ,(cons val vals)))
-             effects)]
+            (if (address-free? key)
+                (value-result
+                 (normalize-collection `(hash-val ,(cons key keys) ,(cons val vals)))
+                 effects)
+                (one-stuck-result `(hash-set (hash-val ,keys ,vals) ,key ,val) effects))]
            [`(hash-remove ,h ,k) (value-result h effects)]
            [`(hash-has-key? ,h ,k)
             (value-result `(variant True) `(variant False) effects)]
@@ -1095,8 +1104,9 @@
                           (list (term (variant True)) (term (variant False))))
   (check-exp-steps-to-all? (term (= abs-nat abs-nat))
                           (list (term (variant True)) (term (variant False))))
-  (check-exp-steps-to-all? (term (= (marked (collective-addr (env 1))) (marked (addr (env 1) 0))))
-                          (list (term (variant True)) (term (variant False))))
+  (check-exp-steps-to-all? ;; stuck state: can't check equality on addresses
+   (term (= (marked (collective-addr (env 1))) (marked (addr (env 1) 0))))
+   (list (term (= (marked (collective-addr (env 1))) (marked (addr (env 1) 0))))))
 
   ;; Tests for sorting when adding to lists and hashes
   ;; list
@@ -1355,6 +1365,60 @@
     (eval-machine `(begin (send (marked (addr 1 0)) abs-nat) (goto A)) empty-effects #f)
     (value-result `(goto A)
                   `((((marked (addr 1 0)) abs-nat single)) () ,INIT-HANDLER-MARKER))))
+
+;; Returns true if the given abstract value is something that can be checked for equality with = in
+;; CSA; #f otherwise.
+(define (address-free? v)
+  (match v
+    [`(marked ,_ ...) #f]
+    [`(variant ,_ ,args ...) (andmap address-free? args)]
+    [`(record [,_ ,args] ...) (andmap address-free? args)]
+    [`(folded ,_ ,v) (address-free? v)]
+    [`abs-nat #t]
+    [`abs-string #t]
+    [`(list-val ,vals ...) (andmap address-free? vals)]
+    [`(hash-val ,keys ,vals)
+     (and (andmap address-free? keys) (andmap address-free? vals))]
+    [_ (error 'address-free? "Not a valid abstract value: ~s\n" v)]))
+
+(module+ test
+  (test-true "numbers are address-free"
+    (address-free? 'abs-nat))
+
+  (test-true "strings are address-free"
+    (address-free? 'abs-string))
+
+  (test-true "variants without addresses are address-free"
+    (address-free? '(variant A abs-nat abs-string)))
+  (test-true "variants without addresses are address-free 2"
+    (address-free? '(variant A)))
+
+  (test-true "records without addresses are address-free"
+    (address-free? '(record [a abs-nat] [b abs-string])))
+
+  (test-true "lists without addresses are address-free"
+    (address-free? '(list-val abs-nat)))
+
+  (test-true "dictionaries without addresses are address-free"
+    (address-free? '(hash-val (abs-nat) (abs-string))))
+
+  (test-false "addresses are not address-free"
+    (address-free? `(marked (addr 1 0) 0)))
+
+  (test-false "addresses inside variants are not address-free"
+    (address-free? `(variant A (marked (addr 1 0) 0))))
+
+  (test-false "addresses inside records are not address-free"
+    (address-free? `(record [r (marked (addr 1 0) 0)])))
+
+  (test-false "addresses inside lists are not address-free"
+    (address-free? `(list-val (marked (addr 1 0) 0))))
+
+  (test-false "addresses inside dictionaries are not address-free"
+    (address-free? `(hash-val (abs-string) ((marked (addr 1 0) 0)))))
+
+  (test-false "folded types with addresses are not address-free"
+    (address-free? '(folded (minfixpt A (Addr A)) (marked (addr 1 0) 0)))))
 
 (define (list-values v)
   (match v
