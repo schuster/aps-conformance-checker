@@ -32,3 +32,8 @@ Misc. Notes
 All Redex operations should be contained into the various APS and CSA files -
 main.rkt should be Redex-agnostic (with the exception of constructing test
 cases).
+
+As of July 2018, there appears to be a performance regression in Racket 6.12
+that severely slows down performance. It appears related to using large
+S-expressions as keys in hash tables. Use Racket 6.11 or earlier for better
+performance.
