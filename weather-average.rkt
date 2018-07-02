@@ -183,7 +183,7 @@
        (define-state (Managing)
          [(variant MakeProc resp mdest) -> () (goto Managing)]
          [(variant MakeProc resp mdest) ->
-          ([obligation resp (fork ,@processor-spec-parts)])
+          ([obligation resp (fork-addr ,@processor-spec-parts)])
           (goto Managing)])))
 
   (test-true "Weather program conforms to spec"
