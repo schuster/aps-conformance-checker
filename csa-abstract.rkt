@@ -15,6 +15,7 @@
  csa#-abstract-config
  csa#-blur-config
  csa#-age-addresses
+ csa#-rename-addresses
  csa#-rename-markers
  internal-atomic-action?
  trigger-address
@@ -3701,12 +3702,11 @@
     (merge-receptionists
      (remove-receptionist (csa#-config-receptionists i) addr)
      all-new-receptionists))
-  (list (rename-address `(,remaining-actors
-                          ,remaining-blurred-actors
-                          ,non-evicted-packets
-                          ,updated-receptionists)
-                        addr
-                        `(collective-addr (env ,evicted-type)))
+  (list (csa#-rename-addresses `(,remaining-actors
+                                 ,remaining-blurred-actors
+                                 ,non-evicted-packets
+                                 ,updated-receptionists)
+                               `([,addr (collective-addr (env ,evicted-type))]))
         all-new-receptionists))
 
 (module+ test
@@ -3738,31 +3738,29 @@
   (test-equal? "sexp-by-path 1" (sexp-by-path `(foo (bar) baz) null) `(foo (bar) baz))
   (test-equal? "sexp-by-path 2" (sexp-by-path `(foo (bar (quux 2)) baz) (list 1 1 0)) `quux))
 
-(define (rename-address exp old new)
+(define (csa#-rename-addresses exp subst)
   (match exp
     [(or `(addr ,_ ,_) `(collective-addr ,_))
-     (if (equal? exp old)
-         new
-         (map (lambda (e) (rename-address e old new)) exp))]
-    [(list exps ...)
-     (map (lambda (e) (rename-address e old new)) exps)]
+     (match (assoc exp subst)
+       [#f exp]
+       [`(,_ ,new-addr) new-addr])]
+    [(list exps ...) (map (curryr csa#-rename-addresses subst) exps)]
     [_ exp]))
 
 (module+ test
-  (test-equal? "rename-address 1"
-    (rename-address 'foo `(addr 1 2) `(collective-addr (env Nat)))
+  (test-equal? "csa#-rename-addresses 1"
+    (csa#-rename-addresses 'foo `([(addr 1 2) (collective-addr (env Nat))]))
     'foo)
-  (test-equal? "rename-address 2"
-    (rename-address `(begin (addr 1 2)
-                            (addr 5 6))
-                    `(addr 1 2)
-                    `(collective-addr (env Nat)))
+  (test-equal? "csa#-rename-addresses 2"
+    (csa#-rename-addresses `(begin (addr 1 2)
+                                   (addr 5 6))
+                           `([(addr 1 2) (collective-addr (env Nat))]))
     `(begin (collective-addr (env Nat)) (addr 5 6)))
-  (test-equal? "rename-address 2"
-    (rename-address `(begin (collective-addr 2)
-                            (addr 5 6))
-                    `(collective-addr 2)
-                    `(collective-addr (env Nat)))
+  (test-equal? "csa#-rename-addresses 3"
+    (csa#-rename-addresses `(begin (collective-addr 2)
+                                   (addr 5 6))
+                           `([(collective-addr 2)
+                              (collective-addr (env Nat))]))
     `(begin (collective-addr (env Nat)) (addr 5 6))))
 
 ;; ---------------------------------------------------------------------------------------------------

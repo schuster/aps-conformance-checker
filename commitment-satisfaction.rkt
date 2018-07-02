@@ -695,18 +695,18 @@
                        (not (member prev-commitment (spec-step-satisfied-commitments s-step))))
               (define pred-vertex
                 (graph-find-or-add-vertex! G (list prev-config-pair prev-commitment)))
-              (graph-add-edge-if-new! G (list i-step s-step) pred-vertex vertex)
+              (graph-add-edge-if-new! G (list i-step s-step addr-map marker-map) pred-vertex vertex)
               (enqueue! worklist pred-vertex)))
 
           ;; Add vertices and edges from walking forwards
           (for ([the-full-step (hash-ref outgoing config-pair)])
             (match-define (full-step impl-step spec-step derivatives) the-full-step)
             (unless (member commitment (spec-step-satisfied-commitments spec-step))
-              (match-define (list derivative successor-commitment)
+              (match-define (list derivative addr-map marker-map successor-commitment)
                 (find-carrying-derivative derivatives commitment))
               (define successor-vertex
                 (graph-find-or-add-vertex! G (list derivative successor-commitment)))
-              (graph-add-edge-if-new! G (list impl-step spec-step) vertex successor-vertex)
+              (graph-add-edge-if-new! G (list impl-step spec-step addr-map marker-map) vertex successor-vertex)
               (enqueue! worklist successor-vertex)))
           (loop (set-add visited pair))])]))
   G)
@@ -724,22 +724,22 @@
                              [g (make-config-commitment-pair g-node 2 'W)]
                              [h (make-config-commitment-pair h-node 2 'W)]
                              [l (make-config-commitment-pair l-node 5 'W)])
-                   (edges [(list ag-impl-step ag-spec-step) a g]
-                          [(list gh-impl-step gh-spec-step) g h]
-                          [(list hg-impl-step hg-spec-step) h g]
-                          [(list al-impl-step al-spec-step) a l]
-                          [(list la-impl-step la-spec-step) l a])))
+                   (edges [(list ag-impl-step ag-spec-step null (make-com-sat-map 1 2)) a g]
+                          [(list gh-impl-step gh-spec-step null (make-com-sat-map 2 2)) g h]
+                          [(list hg-impl-step hg-spec-step null (make-com-sat-map 2 2)) h g]
+                          [(list al-impl-step al-spec-step null (make-com-sat-map 1 5)) a l]
+                          [(list la-impl-step la-spec-step null (make-com-sat-map 5 1)) l a])))
 
   (define com-sat-w-on-a-graph
     (graph-literal (vertices [a (make-config-commitment-pair a-node 1 'W)]
                              [g (make-config-commitment-pair g-node 2 'W)]
                              [h (make-config-commitment-pair h-node 2 'W)]
                              [l (make-config-commitment-pair l-node 5 'W)])
-                   (edges [(list ag-impl-step ag-spec-step) a g]
-                          [(list gh-impl-step gh-spec-step) g h]
-                          [(list hg-impl-step hg-spec-step) h g]
-                          [(list al-impl-step al-spec-step) a l]
-                          [(list la-impl-step la-spec-step) l a])))
+                   (edges [(list ag-impl-step ag-spec-step null (make-com-sat-map 1 2)) a g]
+                          [(list gh-impl-step gh-spec-step null (make-com-sat-map 2 2)) g h]
+                          [(list hg-impl-step hg-spec-step null (make-com-sat-map 2 2)) h g]
+                          [(list al-impl-step al-spec-step null (make-com-sat-map 1 5)) a l]
+                          [(list la-impl-step la-spec-step null (make-com-sat-map 5 1)) l a])))
 
   (test-graph-equal? "build-unsatisfying-graph: A with pattern W"
     (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'W)
@@ -757,13 +757,13 @@
                [i (make-config-commitment-pair i-node 3 'X)]
                [j (make-config-commitment-pair j-node 3 'X)]
                [k (make-config-commitment-pair k-node 4 'X)])
-     (edges [(list ai-impl-step ai-spec-step) a i]
-            [(list akm-impl-step akm-spec-step) a k]
-            [(list ba-impl-step ba-spec-step) b a]
-            [(list b-cd-impl-step bc-spec-step) b c]
-            [(list b-cd-impl-step bd-spec-step) b d]
-            [(list ij-impl-step ij-spec-step) i j]
-            [(list ji-impl-step ji-spec-step) j i])))
+     (edges [(list ai-impl-step ai-spec-step null (make-com-sat-map 1 3)) a i]
+            [(list akm-impl-step akm-spec-step null (make-com-sat-map 1 4)) a k]
+            [(list ba-impl-step ba-spec-step null (make-com-sat-map 1 1)) b a]
+            [(list b-cd-impl-step bc-spec-step null (make-com-sat-map 1 1)) b c]
+            [(list b-cd-impl-step bd-spec-step null (make-com-sat-map 1 1)) b d]
+            [(list ij-impl-step ij-spec-step null (make-com-sat-map 3 3)) i j]
+            [(list ji-impl-step ji-spec-step null (make-com-sat-map 3 3)) j i])))
 
   (test-graph-equal? "build-unsatisfying-graph: A with pattern X"
     (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'X)
@@ -786,22 +786,22 @@
                [j (make-config-commitment-pair j-node 3 'Z)]
                [k (make-config-commitment-pair k-node 4 'Z)]
                [l (make-config-commitment-pair l-node 5 'Z)])
-     (edges [(list ag-impl-step ag-spec-step) a g]
-            [(list ai-impl-step ai-spec-step) a i]
-            [(list akm-impl-step akm-spec-step) a k]
-            [(list al-impl-step al-spec-step) a l]
-            [(list ba-impl-step ba-spec-step) b a]
-            [(list b-cd-impl-step bc-spec-step) b c]
-            [(list b-cd-impl-step bd-spec-step) b d]
-            [(list b-ef-impl-step be-spec-step) b e]
-            [(list b-ef-impl-step bf-spec-step) b f]
-            [(list gh-impl-step gh-spec-step) g h]
-            [(list hg-impl-step hg-spec-step) h g]
-            [(list ia-impl-step ia-spec-step) i a]
-            [(list ij-impl-step ij-spec-step) i j]
-            [(list ja-impl-step ja-spec-step) j a]
-            [(list ji-impl-step ji-spec-step) j i]
-            [(list la-impl-step la-spec-step) l a])))
+     (edges [(list ag-impl-step ag-spec-step null (make-com-sat-map 1 2)) a g]
+            [(list ai-impl-step ai-spec-step null (make-com-sat-map 1 3)) a i]
+            [(list akm-impl-step akm-spec-step null (make-com-sat-map 1 4)) a k]
+            [(list al-impl-step al-spec-step  null (make-com-sat-map 1 5)) a l]
+            [(list ba-impl-step ba-spec-step null (make-com-sat-map 1 1)) b a]
+            [(list b-cd-impl-step bc-spec-step null (make-com-sat-map 1 1)) b c]
+            [(list b-cd-impl-step bd-spec-step null (make-com-sat-map 1 1)) b d]
+            [(list b-ef-impl-step be-spec-step null (make-com-sat-map 1 1)) b e]
+            [(list b-ef-impl-step bf-spec-step null (make-com-sat-map 1 1)) b f]
+            [(list gh-impl-step gh-spec-step null (make-com-sat-map 2 2)) g h]
+            [(list hg-impl-step hg-spec-step null (make-com-sat-map 2 2)) h g]
+            [(list ia-impl-step ia-spec-step null (make-com-sat-map 3 1)) i a]
+            [(list ij-impl-step ij-spec-step null (make-com-sat-map 3 3)) i j]
+            [(list ja-impl-step ja-spec-step null (make-com-sat-map 3 1)) j a]
+            [(list ji-impl-step ji-spec-step null (make-com-sat-map 3 3)) j i]
+            [(list la-impl-step la-spec-step null (make-com-sat-map 5 1)) l a])))
 
     (test-graph-equal? "build-unsatisfying-graph: A with pattern Z"
     (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'Z)
@@ -815,9 +815,9 @@
      (vertices [a (make-config-commitment-pair a-node 1 'V)]
                [n (make-config-commitment-pair n-node 1 'V)]
                [o (make-config-commitment-pair o-node 1 'V)])
-     (edges [(list an-impl-step an-spec-step) a n]
-            [(list no-impl-step no-spec-step) n o]
-            [(list on-impl-step on-spec-step) o n])))
+     (edges [(list an-impl-step an-spec-step null (make-com-sat-map 1 1)) a n]
+            [(list no-impl-step no-spec-step null (make-com-sat-map 1 1)) n o]
+            [(list on-impl-step on-spec-step null (make-com-sat-map 1 1)) o n])))
 
   (test-graph-equal? "build-unsatisfying-graph: A with pattern V"
     (build-unsatisfying-graph (make-config-commitment-pair a-node 1 'V)
@@ -826,7 +826,7 @@
                               com-sat-related-steps)
     com-sat-v-on-a-graph))
 
-;; mapped-derivative (List marker pattern) -> (List config-pair (List marker pattern))
+;; mapped-derivative (List marker pattern) -> (List config-pair addr-map marker-map (List marker pattern))
 ;;
 ;; Finds the derivative within the given list that carries the given commitment from the previous
 ;; configuration pair, returning both the derivative config pair as well as the new commitment
@@ -839,7 +839,9 @@
        (match (try-rename-marker (mapped-derivative-marker-map derivative) com-marker)
          [#f (loop derivatives)]
          [new-marker (list (mapped-derivative-config-pair derivative)
-                            (list new-marker (second commitment)))])]
+                           (mapped-derivative-address-map derivative)
+                           (mapped-derivative-marker-map derivative)
+                           (list new-marker (second commitment)))])]
       [(list) (error 'find-carrying-derivative
                      "Unable to find carrying derivative for ~s in ~s"
                      commitment
@@ -852,7 +854,7 @@
                                    (mapped-derivative 'C null (list `[1 4] `[5 2]))
                                    (mapped-derivative 'D null (list `[6 1]`[3 2])))
                              `(3 *))
-   (list 'D `(2 *))))
+   (list 'D null (list `[6 1] `[3 2]) `(2 *))))
 
 ;; Returns the vertex with the given value in the graph, or adds such a vertex if none exists and
 ;; returns it
@@ -960,46 +962,75 @@
 ;; no work to do, and every internal message is eventually received or no longer present as a *single*
 ;; message.
 (define (fair-scc? scc internally-enabled-actors internal-single-receives)
-  (define-values (all-actors-with-internal-work all-internal-single-receives)
-    (for/fold ([actors-with-work (set)]
-               [all-internal-single-receives (set)])
-              ([vertex scc])
-      (values
-       (set-union actors-with-work
-                  (list->set (hash-ref internally-enabled-actors (vertex-impl-config vertex))))
-       (set-union all-internal-single-receives
-                  (list->set (hash-ref internal-single-receives (vertex-impl-config vertex)))))))
+  ;; Memoize the results for reuse when visiting vertices from different directions
+  (define actors-that-run (mutable-set))
+  (define messages-received (mutable-set))
 
-  ;; TODO: shouldn't I be doing some kind of rename on every edge to see if the actor has been
-  ;; renamed? I think it wouldn't break anything in my particular setup, but generally I think it
-  ;; should
-  (and
-   ;; internal actors all execute:
-   (for/and ([actor-address all-actors-with-internal-work])
-     ;; action is disabled or taken in some state
-     (or
-      ;; actor is disabled in some vertex
-      (for/or ([v scc])
-        (not (set-member? (hash-ref internally-enabled-actors (vertex-impl-config v)) actor-address)))
-      ;; there exists an edge between two vertices of the SCC that takes the action
-      (for/or ([v scc])
-        (for/or ([out-edge (vertex-outgoing v)])
+  (define (actor-eventually-runs? curr-vertex actor-address seen-vertices) ; or is disabled
+    (cond
+      [(set-member? seen-vertices (list curr-vertex actor-address)) #f]
+      [(set-member? actors-that-run (list curr-vertex actor-address)) #t]
+      [(or
+        ;; actor is disabled here
+        (not (set-member? (hash-ref internally-enabled-actors (vertex-impl-config curr-vertex))
+                          actor-address))
+        ;; there exists an edge between two vertices of the SCC that takes the action
+        (for/or ([out-edge (vertex-outgoing curr-vertex)])
           (define edge-impl-step (first (edge-value out-edge)))
           (and (equal? (trigger-address (impl-step-trigger edge-impl-step)) actor-address)
-               (set-member? scc (edge-destination out-edge)))))))
-   ;; internal single receives all received:
-   (for/and ([trigger all-internal-single-receives])
-     ;; receive is disabled or taken in some state
-     (or
-      ;; receive is disabled in some vertex
-      (for/or ([v scc])
-        (not (set-member? (hash-ref internal-single-receives (vertex-impl-config v)) trigger)))
-      ;; there exists an edge between two vertices of the SCC that takes the action
-      (for/or ([v scc])
-        (for/or ([out-edge (vertex-outgoing v)])
+               (set-member? scc (edge-destination out-edge)))))
+       (set-add! actors-that-run (list curr-vertex actor-address))
+       #t]
+      [else
+       (set-add! seen-vertices (list curr-vertex actor-address))
+       (for/or ([out-edge (vertex-outgoing curr-vertex)])
+         (define addr-rename-map  (third (edge-value out-edge)))
+         (cond
+           [(and (set-member? scc (edge-destination out-edge))
+                 (actor-eventually-runs? (edge-destination out-edge)
+                                         (csa#-rename-addresses actor-address addr-rename-map)
+                                         seen-vertices))
+            (set-add! actors-that-run (list curr-vertex actor-address))
+            #t]
+           [else #f]))]))
+
+  (define (message-eventually-received? curr-vertex trigger seen-vertices)
+    (cond
+      [(set-member? seen-vertices (list curr-vertex trigger)) #f]
+      [(set-member? messages-received (list curr-vertex trigger)) #t]
+      [(or
+        ;; receive is disabled
+        (not (set-member? (hash-ref internal-single-receives (vertex-impl-config curr-vertex)) trigger))
+        ;; there exists an edge between two vertices of the SCC that takes the action
+        (for/or ([out-edge (vertex-outgoing curr-vertex)])
           (define edge-impl-step (first (edge-value out-edge)))
           (and (equal? (impl-step-trigger edge-impl-step) trigger)
-               (set-member? scc (edge-destination out-edge)))))))))
+               (set-member? scc (edge-destination out-edge)))))
+       (set-add! messages-received (list curr-vertex trigger))
+       #t]
+      [else
+       (set-add! seen-vertices (list curr-vertex trigger))
+       (for/or ([out-edge (vertex-outgoing curr-vertex)])
+         (match-define (list _ _ addr-rename-map marker-rename-map)
+           (edge-value out-edge))
+         (match-define `(,_ ,dest-addr ,message ,quant) trigger)
+         (define new-dest-addr (csa#-rename-addresses dest-addr addr-rename-map))
+         (define new-message
+           (csa#-rename-addresses (csa#-rename-markers message marker-rename-map) addr-rename-map))
+         (define new-trigger `(internal-receive ,new-dest-addr ,new-message ,quant))
+         (cond
+           [(and (set-member? scc (edge-destination out-edge))
+                 (message-eventually-received? (edge-destination out-edge) new-trigger seen-vertices))
+            (set-add! messages-received (list curr-vertex trigger))
+            #t]
+           [else #f]))]))
+
+  (for/and ([vertex scc])
+    (and
+     (for/and ([enabled-actor-addr (hash-ref internally-enabled-actors (vertex-impl-config vertex))])
+       (actor-eventually-runs? vertex enabled-actor-addr (mutable-set)))
+     (for/and ([enabled-message (hash-ref internal-single-receives (vertex-impl-config vertex))])
+       (message-eventually-received? vertex enabled-message (mutable-set))))))
 
 (module+ test
   (define (make-com-sat-scc g . vals)
@@ -1033,12 +1064,98 @@
                 (graph-literal
                  (vertices [n (make-config-commitment-pair n-node 1 'V)]
                            [o (make-config-commitment-pair o-node 1 'V)])
-                 (edges [(list no-impl-step no-spec-step) n o]
-                        [(list on-impl-step on-spec-step) o n]))
+                 (edges [(list no-impl-step no-spec-step null (make-com-sat-map 1 1)) n o]
+                        [(list on-impl-step on-spec-step null (make-com-sat-map 1 1)) o n]))
                 (make-config-commitment-pair n-node 1 'V)
                 (make-config-commitment-pair o-node 1 'V))
                com-sat-actors-with-work
-               com-sat-internal-single-receives)))
+               com-sat-internal-single-receives))
+
+  ;; TODO: write a similar test for markers on messages to handle
+  (test-case "fair-scc?: only one address runs, but renames means it's really both actors running"
+    (define a-node (sat-test-node 'A 1 '(X)))
+    (define b-node (sat-test-node 'B 1 '(X)))
+    (define test-impl-step (sat-impl-step `(timeout (addr 0 0))))
+    (define test-spec-step (sat-spec-step 1 'X))
+    (define test-addr-map `([(addr 0 0) (addr 0 1)] [(addr 0 1) (addr 0 0)]))
+    (check-true
+     (fair-scc?
+      (make-com-sat-scc
+       (graph-literal
+        (vertices [a (make-config-commitment-pair a-node 1 'X)]
+                  [b (make-config-commitment-pair b-node 1 'X)])
+        (edges [(list test-impl-step test-spec-step test-addr-map null) a b]
+               [(list test-impl-step test-spec-step test-addr-map null) b a]))
+       (make-config-commitment-pair a-node 1 'X)
+       (make-config-commitment-pair b-node 1 'X))
+      (immutable-hash ['A (set `(addr 0 0) `(addr 0 1))]
+                      ['B (set `(addr 0 0) `(addr 0 1))])
+      (immutable-hash ['A (set)] ['B (set)]))))
+
+  (test-case "fair-scc?: only one address runs, even with renames"
+    (define a-node (sat-test-node 'A 1 '(X)))
+    (define b-node (sat-test-node 'B 1 '(X)))
+    (define test-impl-step (sat-impl-step `(timeout (addr 0 0))))
+    (define test-spec-step (sat-spec-step 1 'X))
+    (check-false
+     (fair-scc?
+      (make-com-sat-scc
+       (graph-literal
+        (vertices [a (make-config-commitment-pair a-node 1 'X)]
+                  [b (make-config-commitment-pair b-node 1 'X)])
+        (edges [(list test-impl-step test-spec-step null null) a b]
+               [(list test-impl-step test-spec-step null null) b a]))
+       (make-config-commitment-pair a-node 1 'X)
+       (make-config-commitment-pair b-node 1 'X))
+      (immutable-hash ['A (set `(addr 0 0) `(addr 0 1))]
+                      ['B (set `(addr 0 0) `(addr 0 1))])
+      (immutable-hash ['A (set)] ['B (set)]))))
+
+  (test-case "fair-scc?: only one message is received, but renames means it's really both messages getting received"
+    (define a-node (sat-test-node 'A 1 '(X)))
+    (define b-node (sat-test-node 'B 1 '(X)))
+    (define test-impl-step (sat-impl-step `(internal-receive (addr 0 0) (marked (addr 2 1) 0) single)))
+    (define test-spec-step (sat-spec-step 1 'X))
+    (define test-marker-map `([0 1] [1 0]))
+    (check-true
+     (fair-scc?
+      (make-com-sat-scc
+       (graph-literal
+        (vertices [a (make-config-commitment-pair a-node 1 'X)]
+                  [b (make-config-commitment-pair b-node 1 'X)])
+        (edges [(list test-impl-step test-spec-step null test-marker-map) a b]
+               [(list test-impl-step test-spec-step null test-marker-map) b a]))
+       (make-config-commitment-pair a-node 1 'X)
+       (make-config-commitment-pair b-node 1 'X))
+      (immutable-hash ['A (set)]
+                      ['B (set)])
+      (immutable-hash ['A (set `(internal-receive (addr 0 0) (marked (addr 2 1) 0) single)
+                               `(internal-receive (addr 0 0) (marked (addr 2 1) 1) single))]
+                      ['B (set `(internal-receive (addr 0 0) (marked (addr 2 1) 0) single)
+                               `(internal-receive (addr 0 0) (marked (addr 2 1) 1) single))]))))
+
+  (test-case "fair-scc?: only one message is received, even with renames"
+    (define a-node (sat-test-node 'A 1 '(X)))
+    (define b-node (sat-test-node 'B 1 '(X)))
+    (define test-impl-step (sat-impl-step `(internal-receive (addr 0 0) (marked (addr 2 1) 0) single)))
+    (define test-spec-step (sat-spec-step 1 'X))
+    (define test-marker-map `([0 0] [1 1]))
+    (check-false
+     (fair-scc?
+      (make-com-sat-scc
+       (graph-literal
+        (vertices [a (make-config-commitment-pair a-node 1 'X)]
+                  [b (make-config-commitment-pair b-node 1 'X)])
+        (edges [(list test-impl-step test-spec-step null test-marker-map) a b]
+               [(list test-impl-step test-spec-step null test-marker-map) b a]))
+       (make-config-commitment-pair a-node 1 'X)
+       (make-config-commitment-pair b-node 1 'X))
+      (immutable-hash ['A (set)]
+                      ['B (set)])
+      (immutable-hash ['A (set `(internal-receive (addr 0 0) (marked (addr 2 1) 0) single)
+                               `(internal-receive (addr 0 0) (marked (addr 2 1) 1) single))]
+                      ['B (set `(internal-receive (addr 0 0) (marked (addr 2 1) 0) single)
+                               `(internal-receive (addr 0 0) (marked (addr 2 1) 1) single))])))))
 
 ;; Small helper; returns the implementation configuration associated with the given vertex of an
 ;; unsat-graph
