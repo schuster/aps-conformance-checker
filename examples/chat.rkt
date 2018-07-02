@@ -313,7 +313,7 @@
     (define-state (ServerAlways)
       [(variant GetRoomList callback) -> ([obligation callback *]) (goto ServerAlways)]
       [(variant JoinRoom * * handler) ->
-       ([obligation handler (variant JoinedRoom (fork ,@(room-spec-behavior 'handler)))])
+       ([obligation handler (variant JoinedRoom (fork-addr ,@(room-spec-behavior 'handler)))])
        (goto ServerAlways)])))
 
 (define chat-spec
@@ -324,7 +324,7 @@
        [(variant LogIn * * callback) ->
         ([obligation callback
                      (or (variant AuthenticationFailed)
-                         (variant AuthenticationSucceeded (delayed-fork ,@server-spec-behavior)))])
+                         (variant AuthenticationSucceeded (delayed-fork-addr ,@server-spec-behavior)))])
         (goto AuthAlways)])))
 
 (module+ test

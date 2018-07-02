@@ -49,8 +49,8 @@
   ;; output patterns
   (po *
       (or po ...)
-      (fork (goto φ u ...) Φ ...)
-      (delayed-fork (goto φ) Φ ...)
+      (fork-addr (goto φ u ...) Φ ...)
+      (delayed-fork-addr (goto φ) Φ ...)
       self
       (variant t po ...)
       (record [l po] ...))

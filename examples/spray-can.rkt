@@ -959,7 +959,7 @@
      (define-state (Init app-listener)
        [free ->
               ([obligation app-listener
-                           (variant HttpConnected * (delayed-fork ,@connection-spec-behavior))])
+                           (variant HttpConnected * (delayed-fork-addr ,@connection-spec-behavior))])
               (goto Done)])
      (define-state (Done))))
 
@@ -976,7 +976,7 @@
     (define-state (Connected app-listener)
       [free ->
              ([obligation app-listener
-                          (variant HttpConnected * (delayed-fork ,@connection-spec-behavior))])
+                          (variant HttpConnected * (delayed-fork-addr ,@connection-spec-behavior))])
              (goto Connected app-listener)]
       ;; Checker isn't precise enough to know that an unbind result will only be sent once, so we
       ;; have to write a spec that allows for many sends instead
@@ -999,7 +999,7 @@
      (define-state (Init bind-commander app-listener)
        [free ->
               ([obligation bind-commander (or (variant HttpCommandFailed)
-                                              (variant HttpBound (fork ,@listener-spec-behavior)))])
+                                              (variant HttpBound (fork-addr ,@listener-spec-behavior)))])
               (goto Done)])
      (define-state (Done))))
 
@@ -1011,7 +1011,7 @@
      (define-state (Running)
        [(variant HttpBind * commander app-listener) ->
         ([obligation commander (or (variant HttpCommandFailed)
-                                   (variant HttpBound (fork ,@listener-spec-behavior)))])
+                                   (variant HttpBound (fork-addr ,@listener-spec-behavior)))])
         (goto Running)])))
 
 (module+ test

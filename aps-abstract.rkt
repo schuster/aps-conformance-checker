@@ -94,11 +94,11 @@
   subst/aps#/po : po x mk -> po
   [(subst/aps#/po * _ _) *]
   [(subst/aps#/po (or po ...) x mk) (or (subst/aps#/po po x mk) ...)]
-  [(subst/aps#/po (fork (goto φ u ...) Φ ...) x mk)
-   (fork (goto φ (subst/aps#/u u x mk) ...)
+  [(subst/aps#/po (fork-addr (goto φ u ...) Φ ...) x mk)
+   (fork-addr (goto φ (subst/aps#/u u x mk) ...)
          Φ ...)]
-  [(subst/aps#/po (delayed-fork (goto φ) Φ ...) x mk)
-   (delayed-fork (goto φ) Φ ...)]
+  [(subst/aps#/po (delayed-fork-addr (goto φ) Φ ...) x mk)
+   (delayed-fork-addr (goto φ) Φ ...)]
   [(subst/aps#/po self _ _) self]
   [(subst/aps#/po (variant t po ...) x mk) (variant t (subst/aps#/po po x mk) ...)]
   [(subst/aps#/po (record [l po] ...) x mk) (record [l (subst/aps#/po po x mk)] ...)])
@@ -119,14 +119,14 @@
     (term [fork (goto A 1) (define-state (A) [* -> () (goto B x)])]))
 
   (test-equal? "Substitute into goto in an output obligation fork"
-    (term (subst/aps#/f [obligation 0 (variant A (fork (goto S x)))] x 1))
-    (term [obligation 0 (variant A (fork (goto S 1)))]))
+    (term (subst/aps#/f [obligation 0 (variant A (fork-addr (goto S x)))] x 1))
+    (term [obligation 0 (variant A (fork-addr (goto S 1)))]))
 
-  (test-equal? "Substitute for fork and delayed-fork"
-    (term (subst/aps#/f [obligation x (variant A (fork (goto B y)) (delayed-fork (goto C)))]
+  (test-equal? "Substitute for fork-addr and delayed-fork-addr"
+    (term (subst/aps#/f [obligation x (variant A (fork-addr (goto B y)) (delayed-fork-addr (goto C)))]
                         y
                         1))
-    (term [obligation x (variant A (fork (goto B 1)) (delayed-fork (goto C)))])))
+    (term [obligation x (variant A (fork-addr (goto B 1)) (delayed-fork-addr (goto C)))])))
 
 (define-judgment-form aps#
   #:mode (pattern-binds-var I I)
@@ -463,7 +463,7 @@
        ([1 *])]))
 
   (test-case "Immediate fork pattern transition"
-    (define fork-pattern `(fork (goto Z y) (define-state (Z y) [* -> () (goto Z y)])))
+    (define fork-pattern `(fork-addr (goto Z y) (define-state (Z y) [* -> () (goto Z y)])))
     (check-equal?
      (take-transition
       `[(1)
@@ -492,7 +492,7 @@
         ([6 self])))))
 
   (test-case "Delayed fork pattern transition"
-    (define fork-pattern `(delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)])))
+    (define fork-pattern `(delayed-fork-addr (goto Z) (define-state (Z) [* -> () (goto Z)])))
     (check-equal?
      (take-transition
       `((0)
@@ -558,7 +558,7 @@
   (test-equal? "perform 1"
     (perform
      (list `[obligation 1
-                        (fork (goto Z 2) (define-state (Z a) [* -> () (goto Z a)]))]))
+                        (fork-addr (goto Z 2) (define-state (Z a) [* -> () (goto Z a)]))]))
     `[([1 self])
       ([()
         (1 2)
@@ -567,11 +567,11 @@
         ()])
       ()])
 
-  (test-equal? "perform delayed-fork obligation"
+  (test-equal? "perform delayed-fork-addr obligation"
     (perform
      (list `[obligation 1
-                        (delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)]))]))
-    `(([1 (delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)]))])
+                        (delayed-fork-addr (goto Z) (define-state (Z) [* -> () (goto Z)]))]))
+    `(([1 (delayed-fork-addr (goto Z) (define-state (Z) [* -> () (goto Z)]))])
       ()
       ()))
 
@@ -589,12 +589,12 @@
 
   (test-equal? "perform multiple effects"
     (perform (list
-              `[obligation 1 (fork (goto Z 2) (define-state (Z a) [* -> () (goto Z a)]))]
-              `[obligation 3 (delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)]))]
+              `[obligation 1 (fork-addr (goto Z 2) (define-state (Z a) [* -> () (goto Z a)]))]
+              `[obligation 3 (delayed-fork-addr (goto Z) (define-state (Z) [* -> () (goto Z)]))]
               `[fork (goto A 4)]
               `[obligation 5 (variant A self)]))
     `[([5 (variant A self)]
-       [3 (delayed-fork (goto Z) (define-state (Z) [* -> () (goto Z)]))]
+       [3 (delayed-fork-addr (goto Z) (define-state (Z) [* -> () (goto Z)]))]
        [1 self])
       ([() (4) (goto A 4) () ()]
        [() (1 2) (goto Z 2) ((define-state (Z a) [* -> () (goto Z a)])) ()])
@@ -622,7 +622,7 @@
      (extract-sub-patterns
       pats
       (lambda (pats) `(record ,@(map (lambda (f p) `[,f ,p]) fields pats))))]
-    [`(fork ,goto ,state-defs ...)
+    [`(fork-addr ,goto ,state-defs ...)
      (list 'self
            (list `[()
                    ,(remove-duplicates (cons dest (aps#-goto-args goto)))
@@ -630,13 +630,13 @@
                    ,state-defs
                    ()])
            null)]
-    [`(delayed-fork ,_ ,_ ...) (list pattern null null)]
+    [`(delayed-fork-addr ,_ ,_ ...) (list pattern null null)]
     ['self (list pattern null (list dest))]))
 
 (module+ test
   (test-equal? "extract 1"
-    (extract `(or (fork (goto A 1))
-                  (fork (goto B 2)))
+    (extract `(or (fork-addr (goto A 1))
+                  (fork-addr (goto B 2)))
              3)
     `[(or self self)
       ([() (3 1) (goto A 1) () ()]
@@ -644,7 +644,7 @@
       ()])
 
   (test-equal? "extract fork"
-    (extract `(fork (goto A 1) (define-state (A x)))
+    (extract `(fork-addr (goto A 1) (define-state (A x)))
              2)
     `[self
       ([()
@@ -654,10 +654,10 @@
         ()])
       ()])
 
-  (test-equal? "extract delayed-fork"
-    (extract `(delayed-fork (goto B) (define-state (B)) (define-state (C)))
+  (test-equal? "extract delayed-fork-addr"
+    (extract `(delayed-fork-addr (goto B) (define-state (B)) (define-state (C)))
              2)
-    `[(delayed-fork (goto B) (define-state (B)) (define-state (C)))
+    `[(delayed-fork-addr (goto B) (define-state (B)) (define-state (C)))
       ()
       ()])
 
@@ -892,7 +892,7 @@
    ;; every sent-to-env address should have exactly *one* marker on it, because of the various
    ;; transformations
    (aps#-matches-po?/j (marked a# mk)
-                       (delayed-fork (goto φ) Φ ...)
+                       (delayed-fork-addr (goto φ) Φ ...)
                        ()
                        ([(mk) () (goto φ) (Φ ...) ()]))]
 
@@ -977,15 +977,15 @@
    null)
   (test-equal? "Spawn match po test"
     (aps#-match-po '(marked (addr 'foo 1) 2)
-                   '(delayed-fork (goto B) (define-state (B))))
+                   '(delayed-fork-addr (goto B) (define-state (B))))
     (list `[() ([(2) () (goto B) ((define-state (B))) ()])]))
   (test-equal? "Full match po test"
     (aps#-match-po '(variant A (marked (addr 'foo 1) 1) (marked (addr 2 0) 2))
-                   '(variant A (delayed-fork (goto B) (define-state (B))) self))
+                   '(variant A (delayed-fork-addr (goto B) (define-state (B))) self))
     (list `[(2) ([(1) () (goto B) ((define-state (B))) ()])]))
   (test-equal? "Fold test"
     (aps#-match-po `(folded (minfixpt X (Addr (Union [Done] [More X]))) (marked (addr 0 0) 1))
-                   '(delayed-fork (goto B) (define-state (B))))
+                   '(delayed-fork-addr (goto B) (define-state (B))))
     (list `[() ([(1) () (goto B) ((define-state (B))) ()])]))
   (test-equal? "'Or' pattern can match in multiple ways"
     (list->set (aps#-match-po `(marked (addr 1 0) 2) `(or * self)))
@@ -1099,7 +1099,7 @@
          (1)
          (goto S1)
          ((define-state (S1)))
-         ([1 (or * (delayed-fork (goto B)))]))))
+         ([1 (or * (delayed-fork-addr (goto B)))]))))
       (term ([(marked (addr (env (Addr Nat)) 1) 1) (marked (addr 2 0) 2) single]))))
     (set
      ;; result 1 (match against the fork)
@@ -1116,7 +1116,7 @@
            (goto B)
            ()
            ())))
-       ,(list (term [1 (or * (delayed-fork (goto B)))]))]
+       ,(list (term [1 (or * (delayed-fork-addr (goto B)))]))]
      ;; result 2 (match against *)
      `[,(list
          (term
@@ -1125,7 +1125,7 @@
            (goto S1)
            ((define-state (S1)))
            ())))
-       ,(list (term [1 (or * (delayed-fork (goto B)))]))]))
+       ,(list (term [1 (or * (delayed-fork-addr (goto B)))]))]))
 
   (test-equal? "Resolve against spawned spec"
     (aps#-resolve-outputs
@@ -1395,7 +1395,7 @@
       (1)
       (goto A 1)
       ((define-state (A x)
-         [free -> ([obligation x (delayed-fork (goto C) (define-state (C)))]) (goto B)]))
+         [free -> ([obligation x (delayed-fork-addr (goto C) (define-state (C)))]) (goto B)]))
       ()]
     1
     `(marked (addr 1 0) 2))
@@ -1403,14 +1403,14 @@
         (1)
         (goto B)
         ((define-state (A x)
-           [free -> ([obligation x [delayed-fork (goto C) (define-state (C))]]) (goto B)]))
+           [free -> ([obligation x [delayed-fork-addr (goto C) (define-state (C))]]) (goto B)]))
         ()]
        [(2)
         ()
         (goto C)
         ((define-state (C)))
         ()])
-      (delayed-fork (goto C) (define-state (C)))])))
+      (delayed-fork-addr (goto C) (define-state (C)))])))
 
 ;; s# mk v# (transition# ...) -> ([(s# ...) po] ...)
 ;;
@@ -1465,7 +1465,7 @@
      `[(1) ()])
     (list `[(1) () (goto A) ((define-state (A))) ()]))
 
-  (test-equal? "incorporate-output-match-results with delayed-fork"
+  (test-equal? "incorporate-output-match-results with delayed-fork-addr"
     (list->set
      (incorporate-output-match-results
       `(() () (goto A) ((define-state (A))) ([1 *]))
@@ -1717,8 +1717,8 @@
   (match pat
     ['self #t]
     [(? symbol?) #f]
-    [`(fork ,_ ...) #f]
-    [`(delayed-fork ,_ ...) #f]
+    [`(fork-addr ,_ ...) #f]
+    [`(delayed-fork-addr ,_ ...) #f]
     [`(or ,pats ...) (ormap pattern-contains-self? pats)]
     [`(variant ,_ ,pats ...) (ormap pattern-contains-self? pats)]
     [`(record [,_ ,pats] ...) (ormap pattern-contains-self? pats)]))
@@ -1726,7 +1726,7 @@
 (module+ test
   (test-false "pattern-contains-self?: self only in fork's state def"
     (pattern-contains-self?
-     `(fork (goto A) (define-state (A x) [free -> ([obligation x self]) (goto A x)]))))
+     `(fork-addr (goto A) (define-state (A x) [free -> ([obligation x self]) (goto A x)]))))
   (test-true "pattern-contains-self?: true"
     (pattern-contains-self? `(record [a *] [b self])))
     (test-true "pattern-contains-self?: true 2"
@@ -1736,9 +1736,9 @@
   (test-false "pattern-contains-self?: false"
     (pattern-contains-self? `(record [a *] [b (variant B)])))
   (test-false "pattern-contains-self?: false 2"
-    (pattern-contains-self? `(record [a (fork (goto A))] )))
+    (pattern-contains-self? `(record [a (fork-addr (goto A))] )))
   (test-false "pattern-contains-self?: false 3"
-    (pattern-contains-self? `(record [a (delayed-fork (goto A))] ))))
+    (pattern-contains-self? `(record [a (delayed-fork-addr (goto A))] ))))
 
 ;; Makes a PSM with no observed receptionist, a single observed external, and an FSM with no transitions. Used for
 ;; specifications where only the commitments are important.

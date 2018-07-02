@@ -36,6 +36,66 @@
     [PeerClosed]
     [ErrorClosed]))
 
+;; ---------------------------------------------------------------------------------------------------
+;; Desugared Types
+
+(define desugared-tcp-packet-type
+  `(Record
+    [source-port Nat]
+    [destination-port Nat]
+    [seq Nat]
+    [ack Nat]
+    [ack-flag Nat]
+    [rst Nat]
+    [syn Nat]
+    [fin Nat]
+    [window Nat]
+    [payload (List Nat)]))
+
+(define desugared-tcp-output
+  `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
+
+(define desugared-socket-address
+  `(Record [ip Nat] [port Nat]))
+
+(define desugared-session-id
+  `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
+
+(define desugared-write-response
+  `(Union
+    [CommandFailed]
+    [WriteAck]))
+
+(define desugared-session-command
+  `(Union
+    (Register (Addr ,desugared-tcp-session-event))
+    (Write (List Nat) (Addr ,desugared-write-response))
+    (Close (Addr (Union [CommandFailed] [Closed])))
+    (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
+    (Abort (Addr (Union [CommandFailed] [Aborted])))))
+
+(define desugared-connection-status
+  `(Union
+    [CommandFailed]
+    [Connected ,desugared-session-id
+               (Addr ,desugared-session-command)]))
+
+(define desugared-user-command
+  `(Union
+    [Connect ,desugared-socket-address (Addr ,desugared-connection-status)]
+    [Bind Nat
+          (Addr (Union [Bound] [CommandFailed]))
+          (Addr ,desugared-connection-status)]))
+
+(define desugared-tcp-input
+  `(Union
+    (InPacket Nat ,desugared-tcp-packet-type)
+    (UserCommand ,desugared-user-command)
+    (SessionCloseNotification ,desugared-session-id)))
+
+;; ---------------------------------------------------------------------------------------------------
+;; The Program
+
 (define tcp-definitions
   (quasiquote
 (
@@ -1312,13 +1372,16 @@
 
 (define tcp-program
   (desugar
-   `(program (receptionists [tcp TcpInput]) (externals [packets-out TcpOutput])
+   `(program (receptionists [tcp (Union [UserCommand ,desugared-user-command])]
+                            [tcp-unobs (Union [InPacket Nat ,desugared-tcp-packet-type])])
+             (externals [packets-out TcpOutput])
              ,@tcp-definitions
-             (actors [tcp (spawn 1 Tcp packets-out
-                                 ,wait-time-in-milliseconds
-                                 ,max-retries
-                                 ,max-segment-lifetime
-                                 ,user-response-wait-time)]))))
+             (let-actors ([tcp (spawn 1 Tcp packets-out
+                                      ,wait-time-in-milliseconds
+                                      ,max-retries
+                                      ,max-segment-lifetime
+                                      ,user-response-wait-time)])
+                         tcp tcp))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing
@@ -1439,7 +1502,8 @@
 
   (define (start-prog)
     (define packets-out (make-async-channel))
-    (values packets-out (csa-run tcp-program packets-out)))
+    (match-define-values (tcp _) (csa-run tcp-program packets-out))
+    (values packets-out tcp))
 
   ;; Test data
   (define remote-ip 500) ; we're faking IPs with natural numbers, so the actual number doesn't matter
@@ -2029,60 +2093,6 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Specification
 
-(define desugared-tcp-packet-type
-  `(Record
-    [source-port Nat]
-    [destination-port Nat]
-    [seq Nat]
-    [ack Nat]
-    [ack-flag Nat]
-    [rst Nat]
-    [syn Nat]
-    [fin Nat]
-    [window Nat]
-    [payload (List Nat)]))
-
-(define desugared-tcp-output
-  `(Union [OutPacket Nat ,desugared-tcp-packet-type]))
-
-(define desugared-socket-address
-  `(Record [ip Nat] [port Nat]))
-
-(define desugared-session-id
-  `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
-
-(define desugared-write-response
-  `(Union
-    [CommandFailed]
-    [WriteAck]))
-
-(define desugared-session-command
-  `(Union
-    (Register (Addr ,desugared-tcp-session-event))
-    (Write (List Nat) (Addr ,desugared-write-response))
-    (Close (Addr (Union [CommandFailed] [Closed])))
-    (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
-    (Abort (Addr (Union [CommandFailed] [Aborted])))))
-
-(define desugared-connection-status
-  `(Union
-    [CommandFailed]
-    [Connected ,desugared-session-id
-               (Addr ,desugared-session-command)]))
-
-(define desugared-user-command
-  `(Union
-    [Connect ,desugared-socket-address (Addr ,desugared-connection-status)]
-    [Bind Nat
-          (Addr (Union [Bound] [CommandFailed]))
-          (Addr ,desugared-connection-status)]))
-
-(define desugared-tcp-input
-  `(Union
-    (InPacket Nat ,desugared-tcp-packet-type)
-    (UserCommand ,desugared-user-command)
-    (SessionCloseNotification ,desugared-session-id)))
-
 (define tcp-session-program
   `(program (receptionists [launcher (Addr ConnectionStatus)])
             (externals [session-packet-dest (Addr (Union (InTcpPacket TcpPacket)))]
@@ -2111,11 +2121,12 @@
                   (send session-packet-dest session)
                   (goto Done)))
               (define-state (Done) (m) (goto Done)))
-            (actors [launcher (spawn launcher
-                                     Launcher
-                                     session-packet-dest
-                                     packets-out
-                                     close-notifications)])))
+            (let-actors ([launcher (spawn launcher
+                                          Launcher
+                                          session-packet-dest
+                                          packets-out
+                                          close-notifications)])
+                        launcher)))
 
 (define session-spec-behavior
   `((goto AwaitingRegistration)
@@ -2260,24 +2271,25 @@
     (externals [session-packet-dest (Addr (Union [InTcpPacket ,desugared-tcp-packet-type]))]
                [packets-out ,desugared-tcp-output]
                [close-notifications (Union [SessionCloseNotification ,desugared-session-id])])
-    (obs-rec launcher (Addr ,desugared-connection-status))
+    (mon-receptionist launcher)
     (goto Init)
     (define-state (Init)
       [status-updates ->
        ([obligation status-updates (or (variant CommandFailed)
-                                       (variant Connected * (delayed-fork ,@session-spec-behavior)))])
+                                       (variant Connected * (delayed-fork-addr ,@session-spec-behavior)))])
        (goto Done)])
     (define-state (Done)
       [* -> () (goto Done)])))
 
-;; (test-true "Conformance for session"
-;;   (check-conformance (desugar tcp-session-program) session-spec))
+;; (module+ test
+;;   (test-true "Conformance for session"
+;;     (check-conformance (desugar tcp-session-program) session-spec)))
 
 (define manager-spec
-  `(specification (receptionists [tcp ,desugared-tcp-input])
+  `(specification (receptionists [tcp (Union [UserCommand ,desugared-user-command])]
+                                 [tcp-unobs (Union [InPacket Nat ,desugared-tcp-packet-type])])
                   (externals [packets-out ,desugared-tcp-output])
-     (obs-rec tcp (Union [UserCommand ,desugared-user-command])
-                  (Union [InPacket Nat ,desugared-tcp-packet-type]))
+     (mon-receptionist tcp)
      (goto Managing)
      (define-state (Managing)
        [(variant UserCommand (variant Connect * status-updates)) ->
@@ -2286,7 +2298,7 @@
                  [free ->
                   ([obligation status-updates
                                (or (variant CommandFailed)
-                                   (variant Connected * (delayed-fork ,@session-spec-behavior)))])
+                                   (variant Connected * (delayed-fork-addr ,@session-spec-behavior)))])
                   (goto Done)])
                (define-state (Done))])
         (goto Managing)]
@@ -2305,11 +2317,12 @@
        ;;   [fork (goto MaybeGetConnection bind-handler)
        ;;         (define-state (MaybeGetConnection bind-handler)
        ;;           [free ->
-       ;;            ([obligation bind-handler (variant Connected * (fork ,@session-spec-behavior))])
+       ;;            ([obligation bind-handler (variant Connected * (fork-addr ,@session-spec-behavior))])
        ;;            (goto MaybeGetConnection bind-handler)])])
        ;;  (goto Managing)]
        ;; [(variant UserCommand (variant Connect * *)) -> () (goto Managing)])
      )))
+
 ;; Conformance Tests
 (module+ test
   (test-true "User command type" (csa-valid-type? desugared-user-command))

@@ -2485,7 +2485,7 @@
   (define echo-spawn-spec
     (term
      (((define-state (Always)
-         [r -> ([obligation r (delayed-fork
+         [r -> ([obligation r (delayed-fork-addr
                                (goto EchoResponse)
                                (define-state (EchoResponse)
                                  [er -> ([obligation er *]) (goto EchoResponse)]))])
@@ -2533,7 +2533,7 @@
     (term
      (((define-state (Always child-response never-use)
          [* -> ([obligation child-response
-                            (delayed-fork (goto ChildAlways)
+                            (delayed-fork-addr (goto ChildAlways)
                                           (define-state (ChildAlways)
                                             [* -> () (goto ChildAlways)]))])
             (goto Always child-response never-use)]))
@@ -2925,7 +2925,7 @@
   (define worker-spawner-spec
     (term
      (((define-state (Always)
-         [r -> ([obligation r (delayed-fork
+         [r -> ([obligation r (delayed-fork-addr
                                (goto Running)
                                (define-state (Running)
                                  [nr -> ([obligation nr *]) (goto Done)])
@@ -2965,7 +2965,7 @@
   (define ping-coercion-spawner-spec
     (term
      (((define-state (Always)
-         [r -> ([obligation r (delayed-fork
+         [r -> ([obligation r (delayed-fork-addr
                                (goto Ready)
                                (define-state (Ready)
                                  [(variant Ping r) -> ([obligation r (variant Pong)]) (goto Ready)]))])
@@ -3221,7 +3221,7 @@
   ;;   (term
   ;;    (((define-state (Always r)
   ;;        [* -> () (goto Always r)]
-  ;;        [free -> ([obligation r (delayed-fork
+  ;;        [free -> ([obligation r (delayed-fork-addr
   ;;                                  (goto A)
   ;;                                  (define-state (A)
   ;;                                    [r2 -> ([obligation r2 *]) (goto A)]))])
