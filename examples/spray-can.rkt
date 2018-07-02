@@ -498,7 +498,7 @@
                    (spawn request-handler RequestHandler (list 1 2 3) app-layer tcp)
                    (goto Done)))
         (define-state (Done) (m) (goto Done)))
-      (actors [launcher (spawn 1 Launcher app-layer tcp)]))))
+      (let-actors ([launcher (spawn 1 Launcher app-layer tcp)])))))
 
 (define connection-program
   (desugar
@@ -515,7 +515,7 @@
                      (spawn connection HttpServerConnection session-id app-listener tcp-session)
                      (goto Done))))
         (define-state (Done) (m) (goto Done)))
-      (actors [launcher (spawn 1 Launcher app-listener tcp-session)]))))
+      (let-actors ([launcher (spawn 1 Launcher app-listener tcp-session)])))))
 
 (define listener-program
   (desugar
@@ -535,14 +535,14 @@
                    (spawn listener HttpListener 80 bind-commander app-listener tcp)
                    (goto Done)))
         (define-state (Done) (m) (goto Done)))
-      (actors [launcher (spawn 1 Launcher bind-commander app-listener tcp)]))))
+      (let-actors ([launcher (spawn 1 Launcher bind-commander app-listener tcp)])))))
 
 (define manager-program
   (desugar
    `(program (receptionists [manager HttpManagerCommand])
              (externals [tcp TcpCommand])
       ,@spray-can-definitions
-      (actors [manager (spawn manager HttpManager tcp)]))))
+      (let-actors ([manager (spawn manager HttpManager tcp)]) manager))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Tests
@@ -954,7 +954,7 @@
   `(specification (receptionists)
                   (externals [app-listener ,desugared-http-listener-event]
                              [tcp-session ,desugared-tcp-session-command])
-     no-obs-rec
+     no-mon-receptionist
      (goto Init app-listener)
      (define-state (Init app-listener)
        [free ->
@@ -994,7 +994,7 @@
                   (externals [bind-commander ,desugared-http-bind-response]
                              [app-listener ,desugared-http-listener-event]
                              [tcp ,desugared-tcp-user-command])
-     no-obs-rec
+     no-mon-receptionist
      (goto Init bind-commander app-listener)
      (define-state (Init bind-commander app-listener)
        [free ->
@@ -1006,7 +1006,7 @@
 (define http-manager-spec
   `(specification (receptionists [manager ,desugared-http-manager-command])
                   (externals [tcp ,desugared-tcp-user-command])
-     (obs-rec manager ,desugared-http-manager-command)
+     (mon-receptionist manager)
      (goto Running)
      (define-state (Running)
        [(variant HttpBind * commander app-listener) ->
