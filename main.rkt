@@ -3235,4 +3235,27 @@
   ;;   (check-conformance/config
   ;;    (make-single-actor-config forks-in-for-loop-actor)
   ;;    (make-exclusive-spec forks-in-loop-spec)))
-  )
+
+  (test-true "Obligation satisfied by timeout always okay if the environment can't send to the actor (tricky obl patterns)"
+    (check-conformance/config
+     (make-empty-queues-config
+      null
+      (term
+       ([[Nat (marked (addr 0 0))]
+         (((define-state (Always [dest (Addr (Record [a (Union [A])] [b (Union [B])]))]) (m)
+             (goto Always dest)
+             [(timeout 5)
+              (begin
+                (send dest (record [a (variant A)] [b (variant B)]))
+                (goto Always dest))]))
+          (goto Always (marked (addr (env (Record [a (Union [A])] [b (Union [B])])) 1) 0)))])))
+     ;; PSM:
+     `[()
+       ()
+       (goto Always 0)
+       ((define-state (Always dest)
+          [free ->
+                ([obligation dest (record [a *] [b (variant B)])])
+                (goto Always dest)])
+        )
+       ([0 (record [a (variant A)] [b *])])])))
