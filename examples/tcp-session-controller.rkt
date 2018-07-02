@@ -33,7 +33,9 @@
 ;; session controller.
 
 (provide
+ make-tcp-program
  tcp-program
+ make-session-wire-spec
  session-wire-spec)
 
 (require
@@ -143,7 +145,7 @@
 (define remote-iss 1024)
 (define fin-seq 200)
 
-(define tcp-definitions
+(define (make-tcp-definitions bug1 bug2 bug3)
   (quasiquote
 (
 
@@ -530,12 +532,14 @@
            [(packet-rst? packet)
             (send octet-stream (ErrorClosed))
             (halt-with-notification)]
+           ,@(if bug1
            ;; APS PROTOCOL BUG: to replicate, remove this packet-syn? clause here, OR remove the
            ;; similar clause in Closing or TimeWait
-           [(packet-syn? packet)
-            (abort-connection)
-            (send octet-stream (ErrorClosed))
-            (halt-with-notification)]
+                 null
+                 `([(packet-syn? packet)
+                    (abort-connection)
+                    (send octet-stream (ErrorClosed))
+                    (halt-with-notification)]))
            [else
             (process-segment-text packet (variant True) octet-stream)
             ;; Finally, check for the FIN bit
@@ -747,12 +751,22 @@
          ;; APS PROTOCOL BUG (x2!):
          ;; to replicate bug 1: replace this cond with just (abort-connection)
          ;; to replicate bug 2: switch the tests on the cond (so abort-connection happens only for RST packets)
-         (cond
-           [(packet-rst? packet)
-            0]
-           [else
-            (abort-connection)
-            0])
+         ,@(cond
+             [bug2 `((abort-connection))]
+             [bug3
+              `((cond
+                  [(packet-rst? packet)
+                   (abort-connection)
+                   0]
+                  [else
+                   0]))]
+             [else
+              `((cond
+                  [(packet-rst? packet)
+                   0]
+                  [else
+                   (abort-connection)
+                   0]))])
          (goto Closed)]
         [(Register h) (goto Closed)]
         [(Write data handler)
@@ -774,7 +788,7 @@
         ;; shouldn't happen here:
         [(TimeWaitTimeout) (goto Closed)]))))))
 
-(define tcp-program
+(define (make-tcp-program bug1 bug2 bug3)
   (desugar
    `(program (receptionists
               [session (Union (OrderedTcpPacket ,desugared-tcp-packet-type))]
@@ -790,7 +804,7 @@
                         [send-buffer SendBufferCommand]
                         [status-updates ConnectionStatus]
                         [close-notifications (Union [SessionCloseNotification SessionId])])
-             ,@tcp-definitions
+             ,@(make-tcp-definitions bug1 bug2 bug3)
              (let-actors ([session (spawn 1
                                           TcpSession
                                           (record [remote-address (record [ip ,remote-ip] [port ,remote-port])]
@@ -806,6 +820,8 @@
                                           ,max-segment-lifetime
                                           ,user-response-wait-time)])
                          session session))))
+
+(define tcp-program (make-tcp-program #f #f #f))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing
@@ -1308,7 +1324,7 @@
                            [window *]
                            [payload *])))]))
 
-(define session-wire-spec
+(define (make-session-wire-spec bug4)
   `(specification (receptionists
                    [session (Union (OrderedTcpPacket ,desugared-tcp-packet-type))]
                    [session-unobs (Union
@@ -1336,9 +1352,11 @@
         ([obligation send-buffer (variant SendRst)])
         (goto Closed send-buffer)]
        ;; RST on an ACK: fail
-       [,(make-packet-pattern (variant Ack) (variant Rst) * *) ->
-        ()
-        (goto Closed send-buffer)]
+       ,@(if bug4
+             null
+             `([,(make-packet-pattern (variant Ack) (variant Rst) * *) ->
+                                                                       ()
+                                                                       (goto Closed send-buffer)]))
        ;; SYN-ACK: finish connecting (or fail, above)
        [,(make-packet-pattern (variant Ack) (variant NoRst) (variant Syn) *) ->
         ()
@@ -1447,6 +1465,8 @@
         ([obligation send-buffer (variant SendRst)])
         (goto Closed send-buffer)])))
 
+(define session-wire-spec (make-session-wire-spec #f))
+
 ;; Conformance Tests
 (module+ test
   (test-true "session input type" (csa-valid-type? desugared-session-input))
@@ -1455,3 +1475,6 @@
   (test-true "connection-status type" (csa-valid-type? desugared-connection-status))
   (test-true "Conformance for session controller"
     (check-conformance tcp-program session-wire-spec)))
+
+;; (require "../main.rkt")
+;; (check-conformance tcp-program session-wire-spec)
