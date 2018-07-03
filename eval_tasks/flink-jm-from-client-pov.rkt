@@ -4,4 +4,4 @@
  "../check-pair.rkt"
  "../examples/flink.rkt")
 
-(check-pair job-manager-program job-manager-client-pov-spec)
+(check-pair job-manager-program-client-pov job-manager-client-pov-spec)

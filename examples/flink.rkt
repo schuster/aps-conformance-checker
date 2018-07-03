@@ -4,9 +4,12 @@
 ;; in documents
 
 (provide
+ make-task-manager-program
  task-manager-program
  task-manager-spec
+ make-job-manager-program-client-pov
  job-manager-program-client-pov
+ make-job-manager-program-tm-pov
  job-manager-program-tm-pov
  job-manager-client-pov-spec
  job-manager-tm-pov-spec
@@ -20,7 +23,7 @@
 
 (define partition-chunk-size 3)
 
-(define flink-definitions
+(define (make-flink-definitions bug1 bug2)
   (quasiquote
 (
 ;; ---------------------------------------------------------------------------------------------------
@@ -355,8 +358,8 @@
           (goto Running idle-runners busy-runners)]
          [(Cons runner other-runners)
           (send runner (RunTask task))
-          ;; APS PROTOCOL BUG: to replicate, comment out this "send" line for the Acknowledge
-          (send ack-dest (Acknowledge (: task id)))
+          ;; APS PROTOCOL BUG:
+          ,@(if bug1 `() `((send ack-dest (Acknowledge (: task id)))))
           (goto Running other-runners (cons (BusyRunner (: task id) runner) busy-runners))])]
       [(CancelTask id ack-dest)
        (send ack-dest (Acknowledge id))
@@ -550,8 +553,8 @@
                  [partitions (Hash JobTaskId UsedPartition)]) (m)
     (case m
       [(RegisterTaskManager id slots address)
-       ;; APS PROTOCOL BUG: to replicate, comment out this "send" for AcknowledgeRegistration
-       (send address (AcknowledgeRegistration))
+       ;; APS PROTOCOL BUG:
+       ,@(if bug2 `() `((send address (AcknowledgeRegistration))))
        (let* ([task-managers (hash-set task-managers id (ManagedTaskManager address slots))]
               [submission-result (send-ready-tasks task-managers ready-tasks running-tasks)])
          (goto ManagingJobs
@@ -830,43 +833,49 @@
 (define task-runner-only-program
   (desugar
    `(program (receptionists [task-runner Nat]) (externals [job-manager Nat] [task-manager Nat])
-             ,@flink-definitions
+             ,@(make-flink-definitions #f #f)
              (let-actors ([task-runner (spawn task-runner-loc TaskRunner job-manager task-manager)])
                          task-runner))))
 
-(define task-manager-program
+(define (make-task-manager-program bug1 bug2)
   (desugar
    `(program (receptionists)
              (externals [job-manager ,desugared-tm-to-jm-type])
-             ,@flink-definitions
+             ,@(make-flink-definitions bug1 bug2)
              (let-actors ([creator (spawn creator-loc TaskManagerCreator job-manager)])))))
 
-(define job-manager-program-client-pov
+(define task-manager-program (make-task-manager-program #f #f))
+
+(define (make-job-manager-program-client-pov bug1 bug2)
   (desugar
    `(program (receptionists [job-manager ,desugared-job-manager-command]
                             [job-manager-unobs (Union [TaskManagerTerminated Nat])])
              (externals)
-             ,@flink-definitions
+             ,@(make-flink-definitions bug1 bug2)
              (let-actors ([job-manager (spawn jm-loc JobManager)]
                           [task-managers-creator
                            (spawn creator-loc TaskManagersCreator (list 1 2) job-manager)])
                job-manager job-manager))))
 
-(define job-manager-program-tm-pov
+(define job-manager-program-client-pov (make-job-manager-program-client-pov #f #f))
+
+(define (make-job-manager-program-tm-pov bug1 bug2)
   (desugar
    `(program (receptionists [job-manager ,desugared-tm-to-jm-type]
                             [job-manager-unobs (Union ,@(cdr desugared-job-manager-command) [TaskManagerTerminated Nat])])
              (externals)
-             ,@flink-definitions
+             ,@(make-flink-definitions bug1 bug2)
              (let-actors ([job-manager (spawn jm-loc JobManager)]
                           [task-managers-creator
                            (spawn creator-loc TaskManagersCreator (list 1 2) job-manager)])
                job-manager job-manager))))
 
+(define job-manager-program-tm-pov (make-job-manager-program-tm-pov #f #f))
+
 (define single-tm-job-manager-program
   (desugar
    `(program (receptionists [job-manager Nat] [task-manager1 Nat]) (externals)
-             ,@flink-definitions
+             ,@(make-flink-definitions #f #f)
              (let-actors ([job-manager (spawn jm-loc JobManager)]
                           [task-manager1 (spawn task-manager1-loc TaskManager 1 job-manager)]
                           [task-runner1 (spawn runner1-loc TaskRunner job-manager task-manager1)]
@@ -1005,7 +1014,7 @@
     (define task-manager-only-program
       (desugar
        `(program (receptionists [task-manager Nat]) (externals [job-manager Nat])
-                 ,@flink-definitions
+                 ,@(make-flink-definitions #f #f)
                  (let-actors ([task-manager (spawn task-manager-loc TaskManager 1 job-manager)])
                              task-manager))))
     (define jm (make-async-channel))
@@ -1186,8 +1195,7 @@
        [free ->
               ([obligation job-manager
                            (variant RegisterTaskManager * * self)])
-              ;; APS PROTOCOL BUG: to replicate, set the next state as (Registered job-manager)
-              ;; instead of Unregistered
+              ;; APS PROTOCOL BUG: (uncatchable as of July 2018)
               (goto Unregistered job-manager)])
      (define-state (Unregistered job-manager)
       [(variant JobManagerTerminated) -> () (goto Unregistered job-manager)]

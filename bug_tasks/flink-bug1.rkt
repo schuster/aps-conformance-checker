@@ -4,4 +4,4 @@
  "../check-pair.rkt"
  "../examples/flink.rkt")
 
-(check-pair job-manager-program-tm-pov job-manager-tm-pov-spec)
+(check-pair (make-task-manager-program #t #f) task-manager-spec)
