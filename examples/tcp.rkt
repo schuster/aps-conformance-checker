@@ -4,7 +4,9 @@
 ;; (http://doc.akka.io/docs/akka/current/scala/io-tcp.html)
 
 (provide
+ make-tcp-program
  tcp-program
+ make-manager-spec
  manager-spec)
 
 (require
@@ -96,7 +98,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; The Program
 
-(define tcp-definitions
+(define (make-tcp-definitions bug1 bug2)
   (quasiquote
 (
 
@@ -858,11 +860,12 @@
                (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)])]
            [else (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)])]
         [(RetransmitTimeout)
-         ;; APS PROTOCOL BUG: to replicate, replace this case expression with just
-         ;; (send status-updates (CommandFailed))
-         (case open
-           [(ActiveOpen) (send status-updates (CommandFailed)) 0]
-           [(PassiveOpen r) 0])
+         ;; APS PROTOCOL BUG:
+         ,(if bug1
+              `(send status-updates (CommandFailed))
+              `(case open
+                 [(ActiveOpen) (send status-updates (CommandFailed)) 0]
+                 [(PassiveOpen r) 0]))
          (halt-with-notification)]
         ;; None of these should happen at this point; ignore them
         [(Register h) (goto SynReceived snd-nxt rcv-nxt receive-buffer rxmt-timer)]
@@ -1142,16 +1145,17 @@
                 [(SentThenReceivedFin)
                  (cond
                    [all-data-is-acked?
-                    ;; APS PROTOCOL BUG: to replicate, uncomment the commented-out code below (this is
-                    ;; a duplicate send of ConfirmedClosed, which already happened before)
-                    ;;
-                    ;; (case close-type
-                    ;;   [(ConfirmedClose close-handler)
-                    ;;    (send octet-stream (ConfirmedClosed))
-                    ;;    (send close-handler (ConfirmedClosed))
-                    ;;    0]
-                    ;;   [(Close h) 0]
-                    ;;   [(PeerClose) 0])
+                    ;; APS PROTOCOL BUG: (this is a duplicate send of ConfirmedClosed, which already
+                    ;; happened before)
+                    ,@(if bug2
+                          `((case close-type
+                              [(ConfirmedClose close-handler)
+                               (send octet-stream (ConfirmedClosed))
+                               (send close-handler (ConfirmedClosed))
+                               0]
+                              [(Close h) 0]
+                              [(PeerClose) 0]))
+                          `())
                     (goto-TimeWait (: send-buffer send-next)
                                    rcv-nxt
                                    receive-buffer
@@ -1370,18 +1374,20 @@
         [(SessionCloseNotification session-id)
          (goto Ready (hash-remove session-table session-id) binding-table)]))))))
 
-(define tcp-program
+(define (make-tcp-program bug1 bug2)
   (desugar
    `(program (receptionists [tcp (Union [UserCommand ,desugared-user-command])]
                             [tcp-unobs (Union [InPacket Nat ,desugared-tcp-packet-type])])
              (externals [packets-out TcpOutput])
-             ,@tcp-definitions
+             ,@(make-tcp-definitions bug1 bug2)
              (let-actors ([tcp (spawn 1 Tcp packets-out
                                       ,wait-time-in-milliseconds
                                       ,max-retries
                                       ,max-segment-lifetime
                                       ,user-response-wait-time)])
                          tcp tcp))))
+
+(define tcp-program (make-tcp-program #f #f))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing
@@ -2098,7 +2104,7 @@
             (externals [session-packet-dest (Addr (Union (InTcpPacket TcpPacket)))]
                        [packets-out (Union [OutPacket IpAddress TcpPacket])]
                        [close-notifications (Union [SessionCloseNotification SessionId])])
-            ,@tcp-definitions
+            ,@(make-tcp-definitions #f #f)
             (define-actor Nat
               (Launcher [session-packet-dest (Addr (Addr (Union (InTcpPacket TcpPacket))))]
                         [packets-out (Addr (Union [OutPacket IpAddress TcpPacket]))]
@@ -2128,7 +2134,7 @@
                                           close-notifications)])
                         launcher)))
 
-(define session-spec-behavior
+(define (make-session-spec-behavior bug3 bug4)
   `((goto AwaitingRegistration)
 
     (define-state (AwaitingRegistration)
@@ -2148,9 +2154,8 @@
        (goto ClosedNoHandler)]
       ;; e.g. might close because of a registration timeout
       ;;
-      ;; APS PROTOCOL BUG: to replicate, comment out this unobs transition (didn't realize at first
-      ;; this was a possibility)
-      [free -> () (goto ClosedNoHandler)])
+      ;; APS PROTOCOL BUG: didn't realize at first this transition was a possibility
+      ,@(if bug3 `() `([free -> () (goto ClosedNoHandler)])))
 
     (define-state (Connected app-handler)
       [(variant Register other-app-handler) -> () (goto Connected app-handler)]
@@ -2217,7 +2222,7 @@
       ;; NOTE: again, no response on close-handler. Again, intentional
       ;;
       ;; APS PROTOCOL BUG: to replicate, comment out this unobs transition
-      [free -> () (goto ClosedNoHandler)])
+      ,@(if bug4 `() `([free -> () (goto ClosedNoHandler)])))
 
     (define-state (ClosedNoHandler)
       [(variant Register app-handler) -> () (goto ClosedNoHandler)]
@@ -2276,7 +2281,7 @@
     (define-state (Init)
       [status-updates ->
        ([obligation status-updates (or (variant CommandFailed)
-                                       (variant Connected * (delayed-fork-addr ,@session-spec-behavior)))])
+                                       (variant Connected * (delayed-fork-addr ,@(make-session-spec-behavior #f #f))))])
        (goto Done)])
     (define-state (Done)
       [* -> () (goto Done)])))
@@ -2285,7 +2290,7 @@
 ;;   (test-true "Conformance for session"
 ;;     (check-conformance (desugar tcp-session-program) session-spec)))
 
-(define manager-spec
+(define (make-manager-spec bug3 bug4)
   `(specification (receptionists [tcp (Union [UserCommand ,desugared-user-command])]
                                  [tcp-unobs (Union [InPacket Nat ,desugared-tcp-packet-type])])
                   (externals [packets-out ,desugared-tcp-output])
@@ -2298,7 +2303,7 @@
                  [free ->
                   ([obligation status-updates
                                (or (variant CommandFailed)
-                                   (variant Connected * (delayed-fork-addr ,@session-spec-behavior)))])
+                                   (variant Connected * (delayed-fork-addr ,@(make-session-spec-behavior bug3 bug4))))])
                   (goto Done)])
                (define-state (Done))])
         (goto Managing)]
@@ -2322,6 +2327,8 @@
        ;;  (goto Managing)]
        ;; [(variant UserCommand (variant Connect * *)) -> () (goto Managing)])
      )))
+
+(define manager-spec (make-manager-spec #f #f))
 
 ;; Conformance Tests
 (module+ test
