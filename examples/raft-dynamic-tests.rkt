@@ -463,132 +463,153 @@
     (async-channel-put server (variant RequestVote 4 peer1-member 0 0))
     (check-unicast peer1 (variant DeclineCandidate 4 server-id))))
 
-;; ;; ---------------------------------------------------------------------------------------------------
-;; ;; Leader tests
+;; ---------------------------------------------------------------------------------------------------
+;; Leader tests
 
-;; (module+ test
-;;   (test-case "Leader periodically sends heartbeat"
-;;     (match-define (list server peer1 peer2 _ _ _ _) (make-leader-in-term 2))
-;;     (async-channel-put server (variant SendHeartbeatTimeouts 1)) ; timeout ID doesn't matter here
-;;     (define heartbeat
-;;       (variant AppendEntries 2 0 0 (list) 0 server server))
-;;     (check-unicast peer1 heartbeat)
-;;     (check-unicast peer2 heartbeat))
+(module+ test
+  (test-case "Leader periodically sends heartbeat"
+    (match-define (list server peer1 peer2 _ _ _ _) (make-leader-in-term 2))
+    (define server-member (RaftMember server-id server))
+    (async-channel-put server (variant SendHeartbeatTimeouts 1)) ; timeout ID doesn't matter here
+    (define heartbeat
+      (variant AppendEntries 2 0 0 (list) 0 server-member server))
+    (check-unicast peer1 heartbeat)
+    (check-unicast peer2 heartbeat))
 
-;;   (test-case "Leader commits entry when replicated to majority of cluster and replies to client"
-;;     (match-define (list server peer1 peer2 _ _ applications _) (make-leader-in-term 1))
-;;     (define client (make-async-channel))
-;;     (async-channel-put server (variant ClientMessage client "a"))
-;;     (define append-message
-;;       (variant AppendEntries 1 0 0 (list (Entry "a" 1 1 client)) 0 server server))
-;;     (check-unicast peer1 append-message)
-;;     (check-unicast peer2 append-message)
-;;     (async-channel-put server (variant AppendSuccessful 1 1 peer1))
-;;     (check-unicast client (variant CommitSuccess "a"))
-;;     (check-unicast applications "a"))
+  (test-case "Leader commits entry when replicated to majority of cluster and replies to client"
+    (match-define (list server peer1 peer2 _ _ applications _) (make-leader-in-term 1))
+    (define server-member (RaftMember server-id server))
+    (define peer1-member (RaftMember peer1-id peer1))
+    (define client (make-async-channel))
+    (async-channel-put server (variant ClientMessage client "a"))
+    (define append-message
+      (variant AppendEntries 1 0 0 (list (Entry "a" 1 1 client)) 0 server-member server))
+    (check-unicast peer1 append-message)
+    (check-unicast peer2 append-message)
+    (async-channel-put server (variant AppendSuccessful 1 1 peer1-member))
+    (check-unicast client (variant CommitSuccess "a"))
+    (check-unicast applications "a"))
 
-;;   (test-case "Leader does not commit previous term messages until replicating a message of its own"
-;;     ;; 1. someone else is leader and sends a message
-;;     (define client1 (make-async-channel))
-;;     (match-define (list server peer1 peer2 timer-manager applications _) (make-peer1-follower-in-term 1))
-;;     (async-channel-put server (variant AppendEntries 1 0 0 (list (Entry "a" 1 1 client1)) 0 peer1 junk-channel))
-;;     (check-unicast-match peer1 (csa-variant AppendSuccessful _ _ _))
-;;     (define timeout-id (check-unicast-match timer-manager (csa-variant SetTimer _ _ id _ _) #:result id))
-;;     ;; 2. timeout and become leader
-;;     (async-channel-put server (variant Timeout timeout-id))
-;;     (check-unicast peer1 (variant RequestVote 2 server 1 1))
-;;     (async-channel-put server (variant VoteCandidate 2 peer1))
-;;     ;; 3. async-channel-put heartbeat, check for no commit
-;;     (check-unicast peer1 (variant AppendEntries 2 1 1 (list) 0 server server))
-;;     (check-no-message applications)
-;;     ;; 4. async-channel-put new response (client), check for commit of both after
-;;     (define client2 (make-async-channel))
-;;     (async-channel-put server (variant ClientMessage client2 "b"))
-;;     (check-unicast peer1 (variant AppendEntries 2 1 1 (list (Entry "b" 2 2 client2)) 0 server server))
-;;     (async-channel-put server (variant AppendSuccessful 2 2 peer1))
-;;     (check-unicast applications "a")
-;;     (check-unicast applications "b"))
+  (test-case "Leader does not commit previous term messages until replicating a message of its own"
+    ;; 1. someone else is leader and sends a message
+    (define client1 (make-async-channel))
+    (match-define (list server peer1 peer2 timer-manager applications _) (make-peer1-follower-in-term 1))
+    (define server-member (RaftMember server-id server))
+    (define peer1-member (RaftMember peer1-id peer1))
+    (async-channel-put server (variant AppendEntries 1 0 0 (list (Entry "a" 1 1 client1)) 0 peer1-member junk-channel))
+    (check-unicast-match peer1 (csa-variant AppendSuccessful _ _ _))
+    (define timeout-id (check-unicast-match timer-manager (csa-variant SetTimer _ _ id _ _) #:result id))
+    ;; 2. timeout and become leader
+    (async-channel-put server (variant Timeout timeout-id))
+    (check-unicast peer1 (variant RequestVote 2 server-member 1 1))
+    (async-channel-put server (variant VoteCandidate 2 peer1-id))
+    ;; 3. async-channel-put heartbeat, check for no commit
+    (check-unicast peer1 (variant AppendEntries 2 1 1 (list) 0 server-member server))
+    (check-no-message applications)
+    ;; 4. async-channel-put new response (client), check for commit of both after
+    (define client2 (make-async-channel))
+    (async-channel-put server (variant ClientMessage client2 "b"))
+    (check-unicast peer1 (variant AppendEntries 2 1 1 (list (Entry "b" 2 2 client2)) 0 server-member server))
+    (async-channel-put server (variant AppendSuccessful 2 2 peer1-member))
+    (check-unicast applications "a")
+    (check-unicast applications "b"))
 
-;;   (test-case "Leader steps down on receiving RequestVote for later term"
-;;     (match-define (list server peer1 peer2 _ _ _ _) (make-leader-in-term 1))
-;;     (async-channel-put server (variant RequestVote 2 peer1 0 0))
-;;     (check-unicast peer1 (variant VoteCandidate 2 server))
-;;     (async-channel-put server (variant RequestVote 3 peer2 0 0))
-;;     (check-unicast peer2 (variant VoteCandidate 3 server)))
+  (test-case "Leader steps down on receiving RequestVote for later term"
+    (match-define (list server peer1 peer2 _ _ _ _) (make-leader-in-term 1))
+    (define peer1-member (RaftMember peer1-id peer1))
+    (define peer2-member (RaftMember peer2-id peer2))
+    (async-channel-put server (variant RequestVote 2 peer1-member 0 0))
+    (check-unicast peer1 (variant VoteCandidate 2 server-id))
+    (async-channel-put server (variant RequestVote 3 peer2-member 0 0))
+    (check-unicast peer2 (variant VoteCandidate 3 server-id)))
 
-;;   (test-case "Leader responds with current term to RequestVote for earlier term"
-;;     (match-define (list server peer1 _ _ _ _ _) (make-leader-in-term 2))
-;;     (async-channel-put server (variant RequestVote 1 peer1 0 0))
-;;     (check-unicast peer1 (variant DeclineCandidate 2 server)))
+  (test-case "Leader responds with current term to RequestVote for earlier term"
+    (match-define (list server peer1 _ _ _ _ _) (make-leader-in-term 2))
+    (define peer1-member (RaftMember peer1-id peer1))
+    (async-channel-put server (variant RequestVote 1 peer1-member 0 0))
+    (check-unicast peer1 (variant DeclineCandidate 2 server-id)))
 
-;;   (test-case "Leader steps down on receiving AppendEntries for later term"
-;;     (match-define (list server peer1 peer2 _ _ _ _) (make-leader-in-term 1))
-;;     (async-channel-put server (variant AppendEntries 2 0 0 (list) 0 peer1 junk-channel))
-;;     (check-unicast peer1 (variant AppendSuccessful 2 0 server))
-;;     (async-channel-put server (variant RequestVote 3 peer2 0 0))
-;;     (check-unicast peer2 (variant VoteCandidate 3 server)))
+  (test-case "Leader steps down on receiving AppendEntries for later term"
+    (match-define (list server peer1 peer2 _ _ _ _) (make-leader-in-term 1))
+    (define server-member (RaftMember server-id server))
+    (define peer1-member (RaftMember peer1-id peer1))
+    (define peer2-member (RaftMember peer2-id peer2))
+    (async-channel-put server (variant AppendEntries 2 0 0 (list) 0 peer1-member junk-channel))
+    (check-unicast peer1 (variant AppendSuccessful 2 0 server-member))
+    (async-channel-put server (variant RequestVote 3 peer2-member 0 0))
+    (check-unicast peer2 (variant VoteCandidate 3 server-id)))
 
-;;   ;; OLD test: would send back entries instead of an AppendRejected, which does not follow the
-;;   ;; protocol
-;;   ;; (test-case "Leader responds with current term to AppendEntries for earlier term"
-;;   ;;   (match-define (list server peer1 _ _ _ _ _) (make-leader-in-term 2))
-;;   ;;   (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 peer1 junk-channel))
-;;   ;;   (check-unicast peer1 (variant AppendEntries 2 0 0 (list) 0 server server)))
+  ;; OLD test: would send back entries instead of an AppendRejected, which does not follow the
+  ;; protocol
+  ;; (test-case "Leader responds with current term to AppendEntries for earlier term"
+  ;;   (match-define (list server peer1 _ _ _ _ _) (make-leader-in-term 2))
+  ;;   (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 peer1 junk-channel))
+  ;;   (check-unicast peer1 (variant AppendEntries 2 0 0 (list) 0 server server)))
 
-;;   (test-case "Leader responds with current term to AppendEntries for earlier term"
-;;     (match-define (list server peer1 _ _ _ _ _) (make-leader-in-term 2))
-;;     (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 peer1 junk-channel))
-;;     (check-unicast peer1 (variant AppendRejected 2 0 server)))
+  (test-case "Leader responds with current term to AppendEntries for earlier term"
+    (match-define (list server peer1 _ _ _ _ _) (make-leader-in-term 2))
+    (define server-member (RaftMember server-id server))
+    (define peer1-member (RaftMember peer1-id peer1))
+    (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 peer1-member junk-channel))
+    (check-unicast peer1 (variant AppendRejected 2 0 server-member)))
 
-;;   (test-case "Leader ignores incoming votes"
-;;     (match-define (list server peer1 peer2 _ _ _ _) (make-leader-in-term 1))
-;;     (async-channel-put server (variant VoteCandidate 1 peer1))
-;;     (async-channel-put server (variant DeclineCandidate 1 peer2))
-;;     (tick)
+  (test-case "Leader ignores incoming votes"
+    (match-define (list server peer1 peer2 _ _ _ _) (make-leader-in-term 1))
+    (define server-member (RaftMember server-id server))
+    (async-channel-put server (variant VoteCandidate 1 peer1-id))
+    (async-channel-put server (variant DeclineCandidate 1 peer2-id))
+    (tick)
 
-;;     (define client (make-async-channel))
-;;     (async-channel-put server (variant ClientMessage client "a"))
-;;     (define append-message
-;;       (variant AppendEntries 1 0 0 (list (Entry "a" 1 1 client)) 0 server server))
-;;     (check-unicast peer1 append-message)
-;;     (check-unicast peer2 append-message))
+    (define client (make-async-channel))
+    (async-channel-put server (variant ClientMessage client "a"))
+    (define append-message
+      (variant AppendEntries 1 0 0 (list (Entry "a" 1 1 client)) 0 server-member server))
+    (check-unicast peer1 append-message)
+    (check-unicast peer2 append-message))
 
-;;   (test-case "Leader responds to rejected append with a previous log entry"
-;;     ;; 1. As a follower, receive 5 entries
-;;     (match-define (list server peer1 peer2 timer-manager _ _) (make-peer1-follower-in-term 1))
-;;     (define entries (list (Entry "a" 1 1 junk-channel)
-;;                                       (Entry "b" 1 2 junk-channel)
-;;                                       (Entry "c" 1 3 junk-channel)
-;;                                       (Entry "d" 1 4 junk-channel)
-;;                                       (Entry "e" 1 5 junk-channel)))
-;;     (async-channel-put server
-;;           (variant AppendEntries 1 0 0 entries 0 peer1 junk-channel))
-;;     ;; 2. Timeout and become leader
-;;     (define timeout-id (check-unicast-match timer-manager (csa-variant SetTimer _ _ id _ _) #:result id))
-;;     (async-channel-put server (variant Timeout timeout-id))
-;;     (check-unicast peer2 (variant RequestVote 2 server 1 5))
-;;     (async-channel-put server (variant VoteCandidate 2 peer1))
-;;     (check-unicast-match peer2 (csa-variant AppendEntries _ _ _ _ _ _ _)) ; initial heartbeat
-;;     ;; 3. Receive a client message and broadcast AppendEntries at log index 6
-;;     (async-channel-put server (variant ClientMessage junk-channel "f"))
-;;     (check-unicast peer2 (variant AppendEntries 2 1 5 (list (Entry "f" 2 6 junk-channel)) 0 server server))
-;;     ;; 4. Receive rejection, async-channel-put AppendEntries to peer2 with indices 1-5
-;;     (async-channel-put server (variant AppendRejected 2 0 peer2))
-;;     (check-unicast peer2 (variant AppendEntries 2 0 0 entries 0 server server)))
+  (test-case "Leader responds to rejected append with a previous log entry"
+    ;; 1. As a follower, receive 5 entries
+    (match-define (list server peer1 peer2 timer-manager _ _) (make-peer1-follower-in-term 1))
+    (define server-member (RaftMember server-id server))
+    (define peer1-member (RaftMember peer1-id peer1))
+    (define peer2-member (RaftMember peer2-id peer2))
+    (define entries (list (Entry "a" 1 1 junk-channel)
+                                      (Entry "b" 1 2 junk-channel)
+                                      (Entry "c" 1 3 junk-channel)
+                                      (Entry "d" 1 4 junk-channel)
+                                      (Entry "e" 1 5 junk-channel)))
+    (async-channel-put server
+          (variant AppendEntries 1 0 0 entries 0 peer1-member junk-channel))
+    ;; 2. Timeout and become leader
+    (define timeout-id (check-unicast-match timer-manager (csa-variant SetTimer _ _ id _ _) #:result id))
+    (async-channel-put server (variant Timeout timeout-id))
+    (check-unicast peer2 (variant RequestVote 2 server-member 1 5))
+    (async-channel-put server (variant VoteCandidate 2 peer1-id))
+    (check-unicast-match peer2 (csa-variant AppendEntries _ _ _ _ _ _ _)) ; initial heartbeat
+    ;; 3. Receive a client message and broadcast AppendEntries at log index 6
+    (async-channel-put server (variant ClientMessage junk-channel "f"))
+    (check-unicast peer2 (variant AppendEntries 2 1 5 (list (Entry "f" 2 6 junk-channel)) 0 server-member server))
+    ;; 4. Receive rejection, async-channel-put AppendEntries to peer2 with indices 1-5
+    (async-channel-put server (variant AppendRejected 2 0 peer2-member))
+    (check-unicast peer2 (variant AppendEntries 2 0 0 entries 0 server-member server)))
 
-;;   (test-case "Leaders should check if candidate's log is up to date before granting vote"
-;;     (match-define (list server peer1 peer2 _ timeouts _ timeout-id) (make-leader-in-term 1))
-;;     (async-channel-put server  (variant ClientMessage junk-channel "a"))
-;;     (check-unicast peer1 (variant AppendEntries 1 0 0 (list (Entry "a" 1 1 junk-channel)) 0 server server))
-;;     (async-channel-put server (variant RequestVote 2 peer1 0 0))
-;;     (check-unicast peer1 (variant DeclineCandidate 2 server)))
+  (test-case "Leaders should check if candidate's log is up to date before granting vote"
+    (match-define (list server peer1 peer2 _ timeouts _ timeout-id) (make-leader-in-term 1))
+    (define server-member (RaftMember server-id server))
+    (define peer1-member (RaftMember peer1-id peer1))
+    (async-channel-put server  (variant ClientMessage junk-channel "a"))
+    (check-unicast peer1 (variant AppendEntries 1 0 0 (list (Entry "a" 1 1 junk-channel)) 0 server-member server))
+    (async-channel-put server (variant RequestVote 2 peer1-member 0 0))
+    (check-unicast peer1 (variant DeclineCandidate 2 server-id)))
 
-;;   (test-case "Leader steps down after RequestVote with newer term but older log"
-;;     (match-define (list server peer1 peer2 _ timeouts _ timeout-id) (make-leader-in-term 1))
-;;     (async-channel-put server  (variant ClientMessage junk-channel "a"))
-;;     (check-unicast peer1 (variant AppendEntries 1 0 0 (list (Entry "a" 1 1 junk-channel)) 0 server server))
-;;     (async-channel-put server (variant RequestVote 2 peer1 0 0))
-;;     (check-unicast peer1 (variant DeclineCandidate 2 server))
-;;     (define client (make-async-channel))
-;;     (async-channel-put server  (variant ClientMessage client "a"))
-;;     (check-unicast client (variant LeaderIs (variant NoLeader)))))
+  (test-case "Leader steps down after RequestVote with newer term but older log"
+    (match-define (list server peer1 peer2 _ timeouts _ timeout-id) (make-leader-in-term 1))
+    (define server-member (RaftMember server-id server))
+    (define peer1-member (RaftMember peer1-id peer1))
+    (async-channel-put server  (variant ClientMessage junk-channel "a"))
+    (check-unicast peer1 (variant AppendEntries 1 0 0 (list (Entry "a" 1 1 junk-channel)) 0 server-member server))
+    (async-channel-put server (variant RequestVote 2 peer1-member 0 0))
+    (check-unicast peer1 (variant DeclineCandidate 2 server-id))
+    (define client (make-async-channel))
+    (async-channel-put server  (variant ClientMessage client "a"))
+    (check-unicast client (variant LeaderIs (variant NoLeader)))))
