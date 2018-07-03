@@ -21,9 +21,6 @@
   (define peer2-id 2)
   (define server-id 0)
 
-  ;; a channel for output we don't care about
-  (define junk-channel (make-async-channel))
-
   ;; Sleeps for one "tick", i.e. just long enough for the program to process whatever messages it
   ;; currently has and be in a consistent state for new messages from the outside world.
   (define (tick) (sleep 0.11))
@@ -33,6 +30,11 @@
 
   (define (RaftMember id address)
     (record [id id] [address address]))
+
+  ;; a channel for output we don't care about
+  (define junk-id 99)
+  (define junk-channel (make-async-channel))
+  (define junk-member (RaftMember junk-id junk-channel))
 
   ;;;; Helpers for constructing/initializing servers
 
@@ -73,9 +75,9 @@
     (match-define (list server peer1 peer2 timer-manager applications timeout-id)
       (make-initialized-follower))
     (define peer1-client (make-async-channel))
-
+    (define peer1-member (RaftMember peer1-id peer1))
     (when (> target-term 1)
-      (async-channel-put server (variant AppendEntries (- target-term 1) 0 0 (list) 0 peer1 peer1-client))
+      (async-channel-put server (variant AppendEntries (- target-term 1) 0 0 (list) 0 peer1-member peer1-client))
       (check-unicast-match peer1 _)
       ;; AppendEntries resets the timer, so have to grab a new timeout ID
       (set! timeout-id (check-unicast-match timer-manager (csa-variant SetTimer _ _ id _ _) #:result id)))
@@ -150,11 +152,12 @@
     (match-define (list server peer1 peer2 _ timeouts _ timeout-id) (make-leader-in-term 1))
     (define server-member (RaftMember server-id server))
     (define peer1-member (RaftMember peer1-id peer1))
+    (define peer2-member (RaftMember peer2-id peer2))
     (async-channel-put server (variant ClientMessage junk-channel "a"))
-    (check-unicast peer1 (variant AppendEntries 1 0 0 (list (Entry "a" 1 1 junk-channel)) 0 server server))
+    (check-unicast peer1 (variant AppendEntries 1 0 0 (list (Entry "a" 1 1 junk-channel)) 0 server-member server))
     (check-unicast-match peer2 _) ; consume the other append entries
     ;; return to follower state
-    (async-channel-put server (variant AppendEntries 2 0 0 (list) 0 peer2 junk-channel))
+    (async-channel-put server (variant AppendEntries 2 0 0 (list) 0 peer2-member junk-channel))
     (check-unicast peer2 (variant AppendSuccessful 2 1 server-member))
     (async-channel-put server (variant RequestVote 3 peer1-member 0 0))
     (check-unicast peer1 (variant DeclineCandidate 3 server-id)))
@@ -225,7 +228,7 @@
     (async-channel-put server (variant Config (record [members (list peer1-member peer2-member server-member)])))
     (tick)
     ;; Async-Channel-Put a heartbeat to set the leader
-    (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 peer1 peer1-client))
+    (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 peer1-member peer1-client))
     (tick)
     (define client (make-async-channel))
     (async-channel-put server (variant ClientMessage client "a"))
@@ -241,7 +244,7 @@
     (define peer2-member (RaftMember peer2-id peer2))
     (async-channel-put server (variant Config (record [members (list peer1-member peer2-member server-member)])))
     (define client-response (make-async-channel))
-    (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 peer1 junk-channel))
+    (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 peer1-member junk-channel))
     (check-unicast peer1 (variant AppendSuccessful 1 0 server-member)))
 
   (test-case "Follower should commit each result as it gets new commit index from leader"
@@ -254,9 +257,9 @@
     (define peer2-member (RaftMember peer2-id peer2))
     (async-channel-put server (variant Config (record [members (list peer1-member peer2-member server-member)])))
     (define client-response (make-async-channel))
-    (async-channel-put server (variant AppendEntries 1 0 0 (list (Entry "foo" 1 1 client-response)) 0 peer1 junk-channel))
+    (async-channel-put server (variant AppendEntries 1 0 0 (list (Entry "foo" 1 1 client-response)) 0 peer1-member junk-channel))
     (check-unicast peer1 (variant AppendSuccessful 1 1 server-member))
-    (async-channel-put server (variant AppendEntries 1 1 1 (list) 1 peer1 junk-channel))
+    (async-channel-put server (variant AppendEntries 1 1 1 (list) 1 peer1-member junk-channel))
     (check-unicast peer1 (variant AppendSuccessful 1 1 server-member))
     (check-unicast applications "foo"))
 
@@ -270,7 +273,7 @@
     (define peer2-member (RaftMember peer2-id peer2))
     (async-channel-put server (variant Config (record [members (list peer1-member peer2-member server-member)])))
     (define client-response (make-async-channel))
-    (async-channel-put server (variant AppendEntries 1 0 0 (list (Entry "foo" 1 1 client-response)) 1 peer1 junk-channel))
+    (async-channel-put server (variant AppendEntries 1 0 0 (list (Entry "foo" 1 1 client-response)) 1 peer1-member junk-channel))
     (check-unicast peer1 (variant AppendSuccessful 1 1 server-member))
     (check-unicast applications "foo"))
 
@@ -283,11 +286,11 @@
     (define peer1-member (RaftMember peer1-id peer1))
     (define peer2-member (RaftMember peer2-id peer2))
     (async-channel-put server (variant Config (record [members (list peer1-member peer2-member server-member)])))
-    (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 junk-channel junk-channel))
+    (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 junk-member junk-channel))
     (tick)
-    (async-channel-put server (variant AppendEntries 2 0 0 (list) 0 junk-channel junk-channel))
+    (async-channel-put server (variant AppendEntries 2 0 0 (list) 0 junk-member junk-channel))
     (tick)
-    (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 peer1 junk-channel))
+    (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 peer1-member junk-channel))
     (check-unicast peer1 (variant AppendRejected 2 0 server-member)))
 
   (test-case "Follower rejects inconsistent updates"
@@ -299,16 +302,16 @@
     (define peer1-member (RaftMember peer1-id peer1))
     (define peer2-member (RaftMember peer2-id peer2))
     (async-channel-put server (variant Config (record [members (list peer1-member peer2-member server-member)])))
-    (async-channel-put server (variant AppendEntries 3 2 2 (list) 2 peer1 junk-channel))
+    (async-channel-put server (variant AppendEntries 3 2 2 (list) 2 peer1-member junk-channel))
     (check-unicast peer1 (variant AppendRejected 3 0 server-member)))
 
   (test-case "Follower does not update current term if leader is lagging"
     (match-define (list server peer1 peer2 _ _ _) (make-peer1-follower-in-term 3))
-        (define server-member (RaftMember server-id server))
+    (define server-member (RaftMember server-id server))
     (define peer1-member (RaftMember peer1-id peer1))
     (define peer2-member (RaftMember peer2-id peer2))
     ;; receive AppendEntries from older leader
-    (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 peer2 junk-channel))
+    (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 peer2-member junk-channel))
     (check-unicast peer2 (variant AppendRejected 3 0 server-member))
     ;; check that term is still 3
     (async-channel-put server (variant RequestVote 2 peer2-member 0 0))
@@ -320,29 +323,32 @@
 (module+ test
   (test-case "Candidate becomes leader on receiving majority of votes"
     (match-define (list server peer1 peer2 _ _ _ _) (make-candidate-in-term 2))
+    (define server-member (RaftMember server-id server))
     (async-channel-put server (variant VoteCandidate 2 peer1-id))
     (define heartbeat-message
-      (variant AppendEntries 2 0 0 (list) 0 server server))
+      (variant AppendEntries 2 0 0 (list) 0 server-member server))
     (check-unicast peer1 heartbeat-message)
     (check-unicast peer2 heartbeat-message))
 
   (test-case "Extra decline vote does not affect election result"
     (match-define (list server peer1 peer2 _ _ _ _) (make-candidate-in-term 2))
+    (define server-member (RaftMember server-id server))
     (async-channel-put server (variant DeclineCandidate 2 peer2-id))
     (async-channel-put server (variant VoteCandidate 2 peer1-id))
     (define heartbeat-message
-      (variant AppendEntries 2 0 0 (list) 0 server server))
+      (variant AppendEntries 2 0 0 (list) 0 server-member server))
     (check-unicast peer1 heartbeat-message)
     (check-unicast peer2 heartbeat-message))
 
   (test-case "Extra AppendEntries responses do not affect election result"
     (match-define (list server peer1 peer2 _ _ _ _) (make-candidate-in-term 2))
+    (define server-member (RaftMember server-id server))
     (define peer1-member (RaftMember peer1-id peer1))
     (async-channel-put server (variant AppendRejected 1 0 peer1-member))
     (async-channel-put server (variant AppendSuccessful 1 1 peer1-member))
     (async-channel-put server (variant VoteCandidate 2 peer1-id))
     (define heartbeat-message
-      (variant AppendEntries 2 0 0 (list) 0 server server))
+      (variant AppendEntries 2 0 0 (list) 0 server-member server))
     (check-unicast peer1 heartbeat-message)
     (check-unicast peer2 heartbeat-message))
 
@@ -392,8 +398,9 @@
 
   (test-case "Candidate reverts to follower on receiving AppendEntries from leader with equal/later term"
     (match-define (list server peer1 peer2 _ _ _ _) (make-candidate-in-term 2))
+    (define peer1-member (RaftMember peer1-id peer1))
     (define peer2-member (RaftMember peer2-id peer2))
-    (async-channel-put server (variant AppendEntries 3 0 0 (list) 0 peer1 junk-channel))
+    (async-channel-put server (variant AppendEntries 3 0 0 (list) 0 peer1-member junk-channel))
     (check-unicast-match peer1 _)
     ;; Test for follower state by seeing if the server grants its vote
     (async-channel-put server (variant RequestVote 4 peer2-member 0 0))
@@ -415,19 +422,21 @@
 
   (test-case "DeclineVote for current term does not affect rest of the election"
     (match-define (list server peer1 peer2 _ _ _ _) (make-candidate-in-term 1))
+    (define server-member (RaftMember server-id server))
     (async-channel-put server (variant DeclineCandidate 1 peer2-id))
     (tick)
     (async-channel-put server (variant VoteCandidate 1 peer1-id))
     (define heartbeat-message
-      (variant AppendEntries 1 0 0 (list) 0 server server))
+      (variant AppendEntries 1 0 0 (list) 0 server-member server))
     (check-unicast peer1 heartbeat-message)
     (check-unicast peer2 heartbeat-message))
 
   (test-case "AppendEntries from an earlier leader does not change the state"
     (match-define (list server peer1 peer2 _ _ _ _) (make-candidate-in-term 2))
     (define server-member (RaftMember server-id server))
+    (define peer1-member (RaftMember peer1-id peer1))
     (define peer2-member (RaftMember peer2-id peer2))
-    (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 peer1 junk-channel))
+    (async-channel-put server (variant AppendEntries 1 0 0 (list) 0 peer1-member junk-channel))
     (check-unicast peer1 (variant AppendRejected 2 0 server-member))
     ;; Test for follower state by seeing if the server grants its vote
     (async-channel-put server (variant RequestVote 2 peer2-member 0 0))
@@ -437,12 +446,13 @@
     (match-define (list server peer1 peer2 _ timer _ _) (make-leader-in-term 1))
     (define server-member (RaftMember server-id server))
     (define peer1-member (RaftMember peer1-id peer1))
+    (define peer2-member (RaftMember peer2-id peer2))
     (check-no-message timer)
     (async-channel-put server  (variant ClientMessage junk-channel "a"))
-    (check-unicast peer1 (variant AppendEntries 1 0 0 (list (Entry "a" 1 1 junk-channel)) 0 server server))
+    (check-unicast peer1 (variant AppendEntries 1 0 0 (list (Entry "a" 1 1 junk-channel)) 0 server-member server))
     (check-no-message timer)
     ;; return to Follower
-    (async-channel-put server (variant AppendEntries 2 0 0 (list) 0 peer2 junk-channel))
+    (async-channel-put server (variant AppendEntries 2 0 0 (list) 0 peer2-member junk-channel))
     (check-unicast-match peer2 _)
     (check-unicast-match timer _) ; consume the heartbeat cancellation
     (check-unicast-match timer _) ; consume the election reset from step-down
