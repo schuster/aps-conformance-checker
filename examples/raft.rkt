@@ -3,7 +3,9 @@
 ;; A full test of the Raft port to CSA, verified against its spec
 
 (provide
+ make-raft-actor-prog
  raft-actor-prog
+ make-raft-spec
  raft-spec)
 
 ;; TODO: refactor this program to use records like those in akka-raft
@@ -49,7 +51,7 @@
         Nat
         (List ,desugared-entry-type)
         Nat
-        RaftMsgAddress
+        (Record [id ,desugared-raft-id-type] [address RaftMsgAddress])
         (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
 
        (AppendRejected
@@ -87,7 +89,7 @@
      Nat
      (List ,desugared-entry-type)
      Nat
-     ,desugared-raft-message-address-type
+     ,desugared-raft-member-type
      (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
 
     (AppendRejected
@@ -111,7 +113,7 @@
           (SendHeartbeatTimeouts Nat))))
 
 ;; TODO: write a check that alerts for any underscores in the spec (b/c those are invalid)
-(define raft-spec
+(define (make-raft-spec bug1)
   (term
    (specification (receptionists [raft-server ,desugared-raft-message-type] [raft-server-unobs ,unobserved-interface-type])
                   (externals)
@@ -123,7 +125,7 @@
        [(variant RequestVote * (record [id *] [address candidate]) * *) -> () (goto Init)]
        [(variant VoteCandidate * *) -> () (goto Init)]
        [(variant DeclineCandidate * *) -> () (goto Init)]
-       [(variant AppendEntries * * * * * leader *) -> () (goto Init)]
+       [(variant AppendEntries * * * * * (record [id *] [address leader]) *) -> () (goto Init)]
        [(variant AppendRejected * * (record [id *] [address member])) -> () (goto Init)]
        [(variant AppendSuccessful * * *) -> () (goto Init)])
      (define-state (Running)
@@ -135,10 +137,10 @@
         (goto Running)]
        [(variant VoteCandidate * *) -> () (goto Running)]
        [(variant DeclineCandidate * *) -> () (goto Running)]
-       [(variant AppendEntries * * * * * leader *) ->
+       [(variant AppendEntries * * * * * (record [id *] [address leader]) *) ->
         ([obligation leader (variant AppendRejected * * *)])
         (goto Running)]
-       [(variant AppendEntries * * * * * leader *) ->
+       [(variant AppendEntries * * * * * (record [id *] [address leader]) *) ->
         ([obligation leader (variant AppendSuccessful * * *)])
         (goto Running)]
        ;; TODO: break these out into separate states so that the append retry can only happen when in
@@ -146,13 +148,17 @@
        [(variant AppendRejected * * (record [id *] [address member])) -> () (goto Running)]
        ;; APS PROTOCOL BUG: to replicate, comment out this case that sends an AppendEntries back (I
        ;; left this case out the first time around)
-       [(variant AppendRejected * * (record [id *] [address member])) ->
-        ;; TODO: should I require that the self address is in this response?
-        ([obligation member (variant AppendEntries * * * * * * *)])
-        (goto Running)]
+       ,@(if bug1
+             '()
+             '([(variant AppendRejected * * (record [id *] [address member])) ->
+                 ;; TODO: should I require that the self address is in this response?
+                 ([obligation member (variant AppendEntries * * * * * * *)])
+                 (goto Running)]))
        [(variant AppendSuccessful * * *) -> () (goto Running)]))))
 
-(define raft-actor-prog (desugar (term
+(define raft-spec (make-raft-spec #f))
+
+(define (make-raft-actor-prog bug2 bug3 bug4 bug5) (desugar (term
 (program
  (receptionists [raft-server ,desugared-raft-message-type] [raft-server-unobs ,unobserved-interface-type])
  (externals [timer-manager TimerMessage] [application String])
@@ -235,7 +241,7 @@
    [prev-log-index Nat]
    [entries (List Entry)]
    [leader-commit-id Nat]
-   [leader ,desugared-raft-message-address-type]
+   [leader RaftMember]
    [leader-client (Addr ClientMessage)])
   ;; A note on last-index: In the paper, this is the optimization at the bottom of p. 7 that allows
   ;; for quicker recovery of a node that has fallen behind in its log. In RaftScope, they call this
@@ -282,7 +288,7 @@
     Nat
     (List ,desugared-entry-type)
     Nat
-    ,desugared-raft-message-address-type
+    RaftMember
     (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
    (AppendRejected
     Nat
@@ -676,7 +682,7 @@
                                       [replicated-log ReplicatedLog]
                                       [from-index Nat]
                                       [leader-commit-id Nat]
-                                      [leader ,desugared-raft-message-address-type]
+                                      [leader RaftMember]
                                       [leader-client (Addr (Union (ClientMessage ClientMessage)))])
   (let ([entries (replicated-log-entries-batch-from replicated-log from-index)])
     (cond
@@ -787,20 +793,21 @@
                                    [recently-contacted-by-leader MaybeLeader])
     (cond
       [(leader-is-lagging term m)
-       ;; MY FIX:
-       (send (unfold ,desugared-raft-message-address-type leader)
-             (AppendRejected (: m current-term)
-                             (replicated-log-last-index replicated-log)
-                             (RaftMember self-id (fold ,desugared-raft-message-address-type self))))
        ;; APS PROTOCOL BUG: akka-raft does not respond to heartbeats in this case, but I think it
-       ;; should. To replicate, comment out the above send and uncomment the following cond expression
-       ;; (cond
-       ;;   [(not (is-heartbeat entries))
-       ;;    (send (unfold ,desugared-raft-message-address-type leader)
-       ;;          (AppendRejected (: m current-term)
-       ;;                          (replicated-log-last-index replicated-log)
-       ;;                          (RaftMember self-id (fold ,desugared-raft-message-address-type self))))]
-       ;;   [else 0])
+       ;; should.
+       ,(if bug2
+            `(cond
+               [(not (is-heartbeat entries))
+                (send (unfold ,desugared-raft-message-address-type leader)
+                      (AppendRejected (: m current-term)
+                                      (replicated-log-last-index replicated-log)
+                                      (RaftMember self-id (fold ,desugared-raft-message-address-type self))))]
+               [else 0])
+            ;; MY FIX:
+            `(send (unfold ,desugared-raft-message-address-type leader)
+                   (AppendRejected (: m current-term)
+                                   (replicated-log-last-index replicated-log)
+                                   (RaftMember self-id (fold ,desugared-raft-message-address-type self)))))
        (goto Follower recently-contacted-by-leader m replicated-log config)]
       [(not (replicated-log-consistent-update replicated-log prev-log-term prev-log-index))
        (let ([meta-with-updated-term (StateMetadata term (: m votes) (: m last-used-timeout-id))])
@@ -813,9 +820,11 @@
                            config
                            recently-contacted-by-leader))]
       ;; APS PROTOCOL BUG: akka-raft does not do the append/commit logic for heartbeats, even though
-      ;; it should. To replicate, uncomment this cond clause
-      ;; [(is-heartbeat entries)
-      ;;  (accept-heartbeat m replicated-log config recently-contacted-by-leader)]
+      ;; it should.
+      ,@(if bug3
+            `([(is-heartbeat entries)
+               (accept-heartbeat m replicated-log config recently-contacted-by-leader)])
+            `())
       [else
        (let* ([meta-with-updated-term (StateMetadata term (: m votes) (: m last-used-timeout-id))]
               [append-result (append replicated-log prev-log-index entries meta-with-updated-term)])
@@ -836,7 +845,7 @@
                                  replicated-log
                                  (log-index-map-value-for next-index (: member id))
                                  (: replicated-log committed-index)
-                                 (fold ,desugared-raft-message-address-type self)
+                                 (record [id self-id] [address (fold ,desugared-raft-message-address-type self)])
                                  self))))
 
   (define-function (send-heartbeat [m LeaderMeta]
@@ -870,7 +879,7 @@
                                replicated-log
                                (log-index-map-value-for next-index (: follower id))
                                (: replicated-log committed-index)
-                               (fold ,desugared-raft-message-address-type self)
+                               (record [id self-id] [address (fold ,desugared-raft-message-address-type self)])
                                self)))
 
   (define-function (maybe-commit-entry [match-index (Hash RaftId Nat)]
@@ -989,7 +998,7 @@
                         prev-index
                         entries
                         leader-commit-id
-                        leader
+                        (: leader address)
                         metadata
                         replicated-log
                         config
@@ -1089,18 +1098,19 @@
                              prev-log-index
                              entries
                              leader-commit-id
-                             leader
+                             (: leader address)
                              (for-follower/candidate m)
                              replicated-log
                              config
                              recently-contacted-by-leader))]
           [else
-           ;; APS PROTOCOL BUG: original code left out this response. To replicate, uncomment this
-           ;; send
-           (send (unfold ,desugared-raft-message-address-type leader)
-                 (AppendRejected (: m current-term)
-                                 (replicated-log-last-index replicated-log)
-                                 (RaftMember self-id (fold ,desugared-raft-message-address-type self))))
+           ;; APS PROTOCOL BUG: original code left out this response.
+           ,@(if bug4
+                 `()
+                 `((send (unfold ,desugared-raft-message-address-type (: leader address))
+                         (AppendRejected (: m current-term)
+                                         (replicated-log-last-index replicated-log)
+                                         (RaftMember self-id (fold ,desugared-raft-message-address-type self))))))
            (goto Candidate m replicated-log config)]))]
      [(AppendSuccessful t i member) (goto Candidate m replicated-log config)]
      [(AppendRejected t i member) (goto Candidate m replicated-log config)]
@@ -1172,27 +1182,27 @@
                              prev-log-index
                              entries
                              leader-commit-id
-                             leader
+                             (: leader address)
                              (for-follower/leader m)
                              replicated-log
                              config
                              recently-contacted-by-leader)))]
         [else
-         ;; MY FIX:
-         (send (unfold ,desugared-raft-message-address-type leader)
-               (AppendRejected (: m current-term)
-                               (replicated-log-last-index replicated-log)
-                               (RaftMember self-id (fold ,desugared-raft-message-address-type self))))
          ;; APS PROTOCOL BUG: this is where akka-raft sends entries back instead of the rejection
-         ;; response. To replicate, comment out the above send and uncomment the below send-entries
-         ;;
-         ;; (send-entries leader
-         ;;               m
-         ;;               replicated-log
-         ;;               next-index
-         ;;               (: replicated-log committed-index)
-         ;;               (fold ,desugared-raft-message-address-type self)
-         ;;               self)
+         ;; response.
+         ,(if bug5
+              `(send-entries leader
+                             m
+                             replicated-log
+                             next-index
+                             (: replicated-log committed-index)
+                             (fold ,desugared-raft-message-address-type self)
+                             self)
+              ;; MY FIX:
+              `(send (unfold ,desugared-raft-message-address-type (: leader address))
+                     (AppendRejected (: m current-term)
+                                     (replicated-log-last-index replicated-log)
+                                     (RaftMember self-id (fold ,desugared-raft-message-address-type self)))))
          (goto Leader m next-index match-index replicated-log config)])]
      [(AppendRejected term last-index member)
       (register-append-rejected term
@@ -1223,6 +1233,8 @@
 
 (let-actors ([raft-server (spawn 1 RaftActor 0 timer-manager application)])
             raft-server raft-server)))))
+
+(define raft-actor-prog (make-raft-actor-prog #f #f #f #f))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Conformance check
