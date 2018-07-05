@@ -1,3 +1,30 @@
+This repository contains the code for a model checker for the APS specification
+language, as described in my PhD dissertation, along with various example
+programs.
+
+Setup/Prerequisites
+===================
+
+1. Install Racket if you don't already have it (note the issue with Racket
+   version 6.12 mentioned below)
+2. Navigate to the directory containing this README, then run "raco pkg
+   install". Install the requested dependencies.
+
+Running the Model Checker
+=========================
+
+The file main.rkt in this repository provides a function "check-conformance"
+that takes a CSA program and an APS specification (both represented as
+S-expressions) and returns true (#t) if the program conforms to the
+specification, or false (#f) otherwise.
+
+The programs given in the examples directory are written in a syntactic sugar
+language on top of CSA. Such programs are desugared using the desugar function
+from desugar.rkt.
+
+File Overview
+=============
+
 Here are the important files in the conformance checker:
 
 main.rkt:           Implements the top-level function, "check-conformance", and includes the core of the
@@ -16,8 +43,6 @@ aps-abstract.rkt    Abstract semantic domains for APS (specification language), 
 desugar.rkt			Nanopass-based desugarer for the bigger language (desugars down to CSA)
 
 graph.rkt           A simple graph implementation and related algorithms
-
-raft.rkt			A larger test of the conformance-checker, for an implementation of Raft
 
 Naming Conventions
 ==================
