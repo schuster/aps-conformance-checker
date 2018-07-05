@@ -109,13 +109,12 @@
 (define-extended-language csa-eval
   csa
   ;; NOTE: don't need to record the marker here; we can just over-estimate it with constants, instead
-  (i (α μ ρ χ)) ; configuration ; TODO: remove χ
+  (i (α μ ρ)) ; configuration
   (α ((a b) ...))
   (b ((Q ...) e)) ; behavior
   (μ (m ...))
   (m (a <= v)) ; NOTE: technically these are marked addresses, but in the model checker internal messages never have markers
-  ;; TODO: remove the externals list; use types on addresses instead
-  ((ρ χ) ([τ (marked a mk ...)] ...)) ; NOTE: can be 0 or 1 marker, because of loop-sent addresses
+  (ρ ([τ (marked a mk ...)] ...)) ; NOTE: can be 0 or 1 marker, because of loop-sent addresses
   (e ....
      v)
   (v n
@@ -191,10 +190,7 @@
            ; message store
            ()
            ; receptionists
-           ([τ_receptionist (marked a_receptionist mk_rec)] ...)
-           ; externals
-           ;; TODO: remove this
-           ([τ_external (marked a_external mk_ext)] ...)])])
+           ([τ_receptionist (marked a_receptionist mk_rec)] ...)])])
 
 (define-metafunction csa-eval
   spawn->behavior : e ([x v] ...) v -> b
@@ -232,10 +228,7 @@
         ()
         ;; receptionists
         ((Nat (marked (addr 1 0) 0))
-         ((Record) (marked (addr 2 0) 1)))
-        ;; externals
-        ((String (marked (addr (env String) 0) 2))
-         ((Union) (marked (addr (env (Union)) 1) 3))))
+         ((Record) (marked (addr 2 0) 1))))
        ;; bindings
        ([a 0] [b 1])
        ([d 2] [e 3])))))
@@ -265,7 +258,7 @@
 (define-metafunction csa-eval
   make-single-actor-config/mf : ((τ (marked a mk ...)) b) -> i
   [(make-single-actor-config/mf ((τ (marked a mk ...)) b))
-   (((a b)) () ((τ (marked a mk ...))) ())])
+   (((a b)) () ((τ (marked a mk ...))))])
 
 (module+ test
   (test-equal? "make-single-actor-config"
@@ -273,8 +266,7 @@
                                [((define-state (A) (m) (goto A))) (goto A)]])
    `[([(addr 0 1) [((define-state (A) (m) (goto A))) (goto A)]])
      ()
-     ([Nat (marked (addr 0 1) 2)])
-     ()]))
+     ([Nat (marked (addr 0 1) 2)])]))
 
 ;; like make-single-actor-config, except also allows more receptionists
 (define (make-single-actor-config/plus actor extra-receptionists)
@@ -283,7 +275,7 @@
 (define-metafunction csa-eval
   make-single-actor-config/plus/mf : ((τ (marked a mk ...)) b) ([τ (marked a mk ...)] ...) -> i
   [(make-single-actor-config/plus/mf ((τ (marked a mk ...)) b) (any_rec ...))
-   (((a b)) () ((τ (marked a mk ...)) any_rec ...) ())])
+   (((a b)) () ((τ (marked a mk ...)) any_rec ...))])
 
 (module+ test
   (test-equal? "make-single-actor-config/plus"
@@ -293,8 +285,7 @@
    `[([(addr 0 1) [((define-state (A) (m) (goto A))) (goto A)]])
      ()
      ([Nat (marked (addr 0 1) 2)]
-      [Nat (marked (addr 0 1) 3)])
-     ()]))
+      [Nat (marked (addr 0 1) 3)])]))
 
 (define (make-empty-queues-config receptionists internal-actors)
   (term (make-empty-queues-config/mf ,receptionists ,internal-actors)))
@@ -305,8 +296,7 @@
                                 (((τ_int (marked a_int _ ...)) b_int) ...))
    (((a_rec b_receptionist) ... (a_int b_int) ...)
     ()
-    ((τ_rec (marked a_rec mk_rec ...)) ...)
-    ())])
+    ((τ_rec (marked a_rec mk_rec ...)) ...))])
 
 (module+ test
   (test-equal? "make-empty-queues-config"
@@ -319,8 +309,7 @@
     `[([(addr 0 1) [((define-state (A) (m) (goto A))) (goto A)]]
        [(addr 3 4) [((define-state (B) (m) (goto B))) (goto B)]])
      ()
-     ([Nat (marked (addr 0 1) 2)])
-     ()]))
+     ([Nat (marked (addr 0 1) 2)])]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
@@ -446,7 +435,7 @@
 ;; Selectors
 
 (define (csa-config-actor-addresses config)
-  (redex-let* csa-eval ([(((a _) ...) _ _ _) config])
+  (redex-let* csa-eval ([(((a _) ...) _ _) config])
     (term (a ...))))
 
 (module+ test
@@ -455,7 +444,7 @@
                          [b_2 (term (() (goto B (marked (addr 3 3)) (marked (addr 4 4)))))]
                          [α (term ([(addr 0 0) b_1]
                                    [(addr 1 1) b_2]))]
-                         [i (term (α () () ()))])
+                         [i (term (α () ()))])
      (check-equal? (csa-config-actor-addresses (term i))
                    (term ((addr 0 0) (addr 1 1)))))))
 

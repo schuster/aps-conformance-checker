@@ -202,9 +202,7 @@
         ;; messages
         ()
         ;; receptionists
-        ((Nat (marked (addr 1 0) 0)) ((Record) (marked (addr 2 0) 1)))
-        ;; externals
-        ((String (marked (addr (env String) 0) 2)) ((Union) (marked (addr (env (Union)) 1) 3))))
+        ((Nat (marked (addr 1 0) 0)) ((Record) (marked (addr 2 0) 1))))
        ;; spec config
        (;; monitored receptionists
         ()

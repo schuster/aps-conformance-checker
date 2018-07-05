@@ -1882,9 +1882,7 @@
   abstract-config/mf : i (a_internal ...) -> i#
   [(abstract-config/mf (((a b) ...) ; actors
                         () ; messages-in-transit
-                        ρ ; receptionists
-                        _ ; externals (ignored)
-                        )
+                        ρ) ; receptionists
                        (a_internal ...))
    (([a# b#] ...) () () ρ)
    (where ([a# b#] ...) ((abstract-actor (a b) (a_internal ...)) ...))])

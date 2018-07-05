@@ -3010,8 +3010,7 @@
                (define-state (ParentDone) (m) (goto ParentDone)))
               (goto Start (marked (addr (env Nat) 2) 2)))])
            ()
-           (((Union [FromEnv]) (marked (addr 1 0) 1)))
-           ((Nat (marked (addr (env Nat) 2) 2))))))
+           (((Union [FromEnv]) (marked (addr 1 0) 1))))))
   ;; Spec with no real transitions, but a commitment on address 2
   (define new-spawn-spec-config
     (term ((1)
@@ -3020,8 +3019,8 @@
            ((define-state (Always)
               [* -> () (goto Always)]))
            ([2 *]))))
-  (check-true (redex-match? csa-eval i new-spawn-impl-config))
-  (check-true (redex-match? aps-eval s new-spawn-spec-config))
+  (test-true "Valid impl config for widen new-spawn counterexample" (redex-match? csa-eval i new-spawn-impl-config))
+  (test-true "Valid PSM for widen new-spawn counterexample" (redex-match? aps-eval s new-spawn-spec-config))
   (test-false "Widen new-spawn counterexample"
     (check-conformance/config new-spawn-impl-config new-spawn-spec-config))
 
