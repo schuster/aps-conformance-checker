@@ -4,4 +4,4 @@
  "../check-pair.rkt"
  "../examples/tcp.rkt")
 
-(check-pair (make-tcp-program #t #f) manager-spec)
+(check-pair (make-tcp-program #f #t #f) passive-manager-spec)

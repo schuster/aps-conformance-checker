@@ -5,9 +5,11 @@
 
 (provide
  make-tcp-program
- tcp-program
+ active-tcp-program
+ passive-tcp-program
  make-manager-spec
- manager-spec)
+ active-manager-spec
+ passive-manager-spec)
 
 (require
  "../desugar.rkt")
@@ -98,7 +100,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; The Program
 
-(define (make-tcp-definitions bug1 bug2)
+(define (make-tcp-definitions active-open? bug1 bug2)
   (quasiquote
 (
 
@@ -1322,24 +1324,23 @@
                  [(Just bind-handler)
                   ;; NOTE: having both passive and active opens here allows too much of a state
                   ;; explosion, causing the conformance check to take more than 24 hours
-                  (goto Ready session-table binding-table)
-                  ;; (let* ([session-id
-                  ;;         (SessionId (InetSocketAddress source-ip (: packet source-port))
-                  ;;                    (: packet destination-port))]
-                  ;;        [session (spawn passive-tcp-session
-                  ;;                        TcpSession
-                  ;;                        session-id
-                  ;;                        (PassiveOpen (: packet seq))
-                  ;;                        packets-out
-                  ;;                        bind-handler
-                  ;;                        self
-                  ;;                        ;; REFACTOR: consider making these top-level constants
-                  ;;                        wait-time-in-milliseconds
-                  ;;                        max-retries
-                  ;;                        max-segment-lifetime-in-ms
-                  ;;                        user-response-wait-time)])
-                  ;;   (goto Ready (hash-set session-table session-id session) binding-table))
-                  ]
+                  ,(if active-open?
+                       `(goto Ready session-table binding-table)
+                       `(let* ([session-id
+                                (SessionId (InetSocketAddress source-ip (: packet source-port))
+                                           (: packet destination-port))]
+                               [session (spawn passive-tcp-session
+                                               TcpSession
+                                               session-id
+                                               (PassiveOpen (: packet seq))
+                                               packets-out
+                                               bind-handler
+                                               self
+                                               wait-time-in-milliseconds
+                                               max-retries
+                                               max-segment-lifetime-in-ms
+                                               user-response-wait-time)])
+                          (goto Ready (hash-set session-table session-id session) binding-table)))]
                  [(Nothing)
                    ;; RFC 793 on resets:
                    ;;
@@ -1355,31 +1356,33 @@
         [(UserCommand cmd)
          (case cmd
            [(Connect dest status-updates)
-            (let* ([id (SessionId dest (get-new-port))]
-                   [session-actor (spawn active-tcp-session
-                                         TcpSession
-                                         id
-                                         (ActiveOpen)
-                                         packets-out
-                                         status-updates
-                                         self
-                                         wait-time-in-milliseconds
-                                         max-retries
-                                         max-segment-lifetime-in-ms
-                                         user-response-wait-time)])
-              (goto Ready (hash-set session-table id session-actor) binding-table))]
+            ,(if active-open?
+                 `(let* ([id (SessionId dest (get-new-port))]
+                         [session-actor (spawn active-tcp-session
+                                               TcpSession
+                                               id
+                                               (ActiveOpen)
+                                               packets-out
+                                               status-updates
+                                               self
+                                               wait-time-in-milliseconds
+                                               max-retries
+                                               max-segment-lifetime-in-ms
+                                               user-response-wait-time)])
+                    (goto Ready (hash-set session-table id session-actor) binding-table))
+                 `(goto Ready session-table binding-table))]
            [(Bind port bind-status-addr bind-handler)
              (send bind-status-addr (Bound))
              (goto Ready session-table (hash-set binding-table port bind-handler))])]
         [(SessionCloseNotification session-id)
          (goto Ready (hash-remove session-table session-id) binding-table)]))))))
 
-(define (make-tcp-program bug1 bug2)
+(define (make-tcp-program active-open? bug1 bug2)
   (desugar
    `(program (receptionists [tcp (Union [UserCommand ,desugared-user-command])]
                             [tcp-unobs (Union [InPacket Nat ,desugared-tcp-packet-type])])
              (externals [packets-out TcpOutput])
-             ,@(make-tcp-definitions bug1 bug2)
+             ,@(make-tcp-definitions active-open? bug1 bug2)
              (let-actors ([tcp (spawn 1 Tcp packets-out
                                       ,wait-time-in-milliseconds
                                       ,max-retries
@@ -1387,7 +1390,8 @@
                                       ,user-response-wait-time)])
                          tcp tcp))))
 
-(define tcp-program (make-tcp-program #f #f))
+(define active-tcp-program (make-tcp-program #t #f #f))
+(define passive-tcp-program (make-tcp-program #f #f #f))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing
@@ -1508,7 +1512,7 @@
 
   (define (start-prog)
     (define packets-out (make-async-channel))
-    (match-define-values (tcp _) (csa-run tcp-program packets-out))
+    (match-define-values (tcp _) (csa-run active-tcp-program packets-out))
     (values packets-out tcp))
 
   ;; Test data
@@ -2104,7 +2108,7 @@
             (externals [session-packet-dest (Addr (Union (InTcpPacket TcpPacket)))]
                        [packets-out (Union [OutPacket IpAddress TcpPacket])]
                        [close-notifications (Union [SessionCloseNotification SessionId])])
-            ,@(make-tcp-definitions #f #f)
+            ,@(make-tcp-definitions #t #f #f)
             (define-actor Nat
               (Launcher [session-packet-dest (Addr (Addr (Union (InTcpPacket TcpPacket))))]
                         [packets-out (Addr (Union [OutPacket IpAddress TcpPacket]))]
@@ -2290,48 +2294,48 @@
 ;;   (test-true "Conformance for session"
 ;;     (check-conformance (desugar tcp-session-program) session-spec)))
 
-(define (make-manager-spec bug3 bug4)
+(define (make-manager-spec active-open? bug3 bug4)
   `(specification (receptionists [tcp (Union [UserCommand ,desugared-user-command])]
                                  [tcp-unobs (Union [InPacket Nat ,desugared-tcp-packet-type])])
                   (externals [packets-out ,desugared-tcp-output])
      (mon-receptionist tcp)
      (goto Managing)
      (define-state (Managing)
-       [(variant UserCommand (variant Connect * status-updates)) ->
-        ([fork (goto MaybeSend status-updates)
-               (define-state (MaybeSend status-updates)
-                 [free ->
-                  ([obligation status-updates
-                               (or (variant CommandFailed)
-                                   (variant Connected * (delayed-fork-addr ,@(make-session-spec-behavior bug3 bug4))))])
-                  (goto Done)])
-               (define-state (Done))])
-        (goto Managing)]
-       ;; NOTE: Bind disabled because the conformance checker cannot handle the state explosion that
-       ;; follows
-       [(variant UserCommand (variant Bind * * *)) -> () (goto Managing)]
+       ,@(if active-open?
+             `([(variant UserCommand (variant Connect * status-updates)) ->
+                 ([fork (goto MaybeSend status-updates)
+                        (define-state (MaybeSend status-updates)
+                          [free ->
+                           ([obligation status-updates
+                                        (or (variant CommandFailed)
+                                            (variant Connected * (delayed-fork-addr ,@(make-session-spec-behavior bug3 bug4))))])
+                           (goto Done)])
+                        (define-state (Done))])
+                 (goto Managing)]
+                ;; NOTE: Bind disabled because the conformance checker cannot handle the state
+                ;; explosion that follows
+                [(variant UserCommand (variant Bind * * *)) -> () (goto Managing)])
+             `([(variant UserCommand (variant Bind * bind-status bind-handler)) ->
+                ;; on Bind, send back the response to bind-status and fork a spec that says we might
+                ;; get some number of connections on this address
+                ([obligation bind-status (or (variant CommandFailed) (variant Bound))]
+                 [fork (goto MaybeGetConnection bind-handler)
+                       (define-state (MaybeGetConnection bind-handler)
+                         [free ->
+                          ([obligation bind-handler (variant Connected * (fork-addr ,@(make-session-spec-behavior bug3 bug4)))])
+                          (goto MaybeGetConnection bind-handler)])])
+                (goto Managing)]
+               [(variant UserCommand (variant Connect * *)) -> () (goto Managing)])))))
 
-       ;; Alternative: comment out the spawn for active-open sessions the Connect clause of this
-       ;; spec, and the above Bind clause, and instead uncomment the spawn for passive-open sessions
-       ;; and this more precise spec for Bind commands as well as the less precise Connect clause below to test the behavior of the controller for
-       ;; Bind.
-       ;; [(variant UserCommand (variant Bind * bind-status bind-handler)) ->
-       ;;  ;; on Bind, send back the response to bind-status and fork a spec that says we might get
-       ;;  ;; some number of connections on this address
-       ;;  ([obligation bind-status (or (variant CommandFailed) (variant Bound))]
-       ;;   [fork (goto MaybeGetConnection bind-handler)
-       ;;         (define-state (MaybeGetConnection bind-handler)
-       ;;           [free ->
-       ;;            ([obligation bind-handler (variant Connected * (fork-addr ,@session-spec-behavior))])
-       ;;            (goto MaybeGetConnection bind-handler)])])
-       ;;  (goto Managing)]
-       ;; [(variant UserCommand (variant Connect * *)) -> () (goto Managing)])
-     )))
-
-(define manager-spec (make-manager-spec #f #f))
+(define active-manager-spec (make-manager-spec #t #f #f))
+(define passive-manager-spec (make-manager-spec #f #f #f))
 
 ;; Conformance Tests
 (module+ test
   (test-true "User command type" (csa-valid-type? desugared-user-command))
-  (test-true "Conformance for manager"
-    (check-conformance tcp-program manager-spec)))
+
+  (test-true "Conformance for active manager"
+    (check-conformance active-tcp-program active-manager-spec))
+
+  (test-true "Conformance for passive manager"
+    (check-conformance passive-tcp-program passive-manager-spec)))
