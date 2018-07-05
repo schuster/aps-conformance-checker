@@ -291,9 +291,7 @@
 ;; sends: (Listof [(marked a# mk...) v# m])
 ;;
 ;; spawns: (Listof [a# b#])
-;;
-;; unused-marker: mk ; TODO: remove this?
-(struct csa#-transition-effect (trigger behavior sends spawns unused-marker) #:transparent)
+(struct csa#-transition-effect (trigger behavior sends spawns) #:transparent)
 
 (define (csa#-transition-spawn-locs transition)
   (map address-location (map first (csa#-transition-effect-spawns transition))))
@@ -532,8 +530,7 @@
          trigger
          (term (,state-defs (goto q v#_param ...)))
          outputs
-         spawns
-         unused-marker)))))
+         spawns)))))
 
 (module+ test
   (test-equal? "Atomic actor spawns atomic actors"
@@ -544,8 +541,7 @@
     (list (csa#-transition-effect `(timeout (addr 1 0))
                                   `(() (goto S2))
                                   null
-                                  (list `[(addr 1 1) (() (goto S1))])
-                                  INIT-HANDLER-MARKER)))
+                                  (list `[(addr 1 1) (() (goto S1))]))))
 
   (test-equal? "Collective actor spawns collective actors"
     (eval-handler `((begin (spawn 2 Nat (goto S1)) (goto S2)) (() () ,INIT-HANDLER-MARKER))
@@ -555,8 +551,7 @@
     (list (csa#-transition-effect `(timeout (collective-addr 1))
                                   `(() (goto S2))
                                   null
-                                  (list `[(collective-addr 2) (() (goto S1))])
-                                  INIT-HANDLER-MARKER))))
+                                  (list `[(collective-addr 2) (() (goto S1))])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Interpreter
@@ -1522,8 +1517,7 @@
                              (list `[(marked (collective-addr (env (Addr String))))
                                      (marked (addr 1 1) 1)
                                      single])
-                             null
-                             2))
+                             null))
     (csa#-transition `(timeout (addr 1 1))
                      (list `[(marked (collective-addr (env (Addr String))))
                              (marked (addr 1 1) 1)
@@ -3823,7 +3817,7 @@
 ;; Rename addresses in everything but the state definitions of the transition so that any marker >
 ;; INIT-MESSAGE-MARKER is removed, and any NEW spawn address is converted to a collective-addr.
 (define (pseudo-blur-transition-result transition-result)
-  (match-define (csa#-transition-effect trigger `(,state-defs ,goto-exp) sends spawns unused-marker)
+  (match-define (csa#-transition-effect trigger `(,state-defs ,goto-exp) sends spawns)
     transition-result)
   (define new-sends
     (for/list ([send sends])
@@ -3833,7 +3827,7 @@
     (for/list ([spawn spawns])
       (match-define `[,addr [,spawn-state-defs ,spawn-goto]] spawn)
       `[,(pseudo-blur addr) [,(pseudo-blur spawn-state-defs) ,(pseudo-blur spawn-goto)]]))
-  (csa#-transition-effect trigger `(,state-defs ,(pseudo-blur goto-exp)) new-sends new-spawns unused-marker))
+  (csa#-transition-effect trigger `(,state-defs ,(pseudo-blur goto-exp)) new-sends new-spawns))
 
 ;; Does the marker-removal/assimilation mentioned in comments for pseudo-blur-transition-result, on an
 ;; arbitrary expression/term
