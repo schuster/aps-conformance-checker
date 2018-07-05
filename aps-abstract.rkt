@@ -516,9 +516,7 @@
   (test-case "Cannot give old saved markers to new fork"
     (define test-transition `[* -> [(fork (goto C x))] (goto B)])
     (check-exn
-     (lambda (e)
-       (displayln e)
-       #t)
+     (lambda (e) #t)
      (lambda ()
        (take-transition
         `[(0)
