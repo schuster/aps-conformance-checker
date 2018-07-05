@@ -50,9 +50,7 @@
 
 (define-extended-language aps#
   aps-eval-with-csa#
-  (s# s) ; NOTE: leaving s# in just so I don't have to convert all the code below
-  ;; (match-fork (ρ#_obs (goto φ) (Φ ...))) ; TODO: do I still need this?
-  )
+  (s# s)) ; NOTE: leaving s# in just so I don't have to convert all the code below
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Substitution
