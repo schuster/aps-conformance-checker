@@ -2499,7 +2499,6 @@
 
 ;; Converts all address identifiers to 0, and returns the appropriate address substitution map
 (define (csa#-age-addresses config)
-  ;; TODO: return addr subst, too
   (list (do-aging config)
         (map
          (lambda (actor)
