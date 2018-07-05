@@ -174,8 +174,6 @@
 (define (csa#-messages-of-type type)
   ;; reset the generated address, so that we don't keep finding different numbers for different types
   ;; (or even the same type, if metafunction caching ever goes away here)
-  ;;
-  ;; TODO: can I get re-enable caching now that I don't use a global for the generated addresses?
   (parameterize ([caching-enabled? #f])
     (map (lambda (v) (first (mark v INIT-MESSAGE-MARKER))) (term (messages-of-type/mf ,type)))))
 
