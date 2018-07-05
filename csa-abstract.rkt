@@ -3250,8 +3250,6 @@
 
   ;; implements the Amber rule
   [(type<=/j (any ... (X_1 X_2)) τ_1 τ_2)
-   ;; TODO: shouldn't these constraints override previous ones, e.g. if one recursive type shadows
-   ;; another?
    ----------------------------------------------------------
    (type<=/j (any ...) (rec X_1 τ_1) (rec X_2 τ_2))]
 
@@ -4319,8 +4317,6 @@
 ;;      behavior-test-config)
 ;;     'eq))
 
-;; TODO: test this
-
 ;; Returns:
 ;;
 ;; * 'gt if i1 has at least one collective actor with a behavior different than the one in i1, or a
@@ -4342,8 +4338,6 @@
                       (csa#-blurred-actor-behaviors i2-collective))
               (loop i1-collectives)
               'gt)])])))
-
-;; TODO: test this
 
 ;; Returns:
 ;;
@@ -4394,8 +4388,6 @@
           [`(single ,_)     'not-gteq]
           [`(many   many)   'eq]
           [`(many   ,_)      'gt])))]))
-
-;; TODO: test the new message rule
 
 ;; (module+ test
 
