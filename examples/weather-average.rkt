@@ -5,7 +5,7 @@
 
 ;; actor names: (Feed) Processor and Manager
 
-(require "desugar.rkt")
+(require "../desugar.rkt")
 
 (define ProcUserAPI
   `(Union
@@ -101,7 +101,7 @@
    csa/eval
    csa/testing
    rackunit
-   "main.rkt")
+   "../main.rkt")
 
   (test-case "General test for the processor"
     (match-define-values (manager _) (csa-run weather-program))
