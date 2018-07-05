@@ -2,10 +2,6 @@
 
 ;; Nanopass-based desugarer for the bigger language (desugars down to CSA)
 
-;; TODO: report that it would be nice to have "input-language" as a variable for whatever language a
-;; pass takes as input, rather than manually typing it each time (make it a "parameter", so it follows
-;; dynamic scope?)
-
 (provide
  desugar)
 
@@ -142,7 +138,7 @@
   (FuncDef (fd)
            (define-function (f [x τ] ...) e1 e* ...))
   (ConstDef (cd)
-            (define-constant x e)) ; TODO: should really only be literals
+            (define-constant x e)) ; NOTE: should really only be literals
   (Type (τ)
         pτ
         (rec T τ)
@@ -600,8 +596,6 @@
   ;; REFACTOR: figure out the best way to do this kind of fold, because the restriction that the
   ;; return type always has to be the same languae prevents me from doing a general Subst processor
   ;; like I want to (but perhaps that's inefficient anyway, since it requires many passes)
-  ;;
-  ;; TODO: Figure out an easy way to preserve hygiene, since now I should do proper substitution
   (definitions
     (define func-defs (make-hash))
     (define const-defs (make-hash)))
@@ -711,7 +705,6 @@
 
 (define-pass inline-actor-definitions : csa/inlined-program-definitions (P) -> csa/inlined-actor-definitions ()
   (definitions
-    ;; TODO: clear this list every time we start a new actor
     (define funcs (make-hash))
     (define consts (make-hash)))
   (ActorDef : ActorDef (d) -> ActorDef ()
@@ -726,7 +719,10 @@
       (with-output-language (csa/inlined-program-definitions ActorDef)
         `(define-actor ,τ (,a [,x1 ,τ1] ...) (,AI* ...) ,body ,S ...)))]
     [(define-actor ,[τ] (,a [,x ,[τ1]] ...) () ,[e] ,[S] ...)
-     `(define-actor ,τ (,a [,x ,τ1] ...) ,e ,S ...)])
+     (define result `(define-actor ,τ (,a [,x ,τ1] ...) ,e ,S ...))
+     (hash-clear! funcs)
+     (hash-clear! consts)
+     result])
   (Exp : Exp (e) -> Exp ()
        [(app ,f ,[e*] ...)
         (match-define (func-record formals body)
@@ -774,7 +770,41 @@
      (define-actor Nat (A)
        (let ([x 5])
          (let ([x (let ([x x]) (+ x x))]) (+ x x))))
-     (let-actors ([a (spawn 1 A)]) a))))
+     (let-actors ([a (spawn 1 A)]) a)))
+
+  (test-exn "inline actor defs: don't reuse functions"
+    (lambda (exn) #t)
+    (lambda ()
+      (unparse-csa/inlined-actor-definitions
+       (inline-actor-definitions
+        (parse-csa/inlined-program-definitions
+         `(program (receptionists) (externals)
+                   (define-actor Nat (A)
+                     ((define-function (double [x Nat]) (+ x x)))
+                     (app double 5))
+                   (define-actor Nat (B)
+                     ()
+                     (app double 5))
+                   (let-actors ([a (spawn 1 A)]
+                                [b (spawn 2 B)]))))))))
+
+  (test-equal? "inline actor defs: don't reuse constants"
+   (unparse-csa/inlined-actor-definitions
+    (inline-actor-definitions
+     (parse-csa/inlined-program-definitions
+      `(program (receptionists) (externals)
+        (define-actor Nat (A)
+          ((define-constant Y 5))
+          Y)
+        (define-actor Nat (B)
+          ()
+          Y)
+        (let-actors ([a (spawn 1 A)]
+                     [b (spawn 2 B)]))))))
+   `(program (receptionists) (externals)
+     (define-actor Nat (A) 5)
+     (define-actor Nat (B) Y)
+     (let-actors ([a (spawn 1 A)] [b (spawn 2 B)])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Inlined Actors
