@@ -1,7 +1,9 @@
 #lang racket
 
 (provide
-  manager-program http-manager-spec)
+ make-manager-program
+ manager-program
+ http-manager-spec)
 
 (require
  "../desugar.rkt")
@@ -39,7 +41,7 @@
   (list `[(1 4 1 1 1) (Addr (Union [BindTimeout] [UnbindTimeout]))]
         `[(1 4 1 1 2) (Union [BindTimeout] [UnbindTimeout])]))
 
-(define spray-can-definitions
+(define (make-spray-can-definitions bug1 bug2)
   (quasiquote
    (
 
@@ -298,7 +300,9 @@
        ;; "handler"
 
        ;; just ignore extra registration messages
-       (goto Running held-data handler)]))
+       ,(if bug1
+            `(goto Running held-data new-handler)
+            `(goto Running held-data handler))]))
 
   (define-state (Closed) (m) (goto Closed)))
 
@@ -322,7 +326,7 @@
   ;;
   ;; APS PROTOCOL BUG: to replicate, replace "bind-timer" in the spawn expression with
   ;; "bind-timer-EVICT" (otherwise, we can't guarantee that the user's Bind command gets a response)
-  (let ([bind-timer (spawn bind-timer Timer (BindTimeout) self)])
+  (let ([bind-timer (spawn ,(if bug2 `bind-timer-EVICT `bind-timer) Timer (BindTimeout) self)])
     (send tcp (Bind port self self))
     (send bind-timer (Start ,BIND-WAIT-TIME-IN-MS))
     (goto Binding bind-timer))
@@ -487,7 +491,7 @@
   (desugar
    `(program (receptionists)
              (externals [app-layer IncomingRequest] [tcp TcpWriteOnlyCommanpd])
-      ,@spray-can-definitions
+      ,@(make-spray-can-definitions #f #f)
       (define-actor Nat
         (Launcher [app-layer (Addr IncomingRequest)]
                   [tcp (Addr TcpWriteOnlyCommanpd)])
@@ -504,7 +508,7 @@
   (desugar
    `(program (receptionists)
              (externals [app-listener HttpListenerEvent] [tcp-session TcpSessionCommand])
-      ,@spray-can-definitions
+      ,@(make-spray-can-definitions #f #f)
       (define-actor Nat
         (Launcher [app-listener (Addr HttpListenerEvent)] [tcp-session (Addr TcpSessionCommand)])
         ()
@@ -523,7 +527,7 @@
              (externals [bind-commander HttpBindResponse]
                         [app-listener HttpListenerEvent]
                         [tcp TcpCommand])
-      ,@spray-can-definitions
+      ,@(make-spray-can-definitions #f #f)
       (define-actor Nat
         (Launcher [bind-commander (Addr HttpBindResponse)]
                   [app-listener (Addr HttpListenerEvent)]
@@ -537,12 +541,14 @@
         (define-state (Done) (m) (goto Done)))
       (let-actors ([launcher (spawn 1 Launcher bind-commander app-listener tcp)])))))
 
-(define manager-program
+(define (make-manager-program bug1 bug2)
   (desugar
    `(program (receptionists [manager HttpManagerCommand])
              (externals [tcp TcpCommand])
-      ,@spray-can-definitions
+      ,@(make-spray-can-definitions bug1 bug2)
       (let-actors ([manager (spawn manager HttpManager tcp)]) manager))))
+
+(define manager-program (make-manager-program #f #f))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Tests
