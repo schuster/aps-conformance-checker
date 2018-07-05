@@ -958,8 +958,6 @@
                             (any_self-markers1 ... any_self-markers2 ...)
                             (any_forks1 ... any_forks2 ...))])
 
-;; TODO: ensure somewhere that at most one self-addr is used
-
 (module+ test
   (test-equal? "Output match with *"
     (aps#-match-po 'abs-nat '*)

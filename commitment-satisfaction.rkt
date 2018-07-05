@@ -453,7 +453,6 @@
                          (list->set (map trigger-address (filter internal-atomic-action? all-actions)))))))
 
 (module+ test
-  ;; TODO: update these; not sure what exactly they should do
   (define com-sat-actors-with-work
     (immutable-hash ['A (set `(addr 1 0) `(addr 2 0) `(addr 3 0) `(addr 4 0) `(addr 5 0))]
                     ['B (set `(addr 1 0) `(addr 2 0) `(addr 3 0))]
@@ -1071,7 +1070,6 @@
                com-sat-actors-with-work
                com-sat-internal-single-receives))
 
-  ;; TODO: write a similar test for markers on messages to handle
   (test-case "fair-scc?: only one address runs, but renames means it's really both actors running"
     (define a-node (sat-test-node 'A 1 '(X)))
     (define b-node (sat-test-node 'B 1 '(X)))
