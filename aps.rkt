@@ -81,35 +81,6 @@
   [(subst-n/aps-eval/u u [x mk] any_rest ...)
    (subst-n/aps-eval/u (subst/aps-eval/u u x mk) any_rest ...)])
 
-(define-metafunction aps-eval
-  subst-n/aps-eval/Φ : Φ (x mk) ... -> Φ
-  [(subst-n/aps-eval/Φ Φ) Φ]
-  [(subst-n/aps-eval/Φ Φ (x mk) any_rest ...)
-   (subst-n/aps-eval/Φ (subst/aps-eval/Φ Φ x mk) any_rest ...)])
-
-(define-metafunction aps-eval
-  subst/aps-eval/Φ : Φ x mk -> Φ
-  [(subst/aps-eval/Φ (define-state (φ any_1 ... x any_2 ...) any_trans ...) x mk)
-   (define-state (φ any_1 ... x any_2 ...) any_trans ...)]
-  [(subst/aps-eval/Φ (define-state (φ x_φ ...) any_trans ...) x mk)
-   (define-state (φ x_φ ...) (subst/aps-eval/trans any_trans x mk) ...)])
-
-(define-metafunction aps-eval
-  subst/aps-eval/trans : (pt -> (f ...) (goto φ u ...)) x mk -> (pt -> (f ...) (goto φ u ...))
-  [(subst/aps-eval/trans (p -> (f ...) (goto φ u ...)) x mk)
-   (p -> (f ...) (goto φ u ...))
-   (judgment-holds (pattern-binds-var p x))]
-  [(subst/aps-eval/trans (pt -> (f ...) (goto φ u ...)) x mk)
-   (pt -> ((subst/aps-eval/f f x mk) ...) (goto φ (subst/aps-eval/u u x mk) ...))])
-
-(define-metafunction aps-eval
-  subst/aps-eval/f : f x mk -> f
-  [(subst/aps-eval/f (obligation u po) x mk)
-   (obligation (subst/aps-eval/u u x mk) po)]
-  [(subst/aps-eval/f (fork (goto φ u ...) Φ ...) x mk)
-   (fork (goto φ (subst/aps-eval/u u x mk) ...)
-         (subst/aps-eval/Φ Φ x mk) ...)])
-
 ;; Judgment holds if the given pattern binds the given variable
 (define-judgment-form aps-eval
   #:mode (pattern-binds-var I I)
@@ -264,8 +235,7 @@
     ;; current state
     (goto φ mk_state-arg ...)
     ;; states
-    ;; TODO: shouldn't do subst here
-    ((subst-n/aps-eval/Φ Φ [x_ext mk_ext] ...) ...)
+    (Φ ...)
     ;; obligations
     ())
    (where (mk_state-arg ...) ((subst-n/aps-eval/u x_arg [x_ext mk_ext] ...) ...))])
@@ -292,7 +262,18 @@
          ;; state defs
          ()
          ;; obligation map
-         ()))))
+         ())))
+
+  (test-equal? "Instantiation does not substitute into state definitions"
+    (term (instantiate-spec/mf
+           (specification (receptionists) (externals [a Nat])
+             no-mon-receptionist
+             (goto A)
+             (define-state (A)
+               [free -> () (goto B a)]))
+           ()
+           ([a 1])))
+    (term [() () (goto A) ((define-state (A) [free -> () (goto B a)])) ()])))
 
 ;; Gets the monitored receptionist marker (if any) by substituting in the given receptionist markers
 ;; to the mr-clause
