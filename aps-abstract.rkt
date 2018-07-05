@@ -513,19 +513,29 @@
         ([3 *]
          [1 ,fork-pattern])))))
 
-  (test-case "Cannot give old saved markers to new fork"
-    (define test-transition `[* -> [(fork (goto C x))] (goto B)])
-    (check-exn
-     (lambda (e) #t)
-     (lambda ()
-       (take-transition
-        `[(0)
-          (1)
-          (goto A 1)
-          ((define-state (A x) ,test-transition))
-          ()]
-        test-transition
-        `(external-receive (marked (addr 0 0) 0) abs-nat))))))
+  (test-exn "Cannot give old saved markers to new fork"
+    (lambda (e) #t)
+    (lambda ()
+      (take-transition
+       `[(0)
+         (1)
+         (goto A 1)
+         ((define-state (A x) [* -> [(fork (goto C x))] (goto B)]))
+         ()]
+       `[* -> [(fork (goto C 1))] (goto B)]
+       `(external-receive (marked (addr 0 0) 0) abs-nat))))
+
+  (test-exn "Cannot do fork-addr in free transition: no address it can take ownership of"
+    (lambda (e) #t)
+    (lambda ()
+      (take-transition
+       `[(0)
+         (1)
+         (goto A 1)
+         ((define-state (A x) [free -> [(obligation x (fork-addr (goto C)))] (goto B)]))
+         ()]
+       `[free -> [(obligation 1 (fork-addr (goto C)))] (goto B)]
+       `(timeout (addr 0 0))))))
 
 ;; (f ...) ([x mk] ...) -> (f ...)
 ;;
