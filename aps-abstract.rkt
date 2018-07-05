@@ -511,7 +511,23 @@
         ((define-state (A x) [* -> ([obligation x ,fork-pattern]) (goto B)])
          (define-state (B) [* -> () (goto B)]))
         ([3 *]
-         [1 ,fork-pattern]))))))
+         [1 ,fork-pattern])))))
+
+  (test-case "Cannot give old saved markers to new fork"
+    (define test-transition `[* -> [(fork (goto C x))] (goto B)])
+    (check-exn
+     (lambda (e)
+       (displayln e)
+       #t)
+     (lambda ()
+       (take-transition
+        `[(0)
+          (1)
+          (goto A 1)
+          ((define-state (A x) ,test-transition))
+          ()]
+        test-transition
+        `(external-receive (marked (addr 0 0) 0) abs-nat))))))
 
 ;; (f ...) ([x mk] ...) -> (f ...)
 ;;
