@@ -160,10 +160,7 @@
      _))
    ((pt ->
         ((subst-n/aps#/f f (x mk) ...) ...)
-        (goto φ_trans (subst-n/aps#/u u_trans (x mk) ...) ...)) ...
-    ;; Note that we include the "null"/no-step transition
-    ;; TODO: move this out of here and into aps#-matching-spec-steps
-    (free -> () (goto φ mk ...)))])
+        (goto φ_trans (subst-n/aps#/u u_trans (x mk) ...) ...)) ...)])
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
@@ -178,8 +175,9 @@
     ;; Remove the free-output transitions: these would cause the checker to make many "bad
     ;; guesses" about what conforms to what, and the outputs they use can always be used for
     ;; other transitions.
-    (filter (negate (curryr free-stable-transition? (aps#-psm-current-state spec-config)))
-            (config-current-transitions spec-config)))
+    (cons `(free -> () ,(aps#-psm-current-state spec-config))
+     (filter (negate (curryr free-stable-transition? (aps#-psm-current-state spec-config)))
+             (config-current-transitions spec-config))))
 
   (define matching-transitions
     (filter (curry transition-matches? (aps#-psm-mon-receptionists spec-config) trigger)
@@ -1789,10 +1787,10 @@
       ([0 *] [0 (record [a *] [b *])]))))
 
 (define (aps#-completed-no-transition-psm? s)
-  ;; A configuration is a completed, no-transition configuration if its only current transition is the
-  ;; implicit do-nothing transition, it has no remaining obligations, and no observable receptionist.
+  ;; A configuration is a completed, no-transition configuration if it has no current transitions, no
+  ;; remaining obligations, and no observable receptionist.
   (and (null? (aps#-psm-mon-receptionists s))
-       (= 1 (length (config-current-transitions s)))
+       (= 0 (length (config-current-transitions s)))
        (null? (aps#-psm-obligations s))))
 
 (module+ test
