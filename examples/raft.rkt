@@ -180,7 +180,7 @@
 (define-function (min [a Nat] [b Nat])
   (if (< a b) a b))
 
-(define-variant MaybeHashResult
+(define-variant MaybeDictResult
   (Nothing)
   (Just [val Nat])) ; TODO: come up with an accurate type
 
@@ -306,13 +306,13 @@
 
 (define-record StateMetadata
   [current-term Nat]
-  [votes (Hash Nat RaftId)] ; who this actor voted for in each term
+  [votes (Dict Nat RaftId)] ; who this actor voted for in each term
   [last-used-timeout-id Nat])
 
 (define-record ElectionMeta
   [current-term Nat]
-  [votes-received (Hash RaftId Boolean)] ; who has voted for this actor in this term
-  [votes (Hash Nat RaftId)]
+  [votes-received (Dict RaftId Boolean)] ; who has voted for this actor in this term
+  [votes (Dict Nat RaftId)]
   [last-used-timeout-id Nat])
 
 (define-record LeaderMeta
@@ -481,7 +481,7 @@
                               [last-log-index Nat])
   (and (>= term (: metadata current-term))
        (candidate-at-least-as-up-to-date? log last-log-term last-log-index)
-       (case (hash-ref (: metadata votes) term)
+       (case (dict-ref (: metadata votes) term)
          [(Nothing) true]
          [(Just c) (= (: candidate id) c)])))
 
@@ -493,7 +493,7 @@
                                [last-log-index Nat])
   (and (>= term (: metadata current-term))
        (candidate-at-least-as-up-to-date? log last-log-term last-log-index)
-       (case (hash-ref (: metadata votes) term)
+       (case (dict-ref (: metadata votes) term)
          [(Nothing) true]
          [(Just c) (= (: candidate id) c)])))
 
@@ -509,17 +509,17 @@
 (define-function (with-vote [metadata StateMetadata] [term Nat] [candidate RaftMember])
   (StateMetadata
    (: metadata current-term)
-   (hash-set (: metadata votes) term (: candidate id))
+   (dict-set (: metadata votes) term (: candidate id))
    (: metadata last-used-timeout-id)))
 
 (define-function (initial-metadata)
-  (StateMetadata 0 (hash) 0))
+  (StateMetadata 0 (dict) 0))
 
 (define-function (for-follower/candidate [metadata ElectionMeta])
-  (StateMetadata (: metadata current-term) (hash) (: metadata last-used-timeout-id)))
+  (StateMetadata (: metadata current-term) (dict) (: metadata last-used-timeout-id)))
 
 (define-function (for-follower/leader [metadata LeaderMeta])
-  (StateMetadata (: metadata current-term) (hash) (: metadata last-used-timeout-id)))
+  (StateMetadata (: metadata current-term) (dict) (: metadata last-used-timeout-id)))
 
 (define-function (for-leader [metadata ElectionMeta])
   (LeaderMeta (: metadata current-term) (: metadata last-used-timeout-id)))
@@ -569,16 +569,16 @@
 
 ;; ;; Because this language does not have traits, I separate forNewElection into two functions
 (define-function (for-new-election/follower [m StateMetadata])
-  (ElectionMeta (next (: m current-term)) (hash) (: m votes) (: m last-used-timeout-id)))
+  (ElectionMeta (next (: m current-term)) (dict) (: m votes) (: m last-used-timeout-id)))
 
 (define-function (for-new-election/candidate [m StateMetadata])
-  (ElectionMeta (next (: m current-term)) (hash) (: m votes) (: m last-used-timeout-id)))
+  (ElectionMeta (next (: m current-term)) (dict) (: m votes) (: m last-used-timeout-id)))
 
 ;; ;; this effectively duplicates the logic of withVote, but it follows the akka-raft code
 (define-function (with-vote-for [m ElectionMeta] [term Nat] [candidate RaftMember])
   (ElectionMeta (: m current-term)
                 (: m votes-received)
-                (hash-set (: m votes) term (: candidate id))
+                (dict-set (: m votes) term (: candidate id))
                 (: m last-used-timeout-id)))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -591,7 +591,7 @@
 
 (define-function (inc-vote [m ElectionMeta] [follower RaftId])
   (ElectionMeta (: m current-term)
-                (hash-set (: m votes-received) follower true)
+                (dict-set (: m votes-received) follower true)
                 (: m votes)
                 (: m last-used-timeout-id)))
 
@@ -599,7 +599,7 @@
   (let ([total-votes-received
          (for/fold ([total 0])
                    ([member (: config members)])
-           (+ total (if (hash-has-key? (: m votes-received) (: member id)) 1 0)))])
+           (+ total (if (dict-has-key? (: m votes-received) (: member id)) 1 0)))])
     (> total-votes-received (/ (length (: config members)) 2))))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -607,33 +607,33 @@
 
 (define-function (log-index-map-initialize [members (List RaftMember)]
                                            [initialize-with Nat])
-  (for/fold ([map (hash)])
+  (for/fold ([map (dict)])
             ([member members])
-    (hash-set map (: member id) initialize-with)))
+    (dict-set map (: member id) initialize-with)))
 
-(define-function (log-index-map-value-for [map (Hash RaftId Nat)]
+(define-function (log-index-map-value-for [map (Dict RaftId Nat)]
                                           [member RaftId])
-  (case (hash-ref map member)
+  (case (dict-ref map member)
     [(Nothing)
       ;; akka-raft would update the map here, but we should never have to because we don't change the
       ;; config
       0]
     [(Just value) value]))
 
-(define-function (log-index-map-put-if-greater [map (Hash RaftId Nat)]
+(define-function (log-index-map-put-if-greater [map (Dict RaftId Nat)]
                                                [member RaftId]
                                                [value Nat])
   (let ([old-value (log-index-map-value-for map member)])
     (cond
-      [(< old-value value) (hash-set map member value)]
+      [(< old-value value) (dict-set map member value)]
       [else map])))
 
-(define-function (log-index-map-put-if-smaller [map (Hash RaftId Nat)]
+(define-function (log-index-map-put-if-smaller [map (Dict RaftId Nat)]
                                                [member RaftId]
                                                [value Nat])
   (let ([old-value (log-index-map-value-for map member)])
     (cond
-      [(> old-value value) (hash-set map member value)]
+      [(> old-value value) (dict-set map member value)]
       [else map])))
 
 ;; Helper for sort-numbers-descending
@@ -658,12 +658,12 @@
 
 ;; ;; NOTE: because the akka-raft version of this is completely wrong, I'm writing my own
 ;; ;; Returns the greatest index that a majority of entries in the map agree on
-(define-function (log-index-map-consensus-for-index [map (Hash RaftId Nat)]
+(define-function (log-index-map-consensus-for-index [map (Dict RaftId Nat)]
                                                     [config ClusterConfiguration])
   (let ([all-indices
          (for/fold ([indices-so-far (list)])
                    ([member (: config members)])
-           (case (hash-ref map (: member id))
+           (case (dict-ref map (: member id))
              [(Nothing) indices-so-far] ; NOTE: this should never happen
              [(Just index) (cons index indices-so-far)]))])
     (list-ref (sort-numbers-descending all-indices)
@@ -836,7 +836,7 @@
                              recently-contacted-by-leader)))]))
 
   (define-function (replicate-log [m LeaderMeta]
-                                  [next-index (Hash RaftId Nat)]
+                                  [next-index (Dict RaftId Nat)]
                                   [replicated-log ReplicatedLog]
                                   [config ClusterConfiguration])
     (for ([member (members-except-self config self-id)])
@@ -849,7 +849,7 @@
                                  self))))
 
   (define-function (send-heartbeat [m LeaderMeta]
-                                   [next-index (Hash RaftId Nat)]
+                                   [next-index (Dict RaftId Nat)]
                                    [replicated-log ReplicatedLog]
                                    [config ClusterConfiguration])
     (replicate-log m next-index replicated-log config))
@@ -857,7 +857,7 @@
   (define-constant heartbeat-timer-name "HeartbeatTimer")
   (define-constant heartbeat-interval 50)
   (define-function (start-heartbeat [m LeaderMeta]
-                                    [next-index (Hash RaftId Nat)]
+                                    [next-index (Dict RaftId Nat)]
                                     [replicated-log ReplicatedLog]
                                     [config ClusterConfiguration])
     (send-heartbeat m next-index replicated-log config)
@@ -882,7 +882,7 @@
                                (record [id self-id] [address (fold ,desugared-raft-message-address-type self)])
                                self)))
 
-  (define-function (maybe-commit-entry [match-index (Hash RaftId Nat)]
+  (define-function (maybe-commit-entry [match-index (Dict RaftId Nat)]
                                        [replicated-log ReplicatedLog]
                                        [config ClusterConfiguration])
     (let ([index-on-majority (log-index-map-consensus-for-index match-index config)])
@@ -895,12 +895,12 @@
                                                [follower-index Nat]
                                                [member RaftMember]
                                                [m LeaderMeta]
-                                               [next-index (Hash RaftId Nat)]
-                                               [match-index (Hash RaftId Nat)]
+                                               [next-index (Dict RaftId Nat)]
+                                               [match-index (Dict RaftId Nat)]
                                                [replicated-log ReplicatedLog]
                                                [config ClusterConfiguration])
     ;; NOTE: (maybe akka-raft bug): why don't both indices use put-if-greater?
-    (let* ([next-index (hash-set next-index (: member id) follower-index)]
+    (let* ([next-index (dict-set next-index (: member id) follower-index)]
            [match-index (log-index-map-put-if-greater match-index
                                                       (: member id)
                                                       (log-index-map-value-for next-index (: member id)))]
@@ -911,8 +911,8 @@
                                              [follower-index Nat]
                                              [member RaftMember]
                                              [m LeaderMeta]
-                                             [next-index (Hash RaftId Nat)]
-                                             [match-index (Hash RaftId Nat)]
+                                             [next-index (Dict RaftId Nat)]
+                                             [match-index (Dict RaftId Nat)]
                                              [replicated-log ReplicatedLog]
                                              [config ClusterConfiguration])
     (let ([next-index (log-index-map-put-if-smaller next-index (: member id) (+ 1 follower-index))])
@@ -1052,7 +1052,7 @@
               ;;
               ;; (send self (ElectedAsLeader))
               ;; (cancel-election-deadline timer-manager)
-              ;; (next-state (Leader (for-leader m) (hash) (hash) replicated-log config))
+              ;; (next-state (Leader (for-leader m) (dict) (dict) replicated-log config))
               (cancel-election-deadline timer-manager)
               ;; NOTE: because we don't have mutation, I'm just inlining the code for
               ;; initializeLeaderState here
@@ -1128,8 +1128,8 @@
      [(SendHeartbeatTimeouts id) (goto Candidate m replicated-log config)]))
 
  (define-state (Leader [m LeaderMeta]
-                       [next-index (Hash RaftId Nat)]
-                       [match-index (Hash RaftId Nat)]
+                       [next-index (Dict RaftId Nat)]
+                       [match-index (Dict RaftId Nat)]
                        [replicated-log ReplicatedLog]
                        [config ClusterConfiguration]) (message)
    (case message
@@ -1138,7 +1138,7 @@
                            (: m current-term) (replicated-log-next-index replicated-log)
                            client)]
              [replicated-log (replicated-log+ replicated-log entry)]
-             [match-index (hash-set match-index self-id (: entry index))])
+             [match-index (dict-set match-index self-id (: entry index))])
         (replicate-log m next-index replicated-log config)
         (goto Leader m next-index match-index replicated-log config))]
      [(RequestVote term candidate last-log-term last-log-index)

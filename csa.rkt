@@ -52,7 +52,7 @@
      x
      n
      (list e ...)
-     (hash [e e] ...)
+     (dict [e e] ...)
      (for/fold ([x e]) ([x e]) e))
   (Q (define-state (q [x τ] ...) (x) e)
      (define-state (q [x τ] ...) (x) e [(timeout e) e]))
@@ -80,13 +80,13 @@
    list-copy
    take
    drop
-   hash-ref
-   hash-keys
-   hash-values
-   hash-remove
-   hash-set
-   hash-has-key?
-   hash-empty?
+   dict-ref
+   dict-keys
+   dict-values
+   dict-remove
+   dict-set
+   dict-has-key?
+   dict-empty?
    ;; printf and abs-len for debugging only
    printf
    print-len)
@@ -102,7 +102,7 @@
      (Record [l τ] ...)
      (Addr τ)
      (List τ)
-     (Hash τ τ))
+     (Dict τ τ))
   (X variable-not-otherwise-mentioned)
   (loc any))
 
@@ -125,7 +125,7 @@
      mk-a
      string
      (list v ...)
-     (hash [v v] ...))
+     (dict [v v] ...))
   (a (addr loc natural))
   (mk natural)
   (mk-a (marked a mk ...)))
@@ -360,7 +360,7 @@
   [(subst (variant t e ...) x v) (variant t (subst e x v) ...)]
   [(subst (primop e ...) x v) (primop (subst e x v) ...)]
   [(subst (list e ...) x v) (list (subst e x v) ...)]
-  [(subst (hash [e_key e_val] ...) x v) (hash [(subst e_key x v) (subst e_val x v)] ...)]
+  [(subst (dict [e_key e_val] ...) x v) (dict [(subst e_key x v) (subst e_val x v)] ...)]
   [(subst (for/fold ([x_1 e_1]) ([x_2 e_2]) e_3) x_1 v)
    (for/fold ([x_1 (subst e_1 x_1 v)]) ([x_2 (subst e_2 x_1 v)]) e_3)]
   [(subst (for/fold ([x_1 e_1]) ([x_2 e_2]) e_3) x_2 v)

@@ -57,7 +57,7 @@
   [final-task-id Nat])
 
 (define-variant JobResult
-  (JobResultSuccess [result (Hash String Nat)])
+  (JobResultSuccess [result (Dict String Nat)])
   (JobResultFailure))
 
 (define-variant CancellationResult
@@ -87,7 +87,7 @@
 
 (define-variant ReadyTaskWork
   (MapWork [initial-data (List String)])
-  (ReduceWork [left (Hash String Nat)] [right (Hash String Nat)]))
+  (ReduceWork [left (Dict String Nat)] [right (Dict String Nat)]))
 
 ;; A task with all of its required input data
 (define-record ReadyTask
@@ -118,7 +118,7 @@
 ;; JobManager -> TaskManager Communication
 
 (define-variant ExecutionState ; comes from runtime/execution/ExecutionState.java
-  (Finished [result (Hash String Nat)])
+  (Finished [result (Dict String Nat)])
   (Cancelled))
 
 (define-type CancelResponse
@@ -213,17 +213,17 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; TaskRunner
 
-(define-function (word-count-increment [h (Hash String Nat)] [word String])
-  (hash-set h
+(define-function (word-count-increment [h (Dict String Nat)] [word String])
+  (dict-set h
             word
-            (case (hash-ref h word)
+            (case (dict-ref h word)
               [(Nothing) 1]
               [(Just n) (+ n 1)])))
 
 (define-actor TaskRunnerInput
   (TaskRunner [job-manager (Addr InputSplitRequest)] [task-manager (Addr TaskManagerNotification)])
   ((define-function (count-new-words [id JobTaskId]
-                                     [word-count (Hash String Nat)]
+                                     [word-count (Dict String Nat)]
                                      [words (List String)])
      (let ([result-so-far
             (for/fold ([result word-count])
@@ -261,25 +261,25 @@
       (case (: task work)
         [(MapWork words)
          (count-new-words (: task id)
-                          ;; we add and remove an item to the empty hash so that the model checker
-                          ;; abstracts this to a non-empty hash, avoiding a state-space explosion
-                          (hash-remove (hash-set (hash) "a" 1) "a")
+                          ;; we add and remove an item to the empty dict so that the model checker
+                          ;; abstracts this to a non-empty dict, avoiding a state-space explosion
+                          (dict-remove (dict-set (dict) "a" 1) "a")
                           words)]
         [(ReduceWork left right)
          (let ([final-result
                 (for/fold ([result left])
-                          ([key (hash-keys right)])
+                          ([key (dict-keys right)])
                   (let ([left-value
-                         (case (hash-ref result key)
+                         (case (dict-ref result key)
                            ;; this case should never happen, but the type system will make us handle
                            ;; it anyway
                            [(Nothing) 0]
                            [(Just n) n])]
-                        [right-value (case (hash-ref right key) [(Nothing) 0] [(Just n) n])])
-                    (hash-set result key (+ left-value right-value))))])
+                        [right-value (case (dict-ref right key) [(Nothing) 0] [(Just n) n])])
+                    (dict-set result key (+ left-value right-value))))])
            (send task-manager (UpdateTaskExecutionState (: task id) (Finished final-result)))
            (goto AwaitingTask))])))
-  (define-state (WaitingForNextSplit [id JobTaskId] [word-count (Hash String Nat)]) (m)
+  (define-state (WaitingForNextSplit [id JobTaskId] [word-count (Dict String Nat)]) (m)
     (case m
       [(RunTask task)
        ;; drop the current task and notify the task manager
@@ -405,7 +405,7 @@
                                             [tasks (List Task)]
                                             [waiting-tasks (List WatingReduceTask)]
                                             [ready-tasks (List ReadyTask)]
-                                            [partitions (Hash JobTaskId UsedPartition)])
+                                            [partitions (Dict JobTaskId UsedPartition)])
      (for/fold ([all-tasks (record [need-data waiting-tasks]
                                    [ready ready-tasks]
                                    [partitions partitions])])
@@ -418,7 +418,7 @@
                       [ready (cons (ReadyTask full-id (MapWork (take data partition-next-send)))
                                    (: all-tasks ready))]
                       [partitions
-                       (hash-set (: all-tasks partitions)
+                       (dict-set (: all-tasks partitions)
                                  full-id
                                  (UsedPartition data partition-next-send))]))]
            [(Reduce left-id right-id)
@@ -431,10 +431,10 @@
 
    ;; Returns (Just id) for the id of a task manager with at least 1 open slot; Nothing if there is no
    ;; task manager with an open slot
-   (define-function (find-available-slot [task-managers (Hash Nat ManagedTaskManager)])
+   (define-function (find-available-slot [task-managers (Dict Nat ManagedTaskManager)])
      (for/fold ([result (variant Nothing)])
-               ([id (hash-keys task-managers)])
-       (case (hash-ref task-managers id)
+               ([id (dict-keys task-managers)])
+       (case (dict-ref task-managers id)
          [(Nothing)
           ;; shouldn't happen
           result]
@@ -446,9 +446,9 @@
 
    ;; Submits tasks from the ready tasks list for execution on task managers with available slots
    ;; until we run out of either slots or tasks
-   (define-function (send-ready-tasks [task-managers (Hash Nat ManagedTaskManager)]
+   (define-function (send-ready-tasks [task-managers (Dict Nat ManagedTaskManager)]
                                       [ready-tasks (List ReadyTask)]
-                                      [running-tasks (Hash JobTaskId RunningTaskExecution)])
+                                      [running-tasks (Dict JobTaskId RunningTaskExecution)])
      (for/fold ([state (record [task-managers task-managers]
                                [remaining-ready-tasks ready-tasks]
                                [running-tasks running-tasks])])
@@ -460,7 +460,7 @@
                   [remaining-ready-tasks (: state remaining-ready-tasks)]
                   [running-tasks (: state running-tasks)])]
          [(Just task-manager-id)
-          (case (hash-ref (: state task-managers) task-manager-id)
+          (case (dict-ref (: state task-managers) task-manager-id)
             [(Nothing) ; shouldn't happen
              state]
             [(Just manager-record)
@@ -468,35 +468,35 @@
              (let ([new-manager-record (ManagedTaskManager
                                         (: manager-record address)
                                         (- (: manager-record available-slots) 1))])
-               (record [task-managers (hash-set (: state task-managers) task-manager-id new-manager-record)]
+               (record [task-managers (dict-set (: state task-managers) task-manager-id new-manager-record)]
                        [remaining-ready-tasks (remove task (: state remaining-ready-tasks))]
-                       [running-tasks (hash-set (: state running-tasks)
+                       [running-tasks (dict-set (: state running-tasks)
                                                 (: task id)
                                                 (RunningTaskExecution task task-manager-id))]))])])))
 
    ;; Remove the task from the active jobs list and free up a slot on the TaskManager
    (define-function (deactivate-task [id JobTaskId]
-                                     [task-managers (Hash Nat ManagedTaskManager)]
-                                     [running-tasks (Hash JobTaskId RunningTaskExecution)])
-     (case (hash-ref running-tasks id)
+                                     [task-managers (Dict Nat ManagedTaskManager)]
+                                     [running-tasks (Dict JobTaskId RunningTaskExecution)])
+     (case (dict-ref running-tasks id)
        [(Nothing)
         (record [task-managers task-managers] [running-tasks running-tasks])]
        [(Just execution)
-        (case (hash-ref task-managers (: execution task-manager))
+        (case (dict-ref task-managers (: execution task-manager))
           ;; Might not be around anymore if the task manager was deregistered
           [(Nothing)
-           (record [task-managers task-managers] [running-tasks (hash-remove running-tasks id)])]
+           (record [task-managers task-managers] [running-tasks (dict-remove running-tasks id)])]
           [(Just manager-record)
            (let ([new-record (ManagedTaskManager (: manager-record address)
                                                  (+ 1 (: manager-record available-slots)))])
-             (record [task-managers (hash-set task-managers
+             (record [task-managers (dict-set task-managers
                                               (: execution task-manager)
                                               new-record)]
-                     [running-tasks (hash-remove running-tasks id)]))])]))
+                     [running-tasks (dict-remove running-tasks id)]))])]))
 
    (define-function (maybe-populate-input [maybe-data MaybeReduceData]
                                           [id JobTaskId]
-                                          [task-result (Hash String Nat)])
+                                          [task-result (Dict String Nat)])
      (case maybe-data
        [(WaitingOn waiting-for-id)
         (if (= id waiting-for-id)
@@ -506,7 +506,7 @@
 
    ;; Puts the result data into the tasks for any data that's waiting for it
    (define-function (push-to-consumer [id JobTaskId]
-                                      [task-result (Hash String Nat)]
+                                      [task-result (Dict String Nat)]
                                       [waiting-tasks (List WaitingTask)]
                                       [ready-tasks (List ReadyTask)])
      (for/fold ([result (record [waiting-tasks waiting-tasks] [ready-tasks ready-tasks])])
@@ -529,33 +529,33 @@
             (record [waiting-tasks (cons new-waiting-task waiting-tasks)]
                     [ready-tasks (: result ready-tasks)])]))))
 
-   (define-function (reset-partition [partitions (Hash JobTaskId UsedPartition)] [task-id JobTaskId])
-     (case (hash-ref partitions task-id)
+   (define-function (reset-partition [partitions (Dict JobTaskId UsedPartition)] [task-id JobTaskId])
+     (case (dict-ref partitions task-id)
        [(Nothing) partitions]
        [(Just partition)
-        (hash-set partitions
+        (dict-set partitions
                   task-id
                   (UsedPartition (: partition data)
                                  (min ,partition-chunk-size (length (: partition data)))))])))
 
-  (goto ManagingJobs (hash) (hash) (list) (list) (hash) (hash))
+  (goto ManagingJobs (dict) (dict) (list) (list) (dict) (dict))
 
   ;; NOTE: I'm ignoring for now the ordering of waiting-tasks. In a real implementation it would use a
   ;; queue to avoid starvation of any tasks/jobs, but I'm making the simplifying assumption that that
   ;; won't be an issue in my uses
   (define-state (ManagingJobs
-                 [task-managers (Hash Nat ManagedTaskManager)]
-                 [active-jobs (Hash Nat JobCompletionInfo)]
+                 [task-managers (Dict Nat ManagedTaskManager)]
+                 [active-jobs (Dict Nat JobCompletionInfo)]
                  ;; Tasks that are waiting on their input tasks to complete
                  [waiting-tasks (List WaitingReduceTask)]
                  [ready-tasks (List ReadyTask)]
-                 [running-tasks (Hash JobTaskId RunningTaskExecution)]
-                 [partitions (Hash JobTaskId UsedPartition)]) (m)
+                 [running-tasks (Dict JobTaskId RunningTaskExecution)]
+                 [partitions (Dict JobTaskId UsedPartition)]) (m)
     (case m
       [(RegisterTaskManager id slots address)
        ;; APS PROTOCOL BUG:
        ,@(if bug2 `() `((send address (AcknowledgeRegistration))))
-       (let* ([task-managers (hash-set task-managers id (ManagedTaskManager address slots))]
+       (let* ([task-managers (dict-set task-managers id (ManagedTaskManager address slots))]
               [submission-result (send-ready-tasks task-managers ready-tasks running-tasks)])
          (goto ManagingJobs
                (: submission-result task-managers)
@@ -575,7 +575,7 @@
                                                    running-tasks)])
          (goto ManagingJobs
                (: submission-result task-managers)
-               (hash-set active-jobs (: job id) (JobCompletionInfo (: job final-task-id) client))
+               (dict-set active-jobs (: job id) (JobCompletionInfo (: job final-task-id) client))
                (: triage-result need-data)
                (: submission-result remaining-ready-tasks)
                (: submission-result running-tasks)
@@ -587,7 +587,7 @@
        (goto ManagingJobs task-managers active-jobs waiting-tasks ready-tasks running-tasks partitions)]
       [(RequestNextInputSplit id target)
        (let ([new-partitions
-              (case (hash-ref partitions id)
+              (case (dict-ref partitions id)
                 [(Nothing)
                  (send target (NextInputSplit (list)))
                  partitions]
@@ -597,7 +597,7 @@
                         [next-send (: partition next-send)]
                         [num-items-to-send (min ,partition-chunk-size (- len next-send))])
                    (send target (NextInputSplit (list-copy data next-send (+ next-send num-items-to-send))))
-                   (hash-set partitions id (UsedPartition data (+ next-send num-items-to-send))))])])
+                   (dict-set partitions id (UsedPartition data (+ next-send num-items-to-send))))])])
          (goto ManagingJobs task-managers active-jobs waiting-tasks ready-tasks running-tasks new-partitions))]
       [(UpdateTaskExecutionState id state)
        ;; Remove the task from the running tasks list and free up a slot on the TaskManager
@@ -607,7 +607,7 @@
          (case state
            [(Finished result)
             ;; 1. remove the partition
-            (let* ([partitions (hash-remove partitions id)]
+            (let* ([partitions (dict-remove partitions id)]
                    ;; 2. update any tasks that depended on this one, move them into ready if necessary
                    [push-result (push-to-consumer id result waiting-tasks ready-tasks)]
                    [waiting-tasks (: push-result waiting-tasks)]
@@ -618,7 +618,7 @@
                    [ready-tasks (: submission-result remaining-ready-tasks)]
                    [running-tasks (: submission-result running-tasks)])
               ;; 4. if job is finished: send result to client and remove from active jobs
-              (case (hash-ref active-jobs (: id job-id))
+              (case (dict-ref active-jobs (: id job-id))
                 [(Nothing) ; could happen if this was a duplicate result or job was cancelled
                  (goto ManagingJobs task-managers active-jobs waiting-tasks ready-tasks running-tasks partitions)]
                 [(Just job-info)
@@ -627,7 +627,7 @@
                     (send (: job-info client) (JobResultSuccess result))
                     (goto ManagingJobs
                           task-managers
-                          (hash-remove active-jobs (: id job-id))
+                          (dict-remove active-jobs (: id job-id))
                           waiting-tasks
                           ready-tasks
                           running-tasks
@@ -651,19 +651,19 @@
                   running-tasks
                   (reset-partition partitions id))]))]
       [(TaskManagerTerminated task-manager-id)
-       (let* ([task-managers (hash-remove task-managers task-manager-id)]
+       (let* ([task-managers (dict-remove task-managers task-manager-id)]
               [move-result
                (for/fold ([result (record [ready-tasks ready-tasks]
                                           [running-tasks running-tasks]
                                           [partitions partitions])])
-                         ([execution (hash-values running-tasks)])
+                         ([execution (dict-values running-tasks)])
                  (cond
                    [(= (: execution task-manager) task-manager-id)
                     (let* ([task (: execution task)]
                            [task-id (: task id)])
                       ;; move the task from running-tasks to ready-tasks and reset its partition
                       (record [ready-tasks (cons task (: result ready-tasks))]
-                              [running-tasks (hash-remove (: result running-tasks) task-id)]
+                              [running-tasks (dict-remove (: result running-tasks) task-id)]
                               [partitions (reset-partition partitions task-id)]))]
                    [else result]))]
               [ready-tasks (: move-result ready-tasks)]
@@ -679,7 +679,7 @@
                (: submission-result running-tasks)
                partitions))]
       [(CancelJob id-to-cancel result-dest)
-       (case (hash-ref active-jobs id-to-cancel)
+       (case (dict-ref active-jobs id-to-cancel)
          [(Nothing)
           (send result-dest (CancellationFailure))
           (goto ManagingJobs task-managers active-jobs waiting-tasks ready-tasks running-tasks partitions)]
@@ -688,29 +688,29 @@
           (let* ([run-remove-result
                   (for/fold ([result (record [task-managers task-managers]
                                              [running-tasks running-tasks])])
-                            ([execution (hash-values running-tasks)])
+                            ([execution (dict-values running-tasks)])
                     (let ([task-id (: (: execution task) id)])
                       (cond
                         [(= (: task-id job-id) id-to-cancel)
                          (record [task-managers
-                                  (case (hash-ref (: result task-managers) (: execution task-manager))
+                                  (case (dict-ref (: result task-managers) (: execution task-manager))
                                     [(Nothing) (: result task-managers)]
                                     [(Just m)
                                      (send (: m address) (CancelTask task-id self))
-                                     (hash-set (: result task-managers)
+                                     (dict-set (: result task-managers)
                                                (: execution task-manager)
                                                (ManagedTaskManager (: m address) (+ (: m available-slots) 1)))])
                                   ]
-                                 [running-tasks (hash-remove running-tasks task-id)])]
+                                 [running-tasks (dict-remove running-tasks task-id)])]
                         [else result])))]
                  [task-managers (: run-remove-result task-managers)]
                  [running-tasks (: run-remove-result running-tasks)]
                  ;; 2. Clear partitions
                  [partitions
                   (for/fold ([remaining-partitions partitions])
-                            ([key (hash-keys partitions)])
+                            ([key (dict-keys partitions)])
                     (if (= (: key job-id) id-to-cancel)
-                        (hash-remove remaining-partitions key)
+                        (dict-remove remaining-partitions key)
                         remaining-partitions))]
                  ;; 3. Remove ready tasks
                  [ready-tasks
@@ -730,7 +730,7 @@
             (send result-dest (CancellationSuccess))
             (goto ManagingJobs
                   task-managers
-                  (hash-remove active-jobs id-to-cancel)
+                  (dict-remove active-jobs id-to-cancel)
                   waiting-tasks
                   ready-tasks
                   running-tasks
@@ -774,7 +774,7 @@
 (define desugared-ready-task
   `(Record [id ,desugared-job-task-id]
            [work (Union (MapWork (List String))
-                        (ReduceWork (Hash String Nat) (Hash String Nat)))]))
+                        (ReduceWork (Dict String Nat) (Dict String Nat)))]))
 
 (define desugared-submit-cancel-response
   `(Union
@@ -789,7 +789,7 @@
 
 (define desugared-execution-state
   `(Union
-    (Finished (Hash String Nat))
+    (Finished (Dict String Nat))
     (Cancelled)))
 
 (define desugared-tm-to-jm-type
@@ -811,7 +811,7 @@
 (define desugared-task `(Record [id Nat] [type ,desugared-task-description]))
 (define desugared-job `(Record [id Nat] [tasks (List ,desugared-task)] [final-task-id Nat]))
 (define desugared-job-result
-  `(Union [JobResultSuccess (Hash String Nat)] [JobResultFailure]))
+  `(Union [JobResultSuccess (Dict String Nat)] [JobResultFailure]))
 (define desugared-cancellation-result
   `(Union (CancellationSuccess) (CancellationFailure)))
 (define desugared-job-manager-command

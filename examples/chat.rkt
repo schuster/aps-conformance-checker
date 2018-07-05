@@ -16,7 +16,7 @@
 (define chat-program (desugar (quote
 
 (program (receptionists [auth AuthCommand] [unobs-auth AuthCommand]) (externals)
-  (define-constant pw-table (hash ["joe" "abc"] ["sally" "xyz"] ["john" "def"]))
+  (define-constant pw-table (dict ["joe" "abc"] ["sally" "xyz"] ["john" "def"]))
 
   (define-type RoomCommand
     (Union
@@ -53,13 +53,13 @@
     (GetMembers [callback (Addr (List String))]))
 
   (define-actor AuthCommand
-    (Authenticator [pw-table (Hash String String)] [server (Addr ServerCommand)])
+    (Authenticator [pw-table (Dict String String)] [server (Addr ServerCommand)])
     ()
     (goto Always)
     (define-state (Always) (m)
       (case m
         [(LogIn username password callback)
-         (case (hash-ref pw-table username)
+         (case (dict-ref pw-table username)
            [(Nothing)
             (send callback (AuthenticationFailed))
             (goto Always)]
@@ -74,53 +74,53 @@
   (define-actor ChatRoomInput
     (ChatRoom [name String])
     ()
-    (goto Running (hash))
-    (define-state (Running [users (Hash String (Addr RoomEvent))]) (m)
+    (goto Running (dict))
+    (define-state (Running [users (Dict String (Addr RoomEvent))]) (m)
       (case m
         [(UserJoining username user)
          (send user (JoinedRoom self))
          (for/fold ([dummy 0])
-                   ([other-user (hash-values users)])
+                   ([other-user (dict-values users)])
            (send other-user (MemberJoined username))
            0)
-         (goto Running (hash-set users username user))]
+         (goto Running (dict-set users username user))]
         [(Speak speaker-name message)
          (for/fold ([dummy 0])
-                   ([user (hash-values users)])
+                   ([user (dict-values users)])
            (send user (Message speaker-name message))
            0)
          (goto Running users)]
         [(Leave username)
          (cond
-           [(hash-has-key? users username)
-            (let ([remaining-users (hash-remove users username)])
+           [(dict-has-key? users username)
+            (let ([remaining-users (dict-remove users username)])
               (for/fold ([dummy 0])
-                        ([remaining-user (hash-values remaining-users)])
+                        ([remaining-user (dict-values remaining-users)])
                 (send remaining-user (MemberLeft username))
                 0)
               (goto Running remaining-users))]
            [else (goto Running users)])]
         [(GetMembers callback)
-         (send callback (hash-keys users))
+         (send callback (dict-keys users))
          (goto Running users)])))
 
   (define-actor ChatServerInput
     (ChatServer)
     ()
-    (goto Always (hash))
-    (define-state (Always [rooms (Hash String (Addr RoomCommand))]) (m)
+    (goto Always (dict))
+    (define-state (Always [rooms (Dict String (Addr RoomCommand))]) (m)
       (case m
         [(JoinRoom room-name username user)
-         (case (hash-ref rooms room-name)
+         (case (dict-ref rooms room-name)
            [(Nothing)
             (let ([new-room (spawn new-room ChatRoom room-name)])
               (send new-room (UserJoining username user))
-              (goto Always (hash-set rooms room-name new-room)))]
+              (goto Always (dict-set rooms room-name new-room)))]
            [(Just room)
             (send room (UserJoining username user))
             (goto Always rooms)])]
         [(GetRoomList callback)
-         (send callback (hash-keys rooms))
+         (send callback (dict-keys rooms))
          (goto Always rooms)])))
 
   (let-actors ([server (spawn server ChatServer)]

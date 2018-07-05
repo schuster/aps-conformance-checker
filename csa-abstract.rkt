@@ -99,7 +99,7 @@
       abs-nat
       abs-string
       (list-val v# ...)
-      (hash-val (v# ...) (v# ...)))
+      (dict-val (v# ...) (v# ...)))
   (e# (spawn any_location τ e# Q# ...)
       (spawning a# τ e# Q# ...)
       (goto q e# ...)
@@ -115,7 +115,7 @@
       (primop e# ...)
       (printf string e# ...) ; for debugging only
       (list e# ...)
-      (hash [e# e#] ...)
+      (dict [e# e#] ...)
       (for/fold ([x e#]) ([x e#]) e#)
       (loop-context e#)
       x
@@ -144,8 +144,8 @@
       (primop v# ... E# e# ...)
       (printf string v# ... E# e# ...)
       (list v# ... E# e# ...)
-      (hash [v# v#] ... [E# e#] [e# e#] ...)
-      (hash [v# v#] ... [v# E#] [e# e#] ...)
+      (dict [v# v#] ... [E# e#] [e# e#] ...)
+      (dict [v# v#] ... [v# E#] [e# e#] ...)
       (for/fold ([x E#]) ([x e#]) e#)
       (for/fold ([x v#]) ([x E#]) e#)
       (loop-context E#))
@@ -210,8 +210,8 @@
   [(messages-of-type/mf (List τ))
    (,(normalize-collection (term (list-val v# ...))))
    (where (v# ...) (messages-of-type/mf τ))]
-  [(messages-of-type/mf (Hash τ_1 τ_2))
-   (,(normalize-collection (term (hash-val (v#_keys ...) (v#_vals ...)))))
+  [(messages-of-type/mf (Dict τ_1 τ_2))
+   (,(normalize-collection (term (dict-val (v#_keys ...) (v#_vals ...)))))
    (where (v#_keys ...) (messages-of-type/mf τ_1))
    (where (v#_vals ...) (messages-of-type/mf τ_2))])
 
@@ -275,8 +275,8 @@
    (term (messages-of-type/mf (List Nat)))
    (list `(list-val abs-nat)))
   (test-same-items? "messages-of-type 12"
-   (term (messages-of-type/mf (Hash Nat (Union [A] [B] [C]))))
-   (list `(hash-val (abs-nat) ((variant A) (variant B) [variant C])))))
+   (term (messages-of-type/mf (Dict Nat (Union [A] [B] [C]))))
+   (list `(dict-val (abs-nat) ((variant A) (variant B) [variant C])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
@@ -704,8 +704,8 @@
              (value-result `(variant True) `(variant False) effects)
              (one-stuck-result `(= ,v1 ,v2) effects)))
        (lambda (stucks) `(= ,@stucks)))]
-    ;; Lists and Hashes
-    [`(,(and op (or 'list 'cons 'list-as-variant 'list-ref 'remove 'length 'append 'list-copy 'take 'drop 'hash-ref 'hash-keys 'hash-values 'hash-set 'hash-remove 'hash-has-key? 'hash-empty?))
+    ;; Lists and Dictionaries
+    [`(,(and op (or 'list 'cons 'list-as-variant 'list-ref 'remove 'length 'append 'list-copy 'take 'drop 'dict-ref 'dict-keys 'dict-values 'dict-set 'dict-remove 'dict-has-key? 'dict-empty?))
        ,args ...)
      (eval-and-then* args effects
        (lambda (vs effects)
@@ -739,31 +739,31 @@
             (value-result
              (normalize-collection `(list-val ,@(list-values v1) ,@(list-values v2)))
              effects)]
-           [`(hash-ref (hash-val ,_ ,vals) ,k)
+           [`(dict-ref (dict-val ,_ ,vals) ,k)
             (if (address-free? k)
                 (apply value-result
                        `(variant Nothing)
                        (append (for/list ([val vals]) `(variant Just ,val))
                                (list effects)))
-                (one-stuck-result `(hash-ref ,(first vs) ,k) effects))]
-           [`(hash-keys (hash-val ,keys ,_))
+                (one-stuck-result `(dict-ref ,(first vs) ,k) effects))]
+           [`(dict-keys (dict-val ,keys ,_))
             (value-result `(list-val ,@keys) effects)]
-           [`(hash-values (hash-val ,_ ,values))
+           [`(dict-values (dict-val ,_ ,values))
             (value-result `(list-val ,@values) effects)]
-           [`(hash-set (hash-val ,keys ,vals) ,key ,val)
+           [`(dict-set (dict-val ,keys ,vals) ,key ,val)
             (if (address-free? key)
                 (value-result
-                 (normalize-collection `(hash-val ,(cons key keys) ,(cons val vals)))
+                 (normalize-collection `(dict-val ,(cons key keys) ,(cons val vals)))
                  effects)
-                (one-stuck-result `(hash-set (hash-val ,keys ,vals) ,key ,val) effects))]
-           [`(hash-remove ,h ,k) (value-result h effects)]
-           [`(hash-has-key? ,h ,k)
+                (one-stuck-result `(dict-set (dict-val ,keys ,vals) ,key ,val) effects))]
+           [`(dict-remove ,h ,k) (value-result h effects)]
+           [`(dict-has-key? ,h ,k)
             (value-result `(variant True) `(variant False) effects)]
-           [`(hash-empty? ,h)
+           [`(dict-empty? ,h)
             (value-result `(variant True) `(variant False) effects)]
            [_ (error 'eval-machine/internal "Bad collection operation: ~s" `(,op ,@vs))]))
        (lambda (stucks) `(,op ,@stucks)))]
-    [`(hash ,kvps ...)
+    [`(dict ,kvps ...)
      (eval-and-then* (append* (for/list ([kvp kvps]) (list (first kvp) (second kvp)))) effects
        (lambda (results effects)
          (match-define (list keys vals)
@@ -773,8 +773,8 @@
              (match results
                [(list) (list keys vals)]
                [(list key val rest ...) (loop rest (cons key keys) (cons val vals))])))
-         (value-result (normalize-collection `(hash-val ,keys ,vals)) effects))
-       (lambda (stucks) (error 'eval-machine/internal "Stuck evaluating hash: ~s" `(hash ,@stucks))))]
+         (value-result (normalize-collection `(dict-val ,keys ,vals)) effects))
+       (lambda (stucks) (error 'eval-machine/internal "Stuck evaluating dict: ~s" `(dict ,@stucks))))]
     ;; Loops
     [`(for/fold ([,result-var ,result-exp])
                 ([,item-var ,item-exp])
@@ -883,7 +883,7 @@
      (eval-and-then* args effects
        (lambda (arg-vals effects) (value-result `(goto ,state-name ,@arg-vals) effects))
        (lambda (stucks) `(goto ,state-name ,@stucks)))]
-    [`(,(or 'list-val 'hash-val) ,_ ...) (value-result exp effects)]
+    [`(,(or 'list-val 'dict-val) ,_ ...) (value-result exp effects)]
     ;; Debugging
     [`(printf ,template ,args ...)
      (eval-and-then* args effects
@@ -1109,7 +1109,7 @@
    (term (= (marked (collective-addr (env 1))) (marked (addr (env 1) 0))))
    (list (term (= (marked (collective-addr (env 1))) (marked (addr (env 1) 0))))))
 
-  ;; Tests for sorting when adding to lists and hashes
+  ;; Tests for sorting when adding to lists and dictionaries
   ;; list
   (check-exp-steps-to?
    (term (list (variant C) (variant B)))
@@ -1168,40 +1168,40 @@
   (check-exp-steps-to? `(drop (list-val abs-nat) abs-nat)
                        `(list-val abs-nat))
 
-  ;; hash
+  ;; dict
   (check-exp-steps-to?
-   (term (hash [abs-nat (variant B)] [abs-nat (variant A)]))
-   (term (hash-val (abs-nat) ((variant A) (variant B)))))
+   (term (dict [abs-nat (variant B)] [abs-nat (variant A)]))
+   (term (dict-val (abs-nat) ((variant A) (variant B)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val (abs-nat) ((variant B) (variant C))) abs-nat (variant A)))
-   (term (hash-val (abs-nat) ((variant A) (variant B) (variant C)))))
+   (term (dict-set (dict-val (abs-nat) ((variant B) (variant C))) abs-nat (variant A)))
+   (term (dict-val (abs-nat) ((variant A) (variant B) (variant C)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val (abs-nat) ((variant C) (variant B))) abs-nat (variant A)))
-   (term (hash-val (abs-nat) ((variant A) (variant B) (variant C)))))
+   (term (dict-set (dict-val (abs-nat) ((variant C) (variant B))) abs-nat (variant A)))
+   (term (dict-val (abs-nat) ((variant A) (variant B) (variant C)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val () ()) abs-nat (variant A)))
-   (term (hash-val (abs-nat) ((variant A)))))
+   (term (dict-set (dict-val () ()) abs-nat (variant A)))
+   (term (dict-val (abs-nat) ((variant A)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val (abs-nat) ((variant B) (variant C))) abs-nat (variant D)))
-   (term (hash-val (abs-nat) ((variant B) (variant C) (variant D)))))
+   (term (dict-set (dict-val (abs-nat) ((variant B) (variant C))) abs-nat (variant D)))
+   (term (dict-val (abs-nat) ((variant B) (variant C) (variant D)))))
   (check-exp-steps-to?
-   (term (hash-set (hash-val (abs-nat) ((variant B) (variant C))) abs-nat (variant B)))
-   (term (hash-val (abs-nat) ((variant B) (variant C)))))
+   (term (dict-set (dict-val (abs-nat) ((variant B) (variant C))) abs-nat (variant B)))
+   (term (dict-val (abs-nat) ((variant B) (variant C)))))
   (check-exp-steps-to?
-   (term (hash-remove (hash-val (abs-nat) ((variant B) (variant C))) (variant B)))
-   (term (hash-val (abs-nat) ((variant B) (variant C)))))
-  (check-exp-steps-to? (term (hash-ref (hash-val () ()) abs-nat))
+   (term (dict-remove (dict-val (abs-nat) ((variant B) (variant C))) (variant B)))
+   (term (dict-val (abs-nat) ((variant B) (variant C)))))
+  (check-exp-steps-to? (term (dict-ref (dict-val () ()) abs-nat))
                        '(variant Nothing))
-  (check-exp-steps-to-all? (term (hash-empty? (hash-val (abs-nat) ((variant A) (variant B)))))
+  (check-exp-steps-to-all? (term (dict-empty? (dict-val (abs-nat) ((variant A) (variant B)))))
                            (list (term (variant True))
                                  (term (variant False))))
   (check-exp-steps-to-all? (term (list-as-variant (list-val (variant A) (variant B))))
                            (list (term (variant Empty))
                                  (term (variant Cons (variant A) (list-val (variant A) (variant B))))
                                  (term (variant Cons (variant B) (list-val (variant A) (variant B))))))
-  (check-exp-steps-to? (term (hash-keys (hash-val ((variant A) (variant B)) (abs-nat))))
+  (check-exp-steps-to? (term (dict-keys (dict-val ((variant A) (variant B)) (abs-nat))))
                        (term (list-val (variant A) (variant B))))
-  (check-exp-steps-to? (term (hash-values (hash-val (abs-nat) ((variant A) (variant B)))))
+  (check-exp-steps-to? (term (dict-values (dict-val (abs-nat) ((variant A) (variant B)))))
                        (term (list-val (variant A) (variant B))))
   (check-exp-steps-to-all? `(for/fold ([result (variant X)])
                                       ([item (list abs-nat)])
@@ -1378,7 +1378,7 @@
     [`abs-nat #t]
     [`abs-string #t]
     [`(list-val ,vals ...) (andmap address-free? vals)]
-    [`(hash-val ,keys ,vals)
+    [`(dict-val ,keys ,vals)
      (and (andmap address-free? keys) (andmap address-free? vals))]
     [_ (error 'address-free? "Not a valid abstract value: ~s\n" v)]))
 
@@ -1401,7 +1401,7 @@
     (address-free? '(list-val abs-nat)))
 
   (test-true "dictionaries without addresses are address-free"
-    (address-free? '(hash-val (abs-nat) (abs-string))))
+    (address-free? '(dict-val (abs-nat) (abs-string))))
 
   (test-false "addresses are not address-free"
     (address-free? `(marked (addr 1 0) 0)))
@@ -1416,7 +1416,7 @@
     (address-free? `(list-val (marked (addr 1 0) 0))))
 
   (test-false "addresses inside dictionaries are not address-free"
-    (address-free? `(hash-val (abs-string) ((marked (addr 1 0) 0)))))
+    (address-free? `(dict-val (abs-string) ((marked (addr 1 0) 0)))))
 
   (test-false "folded types with addresses are not address-free"
     (address-free? '(folded (rec A (Addr A)) (marked (addr 1 0) 0)))))
@@ -1425,14 +1425,14 @@
   (match v
     [`(list-val ,vs ...) vs]))
 
-;; Puts the given abstract collection value (a list or hash) and puts it into a canonical
+;; Puts the given abstract collection value (a list or dict) and puts it into a canonical
 ;; form
 (define (normalize-collection v)
   (match v
     [`(list-val ,vs ...)
      `(list-val ,@(sort (remove-duplicates vs) sexp<?))]
-    [`(hash-val ,keys ,vals)
-     `(hash-val ,(sort (remove-duplicates keys) sexp<?)
+    [`(dict-val ,keys ,vals)
+     `(dict-val ,(sort (remove-duplicates keys) sexp<?)
                 ,(sort (remove-duplicates vals) sexp<?))]))
 
 ;; Adds a new output to an existing list of outputs, in sexp<? order, merging with existing outputs
@@ -1674,8 +1674,8 @@
     [`(printf ,str ,args ...) `(printf ,str ,@(map do-subst args))]
     [(list (and kw (or 'send 'begin (? primop?) 'list 'list-val 'loop-context)) args ...)
      `(,kw ,@(map do-subst args))]
-    [`(hash-val ,args1 ,args2)
-     `(hash-val ,(map do-subst args1) ,(map do-subst args2))]
+    [`(dict-val ,args1 ,args2)
+     `(dict-val ,(map do-subst args1) ,(map do-subst args2))]
     [`(let ([,new-vars ,new-vals] ...) ,body)
      (define new-let-bindings (map binding new-vars (map do-subst new-vals)))
      `(let ,new-let-bindings ,(csa#-subst-n body (shadow new-vars)))]
@@ -1687,8 +1687,8 @@
     [`(: ,e ,l) `(: ,(do-subst e) ,l)]
     [(list (and kw (or 'fold 'unfold 'folded)) type args ...)
      `(,kw ,type ,@(map do-subst args))]
-    [`(hash [,keys ,vals] ...)
-     `(hash ,@(map (lambda (k v) `[,(do-subst k) ,(do-subst v)]) keys vals))]
+    [`(dict [,keys ,vals] ...)
+     `(dict ,@(map (lambda (k v) `[,(do-subst k) ,(do-subst v)]) keys vals))]
     [`(for/fold ([,x1 ,e1]) ([,x2 ,e2]) ,body)
      `(for/fold ([,x1 ,(do-subst e1)])
                 ([,x2 ,(do-subst e2)])
@@ -1811,8 +1811,8 @@
   [(type-subst/internal (Addr τ) X any)
    (Addr (type-subst/internal τ X any))]
   [(type-subst/internal (List τ_e) X any) (List (type-subst/internal τ_e X any))]
-  [(type-subst/internal (Hash τ_k τ_v) X any)
-   (Hash (type-subst/internal τ_k X any) (type-subst/internal τ_v X any))])
+  [(type-subst/internal (Dict τ_k τ_v) X any)
+   (Dict (type-subst/internal τ_k X any) (type-subst/internal τ_v X any))])
 
 (module+ test
   (test-equal? "type-subst on non-matching rec"
@@ -1962,11 +1962,11 @@
    ,(normalize-collection (term (list-val (abstract-e v (a ...)) ...)))]
   [(abstract-e (list e ...) (a ...))
    (list (abstract-e e (a ...)) ...)]
-  [(abstract-e (hash [v_key v_val] ...) (a ...))
-   ,(normalize-collection (term (hash-val ((abstract-e v_key (a ...)) ...)
+  [(abstract-e (dict [v_key v_val] ...) (a ...))
+   ,(normalize-collection (term (dict-val ((abstract-e v_key (a ...)) ...)
                                           ((abstract-e v_val (a ...)) ...))))]
-  [(abstract-e (hash [e_key e_val] ...) (a ...))
-   (hash [(abstract-e e_key (a ...)) (abstract-e e_val (a ...))] ...)]
+  [(abstract-e (dict [e_key e_val] ...) (a ...))
+   (dict [(abstract-e e_key (a ...)) (abstract-e e_val (a ...))] ...)]
   [(abstract-e (for/fold ([x_1 e_1]) ([x_2 e_2]) e) (a ...))
    (for/fold ([x_1 (abstract-e e_1 (a ...))])
              ([x_2 (abstract-e e_2 (a ...))])
@@ -1994,17 +1994,17 @@
     (term (abstract-e (list (variant B) (variant A)) ()))
     (term (list-val (variant A) (variant B))))
   (test-equal? "abstract-e 6"
-    (term (abstract-e (hash [1 (variant B)] [2 (variant A)]) ()))
-    (term (hash-val (abs-nat) ((variant A) (variant B)))))
+    (term (abstract-e (dict [1 (variant B)] [2 (variant A)]) ()))
+    (term (dict-val (abs-nat) ((variant A) (variant B)))))
   (test-equal? "abstract-e 7"
-    (term (abstract-e (hash [1 2] [3 4]) ()))
-    (term (hash-val (abs-nat) (abs-nat))))
+    (term (abstract-e (dict [1 2] [3 4]) ()))
+    (term (dict-val (abs-nat) (abs-nat))))
   (test-equal? "abstract-e 8"
-    (term (abstract-e (hash) ()))
-    (term (hash-val () ())))
+    (term (abstract-e (dict) ()))
+    (term (dict-val () ())))
   (test-equal? "abstract-e 9"
-    (term (abstract-e (hash [1 (let ([x 1]) x)] [3 4]) ()))
-    (term (hash [abs-nat (let ([x abs-nat]) x)] [abs-nat abs-nat])))
+    (term (abstract-e (dict [1 (let ([x 1]) x)] [3 4]) ()))
+    (term (dict [abs-nat (let ([x abs-nat]) x)] [abs-nat abs-nat])))
   (test-equal? "Abstraction okay on folded"
     (term (abstract-e (folded ,recursive-record-address-type (marked (addr 1 0))) ()))
     `(folded ,recursive-record-address-type (marked (addr 1 0)))))
@@ -2262,7 +2262,7 @@
 ;; term (a#int ...) (mk ...) -> term
 ;;
 ;; Transforms internal addresses in addrs-to-assimilate to collective addresses and removes markers
-;; *not* in monitored-markers. Also performs the deduplication for hash and list values
+;; *not* in monitored-markers. Also performs the deduplication for dict and list values
 ;;
 ;; NOTE: any updates to this function may also need to be added to pseudo-blur
 (define (rename-for-assimilation some-term addrs-to-assimilate monitored-markers)
@@ -2270,16 +2270,16 @@
     [`(marked ,addr ,markers ...)
      (define new-markers (filter (lambda (m) (member m monitored-markers)) markers))
      `(marked ,(rename-addr-for-assimilation addr addrs-to-assimilate) ,@new-markers)]
-    [(list (and keyword (or 'list-val 'hash-val)) terms ...)
+    [(list (and keyword (or 'list-val 'dict-val)) terms ...)
      (define blurred-args
        (map (curryr rename-for-assimilation addrs-to-assimilate monitored-markers) terms))
      (normalize-collection `(,keyword ,@blurred-args))]
-    [`(hash-val ,keys ,vals)
+    [`(dict-val ,keys ,vals)
      (define blurred-keys
        (map (curryr rename-for-assimilation addrs-to-assimilate monitored-markers) keys))
      (define blurred-vals
        (map (curryr rename-for-assimilation addrs-to-assimilate monitored-markers) vals))
-     (normalize-collection `(hash-val ,blurred-keys ,blurred-vals))]
+     (normalize-collection `(dict-val ,blurred-keys ,blurred-vals))]
     [(list terms ...)
      (map (curryr rename-for-assimilation addrs-to-assimilate monitored-markers) terms)]
     [_ some-term]))
@@ -2339,11 +2339,11 @@
                  [i# (make-config (term ([a# b#])) null null null)])
                 (term i#)))
 
-  ;; Make sure duplicates are removed from lists and hashes
+  ;; Make sure duplicates are removed from lists and dictionaries
   (test-equal? "blur test 3"
    (rename-for-assimilation
     (redex-let csa#
-        ([e# (term (hash-val (abs-nat)
+        ([e# (term (dict-val (abs-nat)
                              ((marked (collective-addr (env Nat)) 1)
                               (marked (collective-addr (env Nat)) 2)
                               (marked (collective-addr (env Nat)) 3)
@@ -2352,7 +2352,7 @@
     null
     '(1 3))
    ;; Some reordering happens as a result of normalize-collection
-   (term (hash-val (abs-nat)
+   (term (dict-val (abs-nat)
                    ((marked (collective-addr (env Nat)))
                     (marked (collective-addr (env Nat)) 1)
                     (marked (collective-addr (env Nat)) 3)))))
@@ -3048,7 +3048,7 @@
      (csa#-contains-marker? val target-markers)]
     [`(list-val ,vals ...)
      (ormap (curryr csa#-contains-marker? target-markers) vals)]
-    [`(hash-val ,keys ,vals)
+    [`(dict-val ,keys ,vals)
      (or (ormap (curryr csa#-contains-marker? target-markers) keys)
          (ormap (curryr csa#-contains-marker? target-markers) vals))]
     [_ #f]))
@@ -3064,7 +3064,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Types
 
-;; ;; NOTE: non-equality-based join for lists and hashes is not implemented
+;; ;; NOTE: non-equality-based join for lists and dictionaries is not implemented
 ;; (define-metafunction csa#
 ;;   type-join : τ τ -> τ
 ;;   [(type-join (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))
@@ -3289,7 +3289,7 @@
   [(type<=/j any τ_k1 τ_k2)
    (type<=/j any τ_v1 τ_v2)
    -------------------------------------------
-   (type<=/j any (Hash τ_k1 τ_v1) (Hash τ_k2 τ_v2))])
+   (type<=/j any (Dict τ_k1 τ_v1) (Dict τ_k2 τ_v2))])
 
 (module+ test
   (test-true "type<= same type" (type<= 'Nat 'Nat))
@@ -3303,8 +3303,8 @@
   (define union-ab '(Union [A] [B]))
   (test-true "type<= list 1" (type<= `(List ,union-a) `(List ,union-ab)))
   (test-false "type<= list 2" (type<= `(List ,union-ab) `(List ,union-a)))
-  (test-true "type<= hash 1" (type<= `(Hash ,union-a ,union-a) `(Hash ,union-ab ,union-ab)))
-  (test-false "type<= hash 2" (type<= `(Hash ,union-ab ,union-ab)  `(Hash ,union-a ,union-a)))
+  (test-true "type<= dict 1" (type<= `(Dict ,union-a ,union-a) `(Dict ,union-ab ,union-ab)))
+  (test-false "type<= dict 2" (type<= `(Dict ,union-ab ,union-ab)  `(Dict ,union-a ,union-a)))
   (test-true "type<= alpha-equiv recs"
     (type<= `(rec A (Addr (Addr A)))
             `(rec B (Addr (Addr B)))))
@@ -3419,7 +3419,7 @@
      (get-types-and-merge-all (map list (map second rec-fields) (map second rec-field-types)))]
     [(list `(list-val ,vs ...) `(List ,type))
      (get-types-and-merge-all (map (lambda (v) (list v type)) vs))]
-    [(list `(hash-val ,vs1 ,vs2) `(Hash ,type1 ,type2))
+    [(list `(dict-val ,vs1 ,vs2) `(Dict ,type1 ,type2))
      (merge-receptionists
       (get-types-and-merge-all (map (lambda (v) (list v type1)) vs1))
       (get-types-and-merge-all (map (lambda (v) (list v type2)) vs2)))]
@@ -3453,9 +3453,9 @@
   (test-equal? "addr-types: list"
     (addr-types `(list-val (marked (addr 1 1)) (marked (addr 2 2))) `(List (Addr (Record))))
     (term ([(Record) (marked (addr 1 1))] [(Record) (marked (addr 2 2))])))
-  (test-equal? "addr-types: hash"
-    (addr-types `(hash-val ((marked (addr 0 0))) ((marked (addr 1 1)) (marked (addr 2 2))))
-                `(Hash (Addr String) (Addr (Record))))
+  (test-equal? "addr-types: dict"
+    (addr-types `(dict-val ((marked (addr 0 0))) ((marked (addr 1 1)) (marked (addr 2 2))))
+                `(Dict (Addr String) (Addr (Record))))
     (term ([String (marked (addr 0 0))]
            [(Record) (marked (addr 1 1))]
            [(Record) (marked (addr 2 2))]))))
@@ -3845,13 +3845,13 @@
   (match some-term
     [`(marked ,address ,markers ...)
      `(marked ,(pseudo-blur-address address) ,@(filter (curryr < INIT-MESSAGE-MARKER) markers))]
-    [(list (and keyword (or 'list-val 'hash-val)) terms ...)
+    [(list (and keyword (or 'list-val 'dict-val)) terms ...)
      (define blurred-args (map pseudo-blur terms))
      (normalize-collection `(,keyword ,@blurred-args))]
-    [`(hash-val ,keys ,vals)
+    [`(dict-val ,keys ,vals)
      (define blurred-keys (map pseudo-blur keys))
      (define blurred-vals (map pseudo-blur vals))
-     `(normalize-collection `(hash-val ,blurred-keys ,blurred-vals))]
+     `(normalize-collection `(dict-val ,blurred-keys ,blurred-vals))]
     [(list terms ...) (map pseudo-blur terms)]
     [_ some-term]))
 
@@ -4556,8 +4556,8 @@
          'not-gteq)]
     [(list (list 'list-val args1 ...) (list 'list-val args2 ...))
      (compare-value-sets args1 args2)]
-    [(list (list 'hash-val (list keys1 ...) (list vals1 ...))
-           (list 'hash-val (list keys2 ...) (list vals2 ...)))
+    [(list (list 'dict-val (list keys1 ...) (list vals1 ...))
+           (list 'dict-val (list keys2 ...) (list vals2 ...)))
      (comp-result-and (compare-value-sets keys1 keys2)
                       (compare-value-sets vals1 vals2))]
     [_ (if (equal? v1 v2) 'eq 'not-gteq)]))
@@ -4623,33 +4623,33 @@
                    '(list-val (variant B)))
     'not-gteq)
 
-  (test-equal? "compare-value hash-val 1"
-    (compare-value '(hash-val () ())
-                   '(hash-val () ()))
+  (test-equal? "compare-value dict-val 1"
+    (compare-value '(dict-val () ())
+                   '(dict-val () ()))
     'eq)
-  (test-equal? "compare-value hash-val 2"
-    (compare-value '(hash-val (abs-nat) ((variant A)))
-                   '(hash-val () ()))
+  (test-equal? "compare-value dict-val 2"
+    (compare-value '(dict-val (abs-nat) ((variant A)))
+                   '(dict-val () ()))
     'gt)
-  (test-equal? "compare-value hash-val 3"
-    (compare-value '(hash-val (abs-nat) ((variant A) (variant B)))
-                   '(hash-val (abs-nat) ((variant A))))
+  (test-equal? "compare-value dict-val 3"
+    (compare-value '(dict-val (abs-nat) ((variant A) (variant B)))
+                   '(dict-val (abs-nat) ((variant A))))
     'gt)
-  (test-equal? "compare-value hash-val 4"
-    (compare-value '(hash-val ((variant A) (variant B)) (abs-nat))
-                   '(hash-val ((variant A)) (abs-nat)))
+  (test-equal? "compare-value dict-val 4"
+    (compare-value '(dict-val ((variant A) (variant B)) (abs-nat))
+                   '(dict-val ((variant A)) (abs-nat)))
     'gt)
-  (test-equal? "compare-value hash-val 5"
-    (compare-value '(hash-val (abs-nat) ((variant A)))
-                   '(hash-val (abs-nat) ((variant A) (variant B))))
+  (test-equal? "compare-value dict-val 5"
+    (compare-value '(dict-val (abs-nat) ((variant A)))
+                   '(dict-val (abs-nat) ((variant A) (variant B))))
     'lt)
-  (test-equal? "compare-value hash-val 6"
-    (compare-value '(hash-val ((variant A)) (abs-nat))
-                   '(hash-val ((variant A) (variant B)) (abs-nat)))
+  (test-equal? "compare-value dict-val 6"
+    (compare-value '(dict-val ((variant A)) (abs-nat))
+                   '(dict-val ((variant A) (variant B)) (abs-nat)))
     'lt)
-  (test-equal? "compare-value hash-val 7"
-    (compare-value '(hash-val ((variant A)) (abs-nat))
-                   '(hash-val ((variant B)) (abs-nat)))
+  (test-equal? "compare-value dict-val 7"
+    (compare-value '(dict-val ((variant A)) (abs-nat))
+                   '(dict-val ((variant B)) (abs-nat)))
     'not-gteq)
 
   (test-equal? "compare-value addresses 1"

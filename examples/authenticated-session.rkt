@@ -105,7 +105,7 @@
     (HandshakeWorker [auth-token Nat]
                      [client (Addr GetSessionResult)]
                      [server (Addr ServerInput)]
-                     [password-table (Hash String String)])
+                     [password-table (Dict String String)])
     ()
     ;; init:
     ;; (goto WaitingForCredentials)
@@ -135,7 +135,7 @@
     (define-state (WaitingForCredentials) (m)
       (case m
         [(Authenticate username password reply-to)
-         (case (hash-ref password-table username)
+         (case (dict-ref password-table username)
            [(Nothing)
             (send reply-to (FailedSession))
             (goto Done)]
@@ -163,7 +163,7 @@
     (define-state (Done) (m) (goto Done)))
 
   (define-actor GetSessionType
-    (ServiceGuard [server (Addr ServerInput)] [password-table (Hash String String)])
+    (ServiceGuard [server (Addr ServerInput)] [password-table (Dict String String)])
     ()
     (goto Ready)
     (define-state (Ready) (m)
@@ -175,12 +175,12 @@
   (define-actor ServerInput
     (Server)
     ()
-    (goto Running (hash) 1)
-    (define-state (Running [sessions (Hash Nat Nat)] [next-auth-token Nat]) (m)
+    (goto Running (dict) 1)
+    (define-state (Running [sessions (Dict Nat Nat)] [next-auth-token Nat]) (m)
       (case m
         [(GetSessionInternal auth-token reply-to)
          (cond
-           [(hash-has-key? sessions auth-token)
+           [(dict-has-key? sessions auth-token)
             (send reply-to (SuccessInternal))]
            [else (send reply-to (FailureInternal))])
          (goto Running sessions next-auth-token)]
@@ -190,12 +190,12 @@
          (let ([auth-token next-auth-token]
                [next-auth-token (+ 1 next-auth-token)])
            (send reply-to (NewSessionInternal auth-token))
-           (goto Running (hash-set sessions auth-token 1) next-auth-token))]
+           (goto Running (dict-set sessions auth-token 1) next-auth-token))]
         [(Ping reply-to)
          (send reply-to (Pong))
          (goto Running sessions next-auth-token)])))
 
-  (define-constant pw-table (hash ["joe" "abc"] ["sally" "xyz"]))
+  (define-constant pw-table (dict ["joe" "abc"] ["sally" "xyz"]))
 
   (let-actors ([server (spawn 1 Server)]
                [guard (spawn 2 ServiceGuard server pw-table)]

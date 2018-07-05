@@ -1301,12 +1301,12 @@
          [max-segment-lifetime-in-ms Nat]
          [user-response-wait-time Nat])
     ()
-    (goto Ready (hash) (hash))
-    (define-state (Ready [session-table (Hash SessionId (Addr PacketInputMessage))]
-                         [binding-table (Hash Nat (Addr PacketInputMessage))]) (m)
+    (goto Ready (dict) (dict))
+    (define-state (Ready [session-table (Dict SessionId (Addr PacketInputMessage))]
+                         [binding-table (Dict Nat (Addr PacketInputMessage))]) (m)
       (case m
         [(InPacket source-ip packet)
-         (case (hash-ref session-table
+         (case (dict-ref session-table
                          (SessionId (InetSocketAddress source-ip (: packet source-port)) (: packet destination-port)))
            [(Just to-session)
              (send to-session (InTcpPacket packet))
@@ -1320,7 +1320,7 @@
                (send packets-out (variant OutPacket source-ip (make-rst/global packet)))
                (goto Ready session-table binding-table)]
               [(packet-syn? packet)
-               (case (hash-ref binding-table (: packet destination-port))
+               (case (dict-ref binding-table (: packet destination-port))
                  [(Just bind-handler)
                   ;; NOTE: having both passive and active opens here allows too much of a state
                   ;; explosion, causing the conformance check to take more than 24 hours
@@ -1340,7 +1340,7 @@
                                                max-retries
                                                max-segment-lifetime-in-ms
                                                user-response-wait-time)])
-                          (goto Ready (hash-set session-table session-id session) binding-table)))]
+                          (goto Ready (dict-set session-table session-id session) binding-table)))]
                  [(Nothing)
                    ;; RFC 793 on resets:
                    ;;
@@ -1369,13 +1369,13 @@
                                                max-retries
                                                max-segment-lifetime-in-ms
                                                user-response-wait-time)])
-                    (goto Ready (hash-set session-table id session-actor) binding-table))
+                    (goto Ready (dict-set session-table id session-actor) binding-table))
                  `(goto Ready session-table binding-table))]
            [(Bind port bind-status-addr bind-handler)
              (send bind-status-addr (Bound))
-             (goto Ready session-table (hash-set binding-table port bind-handler))])]
+             (goto Ready session-table (dict-set binding-table port bind-handler))])]
         [(SessionCloseNotification session-id)
-         (goto Ready (hash-remove session-table session-id) binding-table)]))))))
+         (goto Ready (dict-remove session-table session-id) binding-table)]))))))
 
 (define (make-tcp-program active-open? bug1 bug2)
   (desugar

@@ -37,7 +37,7 @@
   (StringResponse [path String]))
 
 (define-constant docs-lookup
-  (hash ["begin" "http://www.racket-lang.org/"]))
+  (dict ["begin" "http://www.racket-lang.org/"]))
 
 (define-type DocResolverInput
   (Union (Resolve String (Addr ResolveResult))))
@@ -49,7 +49,7 @@
   (define-state (Always) (m)
     (case m
       [(Resolve pair sender)
-       (case (hash-ref docs-lookup pair)
+       (case (dict-ref docs-lookup pair)
          [(Nothing)
           (send sender (FalseResponse))
           (goto Always)]
@@ -89,7 +89,7 @@
 (define-variant DebugValue
   (DebugValue [value String]))
 
-(define-constant debug-values (hash [1 "foo"] [2 "bar"]))
+(define-constant debug-values (dict [1 "foo"] [2 "bar"]))
 
 (define-type DebugActorInput
   (Union
@@ -110,14 +110,14 @@
        (send sender (TrueResponse))
        (goto Always)]
       [(DebugValueReq location sender)
-       (case (hash-ref debug-values location)
+       (case (dict-ref debug-values location)
          [(Nothing) (send sender (FalseResponse))]
          [(Just val) (send sender (DebugValue val))])
        (goto Always)])))
 
 ; stubbing out types for File and FileLocation
 (define-variant FileType (Java) (Scala))
-(define-record File [type FileType] [text (Hash Nat String)])
+(define-record File [type FileType] [text (Dict Nat String)])
 (define-type FileLocation Nat)
 (define-variant MaybeDocSigPair
   (NoDocSigPair)
@@ -135,7 +135,7 @@
   (define-state (Always) (m)
     (case m
       [(DocUriAtPointReq file loc sender)
-       (case (hash-ref (: file text) loc)
+       (case (dict-ref (: file text) loc)
          [(Nothing) (send sender (NoDocSigPair))]
          [(Just path) (send sender (DocSigPair path))])
        (goto Always)]
@@ -458,7 +458,7 @@
     (FalseResponse)))
 
 (define desugared-file-type `(Union (Java) (Scala)))
-(define desugared-file `(Record [type ,desugared-file-type] [text (Hash Nat String)]))
+(define desugared-file `(Record [type ,desugared-file-type] [text (Dict Nat String)]))
 
 (define desugared-maybe-doc-sig-pair
   `(Union
