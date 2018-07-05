@@ -2815,9 +2815,9 @@
   (define forwarding-server
     (term
      (((Record [result Nat] [dest (Addr Nat)]) (marked (addr 1 0) 1))
-      (((define-state (ServerAlways) (rec)
+      (((define-state (ServerAlways) (r)
           (begin
-            (send (: rec dest) (: rec result))
+            (send (: r dest) (: r result))
             (goto ServerAlways))))
        (goto ServerAlways)))))
 

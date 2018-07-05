@@ -145,7 +145,7 @@
             (define-constant x e)) ; TODO: should really only be literals
   (Type (τ)
         pτ
-        (minfixpt T τ)
+        (rec T τ)
         T ; not really the right grammar, but Nanopass seems to require having at most one clause per
           ; constructor
         (Addr τ)

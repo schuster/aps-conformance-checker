@@ -190,10 +190,10 @@
    (where (v#_1  ...) (generate-variants t_1 τ_1 ...))
    (where (v#_rest ...)
           (messages-of-type/mf (Union [t_rest τ_rest ...] ...)))]
-  [(messages-of-type/mf (minfixpt X τ))
-   ((folded (minfixpt X τ) v#) ...)
+  [(messages-of-type/mf (rec X τ))
+   ((folded (rec X τ) v#) ...)
    (where (v# ...)
-          (messages-of-type/mf (type-subst τ X (minfixpt X τ))))]
+          (messages-of-type/mf (type-subst τ X (rec X τ))))]
   [(messages-of-type/mf (Record [l_rest τ_rest] ... [l_1 τ_1]))
    ,(for/fold ([records-so-far null])
               ([sub-record (term (messages-of-type/mf (Record [l_rest τ_rest] ...)))])
@@ -255,7 +255,7 @@
          '(record [x (variant B)] [y (variant C)])
          '(record [x (variant B)] [y (variant D)])))
   (define recursive-record-address-type
-    `(minfixpt RecTypeAddr (Addr (Record [a RecTypeAddr]))))
+    `(rec RecTypeAddr (Addr (Record [a RecTypeAddr]))))
   (define recursive-record-type
     `(Record [a ,recursive-record-address-type]))
   (test-same-items? "messages-of-type 8"
@@ -1419,7 +1419,7 @@
     (address-free? `(hash-val (abs-string) ((marked (addr 1 0) 0)))))
 
   (test-false "folded types with addresses are not address-free"
-    (address-free? '(folded (minfixpt A (Addr A)) (marked (addr 1 0) 0)))))
+    (address-free? '(folded (rec A (Addr A)) (marked (addr 1 0) 0)))))
 
 (define (list-values v)
   (match v
@@ -1797,11 +1797,11 @@
   type-subst/internal : τ X any -> any
   [(type-subst/internal Nat _ _) Nat]
   [(type-subst/internal String _ _) String]
-  [(type-subst/internal (minfixpt X any_1) X τ_2)
-   (minfixpt X any_1)]
-  [(type-subst/internal (minfixpt X_1 τ_1) X_2 any)
-   (minfixpt X_fresh (type-subst/internal (type-subst/internal τ_1 X_1 X_fresh) X_2 any))
-   (where X_fresh ,(variable-not-in (term ((minfixpt X_1 τ_1) X_2 any)) (term X_1)))]
+  [(type-subst/internal (rec X any_1) X τ_2)
+   (rec X any_1)]
+  [(type-subst/internal (rec X_1 τ_1) X_2 any)
+   (rec X_fresh (type-subst/internal (type-subst/internal τ_1 X_1 X_fresh) X_2 any))
+   (where X_fresh ,(variable-not-in (term ((rec X_1 τ_1) X_2 any)) (term X_1)))]
   [(type-subst/internal X X any) any]
   [(type-subst/internal X_1 X_2 any) X_1]
   [(type-subst/internal (Union [t τ ...] ...) X any)
@@ -1815,11 +1815,11 @@
    (Hash (type-subst/internal τ_k X any) (type-subst/internal τ_v X any))])
 
 (module+ test
-  (test-equal? "type-subst on non-matching minfixpt"
-    (term (type-subst (minfixpt SomeType (Addr (Record [a AnotherType] [b SomeType])))
+  (test-equal? "type-subst on non-matching rec"
+    (term (type-subst (rec SomeType (Addr (Record [a AnotherType] [b SomeType])))
                       AnotherType
                       Nat))
-    (term (minfixpt SomeType1 (Addr (Record (a Nat) (b SomeType1)))))))
+    (term (rec SomeType1 (Addr (Record (a Nat) (b SomeType1)))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Marking
@@ -3098,13 +3098,13 @@
 ;;                  (sort all-new-branches sexp<?))))]
 ;;   [(type-join (Record [l_1 τ_1] ...) (Record [l_2 τ_2] ...))
 ;;    (Record [l_1 (type-join τ_1 τ_2)] ...)]
-;;   ;; If names for minfixpt are the same, don't rename them
-;;   [(type-join (minfixpt X τ_1) (minfixpt X τ_2))
-;;    (minfixpt X (type-join τ_1 τ_2))]
-;;   [(type-join (minfixpt X_1 τ_1) (minfixpt X_2 τ_2))
-;;    (minfixpt X_fresh (type-join τ_1subst τ_2subst))
+;;   ;; If names for rec are the same, don't rename them
+;;   [(type-join (rec X τ_1) (rec X τ_2))
+;;    (rec X (type-join τ_1 τ_2))]
+;;   [(type-join (rec X_1 τ_1) (rec X_2 τ_2))
+;;    (rec X_fresh (type-join τ_1subst τ_2subst))
 ;;    (where X_fresh
-;;           ,(variable-not-in (term ((minfixpt X_1 τ_1) (minfixpt X_2 τ_2))) (term X_1)))
+;;           ,(variable-not-in (term ((rec X_1 τ_1) (rec X_2 τ_2))) (term X_1)))
 ;;    (where τ_1subst (type-subst τ_1 X_1 X_fresh))
 ;;    (where τ_2subst (type-subst τ_2 X_2 X_fresh))]
 ;;   [(type-join X X) X]
@@ -3133,26 +3133,26 @@
 ;;     (term (type-join (Addr (Union [A])) (Addr (Union [B]))))
 ;;     (term (Addr (Union))))
 
-;;   (test-equal? "type-join on minfixpts with the same names"
-;;     (term (type-join (minfixpt A (Addr (Union [M A])))
-;;                      (minfixpt A (Addr (Union [N A])))))
-;;     (term (minfixpt A (Addr (Union)))))
+;;   (test-equal? "type-join on recs with the same names"
+;;     (term (type-join (rec A (Addr (Union [M A])))
+;;                      (rec A (Addr (Union [N A])))))
+;;     (term (rec A (Addr (Union)))))
 
-;;   (test-equal? "type-join on minfixpts with different names"
-;;     (term (type-join (minfixpt A (Addr (Union [M A])))
-;;                      (minfixpt B (Addr (Union [N B])))))
+;;   (test-equal? "type-join on recs with different names"
+;;     (term (type-join (rec A (Addr (Union [M A])))
+;;                      (rec B (Addr (Union [N B])))))
 ;;     ;; TODO: I think this test is wrong
-;;     (term (minfixpt A1 (Addr (Union)))))
+;;     (term (rec A1 (Addr (Union)))))
 
-;;   (test-exn "type-join on minfixpts with different numbers of 'unfoldings'"
+;;   (test-exn "type-join on recs with different numbers of 'unfoldings'"
 ;;     (lambda (exn) #t)
-;;     (lambda () (term (type-join (minfixpt A (Addr (Union [M (minfixpt A (Addr (Union [M A])))])))
-;;                                 (minfixpt A (Addr (Union [M A])))))))
+;;     (lambda () (term (type-join (rec A (Addr (Union [M (rec A (Addr (Union [M A])))])))
+;;                                 (rec A (Addr (Union [M A])))))))
 
-;;   (test-equal? "type-join on one more minfixpt example"
-;;     (term (type-join (minfixpt B (Addr (Addr (Union     [Y B]))))
-;;                      (minfixpt A (Addr (Addr (Union [X] [Y A]))))))
-;;     `(minfixpt B1 (Addr (Addr (Union [X] [Y B1])))))
+;;   (test-equal? "type-join on one more rec example"
+;;     (term (type-join (rec B (Addr (Addr (Union     [Y B]))))
+;;                      (rec A (Addr (Addr (Union [X] [Y A]))))))
+;;     `(rec B1 (Addr (Addr (Union [X] [Y B1])))))
 
 ;;   (test-equal? "No sorting when we have same number of branches in result and original inputs"
 ;;     (term (type-join (Union [B] [A]) (Union [B] [A])))
@@ -3188,13 +3188,13 @@
 ;;                  (sort all-new-branches sexp<?))))]
 ;;   [(type-meet (Record [l_1 τ_1] ...) (Record [l_2 τ_2] ...))
 ;;    (Record [l_1 (type-meet τ_1 τ_2)] ...)]
-;;   ;; If names for minfixpt are the same, don't rename them
-;;   [(type-meet (minfixpt X τ_1) (minfixpt X τ_2))
-;;    (minfixpt X (type-meet τ_1 τ_2))]
-;;   [(type-meet (minfixpt X_1 τ_1) (minfixpt X_2 τ_2))
-;;    (minfixpt X_fresh (type-meet τ_1subst τ_2subst))
+;;   ;; If names for rec are the same, don't rename them
+;;   [(type-meet (rec X τ_1) (rec X τ_2))
+;;    (rec X (type-meet τ_1 τ_2))]
+;;   [(type-meet (rec X_1 τ_1) (rec X_2 τ_2))
+;;    (rec X_fresh (type-meet τ_1subst τ_2subst))
 ;;    (where X_fresh
-;;           ,(variable-not-in (term ((minfixpt X_1 τ_1) (minfixpt X_2 τ_2))) (term X_1)))
+;;           ,(variable-not-in (term ((rec X_1 τ_1) (rec X_2 τ_2))) (term X_1)))
 ;;    (where τ_1subst (type-subst τ_1 X_1 X_fresh))
 ;;    (where τ_2subst (type-subst τ_2 X_2 X_fresh))]
 ;;   [(type-meet X X) X]
@@ -3222,20 +3222,20 @@
 ;;     (term (type-meet (Addr (Union [A])) (Addr (Union [B]))))
 ;;     (term (Addr (Union [A] [B]))))
 
-;;   (test-equal? "type-meet on minfixpts with the same names"
-;;     (term (type-meet (minfixpt A (Addr (Union [M A])))
-;;                      (minfixpt A (Addr (Union [N A])))))
-;;     (term (minfixpt A (Addr (Union [M A] [N A])))))
+;;   (test-equal? "type-meet on recs with the same names"
+;;     (term (type-meet (rec A (Addr (Union [M A])))
+;;                      (rec A (Addr (Union [N A])))))
+;;     (term (rec A (Addr (Union [M A] [N A])))))
 
-;;   (test-equal? "type-meet on minfixpts with different names"
-;;     (term (type-meet (minfixpt A (Addr (Union [M A])))
-;;                      (minfixpt B (Addr (Union [N B])))))
-;;     (term (minfixpt A1 (Addr (Union [M A1] [N A1])))))
+;;   (test-equal? "type-meet on recs with different names"
+;;     (term (type-meet (rec A (Addr (Union [M A])))
+;;                      (rec B (Addr (Union [N B])))))
+;;     (term (rec A1 (Addr (Union [M A1] [N A1])))))
 
-;;   (test-exn "type-meet on minfixpts with different numbers of 'unfoldings'"
+;;   (test-exn "type-meet on recs with different numbers of 'unfoldings'"
 ;;     (lambda (exn) #t)
-;;     (lambda () (term (type-meet (minfixpt A (Addr (Union [M (minfixpt A (Addr (Union [M A])))])))
-;;                                 (minfixpt A (Addr (Union [M A])))))))
+;;     (lambda () (term (type-meet (rec A (Addr (Union [M (rec A (Addr (Union [M A])))])))
+;;                                 (rec A (Addr (Union [M A])))))))
 
 ;;   (test-equal? "No sorting when we have same number of branches in result and original inputs"
 ;;     (term (type-meet (Union [B] [A]) (Union [B] [A])))
@@ -3264,7 +3264,7 @@
    ;; TODO: shouldn't these constraints override previous ones, e.g. if one recursive type shadows
    ;; another?
    ----------------------------------------------------------
-   (type<=/j (any ...) (minfixpt X_1 τ_1) (minfixpt X_2 τ_2))]
+   (type<=/j (any ...) (rec X_1 τ_1) (rec X_2 τ_2))]
 
   [;; every variant in type 1 must have >= type in type 2
    ;; (side-condition ,(printf "Union: ~s\n"  (term (any (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...)))))
@@ -3305,18 +3305,18 @@
   (test-false "type<= list 2" (type<= `(List ,union-ab) `(List ,union-a)))
   (test-true "type<= hash 1" (type<= `(Hash ,union-a ,union-a) `(Hash ,union-ab ,union-ab)))
   (test-false "type<= hash 2" (type<= `(Hash ,union-ab ,union-ab)  `(Hash ,union-a ,union-a)))
-  (test-true "type<= alpha-equiv minfixpts"
-    (type<= `(minfixpt A (Addr (Addr A)))
-            `(minfixpt B (Addr (Addr B)))))
-  (test-true "type<= minfixpts with no recursive use"
-    (type<= `(minfixpt A (Addr (Union [X] [Y])))
-            `(minfixpt B (Addr (Union [X])))))
-  (test-true "type<= minfixpt 1"
-    (type<= `(minfixpt B (Addr (Addr (Union     [Y B]))))
-            `(minfixpt A (Addr (Addr (Union [X] [Y A]))))))
-  (test-false "type<= minfixpt 2"
-    (type<= `(minfixpt A (Addr (Addr (Union [X] [Y A]))))
-            `(minfixpt B (Addr (Addr (Union     [Y B])))))))
+  (test-true "type<= alpha-equiv recs"
+    (type<= `(rec A (Addr (Addr A)))
+            `(rec B (Addr (Addr B)))))
+  (test-true "type<= recs with no recursive use"
+    (type<= `(rec A (Addr (Union [X] [Y])))
+            `(rec B (Addr (Union [X])))))
+  (test-true "type<= rec 1"
+    (type<= `(rec B (Addr (Addr (Union     [Y B]))))
+            `(rec A (Addr (Addr (Union [X] [Y A]))))))
+  (test-false "type<= rec 2"
+    (type<= `(rec A (Addr (Addr (Union [X] [Y A]))))
+            `(rec B (Addr (Addr (Union     [Y B])))))))
 
 ;; Holds if the variant [t_1 τ_1 ...] has a >= variant in the given union type
 (define-judgment-form csa#
@@ -3376,10 +3376,10 @@
     (internal-addr-types `abs-string `String)
     null)
   (test-equal? "internal-addr-types 5: recursive"
-    (internal-addr-types `(folded (minfixpt X (Addr (Union [A X])))
+    (internal-addr-types `(folded (rec X (Addr (Union [A X])))
                                   (marked (addr 1 0)))
-                         `(minfixpt X (Addr (Union [A X]))))
-    (list `[(Union [A (minfixpt X (Addr (Union [A X])))]) (marked (addr 1 0))]))
+                         `(rec X (Addr (Union [A X]))))
+    (list `[(Union [A (rec X (Addr (Union [A X])))]) (marked (addr 1 0))]))
   (test-case "internal-addr-types: internals and externals"
     (check-same-items?
      (internal-addr-types (term (record [a (marked (addr 1 0) 1)]
@@ -3409,8 +3409,8 @@
   (match (list v type)
     [(list `(marked ,(? (lambda (v) (redex-match? csa# a# v))) ,_ ...) `(Addr ,type))
      (list `[,type ,v])]
-    [(list `(folded ,type ,v) `(minfixpt ,X ,fold-type))
-     (addr-types v (term (type-subst ,fold-type ,X (minfixpt ,X ,fold-type))))]
+    [(list `(folded ,type ,v) `(rec ,X ,fold-type))
+     (addr-types v (term (type-subst ,fold-type ,X (rec ,X ,fold-type))))]
     [(list `(variant ,tag ,vs ...) `(Union ,cases ...))
      (match-define `(,_ ,case-arg-types ...)
        (first (filter (lambda (case) (equal? (first case) tag)) cases)))
@@ -3446,7 +3446,7 @@
     (term ([(Union [A]) (marked (addr 2 2))]
            [(Union [B]) (marked (addr 2 2))])))
   (test-case "addr-types: fold"
-    (define type `(minfixpt SelfAddr (Addr (Union [A SelfAddr]))))
+    (define type `(rec SelfAddr (Addr (Union [A SelfAddr]))))
     (check-equal?
      (addr-types `(folded ,type (marked (addr 1 1))) type)
      (term ([(Union [A ,type]) (marked (addr 1 1))]))))

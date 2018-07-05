@@ -984,7 +984,7 @@
                    '(variant A (delayed-fork-addr (goto B) (define-state (B))) self))
     (list `[(2) ([(1) () (goto B) ((define-state (B))) ()])]))
   (test-equal? "Fold test"
-    (aps#-match-po `(folded (minfixpt X (Addr (Union [Done] [More X]))) (marked (addr 0 0) 1))
+    (aps#-match-po `(folded (rec X (Addr (Union [Done] [More X]))) (marked (addr 0 0) 1))
                    '(delayed-fork-addr (goto B) (define-state (B))))
     (list `[() ([(1) () (goto B) ((define-state (B))) ()])]))
   (test-equal? "'Or' pattern can match in multiple ways"

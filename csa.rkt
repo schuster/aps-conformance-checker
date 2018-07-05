@@ -96,7 +96,7 @@
   (n natural)
   (τ Nat
      String
-     (minfixpt X (Addr τ))
+     (rec X (Addr τ))
      X
      (Union [t τ ...] ...)
      (Record [l τ] ...)
@@ -421,8 +421,8 @@
                 (term (+ 1 b)))
   (check-equal? (term (subst (record [r1 x] [r2 y]) x 2))
                 (term (record [r1 2] [r2 y])))
-  (check-equal? (term (subst (: rec field) rec (record [field 1])))
-                (term (: (record [field 1])  field)))
+  (check-equal? (term (subst (: foo field) foo  (record [field 1])))
+                (term (: (record [field 1]) field)))
   (check-equal?
    (term (subst-n/Q (define-state (S1 [a Nat]) (m) (+ a b)) [a 1] [b 2] [m 3]))
    (term (define-state (S1 [a Nat]) (m) (+ a 2))))

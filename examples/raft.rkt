@@ -28,7 +28,7 @@
 
 (define desugared-raft-id-type 'Nat)
 (define desugared-raft-message-address-type
-  `(minfixpt RaftMsgAddress
+  `(rec RaftMsgAddress
      (Addr
       (Union
        (RequestVote
