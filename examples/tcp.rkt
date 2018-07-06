@@ -2322,7 +2322,7 @@
                  [fork (goto MaybeGetConnection bind-handler)
                        (define-state (MaybeGetConnection bind-handler)
                          [free ->
-                          ([obligation bind-handler (variant Connected * (fork-addr ,@(make-session-spec-behavior bug3 bug4)))])
+                          ([obligation bind-handler (variant Connected * (delayed-fork-addr ,@(make-session-spec-behavior bug3 bug4)))])
                           (goto MaybeGetConnection bind-handler)])])
                 (goto Managing)]
                [(variant UserCommand (variant Connect * *)) -> () (goto Managing)])))))
