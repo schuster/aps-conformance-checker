@@ -1981,20 +1981,23 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Eviction
 
-(define (evict-pair i s)
-  ;; TODO: add the rename map stuff (although technically it's not needed, since the only changed
-  ;; addresses are no longer in the resulting configuration
-  (for/fold ([pair (list i s)])
-            ;; need to check for obs externals, obs internal
-            ([addr (csa#-addrs-to-evict i)])
-    ;; if the PSM monitors a receptionist for this address, don't evict it
-    (define mon-receptionist-addrs
-      (map (curry csa#-config-receptionist-addr-by-marker i) (aps#-psm-mon-receptionists s)))
-    (cond
-      [(member addr mon-receptionist-addrs) pair]
-      [else
-       (match-define (list new-impl-config _) (csa#-evict i addr))
-       (list new-impl-config s)])))
+;; i# s# -> (list i# s# (listof (list a# a#))
+(define (evict-pair impl-config psm)
+  (define-values (new-impl-config new-psm addr-map)
+   (for/fold ([i impl-config]
+              [s psm]
+              [addr-map null])
+             ;; need to check for obs externals, obs internal
+             ([addr (csa#-addrs-to-evict impl-config)])
+     ;; if the PSM monitors a receptionist for this address, don't evict it
+     (define mon-receptionist-addrs
+       (map (curry csa#-config-receptionist-addr-by-marker i) (aps#-psm-mon-receptionists s)))
+     (cond
+       [(member addr mon-receptionist-addrs) (values i s addr-map)]
+       [else
+        (match-define (list new-impl-config new-addr) (csa#-evict i addr))
+        (values new-impl-config s (cons `[,addr ,new-addr] addr-map))])))
+  (list new-impl-config new-psm addr-map))
 
 (module+ test
   (define evict-test-config
@@ -2023,11 +2026,13 @@
        ()
        ([Nat (marked (addr 1 0))]
         [String (marked (addr 2 0))])]
-     `[() () (goto A) () ()]))
+     `[() () (goto A) () ()]
+     `([(addr (EVICT Nat ()) 0) (collective-addr (env Nat))])
+     ))
 
   (test-equal? "don't evict a monitored receptionist"
     (evict-pair evict-test-config `[(1) () (goto A) () ()])
-    (list evict-test-config `[(1) () (goto A) () ()])))
+    (list evict-test-config `[(1) () (goto A) () ()] null)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Testing Helpers

@@ -3639,8 +3639,8 @@
   (check-true (evictable-addr? `(collective-addr (L-EVICT Nat ()))))
   (check-false (evictable-addr? `(collective-addr (EVICT-NOT Nat ())))))
 
-;; i# a# -> (list i# ρ#) Evicts the given address from the given config, returning the new
-;; configuration and receptionists added
+;; i# a# -> (list i# a#) Evicts the actor at the given address from the given config, returning the
+;; new configuration and the new address for the evicted actor
 ;;
 ;; REFACTOR: I don't think I need to return the receptionists anymore
 (define (csa#-evict i addr)
@@ -3689,28 +3689,24 @@
     (merge-receptionists
      (remove-receptionist (csa#-config-receptionists i) addr)
      all-new-receptionists))
+  (define new-address `(collective-addr (env ,evicted-type)))
   (list (csa#-rename-addresses `(,remaining-actors
                                  ,remaining-blurred-actors
                                  ,non-evicted-packets
                                  ,updated-receptionists)
-                               `([,addr (collective-addr (env ,evicted-type))]))
-        all-new-receptionists))
+                               `([,addr ,new-address]))
+        new-address))
 
 (module+ test
   (test-equal? "csa#-evict atomic address"
     (csa#-evict evict-test-config evictable-addr1)
     (list expected-precise-evicted-config
-          `([String (marked (addr 2 0))]
-            [String (marked (addr 3 0))]
-            [Nat (marked (addr 1 0))]
-            [Nat (marked (addr 4 0))])))
+          `(collective-addr (env (Addr Nat)))))
 
   (test-equal? "csa#-evict collective address"
     (csa#-evict evict-test-config collective-evictable-addr1)
     (list expected-blurred-evicted-config
-          `([String (marked (addr 2 0))]
-            [String (marked (addr 3 0))]
-            [Nat (marked (addr 1 0))]))))
+          `(collective-addr (env (Addr Nat))))))
 
 (define (remove-receptionist receptionists addr-to-remove)
   (filter (lambda (rec) (not (equal? (unmark-addr (second rec)) addr-to-remove)))

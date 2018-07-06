@@ -579,7 +579,7 @@
 ;; space.
 (define (sbc pair)
   ;; NOTE: eviction is added here now as well, as part of the general T transform
-  (match-define (list evicted-i evicted-s)
+  (match-define (list evicted-i evicted-s eviction-rename-map)
     (if (USE-EVICTION?)
         (evict-pair (config-pair-impl-config pair) (config-pair-spec-config pair))
         (list (config-pair-impl-config pair) (config-pair-spec-config pair))))
@@ -595,7 +595,11 @@
     (display-step-line "Canonicalizing the pair, adding to queue")
     (match-define (list canonicalized-impl canonicalized-spec addr-map marker-map)
       (canonicalize-pair blurred-impl blurred-spec))
-    (list (config-pair canonicalized-impl canonicalized-spec) addr-map marker-map)))
+    (list (config-pair canonicalized-impl canonicalized-spec)
+          ;; canonicalize only renames the internal addresses after eviction, so we can append the two
+          ;; address maps rather than a more sophisticated composition
+          (append eviction-rename-map addr-map)
+          marker-map)))
 
 ;; Calls sbc on every pair and merges the results into one long list.
 (define (sbc* pairs)
