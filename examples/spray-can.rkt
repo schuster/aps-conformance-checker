@@ -945,16 +945,16 @@
 (define connection-spec-behavior
   `((goto AwaitingRegistration)
     (define-state (AwaitingRegistration)
-      [free -> () (goto Closed)]
-      [(variant HttpRegister handler) -> () (goto Running handler)])
+      [free -> (goto Closed)]
+      [(variant HttpRegister handler) -> (goto Running handler)])
     (define-state (Running handler)
       [free ->
-             ([obligation handler (record [request *] [response-dest *])])
+             [obligation handler (record [request *] [response-dest *])]
              (goto Running handler)]
-      [(variant HttpRegister new-handler) -> () (goto Running handler)]
-      [free -> () (goto Closed)])
+      [(variant HttpRegister new-handler) -> (goto Running handler)]
+      [free -> (goto Closed)])
     (define-state (Closed)
-      [(variant HttpRegister new-handler) -> () (goto Closed)])))
+      [(variant HttpRegister new-handler) -> (goto Closed)])))
 
 (define connection-spec
   `(specification (receptionists)
@@ -964,8 +964,8 @@
      (goto Init app-listener)
      (define-state (Init app-listener)
        [free ->
-              ([obligation app-listener
-                           (variant HttpConnected * (delayed-fork-addr ,@connection-spec-behavior))])
+              [obligation app-listener
+                          (variant HttpConnected * (delayed-fork-addr ,@connection-spec-behavior))]
               (goto Done)])
      (define-state (Done))))
 
@@ -973,25 +973,25 @@
   `((goto SendUnbindResultAnytime unbind-commander)
     (define-state (SendUnbindResultAnytime unbind-commander)
       [free ->
-             ([obligation unbind-commander (or (variant HttpUnbound)
-                                               (variant HttpCommandFailed))])
+             [obligation unbind-commander (or (variant HttpUnbound)
+                                              (variant HttpCommandFailed))]
              (goto SendUnbindResultAnytime unbind-commander)])))
 
 (define listener-spec-behavior
   `((goto Connected app-listener)
     (define-state (Connected app-listener)
       [free ->
-             ([obligation app-listener
-                          (variant HttpConnected * (delayed-fork-addr ,@connection-spec-behavior))])
+             [obligation app-listener
+                         (variant HttpConnected * (delayed-fork-addr ,@connection-spec-behavior))]
              (goto Connected app-listener)]
       ;; Checker isn't precise enough to know that an unbind result will only be sent once, so we
       ;; have to write a spec that allows for many sends instead
       [(variant HttpUnbind unbind-commander) ->
-       ([fork ,@unbind-result-behavior])
+       [fork ,@unbind-result-behavior]
        (goto Closed)])
     (define-state (Closed)
       [(variant HttpUnbind unbind-commander) ->
-       ([fork ,@unbind-result-behavior])
+       [fork ,@unbind-result-behavior]
        (goto Closed)])))
 
 ;; HttpListener check
@@ -1004,8 +1004,8 @@
      (goto Init bind-commander app-listener)
      (define-state (Init bind-commander app-listener)
        [free ->
-              ([obligation bind-commander (or (variant HttpCommandFailed)
-                                              (variant HttpBound (fork-addr ,@listener-spec-behavior)))])
+              [obligation bind-commander (or (variant HttpCommandFailed)
+                                             (variant HttpBound (fork-addr ,@listener-spec-behavior)))]
               (goto Done)])
      (define-state (Done))))
 
@@ -1016,8 +1016,8 @@
      (goto Running)
      (define-state (Running)
        [(variant HttpBind * commander app-listener) ->
-        ([obligation commander (or (variant HttpCommandFailed)
-                                   (variant HttpBound (fork-addr ,@listener-spec-behavior)))])
+        [obligation commander (or (variant HttpCommandFailed)
+                                  (variant HttpBound (fork-addr ,@listener-spec-behavior)))]
         (goto Running)])))
 
 (module+ test

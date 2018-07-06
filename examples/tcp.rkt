@@ -2142,137 +2142,137 @@
   `((goto AwaitingRegistration)
 
     (define-state (AwaitingRegistration)
-      [(variant Register app-handler) -> () (goto Connected app-handler)]
+      [(variant Register app-handler) -> (goto Connected app-handler)]
       [(variant Write * write-handler) ->
-       ([obligation write-handler (variant CommandFailed)])
+       [obligation write-handler (variant CommandFailed)]
        (goto AwaitingRegistration)]
       [(variant Close close-handler) ->
-       ([obligation close-handler (variant Closed)])
+       [obligation close-handler (variant Closed)]
        (goto ClosedNoHandler)]
       ;; NOTE: this is a tricky spec. I want to say that eventually the session is guaranteed to
       ;; close, but the possibility of Abort means this close-handler might not get a response. Also
       ;; the blurring would make that hard to check even without the abort issue.
-      [(variant ConfirmedClose close-handler) -> () (goto ClosingNoHandler close-handler)]
+      [(variant ConfirmedClose close-handler) -> (goto ClosingNoHandler close-handler)]
       [(variant Abort abort-handler) ->
-       ([obligation abort-handler (variant Aborted)])
+       [obligation abort-handler (variant Aborted)]
        (goto ClosedNoHandler)]
       ;; e.g. might close because of a registration timeout
       ;;
       ;; APS PROTOCOL BUG: didn't realize at first this transition was a possibility
-      ,@(if bug3 `() `([free -> () (goto ClosedNoHandler)])))
+      ,@(if bug3 `() `([free -> (goto ClosedNoHandler)])))
 
     (define-state (Connected app-handler)
-      [(variant Register other-app-handler) -> () (goto Connected app-handler)]
+      [(variant Register other-app-handler) -> (goto Connected app-handler)]
       [(variant Write * write-handler) ->
        ;; NOTE: this would probably be WriteAck OR CommandFailed in a real implementation that has a
        ;; limit on its queue size
-       ([obligation write-handler (variant WriteAck)])
+       [obligation write-handler (variant WriteAck)]
        (goto Connected app-handler)]
       [(variant Close close-handler) ->
-       ([obligation app-handler (variant Closed)]
-        [obligation close-handler (variant Closed)])
+       [obligation app-handler (variant Closed)]
+       [obligation close-handler (variant Closed)]
        (goto Closed app-handler)]
-      [(variant ConfirmedClose close-handler) -> () (goto Closing app-handler close-handler)]
+      [(variant ConfirmedClose close-handler) -> (goto Closing app-handler close-handler)]
       [(variant Abort abort-handler) ->
-       ([obligation abort-handler (variant Aborted)]
-        [obligation app-handler (variant Aborted)])
+       [obligation abort-handler (variant Aborted)]
+       [obligation app-handler (variant Aborted)]
        (goto Closed app-handler)]
       ;; Possible unobserved events:
-      [free -> ([obligation app-handler (variant ReceivedData *)]) (goto Connected app-handler)]
-      [free -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)]
-      [free -> ([obligation app-handler (variant PeerClosed)]) (goto Closed app-handler)])
+      [free -> [obligation app-handler (variant ReceivedData *)] (goto Connected app-handler)]
+      [free -> [obligation app-handler (variant ErrorClosed)] (goto Closed app-handler)]
+      [free -> [obligation app-handler (variant PeerClosed)] (goto Closed app-handler)])
 
     (define-state (Closing app-handler close-handler)
       [free ->
-       ([obligation close-handler (variant ConfirmedClosed)]
-        [obligation app-handler (variant ConfirmedClosed)])
+       [obligation close-handler (variant ConfirmedClosed)]
+       [obligation app-handler (variant ConfirmedClosed)]
        (goto Closed app-handler)]
-      [(variant Register app-handler) -> () (goto Closing app-handler close-handler)]
+      [(variant Register app-handler) -> (goto Closing app-handler close-handler)]
       [(variant Write * write-handler) ->
-       ([obligation write-handler (variant CommandFailed)])
+       [obligation write-handler (variant CommandFailed)]
        (goto Closing app-handler close-handler)]
       [(variant Close other-close-handler) ->
-       ([obligation other-close-handler (variant CommandFailed)])
+       [obligation other-close-handler (variant CommandFailed)]
        (goto Closing app-handler close-handler)]
       [(variant ConfirmedClose other-close-handler) ->
-       ([obligation other-close-handler (variant CommandFailed)])
+       [obligation other-close-handler (variant CommandFailed)]
        (goto Closing app-handler close-handler)]
       [(variant Abort abort-handler) ->
        ;; NOTE: no response at all on the ConfirmedClose handler: this is intentional (although
        ;; possibly not a good idea)
-       ([obligation abort-handler (variant Aborted)]
-        [obligation app-handler (variant Aborted)])
+       [obligation abort-handler (variant Aborted)]
+       [obligation app-handler (variant Aborted)]
        (goto Closed app-handler)]
       [free ->
-       ([obligation app-handler (variant ReceivedData *)])
+       [obligation app-handler (variant ReceivedData *)]
        (goto Closing app-handler close-handler)]
       ;; NOTE: again, no response on close-handler. Again, intentional
-      [free -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])
+      [free -> [obligation app-handler (variant ErrorClosed)] (goto Closed app-handler)])
 
     (define-state (ClosingNoHandler close-handler)
-      [free -> ([obligation close-handler (variant ConfirmedClosed)]) (goto ClosedNoHandler)]
-      [(variant Register app-handler) -> () (goto ClosingNoHandler close-handler)]
+      [free -> [obligation close-handler (variant ConfirmedClosed)] (goto ClosedNoHandler)]
+      [(variant Register app-handler) -> (goto ClosingNoHandler close-handler)]
       [(variant Write * write-handler) ->
-       ([obligation write-handler (variant CommandFailed)])
+       [obligation write-handler (variant CommandFailed)]
        (goto ClosingNoHandler close-handler)]
       [(variant Close other-close-handler) ->
-       ([obligation other-close-handler (variant CommandFailed)])
+       [obligation other-close-handler (variant CommandFailed)]
        (goto ClosingNoHandler close-handler)]
       [(variant ConfirmedClose other-close-handler) ->
-       ([obligation other-close-handler (variant CommandFailed)])
+       [obligation other-close-handler (variant CommandFailed)]
        (goto ClosingNoHandler close-handler)]
       [(variant Abort abort-handler) ->
-       ([obligation abort-handler (variant Aborted)]) (goto ClosedNoHandler)]
+       [obligation abort-handler (variant Aborted)] (goto ClosedNoHandler)]
       ;; NOTE: again, no response on close-handler. Again, intentional
       ;;
       ;; APS PROTOCOL BUG: to replicate, comment out this unobs transition
-      ,@(if bug4 `() `([free -> () (goto ClosedNoHandler)])))
+      ,@(if bug4 `() `([free -> (goto ClosedNoHandler)])))
 
     (define-state (ClosedNoHandler)
-      [(variant Register app-handler) -> () (goto ClosedNoHandler)]
+      [(variant Register app-handler) -> (goto ClosedNoHandler)]
       [(variant Write * write-handler) ->
-       ([obligation write-handler (variant CommandFailed)])
+       [obligation write-handler (variant CommandFailed)]
        (goto ClosedNoHandler)]
       [(variant Close other-close-handler) ->
-       ([obligation other-close-handler (variant CommandFailed)])
+       [obligation other-close-handler (variant CommandFailed)]
        (goto ClosedNoHandler)]
       [(variant ConfirmedClose other-close-handler) ->
-       ([obligation other-close-handler (variant CommandFailed)])
+       [obligation other-close-handler (variant CommandFailed)]
        (goto ClosedNoHandler)]
       [(variant Abort abort-handler) ->
        ;; An abort during the close process could still succeed
-       ([obligation abort-handler (or (variant Aborted) (variant CommandFailed))])
+       [obligation abort-handler (or (variant Aborted) (variant CommandFailed))]
        (goto ClosedNoHandler)])
 
     (define-state (Closed app-handler)
-      [(variant Register app-handler) -> () (goto Closed app-handler)]
+      [(variant Register app-handler) -> (goto Closed app-handler)]
       [(variant Write * write-handler) ->
-       ([obligation write-handler (variant CommandFailed)])
+       [obligation write-handler (variant CommandFailed)]
        (goto Closed app-handler)]
       [(variant Close other-close-handler) ->
-       ([obligation other-close-handler (variant CommandFailed)])
+       [obligation other-close-handler (variant CommandFailed)]
        (goto Closed app-handler)]
       [(variant ConfirmedClose other-close-handler) ->
-       ([obligation other-close-handler (variant CommandFailed)])
+       [obligation other-close-handler (variant CommandFailed)]
        (goto Closed app-handler)]
       [(variant Abort abort-handler) ->
        ;; An abort during the close process could still succeed
-       ([obligation abort-handler (variant Aborted)]
-        [obligation app-handler (variant Aborted)])
+       [obligation abort-handler (variant Aborted)]
+       [obligation app-handler (variant Aborted)]
        (goto Closed app-handler)]
       ;; An abort during the close process could still succeed. Abort may or may not send on
       ;; app-handler, depending on which state it's in internally
       [(variant Abort abort-handler) ->
-       ([obligation app-handler (variant CommandFailed)]
-        [obligation abort-handler (variant CommandFailed)])
+       [obligation app-handler (variant CommandFailed)]
+       [obligation abort-handler (variant CommandFailed)]
        (goto Closed app-handler)]
       [(variant Abort abort-handler) ->
-       ([obligation abort-handler (variant CommandFailed)])
+       [obligation abort-handler (variant CommandFailed)]
        (goto Closed app-handler)]
       ;; We might get some data while the other side is closing. Could probably split this into a
       ;; separate spec state, but I'm leaving it here for now
-      [free -> ([obligation app-handler (variant ReceivedData *)]) (goto Closed app-handler)]
-      [free -> ([obligation app-handler (variant ErrorClosed)]) (goto Closed app-handler)])))
+      [free -> [obligation app-handler (variant ReceivedData *)] (goto Closed app-handler)]
+      [free -> [obligation app-handler (variant ErrorClosed)] (goto Closed app-handler)])))
 
 (define session-spec
   `(specification
@@ -2284,11 +2284,11 @@
     (goto Init)
     (define-state (Init)
       [status-updates ->
-       ([obligation status-updates (or (variant CommandFailed)
-                                       (variant Connected * (delayed-fork-addr ,@(make-session-spec-behavior #f #f))))])
+       [obligation status-updates (or (variant CommandFailed)
+                                      (variant Connected * (delayed-fork-addr ,@(make-session-spec-behavior #f #f))))]
        (goto Done)])
     (define-state (Done)
-      [* -> () (goto Done)])))
+      [* -> (goto Done)])))
 
 ;; (module+ test
 ;;   (test-true "Conformance for session"
@@ -2303,29 +2303,29 @@
      (define-state (Managing)
        ,@(if active-open?
              `([(variant UserCommand (variant Connect * status-updates)) ->
-                 ([fork (goto MaybeSend status-updates)
-                        (define-state (MaybeSend status-updates)
-                          [free ->
-                           ([obligation status-updates
-                                        (or (variant CommandFailed)
-                                            (variant Connected * (delayed-fork-addr ,@(make-session-spec-behavior bug3 bug4))))])
-                           (goto Done)])
-                        (define-state (Done))])
+                 [fork (goto MaybeSend status-updates)
+                       (define-state (MaybeSend status-updates)
+                         [free ->
+                               [obligation status-updates
+                                           (or (variant CommandFailed)
+                                               (variant Connected * (delayed-fork-addr ,@(make-session-spec-behavior bug3 bug4))))]
+                               (goto Done)])
+                       (define-state (Done))]
                  (goto Managing)]
                 ;; NOTE: Bind disabled because the conformance checker cannot handle the state
                 ;; explosion that follows
-                [(variant UserCommand (variant Bind * * *)) -> () (goto Managing)])
+                [(variant UserCommand (variant Bind * * *)) -> (goto Managing)])
              `([(variant UserCommand (variant Bind * bind-status bind-handler)) ->
                 ;; on Bind, send back the response to bind-status and fork a spec that says we might
                 ;; get some number of connections on this address
-                ([obligation bind-status (or (variant CommandFailed) (variant Bound))]
-                 [fork (goto MaybeGetConnection bind-handler)
-                       (define-state (MaybeGetConnection bind-handler)
-                         [free ->
-                          ([obligation bind-handler (variant Connected * (delayed-fork-addr ,@(make-session-spec-behavior bug3 bug4)))])
-                          (goto MaybeGetConnection bind-handler)])])
+                [obligation bind-status (or (variant CommandFailed) (variant Bound))]
+                [fork (goto MaybeGetConnection bind-handler)
+                      (define-state (MaybeGetConnection bind-handler)
+                        [free ->
+                              [obligation bind-handler (variant Connected * (delayed-fork-addr ,@(make-session-spec-behavior bug3 bug4)))]
+                              (goto MaybeGetConnection bind-handler)])]
                 (goto Managing)]
-               [(variant UserCommand (variant Connect * *)) -> () (goto Managing)])))))
+               [(variant UserCommand (variant Connect * *)) -> (goto Managing)])))))
 
 (define active-manager-spec (make-manager-spec #t #f #f))
 (define passive-manager-spec (make-manager-spec #f #f #f))

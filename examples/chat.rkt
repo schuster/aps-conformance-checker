@@ -301,19 +301,19 @@
     ;; prove that no messages will be sent to the handler after the Leave message is
     ;; sent.
     (define-state (Running room-handler)
-      [(variant Speak * *) -> () (goto Running room-handler)]
-      [(variant Leave *) -> () (goto Running room-handler)]
-      [(variant GetMembers callback) -> ([obligation callback *]) (goto Running room-handler)]
-      [free -> ([obligation room-handler (variant MemberLeft *)]) (goto Running room-handler)]
-      [free -> ([obligation room-handler (variant MemberJoined *)]) (goto Running room-handler)]
-      [free -> ([obligation room-handler (variant Message * *)]) (goto Running room-handler)])))
+      [(variant Speak * *) -> (goto Running room-handler)]
+      [(variant Leave *) -> (goto Running room-handler)]
+      [(variant GetMembers callback) -> [obligation callback *] (goto Running room-handler)]
+      [free -> [obligation room-handler (variant MemberLeft *)] (goto Running room-handler)]
+      [free -> [obligation room-handler (variant MemberJoined *)] (goto Running room-handler)]
+      [free -> [obligation room-handler (variant Message * *)] (goto Running room-handler)])))
 
 (define server-spec-behavior
   `((goto ServerAlways)
     (define-state (ServerAlways)
-      [(variant GetRoomList callback) -> ([obligation callback *]) (goto ServerAlways)]
+      [(variant GetRoomList callback) -> [obligation callback *] (goto ServerAlways)]
       [(variant JoinRoom * * handler) ->
-       ([obligation handler (variant JoinedRoom (fork-addr ,@(room-spec-behavior 'handler)))])
+       [obligation handler (variant JoinedRoom (fork-addr ,@(room-spec-behavior 'handler)))]
        (goto ServerAlways)])))
 
 (define chat-spec
@@ -322,9 +322,9 @@
      (goto AuthAlways)
      (define-state (AuthAlways)
        [(variant LogIn * * callback) ->
-        ([obligation callback
-                     (or (variant AuthenticationFailed)
-                         (variant AuthenticationSucceeded (delayed-fork-addr ,@server-spec-behavior)))])
+        [obligation callback
+                    (or (variant AuthenticationFailed)
+                        (variant AuthenticationSucceeded (delayed-fork-addr ,@server-spec-behavior)))]
         (goto AuthAlways)])))
 
 (module+ test

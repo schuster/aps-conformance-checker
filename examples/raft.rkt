@@ -119,38 +119,38 @@
      (mon-receptionist raft-server)
      (goto Init)
      (define-state (Init)
-       [free -> () (goto Running)]
-       [(variant RequestVote * (record [id *] [address candidate]) * *) -> () (goto Init)]
-       [(variant RequestVote * (record [id *] [address candidate]) * *) -> () (goto Init)]
-       [(variant VoteCandidate * *) -> () (goto Init)]
-       [(variant DeclineCandidate * *) -> () (goto Init)]
-       [(variant AppendEntries * * * * * (record [id *] [address leader]) *) -> () (goto Init)]
-       [(variant AppendRejected * * (record [id *] [address member])) -> () (goto Init)]
-       [(variant AppendSuccessful * * *) -> () (goto Init)])
+       [free -> (goto Running)]
+       [(variant RequestVote * (record [id *] [address candidate]) * *) -> (goto Init)]
+       [(variant RequestVote * (record [id *] [address candidate]) * *) -> (goto Init)]
+       [(variant VoteCandidate * *) -> (goto Init)]
+       [(variant DeclineCandidate * *) -> (goto Init)]
+       [(variant AppendEntries * * * * * (record [id *] [address leader]) *) -> (goto Init)]
+       [(variant AppendRejected * * (record [id *] [address member])) -> (goto Init)]
+       [(variant AppendSuccessful * * *) -> (goto Init)])
      (define-state (Running)
        [(variant RequestVote * (record [id *] [address candidate]) * *) ->
-        ([obligation candidate (variant VoteCandidate * *)])
+        [obligation candidate (variant VoteCandidate * *)]
         (goto Running)]
        [(variant RequestVote * (record [id *] [address candidate]) * *) ->
-        ([obligation candidate (variant DeclineCandidate * *)])
+        [obligation candidate (variant DeclineCandidate * *)]
         (goto Running)]
-       [(variant VoteCandidate * *) -> () (goto Running)]
-       [(variant DeclineCandidate * *) -> () (goto Running)]
+       [(variant VoteCandidate * *) -> (goto Running)]
+       [(variant DeclineCandidate * *) -> (goto Running)]
        [(variant AppendEntries * * * * * (record [id *] [address leader]) *) ->
-        ([obligation leader (variant AppendRejected * * *)])
+        [obligation leader (variant AppendRejected * * *)]
         (goto Running)]
        [(variant AppendEntries * * * * * (record [id *] [address leader]) *) ->
-        ([obligation leader (variant AppendSuccessful * * *)])
+        [obligation leader (variant AppendSuccessful * * *)]
         (goto Running)]
-       [(variant AppendRejected * * (record [id *] [address member])) -> () (goto Running)]
+       [(variant AppendRejected * * (record [id *] [address member])) -> (goto Running)]
        ;; APS PROTOCOL BUG: to replicate, comment out this case that sends an AppendEntries back (I
        ;; left this case out the first time around)
        ,@(if bug1
              '()
              '([(variant AppendRejected * * (record [id *] [address member])) ->
-                 ([obligation member (variant AppendEntries * * * * * * *)])
+                 [obligation member (variant AppendEntries * * * * * * *)]
                  (goto Running)]))
-       [(variant AppendSuccessful * * *) -> () (goto Running)]))))
+       [(variant AppendSuccessful * * *) -> (goto Running)]))))
 
 (define raft-spec (make-raft-spec #f))
 

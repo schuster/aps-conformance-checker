@@ -1192,53 +1192,53 @@
      (goto Init job-manager)
      (define-state (Init job-manager)
        [free ->
-              ([obligation job-manager
-                           (variant RegisterTaskManager * * self)])
+              [obligation job-manager
+                          (variant RegisterTaskManager * * self)]
               ;; APS PROTOCOL BUG: (uncatchable as of July 2018)
               (goto Unregistered job-manager)])
      (define-state (Unregistered job-manager)
-      [(variant JobManagerTerminated) -> () (goto Unregistered job-manager)]
-      [(variant AcknowledgeRegistration) -> () (goto Registered job-manager)]
+      [(variant JobManagerTerminated) -> (goto Unregistered job-manager)]
+      [(variant AcknowledgeRegistration) -> (goto Registered job-manager)]
       [(variant SubmitTask * ack-dest) ->
-       ([obligation ack-dest (variant Failure *)])
+       [obligation ack-dest (variant Failure *)]
        (goto Unregistered job-manager)]
       [(variant CancelTask * ack-dest) ->
-       ([obligation ack-dest (variant Failure *)])
+       [obligation ack-dest (variant Failure *)]
        (goto Unregistered job-manager)]
       [free ->
              ;; NOTE: this used to have "self" at the end of the pattern, but can't do that now that
              ;; markers distringuish the different copies of each address
-             ([obligation job-manager (variant RegisterTaskManager * * *)])
+             [obligation job-manager (variant RegisterTaskManager * * *)]
              (goto Unregistered job-manager)]
       ;; These two messages might still happen during Unregistered because the runners are
       ;; cancelled later
       [free ->
-             ([obligation job-manager (variant UpdateTaskExecutionState * *)])
+             [obligation job-manager (variant UpdateTaskExecutionState * *)]
              (goto Unregistered job-manager)]
       [free ->
-             ([obligation job-manager (variant RequestNextInputSplit * *)])
+             [obligation job-manager (variant RequestNextInputSplit * *)]
              (goto Unregistered job-manager)])
     (define-state (Registered job-manager)
-      [(variant JobManagerTerminated) -> () (goto Unregistered job-manager)]
-      [(variant AcknowledgeRegistration) -> () (goto Registered job-manager)]
+      [(variant JobManagerTerminated) -> (goto Unregistered job-manager)]
+      [(variant AcknowledgeRegistration) -> (goto Registered job-manager)]
       [(variant SubmitTask * ack-dest) ->
-       ([obligation ack-dest (or (variant Acknowledge *) (variant Failure *))])
+       [obligation ack-dest (or (variant Acknowledge *) (variant Failure *))]
        (goto Registered job-manager)]
       [(variant CancelTask * ack-dest) ->
-       ([obligation ack-dest (or (variant Acknowledge *) (variant Failure *))])
+       [obligation ack-dest (or (variant Acknowledge *) (variant Failure *))]
        (goto Registered job-manager)]
       [free ->
-             ([obligation job-manager (variant UpdateTaskExecutionState * *)])
+             [obligation job-manager (variant UpdateTaskExecutionState * *)]
              (goto Registered job-manager)]
       [free ->
-             ([obligation job-manager (variant RequestNextInputSplit * *)])
+             [obligation job-manager (variant RequestNextInputSplit * *)]
              (goto Registered job-manager)])))
 
 (define send-job-result-anytime-behavior
   `((goto SendAnytime dest)
     (define-state (SendAnytime dest)
-      [free -> ([obligation dest (variant JobResultSuccess *)]) (goto SendAnytime dest)]
-      [free -> ([obligation dest (variant JobResultFailure)]) (goto SendAnytime dest)])))
+      [free -> [obligation dest (variant JobResultSuccess *)] (goto SendAnytime dest)]
+      [free -> [obligation dest (variant JobResultFailure)] (goto SendAnytime dest)])))
 
 (define job-manager-client-pov-spec
   `(specification (receptionists [job-manager ,desugared-job-manager-command]
@@ -1253,15 +1253,15 @@
        ;; In the AI, the best we can say is that we might get any number of results back on this
        ;; address (because the abstraction never actually removes addresses from collections), so
        ;; the spec just states the possible results.
-       [(variant SubmitJob * dest) -> ([fork ,@send-job-result-anytime-behavior]) (goto Running)])))
+       [(variant SubmitJob * dest) -> [fork ,@send-job-result-anytime-behavior] (goto Running)])))
 
 (define registered-tm-behavior
   `((goto SendAck tm)
     (define-state (SendAck tm)
-      [free -> ([obligation tm (variant AcknowledgeRegistration)]) (goto SubmitOrCancelAnytime tm)])
+      [free -> [obligation tm (variant AcknowledgeRegistration)] (goto SubmitOrCancelAnytime tm)])
     (define-state (SubmitOrCancelAnytime tm)
-      [free -> ([obligation tm (variant SubmitTask * *)]) (goto SubmitOrCancelAnytime tm)]
-      [free -> ([obligation tm (variant CancelTask * *)]) (goto SubmitOrCancelAnytime tm)])))
+      [free -> [obligation tm (variant SubmitTask * *)] (goto SubmitOrCancelAnytime tm)]
+      [free -> [obligation tm (variant CancelTask * *)] (goto SubmitOrCancelAnytime tm)])))
 
 (define job-manager-tm-pov-spec
   `(specification (receptionists [job-manager ,desugared-tm-to-jm-type]
@@ -1273,8 +1273,8 @@
        [(variant RequestNextInputSplit * dest) ->
         ([obligation dest (variant NextInputSplit *)])
         (goto Running)]
-       [(variant RegisterTaskManager * * tm) -> ([fork ,@registered-tm-behavior]) (goto Running)]
-       [(variant UpdateTaskExecutionState * *) -> () (goto Running)])))
+       [(variant RegisterTaskManager * * tm) -> [fork ,@registered-tm-behavior] (goto Running)]
+       [(variant UpdateTaskExecutionState * *) -> (goto Running)])))
 
 (module+ test
   (test-true "Task manager conforms to its spec"

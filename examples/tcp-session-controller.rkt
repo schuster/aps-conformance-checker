@@ -1349,88 +1349,71 @@
 
        ;; Anything with an ACK might fail if the ACK is wrong (overlaps with below clauses)
        [,(make-packet-pattern (variant Ack) * * *) ->
-        ([obligation send-buffer (variant SendRst)])
+        [obligation send-buffer (variant SendRst)]
         (goto Closed send-buffer)]
        ;; RST on an ACK: fail
        ,@(if bug4
              null
-             `([,(make-packet-pattern (variant Ack) (variant Rst) * *) ->
-                                                                       ()
-                                                                       (goto Closed send-buffer)]))
+             `([,(make-packet-pattern (variant Ack) (variant Rst) * *) -> (goto Closed send-buffer)]))
        ;; SYN-ACK: finish connecting (or fail, above)
        [,(make-packet-pattern (variant Ack) (variant NoRst) (variant Syn) *) ->
-        ()
         (goto Established send-buffer)]
        ;; ACK without other interesting flags: ignore (or fail, above)
        [,(make-packet-pattern (variant Ack) (variant NoRst) (variant NoSyn) *) ->
-        ()
         (goto SynSent send-buffer)]
        ;; ignore RST without ACK
-       [,(make-packet-pattern (variant NoAck) (variant Rst) * *) ->
-        ()
-        (goto SynSent send-buffer)]
+       [,(make-packet-pattern (variant NoAck) (variant Rst) * *) -> (goto SynSent send-buffer)]
        ;; SYN without ACK: send SYN again (this is simultaneous open)
        [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant Syn) *) ->
-        ([obligation send-buffer (variant SendSyn)])
+        [obligation send-buffer (variant SendSyn)]
         (goto SynReceived send-buffer)]
        ;; ignore all others without ACK
        [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant NoSyn) *) ->
-        ()
         (goto SynSent send-buffer)]
        ;; some internal timeout or other event might occur that causes us to abort the connection
        [free ->
-        ([obligation send-buffer (variant SendRst)])
-        (goto Closed send-buffer)]
-       )
+        [obligation send-buffer (variant SendRst)]
+        (goto Closed send-buffer)])
 
      (define-state (SynReceived send-buffer)
        ;; RST: fail
-       [,(make-packet-pattern * (variant Rst) * *) ->
-        ()
-        (goto Closed send-buffer)]
+       [,(make-packet-pattern * (variant Rst) * *) -> (goto Closed send-buffer)]
        ;; SYN without ACK: fail
        [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant Syn) *) ->
-        ([obligation send-buffer (variant SendRst)])
+        [obligation send-buffer (variant SendRst)]
         (goto Closed send-buffer)]
        ;; ACK without RST: either finish the handshake or send RST and go back to this state
+       [,(make-packet-pattern (variant Ack) (variant NoRst) * *) -> (goto Established send-buffer)]
        [,(make-packet-pattern (variant Ack) (variant NoRst) * *) ->
-        ()
-        (goto Established send-buffer)]
-       [,(make-packet-pattern (variant Ack) (variant NoRst) * *) ->
-        ([obligation send-buffer (variant SendRst)])
+        [obligation send-buffer (variant SendRst)]
         (goto SynReceived send-buffer)]
        ;; No ACK, RST, or SYN: ignore
        [,(make-packet-pattern (variant NoAck) (variant NoRst) (variant NoSyn) *) ->
-        ()
         (goto SynReceived send-buffer)]
        ;; some internal timeout or other event might occur that causes us to abort the connection
        [free ->
-        ([obligation send-buffer (variant SendRst)])
+        [obligation send-buffer (variant SendRst)]
         (goto Closed send-buffer)])
 
      (define-state (Established send-buffer)
        ;; RST or SYN causes a total reset
-       [,(make-packet-pattern * (variant Rst) * *) ->
-        ()
-        (goto Closed send-buffer)]
+       [,(make-packet-pattern * (variant Rst) * *) -> (goto Closed send-buffer)]
        [,(make-packet-pattern * * (variant Syn) *) ->
-        ([obligation send-buffer (variant SendRst)])
+        [obligation send-buffer (variant SendRst)]
         (goto Closed send-buffer)]
        ;; Normal packet (with or without FIN): no particular activity
-       [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) ->
-        ()
-        (goto Established send-buffer)]
+       [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) -> (goto Established send-buffer)]
        ;; might write some bytes to the socket
        [free ->
-        ([obligation send-buffer (variant SendText *)])
+        [obligation send-buffer (variant SendText *)]
         (goto Established send-buffer)]
        ;; might decide to close
        [free ->
-        ([obligation send-buffer (variant SendFin)])
+        [obligation send-buffer (variant SendFin)]
         (goto Closing send-buffer)]
        ;; some internal timeout or other event might occur that causes us to abort the connection
        [free ->
-        ([obligation send-buffer (variant SendRst)])
+        [obligation send-buffer (variant SendRst)]
         (goto Closed send-buffer)])
 
      ;; Corresponds to FIN WAIT 1, FIN WAIT 2, CLOSING, TIME WAIT, and LAST ACK. In the abstract
@@ -1441,28 +1424,24 @@
      ;; packets).
      (define-state (Closing send-buffer)
        ;; RST or SYN causes a total reset
-       [,(make-packet-pattern * (variant Rst) * *) ->
-        ()
-        (goto Closed send-buffer)]
+       [,(make-packet-pattern * (variant Rst) * *) -> (goto Closed send-buffer)]
        [,(make-packet-pattern * * (variant Syn) *) ->
-        ([obligation send-buffer (variant SendRst)])
+        [obligation send-buffer (variant SendRst)]
         (goto Closed send-buffer)]
        ;; A normal packet (regardless of FIN) *may* cause us to close
-       [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) -> () (goto Closed send-buffer)]
-       [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) -> () (goto Closing send-buffer)]
+       [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) -> (goto Closed send-buffer)]
+       [,(make-packet-pattern * (variant NoRst) (variant NoSyn) *) -> (goto Closing send-buffer)]
        ;; we may get a TimeWait timeout and close
-       [free -> () (goto Closed send-buffer)]
+       [free -> (goto Closed send-buffer)]
        ;; some internal timeout or other event might occur that causes us to abort the connection
        [free ->
-         ([obligation send-buffer (variant SendRst)])
+         [obligation send-buffer (variant SendRst)]
          (goto Closed send-buffer)])
 
      (define-state (Closed send-buffer)
-       [,(make-packet-pattern * (variant Rst) * *) ->
-        ()
-        (goto Closed send-buffer)]
+       [,(make-packet-pattern * (variant Rst) * *) -> (goto Closed send-buffer)]
        [,(make-packet-pattern * (variant NoRst) * *) ->
-        ([obligation send-buffer (variant SendRst)])
+        [obligation send-buffer (variant SendRst)]
         (goto Closed send-buffer)])))
 
 (define session-wire-spec (make-session-wire-spec #f))

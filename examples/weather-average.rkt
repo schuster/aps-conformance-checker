@@ -111,27 +111,27 @@
 
       (define-state (Off mdest)
         [(variant AddRdg * resp) ->
-          ([obligation resp (variant NotOk)])
+          [obligation resp (variant NotOk)]
           (goto Off mdest)]
-        [(variant GetMean) -> ([obligation mdest *]) (goto Off mdest)]
-        [(variant Disable) -> () (goto Off mdest)]
-        [(variant Enable) -> () (goto On mdest)]
-        [free -> () (goto Done)])
+        [(variant GetMean) -> [obligation mdest *] (goto Off mdest)]
+        [(variant Disable) -> (goto Off mdest)]
+        [(variant Enable) -> (goto On mdest)]
+        [free -> (goto Done)])
 
       (define-state (On mdest)
         [(variant AddRdg * resp) ->
-          ([obligation resp (variant Ok)])
+          [obligation resp (variant Ok)]
           (goto On mdest)]
-        [(variant GetMean) -> ([obligation mdest *]) (goto On mdest)]
-        [(variant Disable) -> () (goto Off mdest)]
-        [(variant Enable) -> () (goto On mdest)]
-        [free -> () (goto Done)])
+        [(variant GetMean) -> [obligation mdest *] (goto On mdest)]
+        [(variant Disable) -> (goto Off mdest)]
+        [(variant Enable) -> (goto On mdest)]
+        [free -> (goto Done)])
 
       (define-state (Done)
-        [(variant AddRdg * resp) -> () (goto Done)]
-        [(variant GetMean) -> () (goto Done)]
-        [(variant Disable) -> () (goto Done)]
-        [(variant Enable) -> () (goto Done)])
+        [(variant AddRdg * resp) -> (goto Done)]
+        [(variant GetMean) -> (goto Done)]
+        [(variant Disable) -> (goto Done)]
+        [(variant Enable) -> (goto Done)])
       ))
 
   (define manager-spec
@@ -139,9 +139,9 @@
        (mon-receptionist user-api)
        (goto Managing)
        (define-state (Managing)
-         [(variant MakeProc resp mdest) -> () (goto Managing)]
+         [(variant MakeProc resp mdest) -> (goto Managing)]
          [(variant MakeProc resp mdest) ->
-          ([obligation resp (fork-addr ,@processor-spec-parts)])
+          [obligation resp (fork-addr ,@processor-spec-parts)]
           (goto Managing)])))
 
 (module+ test

@@ -68,12 +68,12 @@
   [(subst/aps#/u mk_2 x mk) mk_2])
 
 (define-metafunction aps#
-  subst/aps#/trans : (pt -> (f ...) (goto φ u ...)) x mk -> (pt -> (f ...) (goto φ u ...))
-  [(subst/aps#/trans (p -> (f ...) (goto φ u ...)) x mk)
-   (p -> (f ...) (goto φ u ...))
+  subst/aps#/trans : (pt -> f ... (goto φ u ...)) x mk -> (pt -> f ... (goto φ u ...))
+  [(subst/aps#/trans (p -> f ... (goto φ u ...)) x mk)
+   (p -> f ... (goto φ u ...))
    (judgment-holds (pattern-binds-var p x))]
-  [(subst/aps#/trans (pt -> (f ...) (goto φ u ...)) x mk)
-   (pt -> ((subst/aps#/f f x mk) ...) (goto φ (subst/aps#/u u x mk) ...))])
+  [(subst/aps#/trans (pt -> f ... (goto φ u ...)) x mk)
+   (pt -> (subst/aps#/f f x mk) ... (goto φ (subst/aps#/u u x mk) ...))])
 
 (define-metafunction aps#
   subst-n/aps#/f : f (x mk) ... -> f
@@ -104,17 +104,17 @@
 (module+ test
   (test-equal? "Simple subst/aps#/f test"
     (term (subst/aps#/f [fork (goto S1 x)
-                              (define-state (S1 y x) [* -> () (goto S2 y)])
-                              (define-state (S2 y) [* -> ([obligation y *]) (goto S2 y)])]
+                              (define-state (S1 y x) [* -> (goto S2 y)])
+                              (define-state (S2 y) [* -> [obligation y *] (goto S2 y)])]
                         x
                         1))
     (term [fork (goto S1 1)
-                (define-state (S1 y x) [* -> () (goto S2 y)])
-                (define-state (S2 y) [* -> ([obligation y *]) (goto S2 y)])]))
+                (define-state (S1 y x) [* -> (goto S2 y)])
+                (define-state (S2 y) [* -> [obligation y *] (goto S2 y)])]))
 
   (test-equal? "Substitution should not go into state defs"
-    (term (subst/aps#/f [fork (goto A x) (define-state (A) [* -> () (goto B x)])] x 1))
-    (term [fork (goto A 1) (define-state (A) [* -> () (goto B x)])]))
+    (term (subst/aps#/f [fork (goto A x) (define-state (A) [* -> (goto B x)])] x 1))
+    (term [fork (goto A 1) (define-state (A) [* -> (goto B x)])]))
 
   (test-equal? "Substitute into goto in an output obligation fork"
     (term (subst/aps#/f [obligation 0 (variant A (fork-addr (goto S x)))] x 1))
@@ -151,15 +151,15 @@
 
 ;; FIX: deal with the case where the pattern variables shadow the state variables
 (define-metafunction aps#
-  config-current-transitions/mf : s# -> ((pt -> (f ...) (goto φ u ...)) ...)
+  config-current-transitions/mf : s# -> ((pt -> f ... (goto φ u ...)) ...)
   [(config-current-transitions/mf
     (_
      _
      (goto φ mk ...)
-     (_ ... (define-state (φ x ...) (pt -> (f ...) (goto φ_trans u_trans ...)) ...) _ ...)
+     (_ ... (define-state (φ x ...) (pt -> f ... (goto φ_trans u_trans ...)) ...) _ ...)
      _))
    ((pt ->
-        ((subst-n/aps#/f f (x mk) ...) ...)
+        (subst-n/aps#/f f (x mk) ...) ...
         (goto φ_trans (subst-n/aps#/u u_trans (x mk) ...) ...)) ...)])
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -175,7 +175,7 @@
     ;; Remove the free-output transitions: these would cause the checker to make many "bad
     ;; guesses" about what conforms to what, and the outputs they use can always be used for
     ;; other transitions.
-    (cons `(free -> () ,(aps#-psm-current-state spec-config))
+    (cons `(free -> ,(aps#-psm-current-state spec-config))
      (filter (negate (curryr free-stable-transition? (aps#-psm-current-state spec-config)))
              (config-current-transitions spec-config))))
 
@@ -215,16 +215,16 @@
   (test-equal? "Monitored receive"
     (aps#-matching-steps
      (make-s# (term ((define-state (A)
-                       [*     -> () (goto B)]
-                       [free -> () (goto C)])))
+                       [*    -> (goto B)]
+                       [free -> (goto C)])))
               (term (goto A))
               (term ()))
      (term (external-receive (marked (addr 0 0) 0) abs-nat)))
     (list
      (list
       (make-s# (term ((define-state (A)
-                        [*     -> () (goto B)]
-                        [free -> () (goto C)])))
+                        [*    -> (goto B)]
+                        [free -> (goto C)])))
                (term (goto B))
                (term ())))))
 
@@ -232,8 +232,8 @@
     (list->set
      (aps#-matching-steps
       (make-s# (term ((define-state (A)
-                        [*     -> () (goto B)]
-                        [free -> () (goto C)])))
+                        [*    -> (goto B)]
+                        [free -> (goto C)])))
                (term (goto A))
                (term ()))
       (term (external-receive (marked (addr 0 0) 1) abs-nat))))
@@ -241,15 +241,15 @@
      ;; "null" transition
      (list
       (make-s# (term ((define-state (A)
-                        [*     -> () (goto B)]
-                        [free -> () (goto C)])))
+                        [*    -> (goto B)]
+                        [free -> (goto C)])))
                (term (goto A))
                (term ())))
      ;; free transition
      (list
       (make-s# (term ((define-state (A)
-                        [*     -> () (goto B)]
-                        [free -> () (goto C)])))
+                        [*    -> (goto B)]
+                        [free -> (goto C)])))
                (term (goto C))
                (term ())))))
 
@@ -258,7 +258,7 @@
      (valid-s# `[(0)
                  (1)
                  (goto A 1)
-                 ((define-state (A r) [* -> ((obligation r *)) (goto A r)]))
+                 ((define-state (A r) [* -> (obligation r *) (goto A r)]))
                  ([1 *])])
      (term (external-receive (marked (addr 0 0) 0) abs-nat)))
     null)
@@ -274,33 +274,33 @@
 
   (test-equal? "Spec observes address but neither saves it nor has obligations for it"
     (aps#-matching-steps
-     (make-s# `((define-state (A) [r -> () (goto A)]))
+     (make-s# `((define-state (A) [r -> (goto A)]))
               `(goto A)
               null)
      `(external-receive (marked (addr 0 0) 0) (marked (addr (env Nat) 1) 1)))
     (list `[,(valid-s# `[(0)
                          (1)
                          (goto A)
-                         ((define-state (A) [r -> () (goto A)]))
+                         ((define-state (A) [r -> (goto A)]))
                          ()])]))
 
   (test-equal? "Address received on unmonitored rec not added as monitored external"
     (aps#-matching-steps
-     (make-s# `((define-state (A) [r -> () (goto A)]))
+     (make-s# `((define-state (A) [r -> (goto A)]))
               `(goto A)
               null)
      `(external-receive (marked (addr 0 0) 1) (marked (addr (env Nat) 1) 2)))
-    (list `[,(make-s# `((define-state (A) [r -> () (goto A)]))
+    (list `[,(make-s# `((define-state (A) [r -> (goto A)]))
                       `(goto A)
                       null)]))
 
   (test-equal? "Address matched by wildcard not added as monitored external"
     (aps#-matching-steps
-     (make-s# `((define-state (A) [* -> () (goto A)]))
+     (make-s# `((define-state (A) [* -> (goto A)]))
               `(goto A)
               null)
      `(external-receive (marked (addr 0 0) 0) (marked (addr (env Nat) 1) 2)))
-    (list `[,(make-s# `((define-state (A) [* -> () (goto A)]))
+    (list `[,(make-s# `((define-state (A) [* -> (goto A)]))
                       `(goto A)
                       null)]))
 
@@ -309,7 +309,7 @@
      (valid-s# `[(0)
                  (2)
                  (goto A)
-                 ((define-state (A) [r -> ([obligation r self]) (goto A)]))
+                 ((define-state (A) [r -> [obligation r self] (goto A)]))
                  ([2 self])])
      `(external-receive (marked (addr 0 0) 0) (marked (addr (env Nat) 1) 3)))
     null))
@@ -354,27 +354,27 @@
   (test-true "received message matches transition pattern"
     (transition-matches? (list 1)
                          `(external-receive (marked (addr 0 0) 1) (variant A))
-                         `[(variant A) -> () (goto B)]))
+                         `[(variant A) -> (goto B)]))
 
   (test-false "received message does not match transition pattern"
     (transition-matches? (list 1)
                          `(external-receive (marked (addr 0 0) 1) (variant B))
-                         `[(variant A) -> () (goto B)]))
+                         `[(variant A) -> (goto B)]))
 
   (test-false "received message on unobs marker does not match transition pattern"
     (transition-matches? (list 1)
                          `(external-receive (marked (addr 0 0) 2) (variant A))
-                         `[(variant A) -> () (goto B)]))
+                         `[(variant A) -> (goto B)]))
 
   (test-false "received message on monitored marker cannot match free transition"
     (transition-matches? (list 1)
                          `(external-receive (marked (addr 0 0) 1) (variant A))
-                         `[free -> () (goto B)]))
+                         `[free -> (goto B)]))
 
   (test-true "received message on unmonitored marker matches free transition"
     (transition-matches? (list 1)
                          `(external-receive (marked (addr 0 0) 2) (variant A))
-                         `[free -> () (goto B)])))
+                         `[free -> (goto B)])))
 
 ;; s# spec-state-transition trigger -> (s# ...)
 ;;
@@ -408,15 +408,15 @@
      `[(0)
        ()
        (goto A)
-       ((define-state (A) [r -> () (goto A)]))
+       ((define-state (A) [r -> (goto A)]))
        ()]
-     `[r -> () (goto A)]
+     `[r -> (goto A)]
      `(external-receive (marked (addr 0 0) 0) (marked (addr (env Nat) 1) 1)))
     (list
      `[(0)
        (1)
        (goto A)
-       ((define-state (A) [r -> () (goto A)]))
+       ((define-state (A) [r -> (goto A)]))
        ()]))
 
   (test-equal? "Pattern-matched marker added to monitored externals"
@@ -426,7 +426,7 @@
        (goto A)
        ()
        ()]
-     `[x -> () (goto A)]
+     `[x -> (goto A)]
      `(external-receive (marked (addr 0 0) 1) (marked (addr (env Nat) 1) 2)))
     (list `[(1) (2) (goto A) () ()]))
 
@@ -437,7 +437,7 @@
        (goto A)
        ()
        ()]
-     `[x -> ([fork (goto B x)]) (goto A)]
+     `[x -> [fork (goto B x)] (goto A)]
      `(external-receive (marked (addr 0 0) 1) (marked (addr (env Nat) 1) 2)))
     (list `[(1) () (goto A) () ()]
           `[() (2) (goto B 2) () ()]))
@@ -447,29 +447,29 @@
      `[(0)
        ()
        (goto A)
-       ((define-state (A) [r -> ([obligation r *]) (goto B r)]))
+       ((define-state (A) [r -> [obligation r *] (goto B r)]))
        ()]
-     `[r -> ([obligation r *]) (goto B r)]
+     `[r -> [obligation r *] (goto B r)]
      `(external-receive (marked (addr 0 0) 0) (marked (addr (env Nat) 1) 1)))
     (list
      `[(0)
        (1)
        (goto B 1)
-       ((define-state (A) [r -> ([obligation r *]) (goto B r)]))
+       ((define-state (A) [r -> [obligation r *] (goto B r)]))
        ([1 *])]))
 
   (test-case "Immediate fork pattern transition"
-    (define fork-pattern `(fork-addr (goto Z y) (define-state (Z y) [* -> () (goto Z y)])))
+    (define fork-pattern `(fork-addr (goto Z y) (define-state (Z y) [* -> (goto Z y)])))
     (check-equal?
      (take-transition
       `[(1)
         (3 4)
         (goto A 3)
-        ((define-state (A x) [(variant A y z) -> ([obligation z ,fork-pattern]) (goto B)])
-         (define-state (B) [* -> () (goto B)]))
+        ((define-state (A x) [(variant A y z) -> [obligation z ,fork-pattern] (goto B)])
+         (define-state (B) [* -> (goto B)]))
         ;; check for captured and uncaptured addresses, too
         ([4 *])]
-      `[(variant A y z) -> ([obligation z ,fork-pattern]) (goto B)]
+      `[(variant A y z) -> [obligation z ,fork-pattern] (goto B)]
       `(external-receive (marked (addr 1 0) 1)
                          (variant A
                                   (marked (addr (env (Addr Nat)) 5) 5)
@@ -478,34 +478,34 @@
       `((1)
         (3 4)
         (goto B)
-        ((define-state (A x) [(variant A y z) -> ([obligation z ,fork-pattern]) (goto B)])
-         (define-state (B) [* -> () (goto B)]))
+        ((define-state (A x) [(variant A y z) -> [obligation z ,fork-pattern] (goto B)])
+         (define-state (B) [* -> (goto B)]))
         ([4 *]))
       `(()
         (6 5)
         (goto Z 5)
-        ((define-state (Z y) [* -> () (goto Z y)]))
+        ((define-state (Z y) [* -> (goto Z y)]))
         ([6 self])))))
 
   (test-case "Delayed fork pattern transition"
-    (define fork-pattern `(delayed-fork-addr (goto Z) (define-state (Z) [* -> () (goto Z)])))
+    (define fork-pattern `(delayed-fork-addr (goto Z) (define-state (Z) [* -> (goto Z)])))
     (check-equal?
      (take-transition
       `((0)
         (1 2 3)
         (goto A 1)
-        ((define-state (A x) [* -> ([obligation x ,fork-pattern]) (goto B)])
-         (define-state (B) [* -> () (goto B)]))
+        ((define-state (A x) [* -> [obligation x ,fork-pattern] (goto B)])
+         (define-state (B) [* -> (goto B)]))
         ;; check for captured and uncaptured addresses, too
         ([3 *]))
-      `[* -> ([obligation 1 ,fork-pattern]) (goto B)]
+      `[* -> [obligation 1 ,fork-pattern] (goto B)]
       `(external-receive (marked (addr 1 0) 0) (marked (addr (env (Addr Nat)) 2) 4)))
      (list
       `((0)
         (1 2 3)
         (goto B)
-        ((define-state (A x) [* -> ([obligation x ,fork-pattern]) (goto B)])
-         (define-state (B) [* -> () (goto B)]))
+        ((define-state (A x) [* -> [obligation x ,fork-pattern] (goto B)])
+         (define-state (B) [* -> (goto B)]))
         ([3 *]
          [1 ,fork-pattern])))))
 
@@ -578,20 +578,20 @@
   (test-equal? "perform 1"
     (perform
      (list `[obligation 1
-                        (fork-addr (goto Z 2) (define-state (Z a) [* -> () (goto Z a)]))]))
+                        (fork-addr (goto Z 2) (define-state (Z a) [* -> (goto Z a)]))]))
     `[([1 self])
       ([()
         (1 2)
         (goto Z 2)
-        ((define-state (Z a) [* -> () (goto Z a)]))
+        ((define-state (Z a) [* -> (goto Z a)]))
         ()])
       ()])
 
   (test-equal? "perform delayed-fork-addr obligation"
     (perform
      (list `[obligation 1
-                        (delayed-fork-addr (goto Z) (define-state (Z) [* -> () (goto Z)]))]))
-    `(([1 (delayed-fork-addr (goto Z) (define-state (Z) [* -> () (goto Z)]))])
+                        (delayed-fork-addr (goto Z) (define-state (Z) [* -> (goto Z)]))]))
+    `(([1 (delayed-fork-addr (goto Z) (define-state (Z) [* -> (goto Z)]))])
       ()
       ()))
 
@@ -609,15 +609,15 @@
 
   (test-equal? "perform multiple effects"
     (perform (list
-              `[obligation 1 (fork-addr (goto Z 2) (define-state (Z a) [* -> () (goto Z a)]))]
-              `[obligation 3 (delayed-fork-addr (goto Z) (define-state (Z) [* -> () (goto Z)]))]
+              `[obligation 1 (fork-addr (goto Z 2) (define-state (Z a) [* -> (goto Z a)]))]
+              `[obligation 3 (delayed-fork-addr (goto Z) (define-state (Z) [* -> (goto Z)]))]
               `[fork (goto A 4)]
               `[obligation 5 (variant A self)]))
     `[([5 (variant A self)]
-       [3 (delayed-fork-addr (goto Z) (define-state (Z) [* -> () (goto Z)]))]
+       [3 (delayed-fork-addr (goto Z) (define-state (Z) [* -> (goto Z)]))]
        [1 self])
       ([() (4) (goto A 4) () ()]
-       [() (1 2) (goto Z 2) ((define-state (Z a) [* -> () (goto Z a)])) ()])
+       [() (1 2) (goto Z 2) ((define-state (Z a) [* -> (goto Z a)])) ()])
       (5)]))
 
 ;; po mk -> (po, (s ...), (mk ...))
@@ -1079,12 +1079,12 @@
       (1 2)
       (goto S1 1 2)
       ((define-state (S1 a b)
-         [x -> ([obligation x *]) (goto S1)]
-         [x -> ([obligation b *]) (goto S1)]
-         [free -> ([obligation a (variant A)]) (goto S2)]
-         [free -> ([obligation a (variant B)]) (goto S1 a b)]
-         [free -> ([obligation a (variant C)]) (goto S1 a b)]
-         [free -> ([obligation b (variant D)]) (goto S1 a b)]))
+         [x -> [obligation x *] (goto S1)]
+         [x -> [obligation b *] (goto S1)]
+         [free -> [obligation a (variant A)] (goto S2)]
+         [free -> [obligation a (variant B)] (goto S1 a b)]
+         [free -> [obligation a (variant C)] (goto S1 a b)]
+         [free -> [obligation b (variant D)] (goto S1 a b)]))
       ())))
   (test-equal? "resolve against free outputs"
     (aps#-resolve-outputs (list free-output-spec) (term ([(marked (addr (env (Union [A] [B] [C] [D])) 1) 1) (variant C) many])))
@@ -1096,7 +1096,7 @@
              (1)
              (goto A 1)
              ((define-state (A x)
-                [free -> ([obligation x (variant C)]) (goto B)]))
+                [free -> [obligation x (variant C)] (goto B)]))
              ()])
      (term ([(marked (addr (env (Union [A] [B] [C] [D])) 1) 1) (variant C) single])))
     (list `[,(list
@@ -1104,7 +1104,7 @@
                 (1)
                 (goto B)
                 ((define-state (A x)
-                   [free -> ([obligation x (variant C)]) (goto B)]))
+                   [free -> [obligation x (variant C)] (goto B)]))
                 ()])
             ([1 (variant C)])]))
 
@@ -1413,7 +1413,7 @@
       (1)
       (goto A 1)
       ((define-state (A x)
-         [free -> ([obligation x (delayed-fork-addr (goto C) (define-state (C)))]) (goto B)]))
+         [free -> [obligation x (delayed-fork-addr (goto C) (define-state (C)))] (goto B)]))
       ()]
     1
     `(marked (addr 1 0) 2))
@@ -1421,7 +1421,7 @@
         (1)
         (goto B)
         ((define-state (A x)
-           [free -> ([obligation x [delayed-fork-addr (goto C) (define-state (C))]]) (goto B)]))
+           [free -> [obligation x [delayed-fork-addr (goto C) (define-state (C))]] (goto B)]))
         ()]
        [(2)
         ()
@@ -1515,7 +1515,7 @@
     [`(free -> ([obligation ,_ ,_]) ,(== full-state)) #t]
     [_ #f]))
 
-;; s# a# -> ([pt -> (f ...) (goto φ u ...)])
+;; s# a# -> ([pt -> f ... (goto φ u ...)])
 ;;
 ;; Returns the transitions (after subsitution with the current state arguments) of the PSM that have an unobs
 ;; trigger and a single obligation effect
@@ -1523,7 +1523,7 @@
   (filter
    (lambda (trans)
      (match trans
-       [`(free -> ([obligation ,obligation-marker ,_]) ,_)
+       [`(free -> [obligation ,obligation-marker ,_] ,_)
         (equal? obligation-marker target-marker)]
        [_ #f]))
    (config-current-transitions psm)))
@@ -1535,23 +1535,23 @@
       ()
       (goto S1 1 2)
       ((define-state (S1 a b)
-         [x -> ([obligation x *]) (goto S1)]
-         [x -> ([obligation b *]) (goto S1)]
-         [free -> ([obligation a (variant A)]) (goto S2 a b)]
-         [free -> ([obligation a (variant B)]) (goto S2 a a)]
-         [free -> ([obligation a (variant C)]) (goto S1 a b)]
-         [free -> ([obligation b (variant D)]) (goto S1 a b)]
-         [free -> ([obligation b (variant E)]) (goto S2 a b)]))
+         [x -> [obligation x *] (goto S1)]
+         [x -> [obligation b *] (goto S1)]
+         [free -> [obligation a (variant A)] (goto S2 a b)]
+         [free -> [obligation a (variant B)] (goto S2 a a)]
+         [free -> [obligation a (variant C)] (goto S1 a b)]
+         [free -> [obligation b (variant D)] (goto S1 a b)]
+         [free -> [obligation b (variant E)] (goto S2 a b)]))
       ())))
   (check-equal?
    (get-free-transitions-for-resolution free-transition-spec 1)
-   `([free -> ([obligation 1 (variant A)]) (goto S2 1 2)]
-     [free -> ([obligation 1 (variant B)]) (goto S2 1 1)]
-     [free -> ([obligation 1 (variant C)]) (goto S1 1 2)]))
+   `([free -> [obligation 1 (variant A)] (goto S2 1 2)]
+     [free -> [obligation 1 (variant B)] (goto S2 1 1)]
+     [free -> [obligation 1 (variant C)] (goto S1 1 2)]))
   (check-equal?
    (get-free-transitions-for-resolution free-transition-spec 2)
-   `([free -> ([obligation 2 (variant D)]) (goto S1 1 2)]
-     [free -> ([obligation 2 (variant E)]) (goto S2 1 2)])))
+   `([free -> [obligation 2 (variant D)] (goto S1 1 2)]
+     [free -> [obligation 2 (variant E)] (goto S2 1 2)])))
 
 (define (transition-to-same-state? config transition)
   (equal? (aps#-transition-goto transition) (aps#-psm-current-state config)))
@@ -1559,11 +1559,11 @@
 (module+ test
   (let ([transition-test-config `[() () (goto A 1) () ()]])
     (test-true "transition-to-same-state? true"
-      (transition-to-same-state? transition-test-config `[free -> () (goto A 1)]))
+      (transition-to-same-state? transition-test-config `[free -> (goto A 1)]))
     (test-false "transition-to-same-state? wrong state"
-      (transition-to-same-state? transition-test-config `[free -> () (goto B 1)]))
+      (transition-to-same-state? transition-test-config `[free -> (goto B 1)]))
     (test-false "transition-to-same-state? wrong address"
-      (transition-to-same-state? transition-test-config `[free -> () (goto A 2)]))))
+      (transition-to-same-state? transition-test-config `[free -> (goto A 2)]))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Selectors
@@ -1619,14 +1619,19 @@
            [3 (record [a *])]))))
 
 (define (aps#-transition-trigger transition)
-  (redex-let aps# ([(pt -> _ _) transition])
+  (redex-let aps# ([(pt -> _ ... _) transition])
     (term pt)))
 
 (define (aps#-transition-effects transition)
-  (third transition))
+  (drop-right (list-tail transition 2) 1))
+
+(module+ test
+  (test-equal? "aps#-transition-effects"
+    (aps#-transition-effects `[* -> [obligation a *] [obligation c *] (goto B)])
+    `([obligation a *] [obligation c *])))
 
 (define (aps#-transition-goto transition)
-  (fourth transition))
+  (last transition))
 
 (define (aps#-goto-args goto-exp)
   (rest (rest goto-exp)))
@@ -1698,7 +1703,7 @@
                           (()
                            ,mon-exts
                            (goto A 0)
-                           ((define-state (A x) [* -> () (goto A x)]))
+                           ((define-state (A x) [* -> (goto A x)]))
                            ,obligations))])
       (term s#)))
 
@@ -1744,7 +1749,7 @@
 (module+ test
   (test-false "pattern-contains-self?: self only in fork's state def"
     (pattern-contains-self?
-     `(fork-addr (goto A) (define-state (A x) [free -> ([obligation x self]) (goto A x)]))))
+     `(fork-addr (goto A) (define-state (A x) [free -> [obligation x self] (goto A x)]))))
   (test-true "pattern-contains-self?: true"
     (pattern-contains-self? `(record [a *] [b self])))
     (test-true "pattern-contains-self?: true 2"
@@ -1804,7 +1809,7 @@
                       `(()
                         ()
                         (goto A)
-                        ((define-state (A) [free -> () (goto A)]))
+                        ((define-state (A) [free -> (goto A)]))
                         ())])
       (check-false (aps#-completed-no-transition-psm? (term s#)))))
   (test-case "completed-no-transition-psm?: observed receptionist"
@@ -1865,7 +1870,7 @@
       ((7)
        (2 3 4)
        (goto A 4 3 2)
-       ((define-state (A a b c) [* -> () (goto A)]))
+       ((define-state (A a b c) [* -> (goto A)]))
        ([2 *] [3 (record)]))))
     (list
      (make-single-actor-abstract-config
@@ -1880,7 +1885,7 @@
       ((0)
        (1 2 3)
        (goto A 1 2 3)
-       ((define-state (A a b c) [* -> () (goto A)]))
+       ((define-state (A a b c) [* -> (goto A)]))
        ([2 (record)] [3 *])))
      `([(addr 0 0) (addr 0 0)])
      `([7 0]
@@ -1929,7 +1934,7 @@
       ((7)
        (2 3 4)
        (goto A 4 3 2)
-       ((define-state (A a b c) [* -> () (goto A)]))
+       ((define-state (A a b c) [* -> (goto A)]))
        ([2 *] [3 (record)])))
      `([7 0]
        [4 1]
@@ -1939,7 +1944,7 @@
      ((0)
       (3 2 1)
       (goto A 1 2 3)
-      ((define-state (A a b c) [* -> () (goto A)]))
+      ((define-state (A a b c) [* -> (goto A)]))
       ([3 *] [2 (record)])))))
 
 ;; Returns a spec config identical to the given one, except that the the obs-recs, obs-exts, and obls

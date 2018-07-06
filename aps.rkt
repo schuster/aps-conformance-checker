@@ -33,7 +33,7 @@
   ;; monitored receptionist clause
   (mr (mon-receptionist x)
       no-mon-receptionist)
-  (Φ (define-state (φ x ...) (pt -> (f ...) (goto φ x ...)) ...))
+  (Φ (define-state (φ x ...) (pt -> f ... (goto φ x ...)) ...))
   ;; effects
   (f (obligation u po)
      (fork (goto φ u ...) Φ ...))
@@ -126,7 +126,7 @@
   (test-case "make-psm"
     (define request-response-state-defs
       `((define-state (Always)
-          [response-target -> ([obligation response-target *]) (goto Always)])))
+          [response-target -> [obligation response-target *] (goto Always)])))
     (check-equal?
      (make-psm
       (term
@@ -148,9 +148,9 @@
   (test-case "make-anonymous-psm"
     (define self-reveal-state-defs
       `((define-state (Init r)
-          [free -> ([obligation r self]) (goto Running)])
+          [free -> [obligation r self] (goto Running)])
         (define-state (Running)
-          [r -> ([obligation r *]) (goto Running)])))
+          [r -> [obligation r *] (goto Running)])))
     (check-equal?
      (make-anonymous-psm (term [,self-reveal-state-defs (goto Init 1)]))
      `[() (1) (goto Init 1) ,self-reveal-state-defs ()])))
@@ -268,10 +268,10 @@
              no-mon-receptionist
              (goto A)
              (define-state (A)
-               [free -> () (goto B a)]))
+               [free -> (goto B a)]))
            ()
            ([a 1])))
-    (term [() () (goto A) ((define-state (A) [free -> () (goto B a)])) ()])))
+    (term [() () (goto A) ((define-state (A) [free -> (goto B a)])) ()])))
 
 ;; Gets the monitored receptionist marker (if any) by substituting in the given receptionist markers
 ;; to the mr-clause

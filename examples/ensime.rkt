@@ -500,46 +500,46 @@
      (mon-receptionist project)
      (goto AwaitingConnectionInfoReq)
      (define-state (AwaitingConnectionInfoReq)
-       [(variant ConnectionInfoReq s) -> ([obligation s (variant ConnectionInfo)]) (goto HandleRequests)]
-       [(variant Resolve * s) -> () (goto AwaitingConnectionInfoReq)]
-       [(variant PublicSymbolSearchReq * * s) -> () (goto AwaitingConnectionInfoReq)]
-       [(variant TypeCompletionsReq * * s) -> () (goto AwaitingConnectionInfoReq)]
-       [(variant DebugRunReq s) -> () (goto AwaitingConnectionInfoReq)]
-       [(variant DebugStopReq s) -> () (goto AwaitingConnectionInfoReq)]
-       [(variant DebugValueReq * s) -> () (goto AwaitingConnectionInfoReq)]
-       [(variant DocUriAtPointReq * * s) -> () (goto AwaitingConnectionInfoReq)]
-       [(variant CompletionsReq * * * * * s) -> () (goto AwaitingConnectionInfoReq)]
-       [(variant TypecheckAllReq s) -> () (goto AwaitingConnectionInfoReq)]
-       [(variant RefactorReq * * * s) -> () (goto AwaitingConnectionInfoReq)])
+       [(variant ConnectionInfoReq s) -> [obligation s (variant ConnectionInfo)] (goto HandleRequests)]
+       [(variant Resolve * s) -> (goto AwaitingConnectionInfoReq)]
+       [(variant PublicSymbolSearchReq * * s) -> (goto AwaitingConnectionInfoReq)]
+       [(variant TypeCompletionsReq * * s) -> (goto AwaitingConnectionInfoReq)]
+       [(variant DebugRunReq s) -> (goto AwaitingConnectionInfoReq)]
+       [(variant DebugStopReq s) -> (goto AwaitingConnectionInfoReq)]
+       [(variant DebugValueReq * s) -> (goto AwaitingConnectionInfoReq)]
+       [(variant DocUriAtPointReq * * s) -> (goto AwaitingConnectionInfoReq)]
+       [(variant CompletionsReq * * * * * s) -> (goto AwaitingConnectionInfoReq)]
+       [(variant TypecheckAllReq s) -> (goto AwaitingConnectionInfoReq)]
+       [(variant RefactorReq * * * s) -> (goto AwaitingConnectionInfoReq)])
      (define-state (HandleRequests)
-       [(variant ConnectionInfoReq s) -> ([obligation s (variant ConnectionInfo)]) (goto HandleRequests)]
+       [(variant ConnectionInfoReq s) -> [obligation s (variant ConnectionInfo)] (goto HandleRequests)]
        [(variant Resolve * s) ->
-        ([obligation s (or (variant FalseResponse) (variant StringResponse *))])
+        [obligation s (or (variant FalseResponse) (variant StringResponse *))]
         (goto HandleRequests)]
        [(variant PublicSymbolSearchReq * * s) ->
-        ([obligation s (variant ImportSuggestions *)])
+        [obligation s (variant ImportSuggestions *)]
         (goto HandleRequests)]
        [(variant TypeCompletionsReq * * s) ->
-        ([obligation s (variant SymbolSearchResults *)])
+        [obligation s (variant SymbolSearchResults *)]
         (goto HandleRequests)]
        [(variant DebugRunReq s) ->
-        ([obligation s (or (variant FalseResponse) (variant TrueResponse))])
+        [obligation s (or (variant FalseResponse) (variant TrueResponse))]
         (goto HandleRequests)]
        [(variant DebugStopReq s) ->
-        ([obligation s (or (variant FalseResponse) (variant TrueResponse))])
+        [obligation s (or (variant FalseResponse) (variant TrueResponse))]
         (goto HandleRequests)]
        [(variant DebugValueReq * s) ->
-        ([obligation s (or (variant FalseResponse) (variant DebugValue *))])
+        [obligation s (or (variant FalseResponse) (variant DebugValue *))]
         (goto HandleRequests)]
        [(variant DocUriAtPointReq * * s) ->
-        ([obligation s (or (variant NoDocSigPair) (variant DocSigPair *))])
+        [obligation s (or (variant NoDocSigPair) (variant DocSigPair *))]
         (goto HandleRequests)]
-       [(variant CompletionsReq * * * * * s) -> ([obligation s *]) (goto HandleRequests)]
+       [(variant CompletionsReq * * * * * s) -> [obligation s *] (goto HandleRequests)]
        [(variant TypecheckAllReq s) ->
-        ([obligation s (variant VoidResponse)])
+        [obligation s (variant VoidResponse)]
         (goto HandleRequests)]
        [(variant RefactorReq * * * s) ->
-        ([obligation s (or (variant RefactorFailure * * *) (variant RefactorDiffEffect * * *))])
+        [obligation s (or (variant RefactorFailure * * *) (variant RefactorDiffEffect * * *))]
         (goto HandleRequests)])))
 
 (module+ test

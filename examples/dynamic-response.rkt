@@ -42,8 +42,8 @@
     (mon-receptionist input)
     (goto Always)
     (define-state (Always)
-      [r -> ([obligation r (variant A)]) (goto Always)]
-      [r -> ([obligation r (variant B)]) (goto Always)])))
+      [r -> [obligation r (variant A)] (goto Always)]
+      [r -> [obligation r (variant B)] (goto Always)])))
 
 (module+ test
   (require

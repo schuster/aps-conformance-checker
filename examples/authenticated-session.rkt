@@ -244,18 +244,18 @@
   `((goto ServerReady)
     (define-state (ServerReady)
       [(variant Ping reply-to) ->
-       ([obligation reply-to (variant Pong)])
+       [obligation reply-to (variant Pong)]
        (goto ServerReady)])))
 
 (define worker-spec-behavior
   `((goto WaitingForCredentials)
      (define-state (WaitingForCredentials)
        [(variant Authenticate * * reply-to) ->
-        ([obligation reply-to (or (variant FailedSession)
-                                  (variant ActiveNewSession * (delayed-fork-addr ,@server-spec-behavior)))])
+        [obligation reply-to (or (variant FailedSession)
+                                 (variant ActiveNewSession * (delayed-fork-addr ,@server-spec-behavior)))]
         (goto Done)])
      (define-state (Done)
-       [(variant Authenticate * * reply-to) -> () (goto Done)])))
+       [(variant Authenticate * * reply-to) -> (goto Done)])))
 
 ;; Spec says that:
 ;; * initial request gets response with authN thing.
@@ -268,8 +268,8 @@
      (goto Ready)
      (define-state (Ready)
        [(variant GetSession * reply-to) ->
-        ([obligation reply-to (or (variant ActiveOldSession (delayed-fork-addr ,@server-spec-behavior))
-                                  (variant NewSession (delayed-fork-addr ,@worker-spec-behavior)))])
+        [obligation reply-to (or (variant ActiveOldSession (delayed-fork-addr ,@server-spec-behavior))
+                                 (variant NewSession (delayed-fork-addr ,@worker-spec-behavior)))]
         (goto Ready)])))
 
 ;; ---------------------------------------------------------------------------------------------------

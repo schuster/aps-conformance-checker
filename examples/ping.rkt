@@ -18,7 +18,7 @@
      (mon-receptionist ping-server)
      (goto Always)
      (define-state (Always)
-       [r -> ([obligation r *]) (goto Always)]))))
+       [r -> [obligation r *] (goto Always)]))))
 
 (define no-send-ping-spec
   (quasiquote
@@ -26,7 +26,7 @@
      (mon-receptionist ping-server)
      (goto Always)
      (define-state (Always)
-       [r -> () (goto Always)]))))
+       [r -> (goto Always)]))))
 
 (module+ test
   (require

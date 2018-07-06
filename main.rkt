@@ -485,7 +485,7 @@
      (lambda (exn) #t)
      (lambda ()
        (matching-spec-steps
-        (make-s# '((define-state (A) [x -> () (goto A)])) '(goto A) null)
+        (make-s# '((define-state (A) [x -> (goto A)])) '(goto A) null)
         (impl-step '(external-receive (marked (addr 0 0) 0) abs-nat) null null #f)))))
   (test-case "Unmonitored outputs don't need to match"
     (check-equal?
@@ -518,17 +518,17 @@
   (test-case "Output can be matched by new commitment"
     (check-equal?
      (matching-spec-steps
-      (make-s# '((define-state (A) [x -> ([obligation x *]) (goto A)])) '(goto A) null)
+      (make-s# '((define-state (A) [x -> [obligation x *] (goto A)])) '(goto A) null)
       (impl-step '(external-receive (marked (addr 0 0) 0) (marked (addr (env Nat) 1) 1))
                  (list '((marked (addr (env Nat) 1) 1) abs-nat single))
                  null
                  #f))
-     (mutable-set (spec-step (list (valid-s# `[(0) (1) (goto A) ((define-state (A) [x -> ([obligation x *]) (goto A)])) ()]))
+     (mutable-set (spec-step (list (valid-s# `[(0) (1) (goto A) ((define-state (A) [x -> [obligation x *] (goto A)])) ()]))
                              (list `[1 *])))))
   (test-case "Can't duplicate commitments"
     (check-equal?
      (matching-spec-steps
-      (valid-s# '[(0) (1) (goto A 1) ((define-state (A x) [* -> ([obligation x *]) (goto A x)])) ([1 *])])
+      (valid-s# '[(0) (1) (goto A 1) ((define-state (A x) [* -> [obligation x *] (goto A x)])) ([1 *])])
       (impl-step '(external-receive (marked (addr 0 0) 0) abs-nat) null null #f))
      (mutable-set))))
 
@@ -983,7 +983,7 @@
      ((0)
       ()
       (goto SpecA)
-      ((define-state (SpecA) [* -> () (goto SpecA)]))
+      ((define-state (SpecA) [* -> (goto SpecA)]))
       ())))
 
   (test-true "Init widen config is valid"     (redex-match? csa# i# init-widen-impl-config))
@@ -1033,10 +1033,10 @@
                         ()
                         (goto A)
                         ((define-state (A)
-                           [* -> () (goto A)]
-                           [free -> () (goto B)])
+                           [* -> (goto A)]
+                           [free -> (goto B)])
                          (define-state (B)
-                           [* -> () (goto A)]))
+                           [* -> (goto A)]))
                         ())])
       (term s#)))
 
@@ -1060,10 +1060,10 @@
        ()
        (goto A)
        ((define-state (A)
-          [* -> () (goto B)]
-          [free -> () (goto B)])
+          [* -> (goto B)]
+          [free -> (goto B)])
         (define-state (B)
-          [* -> () (goto A)]))
+          [* -> (goto A)]))
        ())
      (impl-step `(external-receive (marked (addr 1 0) 0) abs-nat)
                 null
@@ -1361,7 +1361,7 @@
   (define ignore-all-config (make-ignore-all-config 'Nat))
   (define ignore-all-spec-instance
     (term
-     (((define-state (Always) [* -> () (goto Always)]))
+     (((define-state (Always) [* -> (goto Always)]))
       (goto Always)
       0)))
   (check-not-false (redex-match csa-eval i ignore-all-config))
@@ -1397,20 +1397,21 @@
   (define static-response-spec
     (term
      (((define-state (Always response-dest)
-         [* -> ([obligation response-dest *]) (goto Always response-dest)]))
+         [* -> [obligation response-dest *] (goto Always response-dest)]))
       (goto Always ,static-response-marker)
       0)))
   (define ignore-all-with-addr-spec-instance
     (term
-     (((define-state (Always response-dest) [* -> () (goto Always response-dest)]))
+     (((define-state (Always response-dest) [* -> (goto Always response-dest)]))
       (goto Always ,static-response-marker)
       0)))
   (define static-double-response-spec
     (term
      (((define-state (Always response-dest)
-         [* -> ([obligation response-dest *]
-                [obligation response-dest *])
-               (goto Always response-dest)]))
+         [* ->
+           [obligation response-dest *]
+           [obligation response-dest *]
+           (goto Always response-dest)]))
       (goto Always ,static-response-marker)
       0)))
 
@@ -1443,8 +1444,8 @@
   (define pattern-match-spec
     (term
      (((define-state (Matching r)
-         [(variant A *) -> ([obligation r (variant A *)]) (goto Matching r)]
-         [(variant B *) -> ([obligation r (variant B *)]) (goto Matching r)]))
+         [(variant A *) -> [obligation r (variant A *)] (goto Matching r)]
+         [(variant B *) -> [obligation r (variant B *)] (goto Matching r)]))
       (goto Matching ,static-response-marker)
       0)))
 
@@ -1494,14 +1495,14 @@
   (define or-pattern-match-spec
     (term
      (((define-state (Matching r)
-         [* -> ([obligation r (or (variant A *) (variant B *))]) (goto Matching r)]))
+         [* -> [obligation r (or (variant A *) (variant B *))] (goto Matching r)]))
       (goto Matching ,static-response-marker)
       0)))
 
   (define or-wrong-pattern-match-spec
     (term
      (((define-state (Matching r)
-         [* -> ([obligation r (or (variant A *) (variant C *))]) (goto Matching r)]))
+         [* -> [obligation r (or (variant A *) (variant C *))] (goto Matching r)]))
       (goto Matching ,static-response-marker)
       0)))
 
@@ -1535,11 +1536,12 @@
   (define overlapping-patterns-spec
     (term
      (((define-state (Init r)
-         [* -> ([obligation r (or (variant A) (variant B))]
-                [obligation r (variant A)])
+         [* ->
+            [obligation r (or (variant A) (variant B))]
+            [obligation r (variant A)]
             (goto NoMoreSends)])
        (define-state (NoMoreSends)
-         [* -> () (goto NoMoreSends)]))
+         [* -> (goto NoMoreSends)]))
       (goto Init 1)
       0)))
 
@@ -1557,16 +1559,16 @@
   (define request-response-spec
     (term
      (((define-state (Always)
-         [response-target -> ([obligation response-target *]) (goto Always)]))
+         [response-target -> [obligation response-target *] (goto Always)]))
       (goto Always)
       0)))
 
   (define request-same-response-addr-spec
     (term
      (((define-state (Init)
-         [response-target -> ([obligation response-target *]) (goto HaveAddr response-target)])
+         [response-target -> [obligation response-target *] (goto HaveAddr response-target)])
        (define-state (HaveAddr response-target)
-         [new-response-target -> ([obligation response-target *]) (goto HaveAddr response-target)]))
+         [new-response-target -> [obligation response-target *] (goto HaveAddr response-target)]))
       (goto Init)
       0)))
   (define request-response-actor
@@ -1724,7 +1726,7 @@
   (define from-env-request-response-spec
     (term
      (((define-state (Always)
-         [(variant FromEnv response-target) -> ([obligation response-target *]) (goto Always)]))
+         [(variant FromEnv response-target) -> [obligation response-target *] (goto Always)]))
       (goto Always)
       0)))
 
@@ -1761,10 +1763,10 @@
   (define maybe-reply-spec
     (term
      (((define-state (A)
-         [r -> ([obligation r *]) (goto B)]
-         [r -> () (goto B)])
+         [r -> [obligation r *] (goto B)]
+         [r -> (goto B)])
        (define-state (B)
-         [* -> () (goto B)]))
+         [* -> (goto B)]))
       (goto A)
       0)))
 
@@ -1780,14 +1782,14 @@
   (define zero-nonzero-spec
     (term
      (((define-state (S1 r)
-         [* -> ([obligation r (variant Zero)])    (goto S1 r)]
-         [* -> ([obligation r (variant NonZero)]) (goto S1 r)]))
+         [* -> [obligation r (variant Zero)]    (goto S1 r)]
+         [* -> [obligation r (variant NonZero)] (goto S1 r)]))
       (goto S1 ,static-response-marker)
       0)))
   (define zero-spec
     (term
      (((define-state (S1 r)
-         [* -> ([obligation r (variant Zero)]) (goto S1 r)]))
+         [* -> [obligation r (variant Zero)] (goto S1 r)]))
       (goto S1 ,static-response-marker)
       0)))
   (define primitive-branch-actor
@@ -1817,8 +1819,8 @@
   (define optional-commitment-spec
     (term
      (((define-state (Always r)
-         [* -> ([obligation r *]) (goto Always r)]
-         [* -> () (goto Always r)]))
+         [* -> [obligation r *] (goto Always r)]
+         [* -> (goto Always r)]))
       (goto Always 1)
       0)))
 
@@ -1831,7 +1833,7 @@
   (define nat-to-nat-spec
     (term
      (((define-state (Always response-dest)
-         [* -> ([obligation response-dest *]) (goto Always response-dest)]))
+         [* -> [obligation response-dest *] (goto Always response-dest)]))
       (goto Always ,static-response-marker)
       0)))
   (define div-by-one-actor
@@ -1886,8 +1888,8 @@
   (define static-response-spec-with-unobs
     (term
      (((define-state (Always response-dest)
-         [*     -> ([obligation response-dest *]) (goto Always response-dest)]
-         [free -> ([obligation response-dest *]) (goto Always response-dest)]))
+         [*    -> [obligation response-dest *] (goto Always response-dest)]
+         [free -> [obligation response-dest *] (goto Always response-dest)]))
       (goto Always ,static-response-marker)
       0)))
   (test-valid-instance? static-response-spec-with-unobs)
@@ -1901,10 +1903,10 @@
     (make-static-response-dest (term (Union (TurningOn) (TurningOff)))))
   (define unobs-toggle-spec
     (term (((define-state (Off r)
-              [* -> ([obligation r (variant TurningOn)]) (goto On r)])
+              [* -> [obligation r (variant TurningOn)] (goto On r)])
             (define-state (On r)
-              [* -> () (goto On r)]
-              [free -> ([obligation r (variant TurningOff)]) (goto Off r)]))
+              [* -> (goto On r)]
+              [free -> [obligation r (variant TurningOff)] (goto Off r)]))
            (goto Off ,static-response-marker)
            0)))
   (define unobs-toggle-actor
@@ -2026,8 +2028,8 @@
   (define record-req-resp-spec
     (term
      (((define-state (Always)
-         [(record [dest dest] [msg (variant A)]) -> ([obligation dest (variant A)]) (goto Always)]
-         [(record [dest dest] [msg (variant B)]) -> ([obligation dest (variant B)]) (goto Always)]))
+         [(record [dest dest] [msg (variant A)]) -> [obligation dest (variant A)] (goto Always)]
+         [(record [dest dest] [msg (variant B)]) -> [obligation dest (variant B)] (goto Always)]))
       (goto Always)
       0)))
   (define record-req-resp-actor
@@ -2223,14 +2225,14 @@
   (define timeout-spec
     (term
      (((define-state (A r)
-         [* -> ([obligation r (variant GotMessage)]) (goto A r)]
-         [free -> ([obligation r (variant GotTimeout)]) (goto A r)]))
+         [* -> [obligation r (variant GotMessage)] (goto A r)]
+         [free -> [obligation r (variant GotTimeout)] (goto A r)]))
       (goto A ,static-response-marker)
       0)))
   (define got-message-only-spec
     (term
      (((define-state (A r)
-         [* -> ([obligation r (variant GotMessage)]) (goto A r)]))
+         [* -> [obligation r (variant GotMessage)] (goto A r)]))
       (goto A ,static-response-marker)
       0)))
   (define timeout-and-send-actor
@@ -2315,8 +2317,8 @@
   (define static-response-with-extra-spec
     (term
      (((define-state (Always response-dest)
-         [* -> ([obligation response-dest *]) (goto Always response-dest)]
-         [free -> ([obligation response-dest *]) (goto Always response-dest)]))
+         [* -> [obligation response-dest *] (goto Always response-dest)]
+         [free -> [obligation response-dest *] (goto Always response-dest)]))
       (goto Always ,static-response-marker)
       0)))
 
@@ -2369,9 +2371,9 @@
   (define self-reveal-spec
     (term
      (((define-state (Init r)
-         [free -> ([obligation r self]) (goto Running)])
+         [free -> [obligation r self] (goto Running)])
        (define-state (Running)
-         [r -> ([obligation r *]) (goto Running)]))
+         [r -> [obligation r *] (goto Running)]))
       (goto Init 2))))
 
   (define self-reveal-actor
@@ -2489,10 +2491,10 @@
   (define echo-spawn-spec
     (term
      (((define-state (Always)
-         [r -> ([obligation r (delayed-fork-addr
-                               (goto EchoResponse)
-                               (define-state (EchoResponse)
-                                 [er -> ([obligation er *]) (goto EchoResponse)]))])
+         [r -> [obligation r (delayed-fork-addr
+                              (goto EchoResponse)
+                              (define-state (EchoResponse)
+                                [er -> [obligation er *] (goto EchoResponse)]))]
                (goto Always)]))
       (goto Always)
       0)))
@@ -2536,10 +2538,10 @@
   (define unobs-fork-spec
     (term
      (((define-state (Always child-response never-use)
-         [* -> ([obligation child-response
-                            (delayed-fork-addr (goto ChildAlways)
-                                          (define-state (ChildAlways)
-                                            [* -> () (goto ChildAlways)]))])
+         [* -> [obligation child-response
+                           (delayed-fork-addr (goto ChildAlways)
+                                              (define-state (ChildAlways)
+                                                [* -> (goto ChildAlways)]))]
             (goto Always child-response never-use)]))
       (goto Always 1 2)
       0)))
@@ -2555,7 +2557,7 @@
   (define no-matching-address-spec
     (term
      (((define-state (DoAnything)
-         [* -> () (goto DoAnything)]))
+         [* -> (goto DoAnything)]))
       (goto DoAnything)
       500)))
   (test-valid-instance? no-matching-address-spec)
@@ -2651,11 +2653,11 @@
   (define child-self-reveal-spec
     (term
      (((define-state (Always)
-         [r -> ([fork (goto Init r)
-                      (define-state (Init r)
-                        [free -> ([obligation r self]) (goto EchoResponse)])
-                      (define-state (EchoResponse)
-                        [er -> ([obligation er *]) (goto EchoResponse)])])
+         [r -> [fork (goto Init r)
+                     (define-state (Init r)
+                       [free -> [obligation r self] (goto EchoResponse)])
+                     (define-state (EchoResponse)
+                       [er -> [obligation er *] (goto EchoResponse)])]
             (goto Always)]))
       (goto Always)
       0)))
@@ -2733,14 +2735,14 @@
   (define never-send-spec
     (term
      (((define-state (Always r)
-         [* -> () (goto Always r)]))
+         [* -> (goto Always r)]))
       (goto Always ,static-response-marker)
       0)))
   (define send-whenever-spec
     (term
      (((define-state (Always r)
-         [* -> () (goto Always r)]
-         [free -> ([obligation r *]) (goto Always r)]))
+         [* -> (goto Always r)]
+         [free -> [obligation r *] (goto Always r)]))
       (goto Always ,static-response-marker)
       0)))
 
@@ -2929,12 +2931,12 @@
   (define worker-spawner-spec
     (term
      (((define-state (Always)
-         [r -> ([obligation r (delayed-fork-addr
-                               (goto Running)
-                               (define-state (Running)
-                                 [nr -> ([obligation nr *]) (goto Done)])
-                               (define-state (Done)
-                                 [nr -> () (goto Done)]))])
+         [r -> [obligation r (delayed-fork-addr
+                              (goto Running)
+                              (define-state (Running)
+                                [nr -> [obligation nr *] (goto Done)])
+                              (define-state (Done)
+                                [nr -> (goto Done)]))]
             (goto Always)]))
       (goto Always)
       0)))
@@ -2969,10 +2971,11 @@
   (define ping-coercion-spawner-spec
     (term
      (((define-state (Always)
-         [r -> ([obligation r (delayed-fork-addr
-                               (goto Ready)
-                               (define-state (Ready)
-                                 [(variant Ping r) -> ([obligation r (variant Pong)]) (goto Ready)]))])
+         [r ->
+            [obligation r (delayed-fork-addr
+                              (goto Ready)
+                              (define-state (Ready)
+                                [(variant Ping r) -> [obligation r (variant Pong)] (goto Ready)]))]
             (goto Always)]))
       (goto Always)
       0)))
@@ -3021,7 +3024,7 @@
            (2)
            (goto Always)
            ((define-state (Always)
-              [* -> () (goto Always)]))
+              [* -> (goto Always)]))
            ([2 *]))))
   (test-true "Valid impl config for widen new-spawn counterexample" (redex-match? csa-eval i new-spawn-impl-config))
   (test-true "Valid PSM for widen new-spawn counterexample" (redex-match? aps-eval s new-spawn-spec-config))
@@ -3052,7 +3055,7 @@
   (define dynamic-never-respond-spec
     (term
      (((define-state (Always)
-         [r -> () (goto Always)]))
+         [r -> (goto Always)]))
       (goto Always)
       0)))
 
@@ -3099,17 +3102,17 @@
   (define dynamic-never-respond-spec-escape
     (term
      (((define-state (Always)
-         [* -> () (goto Always)]))
+         [* -> (goto Always)]))
       (goto Always)
       0)))
   (define obs-escape-spec1
     (term (((define-state (Always)
-              [(record [a a] [b b]) -> () (goto Always)]))
+              [(record [a a] [b b]) -> (goto Always)]))
            (goto Always)
            0)))
   (define obs-escape-spec2
     (term (((define-state (Always)
-              [(record [a a] [b b]) -> ([obligation b *]) (goto Always)]))
+              [(record [a a] [b b]) -> [obligation b *] (goto Always)]))
            (goto Always)
            0)))
 
@@ -3161,9 +3164,9 @@
   (define reply-to-first-request-spec
     (term
      (((define-state (FirstState)
-         [r -> ([obligation r *]) (goto Done)])
+         [r -> [obligation r *] (goto Done)])
        (define-state (Done)
-         [* -> () (goto Done)]))
+         [* -> (goto Done)]))
       (goto FirstState)
       0)))
 
@@ -3185,7 +3188,7 @@
   (define new-self-obligations-spec
     (term
      (((define-state (Always)
-         [r -> ([obligation r self]) (goto Always)]))
+         [r -> [obligation r self] (goto Always)]))
       (goto Always)
       0)))
 
@@ -3258,7 +3261,7 @@
        (goto Always 0)
        ((define-state (Always dest)
           [free ->
-                ([obligation dest (record [a *] [b (variant B)])])
+                [obligation dest (record [a *] [b (variant B)])]
                 (goto Always dest)])
         )
        ([0 (record [a (variant A)] [b *])])])))
