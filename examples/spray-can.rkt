@@ -326,7 +326,7 @@
   ;;
   ;; APS PROTOCOL BUG: to replicate, replace "bind-timer" in the spawn expression with
   ;; "bind-timer-EVICT" (otherwise, we can't guarantee that the user's Bind command gets a response)
-  (let ([bind-timer (spawn ,(if bug2 `bind-timer-EVICT `bind-timer) Timer (BindTimeout) self)])
+  (let ([bind-timer (spawn ,(if bug2 `(bind-timer-EVICT ,desugared-TimerCommand ,timer-type-env) `bind-timer) Timer (BindTimeout) self)])
     (send tcp (Bind port self self))
     (send bind-timer (Start ,BIND-WAIT-TIME-IN-MS))
     (goto Binding bind-timer))
