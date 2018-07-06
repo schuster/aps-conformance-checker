@@ -15,22 +15,22 @@
 ;; Type Aliases
 
 (define ProcUserAPI
-  `(Union
-    [AddRdg Nat (Addr (Union [Ok] [NotOk]))]
+  `(Variant
+    [AddRdg Nat (Addr (Variant [Ok] [NotOk]))]
     [GetMean]
     [Enable]
     [Disable]))
 
 (define ManagerMessage
-  `(Union
+  `(Variant
     [MakeProc (Addr (Addr ,ProcUserAPI)) (Addr Nat)]
     [ShutdownAll]))
 
 (define ManagerUserAPI
-  `(Union [MakeProc (Addr (Addr ,ProcUserAPI)) (Addr Nat)]))
+  `(Variant [MakeProc (Addr (Addr ,ProcUserAPI)) (Addr Nat)]))
 
 (define ManagerSysAPI
-  `(Union [ShutdownAll]))
+  `(Variant [ShutdownAll]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Program
@@ -41,7 +41,7 @@
 
 (define-actor
 ;; Processor's declared type
-(Union [AddRdg Nat (Addr (Union [Ok] [NotOk]))]
+(Variant [AddRdg Nat (Addr (Variant [Ok] [NotOk]))]
        [GetMean]
        [Disable]
        [Enable]
@@ -81,7 +81,7 @@
 (define-state (Done) m (goto Done))
 )
 
-(define-type ProcAddr (Addr (Union [Shutdown])))
+(define-type ProcAddr (Addr (Variant [Shutdown])))
 
 (define-actor ,ManagerMessage (Manager)
   ()

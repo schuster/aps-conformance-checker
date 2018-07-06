@@ -122,17 +122,17 @@
   (Cancelled))
 
 (define-type CancelResponse
-  (Union
+  (Variant
    (Acknowledge JobTaskId)
    (Failure JobTaskId)))
 
 (define-type SubmitCancelResponse
-  (Union
+  (Variant
    (Acknowledge JobTaskId)
    (Failure JobTaskId)))
 
 (define-type TaskManagerCommand
-  (Union
+  (Variant
    [AcknowledgeRegistration]
    [SubmitTask ReadyTask (Addr SubmitCancelResponse)]
    [CancelTask JobTaskId (Addr SubmitCancelResponse)]))
@@ -141,14 +141,14 @@
 ;; TaskRunner -> JobManager Communication
 
 (define-type InputSplitRequest
-  (Union
-   [RequestNextInputSplit JobTaskId (Addr (Union [NextInputSplit (List String)]))]))
+  (Variant
+   [RequestNextInputSplit JobTaskId (Addr (Variant [NextInputSplit (List String)]))]))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; TaskManager -> TaskRunner Communication
 
 (define-type RunnerCommand
-  (Union
+  (Variant
    [RunTask ReadyTask]
    [CancelRunnerTask JobTaskId]))
 
@@ -156,7 +156,7 @@
 ;; TaskManager -> JobManager Communication
 
 (define-type TaskManagerToJobManager
-  (Union
+  (Variant
    [RegisterTaskManager Nat Nat (Addr TaskManagerCommand)]
    [UpdateTaskExecutionState JobTaskId ExecutionState]))
 
@@ -180,7 +180,7 @@
 (define-variant JobManagerInputVariant
   (RegisterTaskManager [id Nat] [num-slots Nat] [address (Addr TaskManagerCommand)])
   (RequestNextInputSplit [id JobTaskId]
-                         [target (Addr (Union [NextInputSplit (List String)]))])
+                         [target (Addr (Variant [NextInputSplit (List String)]))])
   (SubmitJob [job Job] [client (Addr JobResult)])
   (CancelJob [id Nat] [result-dest (Addr CancellationResult)])
   ;; these two are responses to SubmitTask
@@ -192,12 +192,12 @@
   (TaskManagerTerminated [id TaskManagerId]))
 
 (define-type JobManagerInput
-  (Union
+  (Variant
    (RegisterTaskManager Nat Nat (Addr TaskManagerCommand))
    (SubmitJob Job (Addr JobResult))
    (Acknowledge JobTaskId)
    (Failure JobTaskId)
-   (RequestNextInputSplit JobTaskId (Addr (Union [NextInputSplit (List String)])))
+   (RequestNextInputSplit JobTaskId (Addr (Variant [NextInputSplit (List String)])))
    (UpdateTaskExecutionState JobTaskId ExecutionState)
    (TaskManagerTerminated TaskManagerId)
    (CancelJob Nat (Addr CancellationResult))))
@@ -206,7 +206,7 @@
 ;; TaskRunner -> TaskManager Communication
 
 (define-type TaskManagerNotification
-  (Union
+  (Variant
    [RegisterRunner (Addr TaskRunnerInput)]
    [UpdateTaskExecutionState JobTaskId ExecutionState]))
 
@@ -772,33 +772,33 @@
 
 (define desugared-ready-task
   `(Record [id ,desugared-job-task-id]
-           [work (Union (MapWork (List String))
+           [work (Variant (MapWork (List String))
                         (ReduceWork (Dict String Nat) (Dict String Nat)))]))
 
 (define desugared-submit-cancel-response
-  `(Union
+  `(Variant
     (Acknowledge ,desugared-job-task-id)
     (Failure ,desugared-job-task-id)))
 
 (define desugared-task-manager-command
-  `(Union
+  `(Variant
     [AcknowledgeRegistration]
     [SubmitTask ,desugared-ready-task (Addr ,desugared-submit-cancel-response)]
     [CancelTask ,desugared-job-task-id (Addr ,desugared-submit-cancel-response)]))
 
 (define desugared-execution-state
-  `(Union
+  `(Variant
     (Finished (Dict String Nat))
     (Cancelled)))
 
 (define desugared-tm-to-jm-type
-  `(Union
-    [RequestNextInputSplit ,desugared-job-task-id (Addr (Union [NextInputSplit (List String)]))]
+  `(Variant
+    [RequestNextInputSplit ,desugared-job-task-id (Addr (Variant [NextInputSplit (List String)]))]
     [RegisterTaskManager Nat Nat (Addr ,desugared-task-manager-command)]
     [UpdateTaskExecutionState ,desugared-job-task-id ,desugared-execution-state]))
 
 (define desugared-tm-test-input-type
-  `(Union
+  `(Variant
     [JobManagerTerminated]
     [AcknowledgeRegistration]
     [SubmitTask ,desugared-ready-task (Addr ,desugared-submit-cancel-response)]
@@ -806,25 +806,25 @@
 
 ;; client-level API
 (define desugared-task-description
-  `(Union [Map (List String)] [Reduce Nat Nat]))
+  `(Variant [Map (List String)] [Reduce Nat Nat]))
 (define desugared-task `(Record [id Nat] [type ,desugared-task-description]))
 (define desugared-job `(Record [id Nat] [tasks (List ,desugared-task)] [final-task-id Nat]))
 (define desugared-job-result
-  `(Union [JobResultSuccess (Dict String Nat)] [JobResultFailure]))
+  `(Variant [JobResultSuccess (Dict String Nat)] [JobResultFailure]))
 (define desugared-cancellation-result
-  `(Union (CancellationSuccess) (CancellationFailure)))
+  `(Variant (CancellationSuccess) (CancellationFailure)))
 (define desugared-job-manager-command
-  `(Union [SubmitJob ,desugared-job (Addr ,desugared-job-result)]
+  `(Variant [SubmitJob ,desugared-job (Addr ,desugared-job-result)]
           [CancelJob Nat (Addr ,desugared-cancellation-result)]))
 
 (define desugared-job-manager-input
-  `(Union
+  `(Variant
     [RegisterTaskManager Nat Nat (Addr ,desugared-task-manager-command)]
     [SubmitJob ,desugared-job (Addr ,desugared-job-result)]
     [Acknowledge ,desugared-job-task-id]
     [Failure ,desugared-job-task-id]
     [RequestNextInputSplit ,desugared-job-task-id
-                           (Addr (Union [NextInputSplit (List String)]))]
+                           (Addr (Variant [NextInputSplit (List String)]))]
     [UpdateTaskExecutionState ,desugared-job-task-id ,desugared-execution-state]
     [TaskManagerTerminated Nat]
     [CancelJob Nat (Addr ,desugared-cancellation-result)]))
@@ -848,7 +848,7 @@
 (define (make-job-manager-program-client-pov bug1 bug2)
   (desugar
    `(program (receptionists [job-manager ,desugared-job-manager-command]
-                            [job-manager-unobs (Union [TaskManagerTerminated Nat])])
+                            [job-manager-unobs (Variant [TaskManagerTerminated Nat])])
              (externals)
              ,@(make-flink-definitions bug1 bug2)
              (let-actors ([job-manager (spawn jm-loc JobManager)]
@@ -861,7 +861,7 @@
 (define (make-job-manager-program-tm-pov bug1 bug2)
   (desugar
    `(program (receptionists [job-manager ,desugared-tm-to-jm-type]
-                            [job-manager-unobs (Union ,@(cdr desugared-job-manager-command) [TaskManagerTerminated Nat])])
+                            [job-manager-unobs (Variant ,@(cdr desugared-job-manager-command) [TaskManagerTerminated Nat])])
              (externals)
              ,@(make-flink-definitions bug1 bug2)
              (let-actors ([job-manager (spawn jm-loc JobManager)]
@@ -1242,7 +1242,7 @@
 
 (define job-manager-client-pov-spec
   `(specification (receptionists [job-manager ,desugared-job-manager-command]
-                                 [job-manager-unobs (Union [TaskManagerTerminated Nat])])
+                                 [job-manager-unobs (Variant [TaskManagerTerminated Nat])])
                   (externals)
      (mon-receptionist job-manager)
      (goto Running)
@@ -1265,7 +1265,7 @@
 
 (define job-manager-tm-pov-spec
   `(specification (receptionists [job-manager ,desugared-tm-to-jm-type]
-                                 [job-manager-unobs (Union ,@(cdr desugared-job-manager-command) [TaskManagerTerminated Nat])])
+                                 [job-manager-unobs (Variant ,@(cdr desugared-job-manager-command) [TaskManagerTerminated Nat])])
                   (externals)
      (mon-receptionist job-manager)
      (goto Running)

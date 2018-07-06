@@ -12,7 +12,7 @@
 ;; config seems unfeasible (although it would possibly simplify things... Am I already checking all of
 ;; these matches?). Maybe I should just punt on this issue.
 
-(define request-type `(Addr (Union [A] [B])))
+(define request-type `(Addr (Variant [A] [B])))
 
 (define dynamic-response-program
   `(program

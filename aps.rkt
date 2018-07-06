@@ -174,13 +174,13 @@
 (module+ test
   (test-case "Instantiate test"
     (define the-prog
-      `(program (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Union)])
+      `(program (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Variant)])
                 (let-actors ([a (let () (spawn 1 Nat      (goto S1)))]
                              [b (let () (spawn 2 (Record) (goto S2)))]
                              [c (let () (spawn 3 Nat      (goto S3)))])
                             a b)))
     (define the-spec
-      `(specification (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Union)])
+      `(specification (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Variant)])
                       no-mon-receptionist
                       (goto S1)))
     (check-true (redex-match? csa-eval P the-prog))
@@ -241,7 +241,7 @@
 (module+ test
   (test-case "instantiate spec"
       (define the-spec
-      `(specification (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Union)])
+      `(specification (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Variant)])
                       no-mon-receptionist
                       (goto S1 d)))
       (check-true (redex-match? aps spec the-spec))

@@ -71,7 +71,7 @@
     (CreateSession [username String] [reply-to CreateSessionResult]))
 
   (define-type HandshakeWorkerInput
-    (Union (SuccessInternal)
+    (Variant (SuccessInternal)
            (FailureInternal)
            (NewSessionInternal
             Nat ; auth-token
@@ -83,7 +83,7 @@
             )))
 
   (define-type ServerInput
-    (Union
+    (Variant
      (GetSessionInternal
       Nat ; auth-token
       (Addr GetSessionResultInternal) ; reply-to
@@ -203,36 +203,36 @@
 ;; Desugared Types
 
 (define desugared-SessionResponse
-  `(Union (Pong)))
+  `(Variant (Pong)))
 
 (define desugared-SessionCommand
-  `(Union (Ping (Addr ,desugared-SessionResponse))))
+  `(Variant (Ping (Addr ,desugared-SessionResponse))))
 
 (define desugared-AuthenticateResult
-  `(Union (ActiveNewSession Nat (Addr ,desugared-SessionCommand))
+  `(Variant (ActiveNewSession Nat (Addr ,desugared-SessionCommand))
           (FailedSession)))
 
 (define desugared-AuthenticateType
-  `(Union [Authenticate String String (Addr ,desugared-AuthenticateResult)]))
+  `(Variant [Authenticate String String (Addr ,desugared-AuthenticateResult)]))
 
 (define desugared-GetSessionResultInternal
-  `(Union (SuccessInternal) (FailureInternal)))
+  `(Variant (SuccessInternal) (FailureInternal)))
 
 (define desugared-GetSessionInternalType
-  `(Union (GetSessionInternal Nat (Addr ,desugared-GetSessionResultInternal))))
+  `(Variant (GetSessionInternal Nat (Addr ,desugared-GetSessionResultInternal))))
 
 (define desugared-GetSessionResultType
-  `(Union (ActiveOldSession (Addr ,desugared-SessionCommand))
+  `(Variant (ActiveOldSession (Addr ,desugared-SessionCommand))
           (NewSession (Addr ,desugared-AuthenticateType))))
 
 (define desugared-GetSessionType
-  `(Union (GetSession Nat (Addr ,desugared-GetSessionResultType))))
+  `(Variant (GetSession Nat (Addr ,desugared-GetSessionResultType))))
 
 (define desugared-CreateSessionResult
-  `(Union (NewSessionInternal Nat)))
+  `(Variant (NewSessionInternal Nat)))
 
 (define desugared-server-input-type
-  `(Union
+  `(Variant
     (GetSessionInternal Nat (Addr ,desugared-GetSessionResultInternal))
     (CreateSession String desugared-CreateSessionResult)
     (Ping (Addr SessionResponse))))

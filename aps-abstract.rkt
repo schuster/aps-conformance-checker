@@ -1002,7 +1002,7 @@
                    '(variant A (delayed-fork-addr (goto B) (define-state (B))) self))
     (list `[(2) ([(1) () (goto B) ((define-state (B))) ()])]))
   (test-equal? "Fold test"
-    (aps#-match-po `(folded (rec X (Addr (Union [Done] [More X]))) (marked (addr 0 0) 1))
+    (aps#-match-po `(folded (rec X (Addr (Variant [Done] [More X]))) (marked (addr 0 0) 1))
                    '(delayed-fork-addr (goto B) (define-state (B))))
     (list `[() ([(1) () (goto B) ((define-state (B))) ()])]))
   (test-equal? "'Or' pattern can match in multiple ways"
@@ -1087,7 +1087,7 @@
          [free -> [obligation b (variant D)] (goto S1 a b)]))
       ())))
   (test-equal? "resolve against free outputs"
-    (aps#-resolve-outputs (list free-output-spec) (term ([(marked (addr (env (Union [A] [B] [C] [D])) 1) 1) (variant C) many])))
+    (aps#-resolve-outputs (list free-output-spec) (term ([(marked (addr (env (Variant [A] [B] [C] [D])) 1) 1) (variant C) many])))
     (list `[,(list free-output-spec) ()]))
 
   (test-equal? "resolve with unobs transitions"
@@ -1098,7 +1098,7 @@
              ((define-state (A x)
                 [free -> [obligation x (variant C)] (goto B)]))
              ()])
-     (term ([(marked (addr (env (Union [A] [B] [C] [D])) 1) 1) (variant C) single])))
+     (term ([(marked (addr (env (Variant [A] [B] [C] [D])) 1) 1) (variant C) single])))
     (list `[,(list
               `[()
                 (1)
@@ -1149,8 +1149,8 @@
     (aps#-resolve-outputs
      (list `(() (1) (goto S1) ((define-state (S1))) ([1 (variant A *)]))
            `(() (2) (goto S2) ((define-state (S2))) ([2 (variant B *)])))
-     (list `[(marked (addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 1) 1) (variant A (marked (addr 1 0) 3)) single]
-           `[(marked (addr (env (Union [A (Addr Nat)] [B (Addr Nat)])) 2) 2) (variant B (marked (addr 2 0) 4)) single]))
+     (list `[(marked (addr (env (Variant [A (Addr Nat)] [B (Addr Nat)])) 1) 1) (variant A (marked (addr 1 0) 3)) single]
+           `[(marked (addr (env (Variant [A (Addr Nat)] [B (Addr Nat)])) 2) 2) (variant B (marked (addr 2 0) 4)) single]))
     (list `[,(list `(()
                      (1)
                      (goto S1)
@@ -1205,7 +1205,7 @@
     (aps#-resolve-outputs
      (list `(() () (goto S1) ((define-state (S1))) ())
            `(() () (goto S2) ((define-state (S2))) ()))
-     (list `[(marked (addr (env (Union [A (Addr Nat) (Addr String)])) 1) 1)
+     (list `[(marked (addr (env (Variant [A (Addr Nat) (Addr String)])) 1) 1)
              (variant A (marked (addr 1 0) 2) (marked (addr 2 0) 3))
              single]))
     (list `[,(list `(() () (goto S1) ((define-state (S1))) ())
@@ -1230,7 +1230,7 @@
     (aps#-resolve-outputs
      (list `(() (1) (goto S1) ((define-state (S1))) ([1 (record [a *]           [b (variant B)])]))
            `(() (1) (goto S1) ((define-state (S1))) ([1 (record [a (variant A)] [b *])])))
-     (list `[(marked (addr (env (Record [a (Union [A])] [b (Union [B])])) 1) 1) (record [a (variant A)] [b (variant B)]) single]))
+     (list `[(marked (addr (env (Record [a (Variant [A])] [b (Variant [B])])) 1) 1) (record [a (variant A)] [b (variant B)]) single]))
     (list `[,(list `(() (1) (goto S1) ((define-state (S1))) ())
                    `(() (1) (goto S1) ((define-state (S1))) ()))
             ,(list `[1 (record [a *]           [b (variant B)])]
@@ -1243,7 +1243,7 @@
       (list `(() (1) (goto S1) ((define-state (S1))) ([1 (record [a *]           [b (variant B)])]))
             `(() (1) (goto S1) ((define-state (S1))) ([1 (record [a (variant A)] [b *])]
                                                       [1 (record [a *]           [b *])])))
-      (list `[(marked (addr (env (Record [a (Union [A])] [b (Union [B])])) 1) 1) (record [a (variant A)] [b (variant B)]) single])))
+      (list `[(marked (addr (env (Record [a (Variant [A])] [b (Variant [B])])) 1) 1) (record [a (variant A)] [b (variant B)]) single])))
     (set `[,(list `(() (1) (goto S1) ((define-state (S1))) ())
                   `(() (1) (goto S1) ((define-state (S1))) ([1 (record [a *] [b *])])))
            ,(list `[1 (record [a *]           [b (variant B)])]
@@ -1275,7 +1275,7 @@
     (resolve-output/many-psms
      (list `(() () (goto S1) ((define-state (S1))) ())
            `(() () (goto S2) ((define-state (S2))) ()))
-     `[(marked (addr (env (Union [A (Addr Nat) (Addr String)])) 1) 1)
+     `[(marked (addr (env (Variant [A (Addr Nat) (Addr String)])) 1) 1)
        (variant A (addr 1 0) (addr 2 0)) single])
     (list `[,(list `(() () (goto S1) ((define-state (S1))) ())
                    `(() () (goto S2) ((define-state (S2))) ()))
@@ -1292,7 +1292,7 @@
     (resolve-output/many-psms
      (list `(() (1) (goto S1) ((define-state (S1))) ([1 (record [a *]           [b (variant B)])]))
            `(() (1) (goto S1) ((define-state (S1))) ([1 (record [a (variant A)] [b *])])))
-     `[(marked (addr (env (Record [a (Union [A])] [b (Union [B])])) 1) 1) (record [a (variant A)] [b (variant B)]) single])
+     `[(marked (addr (env (Record [a (Variant [A])] [b (Variant [B])])) 1) 1) (record [a (variant A)] [b (variant B)]) single])
     (list `[,(list `(() (1) (goto S1) ((define-state (S1))) ())
                    `(() (1) (goto S1) ((define-state (S1))) ()))
             ,(list `[1 (record [a *]           [b (variant B)])]

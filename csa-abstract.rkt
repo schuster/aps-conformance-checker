@@ -182,12 +182,12 @@
   messages-of-type/mf : τ -> (v# ...)
   [(messages-of-type/mf Nat) (abs-nat)]
   [(messages-of-type/mf String) (abs-string)]
-  [(messages-of-type/mf (Union)) ()]
-  [(messages-of-type/mf (Union [t_1 τ_1 ...] [t_rest τ_rest ...] ...))
+  [(messages-of-type/mf (Variant)) ()]
+  [(messages-of-type/mf (Variant [t_1 τ_1 ...] [t_rest τ_rest ...] ...))
    (v#_1 ... v#_rest ...)
    (where (v#_1  ...) (generate-variants t_1 τ_1 ...))
    (where (v#_rest ...)
-          (messages-of-type/mf (Union [t_rest τ_rest ...] ...)))]
+          (messages-of-type/mf (Variant [t_rest τ_rest ...] ...)))]
   [(messages-of-type/mf (rec X τ))
    ((folded (rec X τ) v#) ...)
    (where (v# ...)
@@ -233,12 +233,12 @@
    (term (messages-of-type/mf Nat))
    '(abs-nat))
   (test-same-items? "messages-of-type 2"
-    (term (messages-of-type/mf (Union [Begin]))) (list '(variant Begin)))
+    (term (messages-of-type/mf (Variant [Begin]))) (list '(variant Begin)))
   (test-same-items? "messages-of-type 3"
-   (term (messages-of-type/mf (Union [A] [B])))
+   (term (messages-of-type/mf (Variant [A] [B])))
    '((variant A) (variant B)))
   (test-same-items? "messages-of-type 4"
-    (term (messages-of-type/mf (Union))) null)
+    (term (messages-of-type/mf (Variant))) null)
   (test-same-items? "messages-of-type 5"
    (term (messages-of-type/mf (Record [a Nat] [b Nat])))
    (list '(record [a abs-nat] [b abs-nat])))
@@ -247,7 +247,7 @@
    (list `(record [a (marked (collective-addr (env Nat)) ,INIT-MESSAGE-MARKER)]
                   [b (marked (collective-addr (env Nat)) ,(add1 INIT-MESSAGE-MARKER))])))
   (test-same-items? "messages-of-type 7"
-   (term (messages-of-type/mf (Record [x (Union [A] [B])] [y (Union [C] [D])])))
+   (term (messages-of-type/mf (Record [x (Variant [A] [B])] [y (Variant [C] [D])])))
    (list '(record [x (variant A)] [y (variant C)])
          '(record [x (variant A)] [y (variant D)])
          '(record [x (variant B)] [y (variant C)])
@@ -262,10 +262,10 @@
                              (marked (collective-addr (env ,recursive-record-type))
                                      ,INIT-MESSAGE-MARKER))])))
   (test-same-items? "messages-of-type 9"
-   (term (messages-of-type/mf (Union)))
+   (term (messages-of-type/mf (Variant)))
    '())
   (test-same-items? "messages-of-type 10"
-   (term (messages-of-type/mf (Union [A] [B String (Union [C] [D])])))
+   (term (messages-of-type/mf (Variant [A] [B String (Variant [C] [D])])))
    '((variant A)
      (variant B abs-string (variant C))
      (variant B abs-string (variant D))))
@@ -273,7 +273,7 @@
    (term (messages-of-type/mf (List Nat)))
    (list `(list-val abs-nat)))
   (test-same-items? "messages-of-type 12"
-   (term (messages-of-type/mf (Dict Nat (Union [A] [B] [C]))))
+   (term (messages-of-type/mf (Dict Nat (Variant [A] [B] [C]))))
    (list `(dict-val (abs-nat) ((variant A) (variant B) [variant C])))))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -1068,8 +1068,8 @@
                       `(marked (addr 1 1))
                       `(marked (addr 1 1)))
   (test-exp-steps-to? "exp-steps-to fold"
-                      (term (fold   (Union [A]) (variant A)))
-                      (term (folded (Union [A]) (variant A))))
+                      (term (fold   (Variant [A]) (variant A)))
+                      (term (folded (Variant [A]) (variant A))))
   (test-exp-steps-to? "exp-steps-to record fold"
                       (term (record [a (fold   ,recursive-record-address-type (marked (addr (env ,recursive-record-type) 1)))]))
                       (term (record [a (folded ,recursive-record-address-type (marked (addr (env ,recursive-record-type) 1)))])))
@@ -1311,7 +1311,7 @@
   ;; Check for sorting of loop sends
   ;; (check-equal?
   ;;  (apply-reduction-relation handler-step#
-  ;;                            (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant A)))
+  ;;                            (term ((loop-context (send ((Variant [A] [B]) (obs-ext 1)) (variant A)))
   ;;                                   ()
   ;;                                   ([(obs-ext 1) (variant B)])
   ;;                                   ())))
@@ -1322,7 +1322,7 @@
   ;;               ()))))
   ;; (check-equal?
   ;;  (apply-reduction-relation handler-step#
-  ;;                            (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant B)))
+  ;;                            (term ((loop-context (send ((Variant [A] [B]) (obs-ext 1)) (variant B)))
   ;;                                   ()
   ;;                                   ([(obs-ext 1) (variant A)])
   ;;                                   ())))
@@ -1333,7 +1333,7 @@
   ;;               ()))))
   ;; (check-equal?
   ;;  (apply-reduction-relation handler-step#
-  ;;                            (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant B)))
+  ;;                            (term ((loop-context (send ((Variant [A] [B]) (obs-ext 1)) (variant B)))
   ;;                                   ()
   ;;                                   ([(obs-ext 1) (variant A)]
   ;;                                    [(obs-ext 1) (variant B)])
@@ -1345,7 +1345,7 @@
   ;;               ()))))
   ;; (check-equal?
   ;;  (apply-reduction-relation handler-step#
-  ;;                            (term ((loop-context (send ((Union [A] [B]) (obs-ext 1)) (variant B)))
+  ;;                            (term ((loop-context (send ((Variant [A] [B]) (obs-ext 1)) (variant B)))
   ;;                                   ()
   ;;                                   ()
   ;;                                   ())))
@@ -1796,8 +1796,8 @@
    (where X_fresh ,(variable-not-in (term ((rec X_1 τ_1) X_2 any)) (term X_1)))]
   [(type-subst/internal X X any) any]
   [(type-subst/internal X_1 X_2 any) X_1]
-  [(type-subst/internal (Union [t τ ...] ...) X any)
-   (Union [t (type-subst/internal τ X any) ...] ...)]
+  [(type-subst/internal (Variant [t τ ...] ...) X any)
+   (Variant [t (type-subst/internal τ X any) ...] ...)]
   [(type-subst/internal (Record [l τ_l] ...) X any)
    (Record [l (type-subst/internal τ_l X any)] ...)]
   [(type-subst/internal (Addr τ) X any)
@@ -3056,8 +3056,8 @@
 ;; ;; NOTE: non-equality-based join for lists and dictionaries is not implemented
 ;; (define-metafunction csa#
 ;;   type-join : τ τ -> τ
-;;   [(type-join (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))
-;;    (Union [t_3 τ_3 ...] ...)
+;;   [(type-join (Variant [t_1 τ_1 ...] ...) (Variant [t_2 τ_2 ...] ...))
+;;    (Variant [t_3 τ_3 ...] ...)
 ;;    (where ([t_3 τ_3 ...] ...)
 ;;           ,(let ()
 ;;              (define branches1 (term ([t_1 τ_1 ...] ...)))
@@ -3105,52 +3105,52 @@
 ;; (module+ test
 ;;   (test-equal? "type-join 1" (term (type-join Nat Nat)) 'Nat)
 ;;   (test-equal? "type-join 2"
-;;                (term (type-join (Union [A]) (Union [B])))
-;;                '(Union [A] [B]))
+;;                (term (type-join (Variant [A]) (Variant [B])))
+;;                '(Variant [A] [B]))
 ;;   (test-equal? "type-join 2, other direction"
-;;                (term (type-join (Union [B]) (Union [A])))
-;;                '(Union [A] [B]))
+;;                (term (type-join (Variant [B]) (Variant [A])))
+;;                '(Variant [A] [B]))
 ;;   (test-equal? "type-join 3"
-;;                (term (type-join (Union [A] [B]) (Union [B])))
-;;                '(Union [A] [B]))
+;;                (term (type-join (Variant [A] [B]) (Variant [B])))
+;;                '(Variant [A] [B]))
 
 ;;   (test-equal? "type-join for records"
-;;     (term (type-join (Record [a (Union [A])]) (Record [a (Union [B])])))
-;;     (term (Record [a (Union [A] [B])])))
+;;     (term (type-join (Record [a (Variant [A])]) (Record [a (Variant [B])])))
+;;     (term (Record [a (Variant [A] [B])])))
 
 ;;   (test-equal? "type-join on addresses"
-;;     (term (type-join (Addr (Union [A])) (Addr (Union [B]))))
-;;     (term (Addr (Union))))
+;;     (term (type-join (Addr (Variant [A])) (Addr (Variant [B]))))
+;;     (term (Addr (Variant))))
 
 ;;   (test-equal? "type-join on recs with the same names"
-;;     (term (type-join (rec A (Addr (Union [M A])))
-;;                      (rec A (Addr (Union [N A])))))
-;;     (term (rec A (Addr (Union)))))
+;;     (term (type-join (rec A (Addr (Variant [M A])))
+;;                      (rec A (Addr (Variant [N A])))))
+;;     (term (rec A (Addr (Variant)))))
 
 ;;   (test-equal? "type-join on recs with different names"
-;;     (term (type-join (rec A (Addr (Union [M A])))
-;;                      (rec B (Addr (Union [N B])))))
+;;     (term (type-join (rec A (Addr (Variant [M A])))
+;;                      (rec B (Addr (Variant [N B])))))
 ;;     ;; NOTE: I think this test is wrong
-;;     (term (rec A1 (Addr (Union)))))
+;;     (term (rec A1 (Addr (Variant)))))
 
 ;;   (test-exn "type-join on recs with different numbers of 'unfoldings'"
 ;;     (lambda (exn) #t)
-;;     (lambda () (term (type-join (rec A (Addr (Union [M (rec A (Addr (Union [M A])))])))
-;;                                 (rec A (Addr (Union [M A])))))))
+;;     (lambda () (term (type-join (rec A (Addr (Variant [M (rec A (Addr (Variant [M A])))])))
+;;                                 (rec A (Addr (Variant [M A])))))))
 
 ;;   (test-equal? "type-join on one more rec example"
-;;     (term (type-join (rec B (Addr (Addr (Union     [Y B]))))
-;;                      (rec A (Addr (Addr (Union [X] [Y A]))))))
-;;     `(rec B1 (Addr (Addr (Union [X] [Y B1])))))
+;;     (term (type-join (rec B (Addr (Addr (Variant     [Y B]))))
+;;                      (rec A (Addr (Addr (Variant [X] [Y A]))))))
+;;     `(rec B1 (Addr (Addr (Variant [X] [Y B1])))))
 
 ;;   (test-equal? "No sorting when we have same number of branches in result and original inputs"
-;;     (term (type-join (Union [B] [A]) (Union [B] [A])))
-;;     (term (Union [B] [A]))))
+;;     (term (type-join (Variant [B] [A]) (Variant [B] [A])))
+;;     (term (Variant [B] [A]))))
 
 ;; (define-metafunction csa#
 ;;   type-meet : τ τ -> τ
-;;   [(type-meet (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))
-;;    (Union [t_3 τ_3 ...] ...)
+;;   [(type-meet (Variant [t_1 τ_1 ...] ...) (Variant [t_2 τ_2 ...] ...))
+;;    (Variant [t_3 τ_3 ...] ...)
 ;;    (where ([t_3 τ_3 ...] ...)
 ;;           ,(let ()
 ;;              (define branches1 (term ([t_1 τ_1 ...] ...)))
@@ -3194,41 +3194,41 @@
 ;; (module+ test
 ;;   (test-equal? "type-meet 1" (term (type-meet Nat Nat)) 'Nat)
 ;;   (test-equal? "type-meet 2"
-;;                (term (type-meet (Union [A]) (Union [B])))
-;;                '(Union))
+;;                (term (type-meet (Variant [A]) (Variant [B])))
+;;                '(Variant))
 ;;   (test-equal? "type-meet 2, other direction"
-;;                (term (type-meet (Union [B]) (Union [A])))
-;;                '(Union))
+;;                (term (type-meet (Variant [B]) (Variant [A])))
+;;                '(Variant))
 ;;   (test-equal? "type-meet 3"
-;;                (term (type-meet (Union [A] [B]) (Union [B])))
-;;                '(Union [B]))
+;;                (term (type-meet (Variant [A] [B]) (Variant [B])))
+;;                '(Variant [B]))
 
 ;;   (test-equal? "type-meet for records"
-;;     (term (type-meet (Record [a (Union [A])]) (Record [a (Union [B])])))
-;;     (term (Record [a (Union)])))
+;;     (term (type-meet (Record [a (Variant [A])]) (Record [a (Variant [B])])))
+;;     (term (Record [a (Variant)])))
 
 ;;   (test-equal? "type-meet on addresses"
-;;     (term (type-meet (Addr (Union [A])) (Addr (Union [B]))))
-;;     (term (Addr (Union [A] [B]))))
+;;     (term (type-meet (Addr (Variant [A])) (Addr (Variant [B]))))
+;;     (term (Addr (Variant [A] [B]))))
 
 ;;   (test-equal? "type-meet on recs with the same names"
-;;     (term (type-meet (rec A (Addr (Union [M A])))
-;;                      (rec A (Addr (Union [N A])))))
-;;     (term (rec A (Addr (Union [M A] [N A])))))
+;;     (term (type-meet (rec A (Addr (Variant [M A])))
+;;                      (rec A (Addr (Variant [N A])))))
+;;     (term (rec A (Addr (Variant [M A] [N A])))))
 
 ;;   (test-equal? "type-meet on recs with different names"
-;;     (term (type-meet (rec A (Addr (Union [M A])))
-;;                      (rec B (Addr (Union [N B])))))
-;;     (term (rec A1 (Addr (Union [M A1] [N A1])))))
+;;     (term (type-meet (rec A (Addr (Variant [M A])))
+;;                      (rec B (Addr (Variant [N B])))))
+;;     (term (rec A1 (Addr (Variant [M A1] [N A1])))))
 
 ;;   (test-exn "type-meet on recs with different numbers of 'unfoldings'"
 ;;     (lambda (exn) #t)
-;;     (lambda () (term (type-meet (rec A (Addr (Union [M (rec A (Addr (Union [M A])))])))
-;;                                 (rec A (Addr (Union [M A])))))))
+;;     (lambda () (term (type-meet (rec A (Addr (Variant [M (rec A (Addr (Variant [M A])))])))
+;;                                 (rec A (Addr (Variant [M A])))))))
 
 ;;   (test-equal? "No sorting when we have same number of branches in result and original inputs"
-;;     (term (type-meet (Union [B] [A]) (Union [B] [A])))
-;;     (term (Union [B] [A]))))
+;;     (term (type-meet (Variant [B] [A]) (Variant [B] [A])))
+;;     (term (Variant [B] [A]))))
 
 ;; NOTE: this is really a conservative approximation of <= for types. For instance, we don't rename
 ;; variables in recursive types to check for alpha-equivalent recursive types
@@ -3254,10 +3254,10 @@
    (type<=/j (any ...) (rec X_1 τ_1) (rec X_2 τ_2))]
 
   [;; every variant in type 1 must have >= type in type 2
-   ;; (side-condition ,(printf "Union: ~s\n"  (term (any (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...)))))
-   (union-variant<=/j any [t_1 τ_1 ...] (Union [t_2 τ_2 ...] ...)) ...
+   ;; (side-condition ,(printf "Variant: ~s\n"  (term (any (Variant [t_1 τ_1 ...] ...) (Variant [t_2 τ_2 ...] ...)))))
+   (union-variant<=/j any [t_1 τ_1 ...] (Variant [t_2 τ_2 ...] ...)) ...
    ---------------------------------------------------------------
-   (type<=/j any (Union [t_1 τ_1 ...] ...) (Union [t_2 τ_2 ...] ...))]
+   (type<=/j any (Variant [t_1 τ_1 ...] ...) (Variant [t_2 τ_2 ...] ...))]
 
   [(type<=/j any τ_1 τ_2) ...
    ---------------------------------------------------
@@ -3280,14 +3280,14 @@
 
 (module+ test
   (test-true "type<= same type" (type<= 'Nat 'Nat))
-  (test-true "type<= expanded union" (type<= '(Union [A]) '(Union [A] [B])))
-  (test-false "type<= reduced union" (type<= '(Union [A] [B]) '(Union [A])))
-  (test-false "type<= record 1" (type<= '(Record [a (Union [A] [B])]) '(Record [a (Union [A])])))
-  (test-true "type<= record 2" (type<= '(Record [a (Union [A])]) '(Record [a (Union [A] [B])])))
-  (test-true "type<= address 1" (type<= '(Addr (Union [A] [B])) '(Addr (Union [A]))))
-  (test-false "type<= address 2" (type<= '(Addr (Union [A])) '(Addr (Union [A] [B]))))
-  (define union-a '(Union [A]))
-  (define union-ab '(Union [A] [B]))
+  (test-true "type<= expanded union" (type<= '(Variant [A]) '(Variant [A] [B])))
+  (test-false "type<= reduced union" (type<= '(Variant [A] [B]) '(Variant [A])))
+  (test-false "type<= record 1" (type<= '(Record [a (Variant [A] [B])]) '(Record [a (Variant [A])])))
+  (test-true "type<= record 2" (type<= '(Record [a (Variant [A])]) '(Record [a (Variant [A] [B])])))
+  (test-true "type<= address 1" (type<= '(Addr (Variant [A] [B])) '(Addr (Variant [A]))))
+  (test-false "type<= address 2" (type<= '(Addr (Variant [A])) '(Addr (Variant [A] [B]))))
+  (define union-a '(Variant [A]))
+  (define union-ab '(Variant [A] [B]))
   (test-true "type<= list 1" (type<= `(List ,union-a) `(List ,union-ab)))
   (test-false "type<= list 2" (type<= `(List ,union-ab) `(List ,union-a)))
   (test-true "type<= dict 1" (type<= `(Dict ,union-a ,union-a) `(Dict ,union-ab ,union-ab)))
@@ -3296,45 +3296,45 @@
     (type<= `(rec A (Addr (Addr A)))
             `(rec B (Addr (Addr B)))))
   (test-true "type<= recs with no recursive use"
-    (type<= `(rec A (Addr (Union [X] [Y])))
-            `(rec B (Addr (Union [X])))))
+    (type<= `(rec A (Addr (Variant [X] [Y])))
+            `(rec B (Addr (Variant [X])))))
   (test-true "type<= rec 1"
-    (type<= `(rec B (Addr (Addr (Union     [Y B]))))
-            `(rec A (Addr (Addr (Union [X] [Y A]))))))
+    (type<= `(rec B (Addr (Addr (Variant     [Y B]))))
+            `(rec A (Addr (Addr (Variant [X] [Y A]))))))
   (test-false "type<= rec 2"
-    (type<= `(rec A (Addr (Addr (Union [X] [Y A]))))
-            `(rec B (Addr (Addr (Union     [Y B])))))))
+    (type<= `(rec A (Addr (Addr (Variant [X] [Y A]))))
+            `(rec B (Addr (Addr (Variant     [Y B])))))))
 
 ;; Holds if the variant [t_1 τ_1 ...] has a >= variant in the given union type
 (define-judgment-form csa#
   #:mode (union-variant<=/j I I I)
-  #:contract (union-variant<=/j ([X X] ...) [t_1 τ_1 ...] (Union [t_2 τ_2 ...] ...))
+  #:contract (union-variant<=/j ([X X] ...) [t_1 τ_1 ...] (Variant [t_2 τ_2 ...] ...))
 
   [(type<=/j any τ_1 τ_2) ...
    ------------------------------------------------------------------------
-   (union-variant<=/j any [t_1 τ_1 ..._n] (Union _ ... [t_1 τ_2 ..._n] _ ...))])
+   (union-variant<=/j any [t_1 τ_1 ..._n] (Variant _ ... [t_1 τ_2 ..._n] _ ...))])
 
 (module+ test
   (test-true "union-variant<= for union with that variant"
     (judgment-holds (union-variant<=/j ()
                                        [A]
-                                       (Union [A]))))
+                                       (Variant [A]))))
   (test-true "union-variant<= for bigger union"
     (judgment-holds (union-variant<=/j ()
                                        [A]
-                                       (Union [A] [B]))))
+                                       (Variant [A] [B]))))
   (test-false "union-variant<= for union without variant"
     (judgment-holds (union-variant<=/j ()
                                        [A]
-                                       (Union [B]))))
+                                       (Variant [B]))))
   (test-true "union-variant<= for union with bigger type"
     (judgment-holds (union-variant<=/j ()
-                                       [A (Union [C])]
-                                       (Union [A (Union [C] [D])] [B]))))
+                                       [A (Variant [C])]
+                                       (Variant [A (Variant [C] [D])] [B]))))
   (test-false "union-variant<= for union with smaller type"
     (judgment-holds (union-variant<=/j ()
-                                       [A (Union [C] [D])]
-                                       (Union [A (Union [C])] [B])))))
+                                       [A (Variant [C] [D])]
+                                       (Variant [A (Variant [C])] [B])))))
 
 ;; v# τ -> ([τ (marked a# mk ...)] ...)
 ;;
@@ -3353,9 +3353,9 @@
   (test-equal? "internal-addr-types: same address at multiple types"
     (internal-addr-types `(record [a (marked (addr 1 0))]
                                   [b (marked (addr 1 0))])
-                         `(Record [a (Addr (Union [A]))] [b (Addr (Union [B]))]))
-    (list `((Union [A]) (marked (addr 1 0)))
-          `((Union [B]) (marked (addr 1 0)))))
+                         `(Record [a (Addr (Variant [A]))] [b (Addr (Variant [B]))]))
+    (list `((Variant [A]) (marked (addr 1 0)))
+          `((Variant [B]) (marked (addr 1 0)))))
   (test-equal? "internal-addr-types: natural"
     (internal-addr-types `abs-nat `Nat)
     null)
@@ -3363,10 +3363,10 @@
     (internal-addr-types `abs-string `String)
     null)
   (test-equal? "internal-addr-types 5: recursive"
-    (internal-addr-types `(folded (rec X (Addr (Union [A X])))
+    (internal-addr-types `(folded (rec X (Addr (Variant [A X])))
                                   (marked (addr 1 0)))
-                         `(rec X (Addr (Union [A X]))))
-    (list `[(Union [A (rec X (Addr (Union [A X])))]) (marked (addr 1 0))]))
+                         `(rec X (Addr (Variant [A X]))))
+    (list `[(Variant [A (rec X (Addr (Variant [A X])))]) (marked (addr 1 0))]))
   (test-case "internal-addr-types: internals and externals"
     (check-same-items?
      (internal-addr-types (term (record [a (marked (addr 1 0) 1)]
@@ -3398,7 +3398,7 @@
      (list `[,type ,v])]
     [(list `(folded ,type ,v) `(rec ,X ,fold-type))
      (addr-types v (term (type-subst ,fold-type ,X (rec ,X ,fold-type))))]
-    [(list `(variant ,tag ,vs ...) `(Union ,cases ...))
+    [(list `(variant ,tag ,vs ...) `(Variant ,cases ...))
      (match-define `(,_ ,case-arg-types ...)
        (first (filter (lambda (case) (equal? (first case) tag)) cases)))
      (get-types-and-merge-all (map list vs case-arg-types))]
@@ -3422,21 +3422,21 @@
     (addr-types `(marked (collective-addr 1)) `(Addr Nat))
     (term ([Nat (marked (collective-addr 1))])))
   (test-equal? "addr-types: variant"
-    (addr-types `(variant A abs-nat (marked (addr 2 2))) `(Union [B] [A Nat (Addr String)]))
+    (addr-types `(variant A abs-nat (marked (addr 2 2))) `(Variant [B] [A Nat (Addr String)]))
     (term ([String (marked (addr 2 2))])))
   (test-equal? "addr-types: record"
     (addr-types `(record [a (marked (addr 1 2))] [b abs-string]) `(Record [a (Addr String)] [b String]))
     (term ([String (marked (addr 1 2))])))
   (test-equal? "addr-types: same address at multiple types"
     (addr-types `(record [a (marked (addr 2 2))] [b (marked (addr 2 2))])
-                `(Record [a (Addr (Union [A]))]  [b (Addr (Union [B]))]))
-    (term ([(Union [A]) (marked (addr 2 2))]
-           [(Union [B]) (marked (addr 2 2))])))
+                `(Record [a (Addr (Variant [A]))]  [b (Addr (Variant [B]))]))
+    (term ([(Variant [A]) (marked (addr 2 2))]
+           [(Variant [B]) (marked (addr 2 2))])))
   (test-case "addr-types: fold"
-    (define type `(rec SelfAddr (Addr (Union [A SelfAddr]))))
+    (define type `(rec SelfAddr (Addr (Variant [A SelfAddr]))))
     (check-equal?
      (addr-types `(folded ,type (marked (addr 1 1))) type)
-     (term ([(Union [A ,type]) (marked (addr 1 1))]))))
+     (term ([(Variant [A ,type]) (marked (addr 1 1))]))))
   (test-equal? "addr-types: list"
     (addr-types `(list-val (marked (addr 1 1)) (marked (addr 2 2))) `(List (Addr (Record))))
     (term ([(Record) (marked (addr 1 1))] [(Record) (marked (addr 2 2))])))
@@ -3469,13 +3469,13 @@
 
   (test-equal? "merge-receptionists handles lists with multiple items"
     (merge-receptionists
-     `(((Union [A]) (marked (addr 1 1) 1))
-       ((Union [B]) (marked (addr 2 2) 2)))
-     `(((Union [A]) (marked (addr 1 1) 1))
-       ((Union [C]) (marked (addr 3 3) 3))))
-    `(((Union [A]) (marked (addr 1 1) 1))
-      ((Union [B]) (marked (addr 2 2) 2))
-      ((Union [C]) (marked (addr 3 3) 3)))))
+     `(((Variant [A]) (marked (addr 1 1) 1))
+       ((Variant [B]) (marked (addr 2 2) 2)))
+     `(((Variant [A]) (marked (addr 1 1) 1))
+       ((Variant [C]) (marked (addr 3 3) 3))))
+    `(((Variant [A]) (marked (addr 1 1) 1))
+      ((Variant [B]) (marked (addr 2 2) 2))
+      ((Variant [C]) (marked (addr 3 3) 3)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Address containment
@@ -3521,14 +3521,14 @@
                                      [(0 4 1 1) (Record [a (Addr String)])]))))
   (define evictable1
     `[,evictable-addr1
-      (((define-state (A [x (Union [Foo (Addr Nat)])]) m
+      (((define-state (A [x (Variant [Foo (Addr Nat)])]) m
           (send (marked (addr 2 0)) "foobar")
           (send (: (record [a (marked (addr 3 0))]) a) "foo")
           (goto A x)))
        (goto A (variant Foo (marked (addr 1 0)))))])
   (define collective-evictable1
     `[,collective-evictable-addr1
-      ([((define-state (A [x (Union [Foo (Addr Nat)])]) m
+      ([((define-state (A [x (Variant [Foo (Addr Nat)])]) m
            (send (marked (addr 2 0)) "foobar")
            (send (: (record [a (marked (addr 3 0))]) a) "foo")
            (goto A x)))

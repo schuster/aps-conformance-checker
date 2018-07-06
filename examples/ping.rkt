@@ -14,7 +14,7 @@
 
 (define ping-spec
   (quasiquote
-   (specification (receptionists [ping-server (Addr (Union [Pong]))]) (externals)
+   (specification (receptionists [ping-server (Addr (Variant [Pong]))]) (externals)
      (mon-receptionist ping-server)
      (goto Always)
      (define-state (Always)
@@ -22,7 +22,7 @@
 
 (define no-send-ping-spec
   (quasiquote
-   (specification (receptionists [ping-server (Addr (Union [Pong]))]) (externals)
+   (specification (receptionists [ping-server (Addr (Variant [Pong]))]) (externals)
      (mon-receptionist ping-server)
      (goto Always)
      (define-state (Always)

@@ -443,7 +443,7 @@
   (test-equal? "external-triggers-for-receptionists"
     (external-triggers-for-receptionists
      (list `[Nat (marked (addr 0 0) 1)]
-           `[(Union [A] [B (Union [C] [D])]) (marked (addr 0 1) 2)]
+           `[(Variant [A] [B (Variant [C] [D])]) (marked (addr 0 1) 2)]
            `[(Addr Nat) (marked (addr 0 2) 3)]))
     (list `(external-receive (marked (addr 0 0) 1) abs-nat)
           `(external-receive (marked (addr 0 1) 2) (variant A))
@@ -1373,7 +1373,7 @@
   ;;;; Send one message to a statically-known address per request
 
   (define static-response-marker 2)
-  (define static-response-type (term (Union (Ack Nat))))
+  (define static-response-type (term (Variant (Ack Nat))))
   (define (make-static-response-dest type) `(marked (addr (env ,type) 2) ,static-response-marker))
   (define static-response-dest (make-static-response-dest static-response-type))
   (define nat-static-response-dest (make-static-response-dest (term Nat)))
@@ -1440,7 +1440,7 @@
 
   ;;;; Pattern matching tests, without dynamic channels
 
-  (define pattern-match-type `(Union [A Nat] [B Nat]))
+  (define pattern-match-type `(Variant [A Nat] [B Nat]))
   (define pattern-match-spec
     (term
      (((define-state (Matching r)
@@ -1451,30 +1451,30 @@
 
   (define pattern-matching-actor
     (term
-     (((Union [A Nat] [B Nat]) (marked (addr 0 0) 0))
-      (((define-state (Always [r (Union [A Nat] [B Nat])]) m
+     (((Variant [A Nat] [B Nat]) (marked (addr 0 0) 0))
+      (((define-state (Always [r (Variant [A Nat] [B Nat])]) m
           (case m
             [(A x) (begin (send r (variant A x)) (goto Always r))]
             [(B y) (begin (send r (variant B 0)) (goto Always r))])))
-       (goto Always ,(make-static-response-dest `(Union [A Nat] [B Nat])))))))
+       (goto Always ,(make-static-response-dest `(Variant [A Nat] [B Nat])))))))
 
   (define reverse-pattern-matching-actor
     (term
-     (((Union [A Nat] [B Nat]) (marked (addr 0 0) 0))
-      (((define-state (Always [r (Union [A Nat] [B Nat])]) m
+     (((Variant [A Nat] [B Nat]) (marked (addr 0 0) 0))
+      (((define-state (Always [r (Variant [A Nat] [B Nat])]) m
           (case m
             [(A x) (begin (send r (variant B 0)) (goto Always r))]
             [(B y) (begin (send r (variant A y)) (goto Always r))])))
-       (goto Always ,(make-static-response-dest `(Union [A Nat] [B Nat])))))))
+       (goto Always ,(make-static-response-dest `(Variant [A Nat] [B Nat])))))))
 
   (define partial-pattern-matching-actor
     (term
-     (((Union [A Nat] [B Nat]) (marked (addr 0 0) 0))
-      (((define-state (Always [r (Union [A Nat] [B Nat])]) m
+     (((Variant [A Nat] [B Nat]) (marked (addr 0 0) 0))
+      (((define-state (Always [r (Variant [A Nat] [B Nat])]) m
           (case m
             [(A x) (begin (send r (variant A 0)) (goto Always r))]
             [(B y) (goto Always r)])))
-       (goto Always ,(make-static-response-dest `(Union [A Nat] [B Nat])))))))
+       (goto Always ,(make-static-response-dest `(Variant [A Nat] [B Nat])))))))
 
   (test-valid-instance? pattern-match-spec)
   (test-valid-actor? pattern-matching-actor)
@@ -1518,11 +1518,11 @@
   (define send-message-then-another
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (Init [r (Addr (Union [A] [B]))]) m
+      (((define-state (Init [r (Addr (Variant [A] [B]))]) m
           (begin
            (send r (variant A))
            (goto SendOther r)))
-        (define-state (SendOther [r (Addr (Union [A] [B]))]) m
+        (define-state (SendOther [r (Addr (Variant [A] [B]))]) m
           (begin
            (send r (variant A))
            (goto Done))
@@ -1531,7 +1531,7 @@
             (send r (variant B))
             (goto Done))])
         (define-state (Done) m (goto Done)))
-       (goto Init (marked (addr (env (Union [A] [B])) 0) 1))))))
+       (goto Init (marked (addr (env (Variant [A] [B])) 0) 1))))))
 
   (define overlapping-patterns-spec
     (term
@@ -1594,7 +1594,7 @@
   (define respond-to-first-addr-actor2
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Always [original-addr (Union (NoAddr) (Original (Addr Nat)))]) response-target
+      (((define-state (Always [original-addr (Variant (NoAddr) (Original (Addr Nat)))]) response-target
           (begin
            (case original-addr
              [(NoAddr)
@@ -1710,7 +1710,7 @@
 
   (define (make-self-send-response-actor addr-number)
     (term
-     (((Union [FromEnv (Addr Nat)]) (marked (addr self-send-loc ,addr-number) ,addr-number))
+     (((Variant [FromEnv (Addr Nat)]) (marked (addr self-send-loc ,addr-number) ,addr-number))
       (((define-state (Always) msg
           (case msg
             [(FromEnv response-target)
@@ -1733,7 +1733,7 @@
   (define from-env-wrapper
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Always [sender (Addr (Union [FromEnv (Addr Nat)]))]) msg
+      (((define-state (Always [sender (Addr (Variant [FromEnv (Addr Nat)]))]) msg
           (begin
             (send sender (variant FromEnv msg))
             (goto Always sender))))
@@ -1778,7 +1778,7 @@
 
   ;;;; Non-deterministic branching in spec
 
-  (define zero-nonzero-response-address (make-static-response-dest `(Union [NonZero] [Zero])))
+  (define zero-nonzero-response-address (make-static-response-dest `(Variant [NonZero] [Zero])))
   (define zero-nonzero-spec
     (term
      (((define-state (S1 r)
@@ -1795,7 +1795,7 @@
   (define primitive-branch-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (S1 [dest (Addr (Union [NonZero] [Zero]))]) i
+      (((define-state (S1 [dest (Addr (Variant [NonZero] [Zero]))]) i
           (begin
             (case (< 0 i)
               [(True) (send dest (variant NonZero))]
@@ -1900,7 +1900,7 @@
 
   ;; 4. unobs causes a particular behavior (like connected/error in TCP)
   (define obs-unobs-static-response-dest
-    (make-static-response-dest (term (Union (TurningOn) (TurningOff)))))
+    (make-static-response-dest (term (Variant (TurningOn) (TurningOff)))))
   (define unobs-toggle-spec
     (term (((define-state (Off r)
               [* -> [obligation r (variant TurningOn)] (goto On r)])
@@ -1911,15 +1911,15 @@
            0)))
   (define unobs-toggle-actor
     (term
-     (((Union [FromObserver]) (marked (addr 0 0) 0))
-      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) m
+     (((Variant [FromObserver]) (marked (addr 0 0) 0))
+      (((define-state (Off [r (Addr (Variant [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver)
              (begin
                (send r (variant TurningOn))
                (goto On r))]
             [(FromUnobservedEnvironment) (goto Off r)]))
-        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) m
+        (define-state (On [r (Addr (Variant [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver) (goto On r)]
             [(FromUnobservedEnvironment)
@@ -1929,8 +1929,8 @@
        (goto Off ,obs-unobs-static-response-dest)))))
   (define unobs-toggle-actor-wrong1
     (term
-     (((Union [FromObserver]) (marked (addr 0 0) 0))
-      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) m
+     (((Variant [FromObserver]) (marked (addr 0 0) 0))
+      (((define-state (Off [r (Addr (Variant [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver)
              (begin
@@ -1938,7 +1938,7 @@
                ;; Going to Off instead of On
                (goto Off r))]
             [(FromUnobservedEnvironment) (goto Off r)]))
-        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) m
+        (define-state (On [r (Addr (Variant [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver) (goto On r)]
             [(FromUnobservedEnvironment)
@@ -1948,15 +1948,15 @@
        (goto Off ,obs-unobs-static-response-dest)))))
   (define unobs-toggle-actor-wrong2
     (term
-     (((Union [FromObserver]) (marked (addr 0 0) 0))
-      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) m
+     (((Variant [FromObserver]) (marked (addr 0 0) 0))
+      (((define-state (Off [r (Addr (Variant [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver)
              (begin
                (send r (variant TurningOn))
                (goto On r))]
             [(FromUnobservedEnvironment) (goto On r)]))
-        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) m
+        (define-state (On [r (Addr (Variant [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver) (goto On r)]
             [(FromUnobservedEnvironment)
@@ -1966,15 +1966,15 @@
        (goto Off ,obs-unobs-static-response-dest)))))
   (define unobs-toggle-actor-wrong3
     (term
-     (((Union [FromObserver]) (marked (addr 0 0) 0))
-      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) m
+     (((Variant [FromObserver]) (marked (addr 0 0) 0))
+      (((define-state (Off [r (Addr (Variant [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver)
              (begin
                (send r (variant TurningOn))
                (goto On r))]
             [(FromUnobservedEnvironment) (goto Off r)]))
-        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) m
+        (define-state (On [r (Addr (Variant [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver) (goto On r)]
             [(FromUnobservedEnvironment)
@@ -1984,15 +1984,15 @@
        (goto Off ,obs-unobs-static-response-dest)))))
   (define unobs-toggle-actor-wrong4
     (term
-     (((Union [FromObserver]) (marked (addr 0 0) 0))
-      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) m
+     (((Variant [FromObserver]) (marked (addr 0 0) 0))
+      (((define-state (Off [r (Addr (Variant [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver) (goto Off r)]
             [(FromUnobservedEnvironment)
              (begin
                (send r (variant TurningOn))
                (goto On r))]))
-        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) m
+        (define-state (On [r (Addr (Variant [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver) (goto On r)]
             [(FromUnobservedEnvironment)
@@ -2012,7 +2012,7 @@
     (check-conformance/config
      (make-single-actor-config/plus
       unobs-toggle-actor
-      (list '((Union [FromUnobservedEnvironment]) (marked (addr 0 0) 1))))
+      (list '((Variant [FromUnobservedEnvironment]) (marked (addr 0 0) 1))))
      (make-psm unobs-toggle-spec)))
 
   (for ([actor (list unobs-toggle-actor-wrong1
@@ -2020,7 +2020,7 @@
                      unobs-toggle-actor-wrong3
                      unobs-toggle-actor-wrong4)])
     (test-false "Obs/Unobs bug-finding test(s)"
-      (check-conformance/config (make-single-actor-config/plus actor (list '((Union [FromUnobservedEnvironment]) (marked (addr 0 0) 1))))
+      (check-conformance/config (make-single-actor-config/plus actor (list '((Variant [FromUnobservedEnvironment]) (marked (addr 0 0) 1))))
                           (make-psm unobs-toggle-spec))))
 
   ;;;; Records
@@ -2034,7 +2034,7 @@
       0)))
   (define record-req-resp-actor
     (term
-     (((Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]) (marked (addr 0 0) 0))
+     (((Record [dest (Addr (Variant [A] [B]))] [msg (Variant [A] [B])]) (marked (addr 0 0) 0))
       (((define-state (Always) m
           (begin
             (send (: m dest) (: m msg))
@@ -2042,7 +2042,7 @@
        (goto Always)))))
   (define record-req-wrong-resp-actor
     (term
-     (((Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]) (marked (addr 0 0) 0))
+     (((Record [dest (Addr (Variant [A] [B]))] [msg (Variant [A] [B])]) (marked (addr 0 0) 0))
       (((define-state (Always) m
           (begin
             (send (: m dest) (variant A))
@@ -2221,7 +2221,7 @@
 
   ;;;; Timeouts
 
-  (define timeout-response-address (make-static-response-dest `(Union [GotTimeout] [GotMessage])))
+  (define timeout-response-address (make-static-response-dest `(Variant [GotTimeout] [GotMessage])))
   (define timeout-spec
     (term
      (((define-state (A r)
@@ -2238,7 +2238,7 @@
   (define timeout-and-send-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) m
+      (((define-state (A [r (Addr (Variant (GotMessage) (GotTimeout)))]) m
           (begin
             (send r (variant GotMessage))
             (goto A r))
@@ -2250,9 +2250,9 @@
   (define timeout-to-send-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) m
+      (((define-state (A [r (Addr (Variant (GotMessage) (GotTimeout)))]) m
           (goto SendOnTimeout r))
-        (define-state (SendOnTimeout [r (Addr (Union (GotMessage) (GotTimeout)))]) m
+        (define-state (SendOnTimeout [r (Addr (Variant (GotMessage) (GotTimeout)))]) m
           (begin
             (send r (variant GotMessage))
             (goto SendOnTimeout r))
@@ -2264,7 +2264,7 @@
   (define spawn-timeout-sender-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) m
+      (((define-state (A [r (Addr (Variant (GotMessage) (GotTimeout)))]) m
           (begin
             (spawn 3 Nat (goto B)
                    (define-state (B) m
@@ -2570,7 +2570,7 @@
   (define spawn-and-retain
     (term
      (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
-      (((define-state (Always [maybe-child (Union [NoChild] [Child (Addr (Addr Nat))])]) dest
+      (((define-state (Always [maybe-child (Variant [NoChild] [Child (Addr (Addr Nat))])]) dest
           (let ([new-child
                  (spawn
                   echo-spawn
@@ -2594,7 +2594,7 @@
   (define spawn-and-retain-but-send-new
     (term
      (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
-      (((define-state (Always [maybe-child (Union [NoChild] [Child (Addr (Addr Nat))])]) dest
+      (((define-state (Always [maybe-child (Variant [NoChild] [Child (Addr (Addr Nat))])]) dest
           (let ([new-child
                  (spawn
                   echo-spawn
@@ -2676,7 +2676,7 @@
     (term
      ((Nat (marked (addr 0 0) 0))
       (((define-state (Always [static-output (Addr ,static-response-type)]
-                              [saved-internal (Union [None]
+                              [saved-internal (Variant [None]
                                                      [First (Addr (Addr ,static-response-type))]
                                                      [Second (Addr (Addr ,static-response-type))])]) m
           (let ([new-child
@@ -2711,7 +2711,7 @@
     (term
      ((Nat (marked (addr 0 0) 0))
       (((define-state (Always [static-output (Addr ,static-response-type)]
-                              [saved-internal (Union [None]
+                              [saved-internal (Variant [None]
                                                      [First (Addr (Addr ,static-response-type))]
                                                      [Second (Addr (Addr ,static-response-type))])]) m
           (let ([new-child
@@ -2872,7 +2872,7 @@
   (define conflicts-only-test-actor
     (term
      (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
-      (((define-state (Always [maybe-forwarder (Union [None] [Forwarder (Addr (Addr Nat))])]) dest
+      (((define-state (Always [maybe-forwarder (Variant [None] [Forwarder (Addr (Addr Nat))])]) dest
           (let ([forwarder
                  (case maybe-forwarder
                    [(None)
@@ -2952,12 +2952,12 @@
 
   (define ping-coercion-spawner
     (term
-     (((Addr (Addr (Union [Ping (Addr (Union [Pong]))]))) (marked (addr 0 0) 0))
+     (((Addr (Addr (Variant [Ping (Addr (Variant [Pong]))]))) (marked (addr 0 0) 0))
       (((define-state (Always) dest
           (begin
             (send dest
                  (spawn 1
-                        (Union [Ping (Addr (Union [Pong]))] [InternalOnly])
+                        (Variant [Ping (Addr (Variant [Pong]))] [InternalOnly])
                         (goto Ready)
                         (define-state (Ready) msg
                           (begin
@@ -3000,7 +3000,7 @@
                     (let ([parent (marked (addr 1 0))])
                       (begin
                         (spawn child-loc
-                               (Addr (Union [FromChild]))
+                               (Addr (Variant [FromChild]))
                                (goto Waiting)
                                (define-state (Waiting) m
                                  (goto Waiting)
@@ -3017,7 +3017,7 @@
                (define-state (ParentDone) m (goto ParentDone)))
               (goto Start (marked (addr (env Nat) 2) 2)))])
            ()
-           (((Union [FromEnv]) (marked (addr 1 0) 1))))))
+           (((Variant [FromEnv]) (marked (addr 1 0) 1))))))
   ;; Spec with no real transitions, but a commitment on address 2
   (define new-spawn-spec-config
     (term ((1)
@@ -3248,13 +3248,13 @@
       null
       (term
        ([[Nat (marked (addr 0 0))]
-         (((define-state (Always [dest (Addr (Record [a (Union [A])] [b (Union [B])]))]) m
+         (((define-state (Always [dest (Addr (Record [a (Variant [A])] [b (Variant [B])]))]) m
              (goto Always dest)
              [(timeout 5)
               (begin
                 (send dest (record [a (variant A)] [b (variant B)]))
                 (goto Always dest))]))
-          (goto Always (marked (addr (env (Record [a (Union [A])] [b (Union [B])])) 1) 0)))])))
+          (goto Always (marked (addr (env (Record [a (Variant [A])] [b (Variant [B])])) 1) 0)))])))
      ;; PSM:
      `[()
        ()

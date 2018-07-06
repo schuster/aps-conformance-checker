@@ -146,7 +146,7 @@
           ; constructor
         (Addr τ)
         (Record [x τ] ...)
-        (Union [V τ ...] ...)
+        (Variant [V τ ...] ...)
         (List τ)
         (Dict τ1 τ2))
   (entry Prog))
@@ -423,7 +423,7 @@
                         constructor-defs
                         (list
                         (with-output-language (csa/desugared-variants ProgItem)
-                          `(define-type ,T (Union [,V ,τ ...] ...)))))))]
+                          `(define-type ,T (Variant [,V ,τ ...] ...)))))))]
         [(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                       ,[PI1] ,PI* ...
                       (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))
@@ -454,7 +454,7 @@
    `(program (receptionists) (externals)
      (define-function (Null) (variant Null))
      (define-function (Cons [element Nat] [list List]) (variant Cons element list))
-     (define-type List (Union (Null) (Cons Nat List)))
+     (define-type List (Variant (Null) (Cons Nat List)))
      (let-actors ([a (case (app Null)
                        [(Null) 0]
                        [(Cons element rest) element])])

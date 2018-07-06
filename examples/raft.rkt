@@ -15,9 +15,9 @@
  "../desugar.rkt")
 
 (define desugared-client-response-type
-  `(Union [LeaderIs
-           (Union [NoLeader]
-                  [JustLeader (Addr (Union [ClientMessage (Addr ResponseType) String]))])]
+  `(Variant [LeaderIs
+           (Variant [NoLeader]
+                  [JustLeader (Addr (Variant [ClientMessage (Addr ResponseType) String]))])]
           [CommitSuccess String]))
 
 (define desugared-entry-type
@@ -30,7 +30,7 @@
 (define desugared-raft-message-address-type
   `(rec RaftMsgAddress
      (Addr
-      (Union
+      (Variant
        (RequestVote
         Nat
         (Record [id ,desugared-raft-id-type] [address RaftMsgAddress])
@@ -52,7 +52,7 @@
         (List ,desugared-entry-type)
         Nat
         (Record [id ,desugared-raft-id-type] [address RaftMsgAddress])
-        (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
+        (Addr (Variant (ClientMessage (Addr ,desugared-client-response-type) String))))
 
        (AppendRejected
         Nat
@@ -68,7 +68,7 @@
   `(Record [id ,desugared-raft-id-type] [address ,desugared-raft-message-address-type]))
 
 (define desugared-raft-message-type
-  `(Union
+  `(Variant
     (RequestVote
      Nat
      ,desugared-raft-member-type
@@ -90,7 +90,7 @@
      (List ,desugared-entry-type)
      Nat
      ,desugared-raft-member-type
-     (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
+     (Addr (Variant (ClientMessage (Addr ,desugared-client-response-type) String))))
 
     (AppendRejected
      Nat
@@ -107,7 +107,7 @@
 
 (define unobserved-interface-type
   (term
-   (Union ,cluster-config-variant
+   (Variant ,cluster-config-variant
           (ClientMessage (Addr ,desugared-client-response-type) String)
           (Timeout Nat)
           (SendHeartbeatTimeouts Nat))))
@@ -186,7 +186,7 @@
 (define-type ClientResponse ,desugared-client-response-type)
 
 (define-type ClientMessage
-  (Union (ClientMessage (Addr ClientResponse) String)))
+  (Variant (ClientMessage (Addr ClientResponse) String)))
 
 ;; Defining just to get the constructors
 (define-variant ClientMessageBranches
@@ -262,7 +262,7 @@
   (SendHeartbeatTimeouts [id Nat]))
 
 (define-type RaftActorMessage
-  (Union
+  (Variant
    (Config ClusterConfiguration)
    (ClientMessage (Addr ClientResponse) String)
    (RequestVote
@@ -283,7 +283,7 @@
     (List ,desugared-entry-type)
     Nat
     RaftMember
-    (Addr (Union (ClientMessage (Addr ,desugared-client-response-type) String))))
+    (Addr (Variant (ClientMessage (Addr ,desugared-client-response-type) String))))
    (AppendRejected
     Nat
     Nat
@@ -315,7 +315,7 @@
 
 (define-variant TimerMessage
   (SetTimer [timer-name String]
-            [target (Addr (Union (Timeout Nat)))]
+            [target (Addr (Variant (Timeout Nat)))]
             [id Nat]
             [duration Duration]
             [repeat? Boolean])
@@ -677,7 +677,7 @@
                                       [from-index Nat]
                                       [leader-commit-id Nat]
                                       [leader RaftMember]
-                                      [leader-client (Addr (Union (ClientMessage ClientMessage)))])
+                                      [leader-client (Addr (Variant (ClientMessage ClientMessage)))])
   (let ([entries (replicated-log-entries-batch-from replicated-log from-index)])
     (cond
       [(> (length entries) 0)

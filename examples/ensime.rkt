@@ -27,7 +27,7 @@
   (quasiquote
 (program (receptionists [project ProjectInput]) (externals)
 
-(define-type Boolean (Union [True] [False]))
+(define-type Boolean (Variant [True] [False]))
 
 (define-variant ConnectionInfo
   (ConnectionInfo))
@@ -40,7 +40,7 @@
   (dict ["begin" "http://www.racket-lang.org/"]))
 
 (define-type DocResolverInput
-  (Union (Resolve String (Addr ResolveResult))))
+  (Variant (Resolve String (Addr ResolveResult))))
 
 (define-actor DocResolverInput
   (DocResolver)
@@ -64,7 +64,7 @@
   (SymbolSearchResults [results (List String)]))
 
 (define-type IndexerInput
-  (Union
+  (Variant
    [PublicSymbolSearchReq (List String) Nat (Addr ImportSuggestions)]
    [TypeCompletionsReq String Nat (Addr SymbolSearchResults)]))
 
@@ -92,10 +92,10 @@
 (define-constant debug-values (dict [1 "foo"] [2 "bar"]))
 
 (define-type DebugActorInput
-  (Union
+  (Variant
    (DebugRunReq (Addr BooleanResponse))
    (DebugStopReq (Addr BooleanResponse))
-   (DebugValueReq DebugLocation (Addr (Union [DebugValue String] [FalseResponse])))))
+   (DebugValueReq DebugLocation (Addr (Variant [DebugValue String] [FalseResponse])))))
 
 (define-actor DebugActorInput
   (DebugActor)
@@ -124,7 +124,7 @@
   (DocSigPair [path String]))
 
 (define-type JavaAnalyzerInput
-  (Union
+  (Variant
    [DocUriAtPointReq File FileLocation (Addr MaybeDocSigPair)]
    [CompletionsReq File Nat Nat Boolean Boolean (Addr (List String))]))
 
@@ -155,7 +155,7 @@
   (RefactorDiffEffect [procedure-id Nat] [refactor-type RefactorType] [diff String]))
 
 (define-type AnalyzerInput
-  (Union
+  (Variant
    [TypecheckAllReq (Addr VoidResponse)]
    [CompletionsReq File Nat Nat Boolean Boolean (Addr (List String))]
    [RefactorReq Nat RefactorType Boolean (Addr RefactorResult)]))
@@ -199,7 +199,7 @@
   (DebugRunReq [sender (Addr BooleanResponse)])
   (DebugStopReq [sender (Addr BooleanResponse)])
   (DebugValueReq [location DebugLocation]
-                 [sender (Addr (Union [DebugValue String] [FalseResponse]))])
+                 [sender (Addr (Variant [DebugValue String] [FalseResponse]))])
   (DocUriAtPointReq [file File] [point FileLocation] [sender (Addr MaybeDocSigPair)])
   (CompletionsReq [file File]
                   [point FileLocation]
@@ -439,49 +439,49 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; Specification
 
-(define desugared-connection-info `(Union (ConnectionInfo)))
+(define desugared-connection-info `(Variant (ConnectionInfo)))
 
 (define desugared-resolve-result
-  `(Union
+  `(Variant
     (FalseResponse)
     (StringResponse String)))
 
 (define desugared-import-suggestions
-  `(Union (ImportSuggestions (List String))))
+  `(Variant (ImportSuggestions (List String))))
 
 (define desugared-symbol-search-results
-  `(Union (SymbolSearchResults (List String))))
+  `(Variant (SymbolSearchResults (List String))))
 
 (define desugared-boolean-response
-  `(Union
+  `(Variant
     (TrueResponse)
     (FalseResponse)))
 
-(define desugared-file-type `(Union (Java) (Scala)))
+(define desugared-file-type `(Variant (Java) (Scala)))
 (define desugared-file `(Record [type ,desugared-file-type] [text (Dict Nat String)]))
 
 (define desugared-maybe-doc-sig-pair
-  `(Union
+  `(Variant
     (NoDocSigPair)
     (DocSigPair String)))
 
 (define desugared-boolean
-  `(Union [False] [True]))
+  `(Variant [False] [True]))
 
 (define desugared-refactor-result
-  `(Union
+  `(Variant
     (RefactorFailure Nat String String)
-    (RefactorDiffEffect Nat (Union (InlineLocal) (Rename)) String)))
+    (RefactorDiffEffect Nat (Variant (InlineLocal) (Rename)) String)))
 
 (define desugared-project-input
-  `(Union
+  `(Variant
     (ConnectionInfoReq (Addr ,desugared-connection-info))
     (Resolve String (Addr ,desugared-resolve-result))
     (PublicSymbolSearchReq (List String) Nat (Addr ,desugared-import-suggestions))
     (TypeCompletionsReq String Nat (Addr ,desugared-symbol-search-results))
     (DebugRunReq (Addr ,desugared-boolean-response))
     (DebugStopReq (Addr ,desugared-boolean-response))
-    (DebugValueReq Nat (Addr (Union [DebugValue String] [FalseResponse])))
+    (DebugValueReq Nat (Addr (Variant [DebugValue String] [FalseResponse])))
     (DocUriAtPointReq ,desugared-file Nat (Addr ,desugared-maybe-doc-sig-pair))
     (CompletionsReq ,desugared-file
                     Nat
@@ -489,9 +489,9 @@
                     ,desugared-boolean
                     ,desugared-boolean
                     (Addr (List String)))
-    (TypecheckAllReq (Addr (Union (VoidResponse))))
+    (TypecheckAllReq (Addr (Variant (VoidResponse))))
     (RefactorReq Nat
-                 (Union [InlineLocal] [Rename])
+                 (Variant [InlineLocal] [Rename])
                  ,desugared-boolean
                  (Addr ,desugared-refactor-result))))
 

@@ -24,14 +24,14 @@
 
 (define desugared-seizer-peer-address
   `(Addr
-    (Union
+    (Variant
      [Seized]
      [Rejected]
      [Answered]
      [Cleared])))
 
 (define desugared-seizable-peer-message
-  `(Union
+  `(Variant
     [Seize (Record [id Nat] [address ,desugared-seizer-peer-address])]
     [Answered]
     [Cleared]))
@@ -40,24 +40,24 @@
   `(Addr ,desugared-seizable-peer-message))
 
 (define desugared-lim-message-type
-  `(Union
-    [StartTone (Union [Dial] [Fault] [Ring] [Busy])]
+  `(Variant
+    [StartTone (Variant [Dial] [Fault] [Ring] [Busy])]
     [StopTone]
     [StartRing]
     [StopRing]))
 
 (define desugared-analyzer-message-type
-  `(Union
+  `(Variant
     [AnalysisRequest
      (List Nat)
-     (Addr (Union
+     (Addr (Variant
             [Invalid]
             [Valid (Record [id Nat]
                            [address ,desugared-seizable-peer-address])]
             [GetMoreDigits]))]))
 
 (define desugared-controller-message-type
-  `(Union
+  `(Variant
     ;; hardware messages
     [OnHook]
     [OffHook]
@@ -87,7 +87,7 @@
 
 (define-record Peer
   [id Nat]
-  [address (Addr (Union [Answered] [Cleared]))])
+  [address (Addr (Variant [Answered] [Cleared]))])
 
 (define-variant ControllerMessage
   ;; hardware messages
@@ -125,7 +125,7 @@
 (define-function (Cleared) (variant Cleared))
 
 (define-type AnalyzerResult
-  (Union
+  (Variant
    (Invalid)
    (Valid SeizablePeer)
    (GetMoreDigits)))

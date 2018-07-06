@@ -98,7 +98,7 @@
      String
      (rec X (Addr τ))
      X
-     (Union [t τ ...] ...)
+     (Variant [t τ ...] ...)
      (Record [l τ] ...)
      (Addr τ)
      (List τ)
@@ -204,7 +204,7 @@
 (module+ test
   (test-case "Instantiate program"
     (define the-prog
-      `(program (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Union)])
+      `(program (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Variant)])
                 (let-actors ([a (let () (spawn 1 Nat      (goto S1)))]
                              [b (let () (spawn 2 (Record) (goto S2)))]
                              [c (let () (spawn 3 Nat      (goto S3)))])

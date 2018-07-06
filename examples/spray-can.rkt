@@ -26,7 +26,7 @@
 (define UNBIND-WAIT-TIME-IN-MS 2000)
 
 (define desugared-sink-type
-  `(Union [CommandFailed]
+  `(Variant [CommandFailed]
           [WriteAck]
           [Closed]
           [ConfirmedClosed]
@@ -34,12 +34,12 @@
           [PeerClosed]
           [ErrorClosed]))
 (define desugared-TimerCommand
-  `(Union
+  `(Variant
     (Stop)
     (Start Nat)))
 (define timer-type-env
-  (list `[(1 4 1 1 1) (Addr (Union [BindTimeout] [UnbindTimeout]))]
-        `[(1 4 1 1 2) (Union [BindTimeout] [UnbindTimeout])]))
+  (list `[(1 4 1 1 1) (Addr (Variant [BindTimeout] [UnbindTimeout]))]
+        `[(1 4 1 1 2) (Variant [BindTimeout] [UnbindTimeout])]))
 
 (define (make-spray-can-definitions bug1 bug2)
   (quasiquote
@@ -57,16 +57,16 @@
     [local-port Nat])
 
 (define-type TcpWriteResponse
-  (Union
+  (Variant
    (CommandFailed)
    (WriteAck)))
 
 (define-type TcpWriteOnlyCommand
-  (Union
+  (Variant
    (Write (List Byte) (Addr TcpWriteResponse))))
 
 (define-type TcpSessionEvent
-  (Union
+  (Variant
    [ReceivedData (List Byte)]
    [Closed]
    [ConfirmedClosed]
@@ -77,12 +77,12 @@
 (define-variant TcpSessionCommand
   (Register [handler (Addr TcpSessionEvent)])
   (Write [data (List Byte)] [handler (Addr TcpWriteResponse)])
-  (Close [close-handler (Addr (Union [CommandFailed] [Closed]))])
-  (ConfirmedClose [close-handler (Addr (Union [CommandFailed] [ConfirmedClosed]))])
-  (Abort [close-handler (Addr (Union [CommandFailed] [Aborted]))]))
+  (Close [close-handler (Addr (Variant [CommandFailed] [Closed]))])
+  (ConfirmedClose [close-handler (Addr (Variant [CommandFailed] [ConfirmedClosed]))])
+  (Abort [close-handler (Addr (Variant [CommandFailed] [Aborted]))]))
 
 (define-type TcpUnbindResponse
-  (Union
+  (Variant
    [Unbound]
    [CommandFailed]))
 
@@ -90,12 +90,12 @@
   (Unbind [unbind-commander (Addr TcpUnbindResponse)]))
 
 (define-type BindStatus
-  (Union [Bound (Addr TcpListenerCommand)]
+  (Variant [Bound (Addr TcpListenerCommand)]
          [CommandFailed]))
 (define-function (Bound [listener (Addr TcpListenerCommand)]) (variant Bound listener))
 
 (define-type ConnectionStatus
-  (Union
+  (Variant
    (CommandFailed)
    (Connected SessionId (Addr TcpSessionCommand))))
 (define-function (Connected [session-id SessionId] [session (Addr TcpSessionCommand)])
@@ -127,7 +127,7 @@
   [HttpRegister [handler (Addr IncomingRequest)]])
 
 (define-type HttpUnbindResponse
-  (Union
+  (Variant
    [HttpUnbound]
    [HttpCommandFailed]))
 (define-function (HttpUnbound) (variant HttpUnbound))
@@ -155,7 +155,7 @@
   (HttpCommandFailed))
 
 (define-type HttpConnectionCommand
-  (Union
+  (Variant
    [HttpRegister (Addr IncomingRequest)]))
 
 (define-variant HttpListenerEvent
@@ -168,7 +168,7 @@
 ;; Sink
 
 ;; just a simple actor to swallow various TCP events
-(define-actor (Union [CommandFailed]
+(define-actor (Variant [CommandFailed]
                      [WriteAck]
                      [Closed]
                      [ConfirmedClosed]
@@ -188,7 +188,7 @@
     (Start [timeout-in-milliseconds Nat]))
 
   (define-type ExpirationMessage
-    (Union
+    (Variant
      [BindTimeout]
      [UnbindTimeout]))
 
@@ -245,7 +245,7 @@
    ;; This fakes the idea of parsing an HTTP request from various received segments from the TCP
    ;; session.
    (define-function (find-request-tail [data (List Byte)])
-     ;; returns (Union [FoundTail [prefix (List Byte)] [rest (List Byte)]] [TailNotFound])
+     ;; returns (Variant [FoundTail [prefix (List Byte)] [rest (List Byte)]] [TailNotFound])
      (let ([loop-result
             (for/fold ([result-so-far (variant LookingForTail (list))])
                       ([byte data])
@@ -872,7 +872,7 @@
 (define desugared-session-id
   `(Record [remote-address ,desugared-socket-address] [local-port Nat]))
 (define desugared-tcp-session-event
-  `(Union
+  `(Variant
     [ReceivedData (List Nat)]
     [Closed]
     [ConfirmedClosed]
@@ -880,55 +880,55 @@
     [PeerClosed]
     [ErrorClosed]))
 (define desugared-tcp-write-response
-  `(Union
+  `(Variant
     [CommandFailed]
     [WriteAck]))
 (define desugared-tcp-session-command
-  `(Union
+  `(Variant
     (Register (Addr ,desugared-tcp-session-event))
     (Write (List Nat) (Addr ,desugared-tcp-write-response))
-    (Close (Addr (Union [CommandFailed] [Closed])))
-    (ConfirmedClose (Addr (Union [CommandFailed] [ConfirmedClosed])))
-    (Abort (Addr (Union [CommandFailed] [Aborted])))))
+    (Close (Addr (Variant [CommandFailed] [Closed])))
+    (ConfirmedClose (Addr (Variant [CommandFailed] [ConfirmedClosed])))
+    (Abort (Addr (Variant [CommandFailed] [Aborted])))))
 (define desugared-tcp-connection-status
-  `(Union
+  `(Variant
     [CommandFailed]
     [Connected ,desugared-session-id
                (Addr ,desugared-tcp-session-command)]))
 (define desugared-tcp-unbind-response
-  `(Union
+  `(Variant
     [Unbound]
     [CommandFailed]))
 (define desugared-tcp-listener-command
-  `(Union [Unbind (Addr ,desugared-tcp-unbind-response)]))
+  `(Variant [Unbind (Addr ,desugared-tcp-unbind-response)]))
 (define desugared-tcp-user-command
-  `(Union
+  `(Variant
     ;; [Connect ,desugared-socket-address (Addr ,desugared-connection-status)]
     [Bind Nat
-          (Addr (Union [Bound (Addr ,desugared-tcp-listener-command)] [CommandFailed]))
+          (Addr (Variant [Bound (Addr ,desugared-tcp-listener-command)] [CommandFailed]))
           (Addr ,desugared-tcp-connection-status)]))
 
 ;; HTTP types
 (define desugared-http-incoming-request
   `(Record [request (List Nat)] [response-dest (Addr (List Nat))]))
 (define desugared-http-connection-command
-  `(Union
+  `(Variant
     [HttpRegister (Addr ,desugared-http-incoming-request)]))
 (define desugared-http-listener-event
-  `(Union (HttpConnected ,desugared-session-id (Addr ,desugared-http-connection-command))))
+  `(Variant (HttpConnected ,desugared-session-id (Addr ,desugared-http-connection-command))))
 (define desugared-http-unbind-response
-  `(Union
+  `(Variant
     [HttpUnbound]
     [HttpCommandFailed]))
 (define desugared-http-listener-command
-  `(Union
+  `(Variant
     [HttpUnbind (Addr ,desugared-http-unbind-response)]))
 (define desugared-http-bind-response
-  `(Union
+  `(Variant
     [HttpBound (Addr ,desugared-http-listener-command)]
     [HttpCommandFailed]))
 (define desugared-http-manager-command
-  `(Union
+  `(Variant
     (HttpBind Nat (Addr ,desugared-http-bind-response) (Addr ,desugared-http-listener-event))))
 
 (module+ test

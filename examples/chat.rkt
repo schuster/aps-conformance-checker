@@ -19,7 +19,7 @@
   (define-constant pw-table (dict ["joe" "abc"] ["sally" "xyz"] ["john" "def"]))
 
   (define-type RoomCommand
-    (Union
+    (Variant
      (Speak String String)
      (Leave String)
      (GetMembers (Addr (List String)))))
@@ -31,7 +31,7 @@
     (Message [username String] [message String]))
 
   (define-type ServerCommand
-    (Union
+    (Variant
      (JoinRoom String String (Addr RoomEvent))
      (GetRoomList (Addr (List String)))))
 
@@ -271,29 +271,29 @@
 ;; Specification
 
 (define desugared-room-command
-  `(Union
+  `(Variant
     (Speak String String)
     (Leave String)
     (GetMembers (Addr (List String)))))
 
 (define desugared-room-event
-  `(Union
+  `(Variant
     (JoinedRoom (Addr ,desugared-room-command))
     (MemberLeft String)
     (MemberJoined String)
     (Message String String)))
 
 (define desugared-server-command
-  `(Union
+  `(Variant
     (JoinRoom String String (Addr ,desugared-room-event))
     (GetRoomList (Addr (List String)))))
 
 (define desugared-login-response
-  `(Union (AuthenticationFailed)
+  `(Variant (AuthenticationFailed)
           (AuthenticationSucceeded (Addr ,desugared-server-command))))
 
 (define desugared-auth-command
-  `(Union (LogIn String String (Addr ,desugared-login-response))))
+  `(Variant (LogIn String String (Addr ,desugared-login-response))))
 
 (define (room-spec-behavior handler)
   `((goto Running ,handler)
