@@ -22,14 +22,14 @@
     (define-actor ,request-type (Responder)
       ()
       (goto Always)
-      (define-state (Always) (r)
+      (define-state (Always) r
         (send r (if (> 1 2) (variant A) (variant B)))
         (goto Always)))
 
     (define-actor ,request-type (InputWorker [responder (Addr ,request-type)])
       ()
       (goto Always)
-      (define-state (Always) (r)
+      (define-state (Always) r
         (send responder r)
         (goto Always)))
 

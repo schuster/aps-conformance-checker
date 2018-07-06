@@ -7,7 +7,7 @@
   (define-actor (Addr PongResponse) (PingServer)
     ()
     (goto Always)
-    (define-state (Always) (response-addr)
+    (define-state (Always) response-addr
       (send response-addr (Pong))
       (goto Always)))
   (let-actors ([ping-server (spawn 0 PingServer)]) ping-server))))

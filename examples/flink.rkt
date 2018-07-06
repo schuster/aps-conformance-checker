@@ -234,18 +234,18 @@
   ;; Can't send message from actor that starts at the start of the program, so we use a timeout-zero
   ;; state instead
   (goto AboutToRegister)
-  (define-state/timeout (AboutToRegister)
-    (m) (goto AboutToRegister) ; this shouldn't happen
+  (define-state/timeout (AboutToRegister) m
+    (goto AboutToRegister) ; this shouldn't happen
     (timeout 0
       (send task-manager (RegisterRunner self))
       (goto AwaitingTask)))
-  (define-state (AwaitingTask) (m)
+  (define-state (AwaitingTask) m
     (case m
       [(RunTask task)
        (goto AboutToRunTask task)]
       [(CancelRunnerTask id) (goto AwaitingTask)]
       [(NextInputSplit items) (goto AwaitingTask)]))
-  (define-state/timeout (AboutToRunTask [task ReadyTask]) (m)
+  (define-state/timeout (AboutToRunTask [task ReadyTask]) m
     (case m
       [(RunTask new-task)
        ;; drop the existing task; presumably the task manager knows about it anyway
@@ -279,7 +279,7 @@
                     (dict-set result key (+ left-value right-value))))])
            (send task-manager (UpdateTaskExecutionState (: task id) (Finished final-result)))
            (goto AwaitingTask))])))
-  (define-state (WaitingForNextSplit [id JobTaskId] [word-count (Dict String Nat)]) (m)
+  (define-state (WaitingForNextSplit [id JobTaskId] [word-count (Dict String Nat)]) m
     (case m
       [(RunTask task)
        ;; drop the current task and notify the task manager
@@ -316,13 +316,13 @@
   (TaskManager [my-id Nat] [job-manager (Addr TaskManagerToJobManager)])
   ()
   (goto Init)
-  (define-state/timeout (Init) (m)
+  (define-state/timeout (Init) m
     (goto Init)
     (timeout 0
       (send job-manager (RegisterTaskManager my-id 2 self))
       (goto AwaitingRegistration (list))))
   (define-state ;;  /timeout ; no timeout anymore; see comment below
-    (AwaitingRegistration [idle-runners (List (Addr TaskRunnerInput))]) (m)
+    (AwaitingRegistration [idle-runners (List (Addr TaskRunnerInput))]) m
     (case m
       [(AcknowledgeRegistration) (goto Running idle-runners (list))]
       [(RegisterRunner runner) (goto AwaitingRegistration (cons runner idle-runners))]
@@ -346,7 +346,7 @@
     ;;   (goto AwaitingRegistration idle-runners))
     )
   (define-state (Running [idle-runners (List (Addr TaskRunnerInput))]
-                         [busy-runners (List BusyRunner)]) (m)
+                         [busy-runners (List BusyRunner)]) m
     (case m
       [(AcknowledgeRegistration) (goto Running idle-runners busy-runners)]
       [(RegisterRunner runner) (goto Running (cons runner idle-runners) busy-runners)]
@@ -549,7 +549,7 @@
                  [waiting-tasks (List WaitingReduceTask)]
                  [ready-tasks (List ReadyTask)]
                  [running-tasks (Dict JobTaskId RunningTaskExecution)]
-                 [partitions (Dict JobTaskId UsedPartition)]) (m)
+                 [partitions (Dict JobTaskId UsedPartition)]) m
     (case m
       [(RegisterTaskManager id slots address)
        ;; APS PROTOCOL BUG:
@@ -739,7 +739,7 @@
   (TaskManagerCreator [job-manager (Addr TaskManagerToJobManager)])
   ()
   (goto Init)
-  (define-state/timeout (Init) (m)
+  (define-state/timeout (Init) m
     (goto Init)
     (timeout 0
       (let ([task-manager (spawn task-manager-loc TaskManager 1 job-manager)])
@@ -747,13 +747,13 @@
                   ([n (list 1 2)])
           (spawn runner-loc TaskRunner job-manager task-manager))
         (goto Done))))
-  (define-state (Done) (m) (goto Done)))
+  (define-state (Done) m (goto Done)))
 
 (define-actor Nat
   (TaskManagersCreator [manager-ids (List Nat)] [job-manager (Addr TaskManagerToJobManager)])
   ()
   (goto Init)
-  (define-state/timeout (Init) (m)
+  (define-state/timeout (Init) m
     (goto Init)
     (timeout 0
       (for/fold ([dummy 0])
@@ -763,7 +763,7 @@
                     ([n (list 1 2)])
             (spawn runner-loc TaskRunner job-manager task-manager))))
       (goto Done)))
-  (define-state (Done) (m) (goto Done))))))
+  (define-state (Done) m (goto Done))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Common Definitions

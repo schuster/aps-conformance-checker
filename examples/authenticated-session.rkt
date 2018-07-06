@@ -116,7 +116,7 @@
     ;; IDEA: with some sort of linear type system, we could do a lightweight typestate-like thing that
     ;; allows us to ignore certain messages once they've been received (because we know the only
     ;; channel for them was already used). Doesn't work in presence of dropped messages, though.
-    (define-state (WaitingForMaybeSession) (m)
+    (define-state (WaitingForMaybeSession) m
       (case m
         [(SuccessInternal)
          (send client (ActiveOldSession server))
@@ -127,7 +127,7 @@
         ;; The rest of these shouldn't happen right now
         [(Authenticate u p r) (goto WaitingForMaybeSession)]
         [(NewSessionInternal auth-token) (goto WaitingForMaybeSession)]))
-    (define-state (WaitingForCredentials) (m)
+    (define-state (WaitingForCredentials) m
       (case m
         [(Authenticate username password reply-to)
          (case (dict-ref password-table username)
@@ -146,7 +146,7 @@
         [(SuccessInternal) (goto WaitingForCredentials)]
         [(FailureInternal) (goto WaitingForCredentials)]
         [(NewSessionInternal auth-token) (goto WaitingForCredentials)]))
-    (define-state (WaitingForServer [auth-reply-dest (Addr AuthenticateResult)]) (m)
+    (define-state (WaitingForServer [auth-reply-dest (Addr AuthenticateResult)]) m
       (case m
         [(NewSessionInternal auth-token)
          (send auth-reply-dest (ActiveNewSession auth-token server))
@@ -155,13 +155,13 @@
         [(SuccessInternal) (goto WaitingForServer auth-reply-dest)]
         [(FailureInternal) (goto WaitingForServer auth-reply-dest)]
         [(Authenticate u p r) (goto WaitingForServer auth-reply-dest)]))
-    (define-state (Done) (m) (goto Done)))
+    (define-state (Done) m (goto Done)))
 
   (define-actor GetSessionType
     (ServiceGuard [server (Addr ServerInput)] [password-table (Dict String String)])
     ()
     (goto Ready)
-    (define-state (Ready) (m)
+    (define-state (Ready) m
       (case m
         [(GetSession auth-token reply-to)
          (spawn 3 HandshakeWorker auth-token reply-to server password-table)
@@ -171,7 +171,7 @@
     (Server)
     ()
     (goto Running (dict) 1)
-    (define-state (Running [sessions (Dict Nat Nat)] [next-auth-token Nat]) (m)
+    (define-state (Running [sessions (Dict Nat Nat)] [next-auth-token Nat]) m
       (case m
         [(GetSessionInternal auth-token reply-to)
          (cond

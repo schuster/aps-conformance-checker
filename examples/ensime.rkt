@@ -46,7 +46,7 @@
   (DocResolver)
   ()
   (goto Always)
-  (define-state (Always) (m)
+  (define-state (Always) m
     (case m
       [(Resolve pair sender)
        (case (dict-ref docs-lookup pair)
@@ -72,7 +72,7 @@
   (Indexer)
   ()
   (goto Always)
-  (define-state (Always) (m)
+  (define-state (Always) m
     (case m
       [(PublicSymbolSearchReq keywords max-results sender)
        (send sender (ImportSuggestions (list "foo" "bar")))
@@ -101,7 +101,7 @@
   (DebugActor)
   ()
   (goto Always)
-  (define-state (Always) (m)
+  (define-state (Always) m
     (case m
       [(DebugRunReq sender)
        (send sender (TrueResponse))
@@ -132,7 +132,7 @@
   (JavaAnalyzer)
   ()
   (goto Always)
-  (define-state (Always) (m)
+  (define-state (Always) m
     (case m
       [(DocUriAtPointReq file loc sender)
        (case (dict-ref (: file text) loc)
@@ -164,7 +164,7 @@
   (Analyzer)
   ()
   (goto Always)
-  (define-state (Always) (m)
+  (define-state (Always) m
     (case m
       [(TypecheckAllReq sender)
        (send sender (VoidResponse))
@@ -221,7 +221,7 @@
            [scalac (Addr AnalyzerInput)])
   ()
   (goto AwaitingConnectionInfoReq)
-  (define-state (AwaitingConnectionInfoReq) (m)
+  (define-state (AwaitingConnectionInfoReq) m
     (case m
       [(ConnectionInfoReq sender)
        (send sender (ConnectionInfo))
@@ -236,7 +236,7 @@
       [(CompletionsReq f p m c r s) (goto AwaitingConnectionInfoReq)]
       [(TypecheckAllReq s) (goto AwaitingConnectionInfoReq)]
       [(RefactorReq p t i s) (goto AwaitingConnectionInfoReq)]))
-  (define-state (HandleRequests) (m)
+  (define-state (HandleRequests) m
     (case m
       [(ConnectionInfoReq sender)
        (send sender (ConnectionInfo))

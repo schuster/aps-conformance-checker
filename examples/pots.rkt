@@ -144,7 +144,7 @@
 
   (goto Idle)
 
-  (define-state (Idle) (m)
+  (define-state (Idle) m
     (case m
       [(OffHook)
        (send lim (StartTone (Dial)))
@@ -165,7 +165,7 @@
       [(Valid a) (goto Idle)]
       [(GetMoreDigits) (goto Idle)]))
 
-  (define-state (GettingFirstDigit) (m)
+  (define-state (GettingFirstDigit) m
     (case m
       [(OnHook)
        (send lim (StopTone))
@@ -189,7 +189,7 @@
       [(Valid a) (goto GettingFirstDigit)]
       [(GetMoreDigits) (goto GettingFirstDigit)]))
 
-  (define-state (GettingNumber [number (List Nat)]) (m)
+  (define-state (GettingNumber [number (List Nat)]) m
     (case m
       [(OnHook) (goto Idle)]
       [(Digit n)
@@ -210,7 +210,7 @@
       [(Valid a) (goto GettingNumber number)]
       [(GetMoreDigits) (goto GettingNumber number)]))
 
-  (define-state (WaitOnAnalysis [number (List Nat)]) (m)
+  (define-state (WaitOnAnalysis [number (List Nat)]) m
     (case m
       [(OnHook) (goto Idle)]
       [(Seize peer)
@@ -236,7 +236,7 @@
       [(Digit n) (goto WaitOnAnalysis number)]))
 
   ;; Called "calling_B" in Ulf's version
-  (define-state (MakeCallToB [peer Peer]) (m)
+  (define-state (MakeCallToB [peer Peer]) m
     (case m
       [(OnHook) (goto Idle)]
       [(Seize new-peer)
@@ -261,7 +261,7 @@
       [(GetMoreDigits) (goto MakeCallToB peer)]))
 
   ;; the other phone is ringing
-  (define-state (RingingASide [peer Peer]) (m)
+  (define-state (RingingASide [peer Peer]) m
     (case m
       [(Seize new-peer)
        (send (: new-peer address) (Rejected))
@@ -286,7 +286,7 @@
       [(GetMoreDigits) (goto RingingASide peer)]))
 
   ;; this phone is ringing
-  (define-state (RingingBSide [peer Peer]) (m)
+  (define-state (RingingBSide [peer Peer]) m
     (case m
       [(Seize new-peer)
        (send (: new-peer address) (Rejected))
@@ -309,7 +309,7 @@
       [(Valid a) (goto RingingBSide peer)]
       [(GetMoreDigits) (goto RingingBSide peer)]))
 
-  (define-state (Speech [peer Peer]) (m)
+  (define-state (Speech [peer Peer]) m
     (case m
       [(Seize new-peer)
        (send (: new-peer address) (Rejected))
@@ -330,7 +330,7 @@
       [(Valid a) (goto Speech peer)]
       [(GetMoreDigits) (goto Speech peer)]))
 
-  (define-state (WaitOnHook [have-tone? HaveTone?]) (m)
+  (define-state (WaitOnHook [have-tone? HaveTone?]) m
     (case m
       [(Seize new-peer)
        (send (: new-peer address) (Rejected))

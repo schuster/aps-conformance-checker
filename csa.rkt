@@ -54,8 +54,8 @@
      (list e ...)
      (dict [e e] ...)
      (for/fold ([x e]) ([x e]) e))
-  (Q (define-state (q [x τ] ...) (x) e)
-     (define-state (q [x τ] ...) (x) e [(timeout e) e]))
+  (Q (define-state (q [x τ] ...) x e)
+     (define-state (q [x τ] ...) x e [(timeout e) e]))
   (primop
    <
    <=
@@ -263,8 +263,8 @@
 (module+ test
   (test-equal? "make-single-actor-config"
    (make-single-actor-config `[[Nat (marked (addr 0 1) 2)]
-                               [((define-state (A) (m) (goto A))) (goto A)]])
-   `[([(addr 0 1) [((define-state (A) (m) (goto A))) (goto A)]])
+                               [((define-state (A) m (goto A))) (goto A)]])
+   `[([(addr 0 1) [((define-state (A) m (goto A))) (goto A)]])
      ()
      ([Nat (marked (addr 0 1) 2)])]))
 
@@ -280,9 +280,9 @@
 (module+ test
   (test-equal? "make-single-actor-config/plus"
     (make-single-actor-config/plus `[[Nat (marked (addr 0 1) 2)]
-                                     [((define-state (A) (m) (goto A))) (goto A)]]
+                                     [((define-state (A) m (goto A))) (goto A)]]
                                    (list `[Nat (marked (addr 0 1) 3)]))
-   `[([(addr 0 1) [((define-state (A) (m) (goto A))) (goto A)]])
+   `[([(addr 0 1) [((define-state (A) m (goto A))) (goto A)]])
      ()
      ([Nat (marked (addr 0 1) 2)]
       [Nat (marked (addr 0 1) 3)])]))
@@ -302,12 +302,12 @@
   (test-equal? "make-empty-queues-config"
     (make-empty-queues-config
      (list `[[Nat (marked (addr 0 1) 2)]
-             [((define-state (A) (m) (goto A))) (goto A)]])
+             [((define-state (A) m (goto A))) (goto A)]])
      (list `[[String (marked (addr 3 4) 5)]
-             [((define-state (B) (m) (goto B))) (goto B)]
+             [((define-state (B) m (goto B))) (goto B)]
              ]))
-    `[([(addr 0 1) [((define-state (A) (m) (goto A))) (goto A)]]
-       [(addr 3 4) [((define-state (B) (m) (goto B))) (goto B)]])
+    `[([(addr 0 1) [((define-state (A) m (goto A))) (goto A)]]
+       [(addr 3 4) [((define-state (B) m (goto B))) (goto B)]])
      ()
      ([Nat (marked (addr 0 1) 2)])]))
 
@@ -375,16 +375,16 @@
 
 (define-metafunction csa-eval
   subst/Q : Q x v -> Q
-  [(subst/Q (define-state (q [x_q τ_q] ...) (x_h) e) x v)
-   (define-state (q [x_q τ_q] ...) (x_h) e)
+  [(subst/Q (define-state (q [x_q τ_q] ...) x_h e) x v)
+   (define-state (q [x_q τ_q] ...) x_h e)
    (where (_ ... x _ ...) (x_q ... x_h))]
-  [(subst/Q (define-state (q [x_q τ_q] ...) (x_h) e) x v)
-   (define-state (q [x_q τ_q] ...) (x_h) (subst e x v))]
-  [(subst/Q (define-state (q [x_q τ_q] ...) (x_h) e_1 [(timeout e_3) e_2]) x v)
-   (define-state (q [x_q τ_q] ...) (x_h) e_1 [(timeout e_3) e_2])
+  [(subst/Q (define-state (q [x_q τ_q] ...) x_h e) x v)
+   (define-state (q [x_q τ_q] ...) x_h (subst e x v))]
+  [(subst/Q (define-state (q [x_q τ_q] ...) x_h e_1 [(timeout e_3) e_2]) x v)
+   (define-state (q [x_q τ_q] ...) x_h e_1 [(timeout e_3) e_2])
    (where (_ ... x _ ...) (x_q ... x_h))]
-  [(subst/Q (define-state (q [x_q τ_q] ...) (x_h) e_1 [(timeout e_3) e_2]) x v)
-   (define-state (q [x_q τ_q] ...) (x_h) (subst e_1 x v) [(timeout e_3) (subst e_2 x v)])])
+  [(subst/Q (define-state (q [x_q τ_q] ...) x_h e_1 [(timeout e_3) e_2]) x v)
+   (define-state (q [x_q τ_q] ...) x_h (subst e_1 x v) [(timeout e_3) (subst e_2 x v)])])
 
 (define-metafunction csa-eval
   subst-n/Q : Q [x v] ... -> Q
@@ -413,8 +413,8 @@
   (check-equal? (term (subst (: foo field) foo  (record [field 1])))
                 (term (: (record [field 1]) field)))
   (check-equal?
-   (term (subst-n/Q (define-state (S1 [a Nat]) (m) (+ a b)) [a 1] [b 2] [m 3]))
-   (term (define-state (S1 [a Nat]) (m) (+ a 2))))
+   (term (subst-n/Q (define-state (S1 [a Nat]) m (+ a b)) [a 1] [b 2] [m 3]))
+   (term (define-state (S1 [a Nat]) m (+ a 2))))
 
   (check-equal? (term (subst (fold Nat x) x 5)) (term (fold Nat 5)))
   (check-equal? (term (subst (fold Nat y) x 5)) (term (fold Nat y)))

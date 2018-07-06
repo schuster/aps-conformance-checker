@@ -227,12 +227,12 @@
            [expiration-target (Addr ExpirationMessage)])
     ()
     (goto Stopped)
-    (define-state (Stopped) (m)
+    (define-state (Stopped) m
       (case m
         [(Stop) (goto Stopped)]
         [(Start timeout-in-milliseconds)
          (goto Running timeout-in-milliseconds)]))
-    (define-state/timeout (Running [timeout-in-milliseconds Nat]) (m)
+    (define-state/timeout (Running [timeout-in-milliseconds Nat]) m
       (case m
         [(Stop) (goto Stopped)]
         [(Start new-timeout-in-milliseconds)
@@ -261,7 +261,7 @@
     (Sink)
     ()
     (goto Sink)
-    (define-state (Sink) (m) (goto Sink)))
+    (define-state (Sink) m (goto Sink)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; TCP
@@ -382,7 +382,7 @@
     ;; initialization
     (goto SynSent)
 
-    (define-state (SynSent) (m)
+    (define-state (SynSent) m
       (case m
         [(OrderedTcpPacket packet)
          ;; Have to handle all messages at this point, because the receive buffer doesn't know what
@@ -435,7 +435,7 @@
         [(RegisterTimeout) (goto SynSent)]
         [(TimeWaitTimeout) (goto SynSent)]))
 
-    (define-state (SynReceived) (m)
+    (define-state (SynReceived) m
       (case m
         [(OrderedTcpPacket packet)
          (cond
@@ -480,7 +480,7 @@
         [(TimeWaitTimeout) (goto SynReceived)]))
 
     ;; We're waiting for the user to register an actor to send received octets to
-    (define-state (AwaitingRegistration [registration-timer (Addr TimerCommand)]) (m)
+    (define-state (AwaitingRegistration [registration-timer (Addr TimerCommand)]) m
       (case m
         [(OrderedTcpPacket packet)
          ;; shouldn't happen here: receive buffer is holding packets until we tell it to resume. We
@@ -525,7 +525,7 @@
         [(TheFinSeq seq) (goto AwaitingRegistration registration-timer)]
         [(TimeWaitTimeout) (goto AwaitingRegistration registration-timer)]))
 
-    (define-state (Established [octet-stream (Addr TcpSessionEvent)]) (m)
+    (define-state (Established [octet-stream (Addr TcpSessionEvent)]) m
       (case m
         [(OrderedTcpPacket packet)
          (cond
@@ -580,7 +580,7 @@
     (define-state (Closing [close-type CloseType]
                            [closing-state ClosingState]
                            [maybe-fin MaybeFinSeq]
-                           [octet-stream (Addr TcpSessionEvent)]) (m)
+                           [octet-stream (Addr TcpSessionEvent)]) m
       (case m
         [(OrderedTcpPacket packet)
          (cond
@@ -706,7 +706,7 @@
     ;; Waiting to make sure the peer received our ACK of their FIN (we've already received an ACK for
     ;; our FIN)
     (define-state (TimeWait [octet-stream (Addr TcpSessionEvent)]
-                            [time-wait-timer (Addr TimerCommand)]) (m)
+                            [time-wait-timer (Addr TimerCommand)]) m
       (case m
         [(OrderedTcpPacket packet)
          (cond
@@ -745,7 +745,7 @@
          ;; (send status-updates (ConnectionClosed))
          (halt-with-notification)]))
 
-    (define-state (Closed) (m)
+    (define-state (Closed) m
       (case m
         [(OrderedTcpPacket packet)
          ;; APS PROTOCOL BUG (x2!):

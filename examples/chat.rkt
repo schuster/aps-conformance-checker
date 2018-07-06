@@ -56,7 +56,7 @@
     (Authenticator [pw-table (Dict String String)] [server (Addr ServerCommand)])
     ()
     (goto Always)
-    (define-state (Always) (m)
+    (define-state (Always) m
       (case m
         [(LogIn username password callback)
          (case (dict-ref pw-table username)
@@ -75,7 +75,7 @@
     (ChatRoom [name String])
     ()
     (goto Running (dict))
-    (define-state (Running [users (Dict String (Addr RoomEvent))]) (m)
+    (define-state (Running [users (Dict String (Addr RoomEvent))]) m
       (case m
         [(UserJoining username user)
          (send user (JoinedRoom self))
@@ -108,7 +108,7 @@
     (ChatServer)
     ()
     (goto Always (dict))
-    (define-state (Always [rooms (Dict String (Addr RoomCommand))]) (m)
+    (define-state (Always [rooms (Dict String (Addr RoomCommand))]) m
       (case m
         [(JoinRoom room-name username user)
          (case (dict-ref rooms room-name)

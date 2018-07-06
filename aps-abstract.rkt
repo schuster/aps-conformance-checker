@@ -1855,7 +1855,7 @@
     (canonicalize-pair
      (make-single-actor-abstract-config
       (term ((addr 0 0)
-             (((define-state (A) (m) (goto A)))
+             (((define-state (A) m (goto A)))
               (goto A
                     (marked (addr (env Nat) 0) 3)
                     (marked (addr (env Nat) 0) 2)
@@ -1870,7 +1870,7 @@
     (list
      (make-single-actor-abstract-config
       (term ((addr 0 0)
-             (((define-state (A) (m) (goto A)))
+             (((define-state (A) m (goto A)))
               (goto A
                     (marked (addr (env Nat) 0) 2)
                     (marked (addr (env Nat) 0) 3)

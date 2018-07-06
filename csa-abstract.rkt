@@ -90,8 +90,8 @@
   (μ# ((a# v# m) ...)) ; message packets
   (m single many) ; m for "multiplicity"
   (ρ# ([τ (marked a# mk ...)] ...))
-  (Q# (define-state (q [x τ] ...) (x) e#)
-      (define-state (q [x τ] ...) (x) e# [(timeout e#) e#]))
+  (Q# (define-state (q [x τ] ...) x e#)
+      (define-state (q [x τ] ...) x e# [(timeout e#) e#]))
   (v# (marked a# mk ...)
       (variant t v# ...)
       (record [l v#] ...)
@@ -158,7 +158,7 @@
 
 (module+ test
   (define test-behavior1
-    (term (((define-state (TestState1) (x) (goto TestState1)))
+    (term (((define-state (TestState1) x (goto TestState1)))
            (goto TestState1)))))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -367,7 +367,7 @@
 ;; state arguments and the message substituted for the appropriate variables
 (define (handler-machine-for-message behavior message)
   (match-define `(,state-defs (goto ,state-name ,state-args ...)) behavior)
-  (match-define `(define-state (,_ [,state-arg-formals ,_] ...) (,message-formal) ,body ,_ ...)
+  (match-define `(define-state (,_ [,state-arg-formals ,_] ...) ,message-formal ,body ,_ ...)
     (state-def-by-name state-defs state-name))
   (define bindings (cons `[,message-formal ,message] (map list state-arg-formals state-args)))
   (inject/H# (csa#-subst-n body bindings)))
@@ -1223,13 +1223,13 @@
     (eval-machine
      `(spawn loc Nat
              (goto Foo self)
-             (define-state (Foo) (m) (goto Foo)))
+             (define-state (Foo) m (goto Foo)))
      empty-effects
      #f)
     (value-result `(marked (addr loc 1))
                   `(()
                     ([(addr loc 1)
-                      (((define-state (Foo) (m) (goto Foo)))
+                      (((define-state (Foo) m (goto Foo)))
                        (goto Foo (marked (addr loc 1))))])
                     ,INIT-HANDLER-MARKER)))
 
@@ -1615,18 +1615,18 @@
 
 (module+ test
   (define new-spawn1
-    (term ((addr foo 0) (((define-state (A) (x) (goto A))) (goto A)))))
+    (term ((addr foo 0) (((define-state (A) x (goto A))) (goto A)))))
   (define new-spawn2
-    (term ((collective-addr foo) (((define-state (A) (x) (goto A))) (goto A)))))
+    (term ((collective-addr foo) (((define-state (A) x (goto A))) (goto A)))))
   (define init-actor1
-    (term ((addr 0 0) (((define-state (B) (x) (goto B))) (goto B)))))
+    (term ((addr 0 0) (((define-state (B) x (goto B))) (goto B)))))
   (test-equal? "merge-new-actors test"
                (merge-new-actors
                 (make-single-actor-abstract-config init-actor1 null)
                 (list new-spawn1 new-spawn2))
                (term ((,init-actor1 ,new-spawn1)
                       (((collective-addr foo)
-                        ((((define-state (A) (x) (goto A))) (goto A)))))
+                        ((((define-state (A) x (goto A))) (goto A)))))
                       ()
                       ()))))
 
@@ -1695,14 +1695,14 @@
 (define (csa#-subst-n/Q# Q bindings)
   (match Q
     ;; No timeout
-    [`(define-state (,q ,(and full-args `[,state-args ,arg-types]) ...) (,message-arg) ,body)
-     `(define-state (,q ,@full-args) (,message-arg)
+    [`(define-state (,q ,(and full-args `[,state-args ,arg-types]) ...) ,message-arg ,body)
+     `(define-state (,q ,@full-args) ,message-arg
         ,(csa#-subst-n body (remove-bindings bindings (cons message-arg state-args))))]
     ;; Has timeout
-    [`(define-state (,q ,(and full-args `[,state-args ,arg-types]) ...) (,message-arg)
+    [`(define-state (,q ,(and full-args `[,state-args ,arg-types]) ...) ,message-arg
         ,body
         [(timeout ,timeout-exp) ,timeout-body])
-     `(define-state (,q ,@full-args) (,message-arg)
+     `(define-state (,q ,@full-args) ,message-arg
         ,(csa#-subst-n body (remove-bindings bindings (cons message-arg state-args)))
         [(timeout ,(csa#-subst-n timeout-exp (remove-bindings bindings state-args)))
          ,(csa#-subst-n timeout-body (remove-bindings bindings state-args))])]))
@@ -1729,32 +1729,32 @@
     (csa#-subst-n `(spawn loc
                           Nat
                           (goto A self abs-nat)
-                          (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
+                          (define-state (A [s Nat] [a Nat]) x (goto A x y self)))
                   (list `[self (marked (addr 2 0))]))
     (term (spawn loc
                  Nat
                  (goto A self abs-nat)
-                 (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))))
+                 (define-state (A [s Nat] [a Nat]) x (goto A x y self)))))
   (test-equal? "spawn subst 2"
     (csa#-subst-n `(spawn loc
                           Nat
                           (goto A self abs-nat)
-                          (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
+                          (define-state (A [s Nat] [a Nat]) x (goto A x y self)))
                   (list `[x (marked (addr 2 0))]))
     (term (spawn loc
                  Nat
                  (goto A self abs-nat)
-                 (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))))
+                 (define-state (A [s Nat] [a Nat]) x (goto A x y self)))))
   (test-equal? "spawn subst 3"
     (csa#-subst-n `(spawn loc
                           Nat
                           (goto A self abs-nat)
-                          (define-state (A [s Nat] [a Nat]) (x) (goto A x y self)))
+                          (define-state (A [s Nat] [a Nat]) x (goto A x y self)))
                   (list `[y (marked (addr 2 0))]))
     (term (spawn loc
                  Nat
                  (goto A self abs-nat)
-                 (define-state (A [s Nat] [a Nat]) (x) (goto A x (marked (addr 2 0)) self)))))
+                 (define-state (A [s Nat] [a Nat]) x (goto A x (marked (addr 2 0)) self)))))
 
   (test-equal? "shadowing works as expected"
     (csa#-subst-n `(begin (let ([x abs-nat]) x) x) (list (binding 'x 'abs-string)))
@@ -1767,16 +1767,16 @@
       `(let ([x abs-nat] [y abs-nat]) (begin a x y abs-string)))
 
   (test-equal? "state-def subst 1"
-    (csa#-subst-n/Q# `(define-state (A [x Nat] [y String]) (m) (begin x y z (goto A x y)))
+    (csa#-subst-n/Q# `(define-state (A [x Nat] [y String]) m (begin x y z (goto A x y)))
                      (list `[z abs-nat]))
-    `(define-state (A [x Nat] [y String]) (m) (begin x y abs-nat (goto A x y))))
+    `(define-state (A [x Nat] [y String]) m (begin x y abs-nat (goto A x y))))
 
     (test-equal? "state-def subst with timeout"
-      (csa#-subst-n/Q# `(define-state (A [x Nat] [y String]) (m)
+      (csa#-subst-n/Q# `(define-state (A [x Nat] [y String]) m
                           (begin x y z (goto A x y))
                           [(timeout z) (begin z (goto A x y))])
                      (list `[z abs-nat]))
-      `(define-state (A [x Nat] [y String]) (m)
+      `(define-state (A [x Nat] [y String]) m
          (begin x y abs-nat (goto A x y))
          [(timeout abs-nat) (begin abs-nat (goto A x y))])))
 
@@ -1888,26 +1888,26 @@
 
 (module+ test
   (test-equal? "abstract-actor"
-    (term (abstract-actor [(addr 0 0) [((define-state (A) (m) (goto A))) (goto A)]] ()))
-    (term [(addr 0 0) [((define-state (A) (m) (goto A))) (goto A)]])))
+    (term (abstract-actor [(addr 0 0) [((define-state (A) m (goto A))) (goto A)]] ()))
+    (term [(addr 0 0) [((define-state (A) m (goto A))) (goto A)]])))
 
 (define-metafunction csa#
   abstract-Q : Q (a_internals ...) -> Q#
-  [(abstract-Q (define-state (q [x τ] ...) (x_m) e) (a ...))
-   (define-state (q [x τ] ...) (x_m) (abstract-e e (a ...)))]
-  [(abstract-Q (define-state (q [x τ] ...) (x_m) e [(timeout e_timeout) e_t-handler])
+  [(abstract-Q (define-state (q [x τ] ...) x_m e) (a ...))
+   (define-state (q [x τ] ...) x_m (abstract-e e (a ...)))]
+  [(abstract-Q (define-state (q [x τ] ...) x_m e [(timeout e_timeout) e_t-handler])
                (a ...))
-   (define-state (q [x τ] ...) (x_m)
+   (define-state (q [x τ] ...) x_m
      (abstract-e e (a ...))
      [(timeout (abstract-e e_timeout (a ...)))
       (abstract-e e_t-handler (a ...))])])
 
 (module+ test
-  (check-equal? (term (abstract-Q (define-state (S) (m) (goto S) [(timeout 5) (goto S)]) ()))
-                (term (define-state (S) (m) (goto S) [(timeout abs-nat) (goto S)])))
-  (check-equal? (term (abstract-Q (define-state (S) (m) (goto S)
+  (check-equal? (term (abstract-Q (define-state (S) m (goto S) [(timeout 5) (goto S)]) ()))
+                (term (define-state (S) m (goto S) [(timeout abs-nat) (goto S)])))
+  (check-equal? (term (abstract-Q (define-state (S) m (goto S)
                                     [(timeout (case x [(A) 1] [(B) 2])) (goto S)]) ()))
-                (term (define-state (S) (m) (goto S)
+                (term (define-state (S) m (goto S)
                         [(timeout (case x [(A) abs-nat] [(B) abs-nat])) (goto S)]))))
 
 ;; Abstracts the given expression to the given depth. The given address list is currently unused; may
@@ -2158,14 +2158,14 @@
 
   (test-equal? "Markers in atomic actor behaviors are assimilated"
     (csa#-blur-config
-     (term (([(addr 1 1) [((define-state (A) (m) (goto A (marked (addr 2 1) 2 3))))
+     (term (([(addr 1 1) [((define-state (A) m (goto A (marked (addr 2 1) 2 3))))
                           (goto A (marked (addr 2 1) 2 3))]])
             ()
             ()
             ()))
      0
      (list 3))
-    (term (([(addr 1 1) [((define-state (A) (m) (goto A (marked (addr 2 1) 3))))
+    (term (([(addr 1 1) [((define-state (A) m (goto A (marked (addr 2 1) 3))))
                           (goto A (marked (addr 2 1) 3))]])
             ()
             ()
@@ -2174,14 +2174,14 @@
   (test-equal? "Markers in collective actor behaviors are assimilated"
     (csa#-blur-config
      (term (()
-            ([(collective-addr 1) ([((define-state (A) (m) (goto A (marked (addr 2 1) 2 3))))
+            ([(collective-addr 1) ([((define-state (A) m (goto A (marked (addr 2 1) 2 3))))
                                     (goto A (marked (addr 2 1) 2 3))])])
             ()
             ()))
      0
      (list 3))
     (term (()
-           ([(collective-addr 1) ([((define-state (A) (m) (goto A (marked (addr 2 1) 3))))
+           ([(collective-addr 1) ([((define-state (A) m (goto A (marked (addr 2 1) 3))))
                                    (goto A (marked (addr 2 1) 3))])])
            ()
            ()))))
@@ -2300,7 +2300,7 @@
                  ([(a# b#)
                    (term
                        ((addr 0 0)
-                        (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
+                        (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) m
                             (begin
                               (send (marked (collective-addr (env Nat)) 1) abs-nat)
                               (send (marked (collective-addr (env Nat)) 2) abs-nat)
@@ -2317,7 +2317,7 @@
                 ([(a# b#)
                   (term
                          ((addr 0 0)
-                          (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) (m)
+                          (((define-state (A [x (Addr Nat)] [y (Addr Nat)] [z (Addr Nat)]) m
                               (begin
                                 (send (marked (collective-addr (env Nat)) 1) abs-nat)
                                 (send (marked (collective-addr (env Nat))) abs-nat)
@@ -2427,14 +2427,14 @@
 
 (module+ test
   (define behavior1
-    (term (((define-state (A) (x) (goto A))) (goto A))))
+    (term (((define-state (A) x (goto A))) (goto A))))
   (define behavior2
-    (term (((define-state (B) (r) (begin (send r abs-nat) (goto B)))) (goto B))))
+    (term (((define-state (B) r (begin (send r abs-nat) (goto B)))) (goto B))))
   (define behavior3
-    (term (((define-state (C [x (List Nat)]) (r) (begin (send r abs-nat) (goto C x))))
+    (term (((define-state (C [x (List Nat)]) r (begin (send r abs-nat) (goto C x))))
            (goto C (list-val)))))
   (define behavior3-greater
-    (term (((define-state (C [x (List Nat)]) (r) (begin (send r abs-nat) (goto C x))))
+    (term (((define-state (C [x (List Nat)]) r (begin (send r abs-nat) (goto C x))))
            (goto C (list-val abs-nat)))))
   (define add-blurred-behaviors-config1
     (term (() (((collective-addr 1) (,behavior1))) () ())))
@@ -3521,14 +3521,14 @@
                                      [(0 4 1 1) (Record [a (Addr String)])]))))
   (define evictable1
     `[,evictable-addr1
-      (((define-state (A [x (Union [Foo (Addr Nat)])]) (m)
+      (((define-state (A [x (Union [Foo (Addr Nat)])]) m
           (send (marked (addr 2 0)) "foobar")
           (send (: (record [a (marked (addr 3 0))]) a) "foo")
           (goto A x)))
        (goto A (variant Foo (marked (addr 1 0)))))])
   (define collective-evictable1
     `[,collective-evictable-addr1
-      ([((define-state (A [x (Union [Foo (Addr Nat)])]) (m)
+      ([((define-state (A [x (Union [Foo (Addr Nat)])]) m
            (send (marked (addr 2 0)) "foobar")
            (send (: (record [a (marked (addr 3 0))]) a) "foo")
            (goto A x)))
@@ -3536,7 +3536,7 @@
   (define non-evictable2-addr `(addr (3-EVICT Nat ()) 0))
   (define non-evictable2
     `[,non-evictable2-addr
-      [((define-state (B) (m)
+      [((define-state (B) m
           (begin (marked ,evictable-addr1)
                  (marked (collective-addr (env Nat)) 1)
                  (goto B))))
@@ -3544,7 +3544,7 @@
   (define non-evictable-has-mon-ext-message-addr `(addr (4-EVICT (Addr Nat) ()) 0))
   (define non-evictable-has-mon-ext-message
     `[,non-evictable-has-mon-ext-message-addr
-      [((define-state (A) (m) (goto A))) (goto A)]])
+      [((define-state (A) m (goto A))) (goto A)]])
 
   (define evict-test-config
     `((,non-evictable1 ,evictable1 ,non-evictable2 ,non-evictable-has-mon-ext-message)
@@ -3560,7 +3560,7 @@
   (define expected-precise-evicted-config
     `(([(addr 1 1) (() (goto S))]
        [(addr (3-EVICT Nat ()) 0)
-        [((define-state (B) (m)
+        [((define-state (B) m
             (begin (marked (collective-addr (env (Addr Nat))))
                    (marked (collective-addr (env Nat)) 1)
                    (goto B))))
@@ -4495,14 +4495,14 @@
                 'gt)
   (check-equal?
    (compare-behavior
-    (term (((define-state (A) (m) (goto A)))         (goto A (list-val (variant B)))))
-    (term (((define-state (A) (m) (goto A abs-nat))) (goto A (list-val (variant B)))))
+    (term (((define-state (A) m (goto A)))         (goto A (list-val (variant B)))))
+    (term (((define-state (A) m (goto A abs-nat))) (goto A (list-val (variant B)))))
     #t)
    'not-gteq)
   (check-equal?
    (compare-behavior
-    (term (((define-state (A) (m) (goto A)))         (goto A (list-val (variant B)))))
-    (term (((define-state (A) (m) (goto A abs-nat))) (goto A (list-val (variant B)))))
+    (term (((define-state (A) m (goto A)))         (goto A (list-val (variant B)))))
+    (term (((define-state (A) m (goto A abs-nat))) (goto A (list-val (variant B)))))
     #f)
    'eq))
 
@@ -4697,11 +4697,11 @@
 (module+ test
   (define enabled-action-test-config
     `(([(addr 0 0)
-        (((define-state (A) (x) (goto A) ([timeout abs-nat] (goto A))))
+        (((define-state (A) x (goto A) ([timeout abs-nat] (goto A))))
          (goto A))]
        [(addr 1 0)
-        (((define-state (A) (x) (goto A) ([timeout abs-nat] (goto A)))
-          (define-state (B) (x) (goto B)))
+        (((define-state (A) x (goto A) ([timeout abs-nat] (goto A)))
+          (define-state (B) x (goto B)))
          (goto B))])
       ()
       ([(addr 0 0) abs-nat many])

@@ -301,12 +301,12 @@
            [expiration-target (Addr ExpirationMessage)])
     ()
     (goto Stopped)
-    (define-state (Stopped) (m)
+    (define-state (Stopped) m
       (case m
         [(Stop) (goto Stopped)]
         [(Start timeout-in-milliseconds)
          (goto Running timeout-in-milliseconds)]))
-    (define-state/timeout (Running [timeout-in-milliseconds Nat]) (m)
+    (define-state/timeout (Running [timeout-in-milliseconds Nat]) m
       (case m
         [(Stop) (goto Stopped)]
         [(Start new-timeout-in-milliseconds)
@@ -335,7 +335,7 @@
     (Sink)
     ()
     (goto Sink)
-    (define-state (Sink) (m) (goto Sink)))
+    (define-state (Sink) m (goto Sink)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; TCP
@@ -756,7 +756,7 @@
             (send-to-ip (make-syn-ack iss rcv-nxt))
             (goto SynReceived (+ 1 iss) rcv-nxt (create-empty-rbuffer) rxmt-timer))]))
 
-    (define-state (SynSent [snd-nxt Nat] [rxmt-timer (Addr TimerCommand)]) (m)
+    (define-state (SynSent [snd-nxt Nat] [rxmt-timer (Addr TimerCommand)]) m
       (case m
         [(InTcpPacket packet)
          (cond
@@ -811,7 +811,7 @@
     (define-state (SynReceived [snd-nxt Nat]
                                [rcv-nxt Nat]
                                [receive-buffer ReceiveBuffer]
-                               [rxmt-timer (Addr TimerCommand)]) (m)
+                               [rxmt-timer (Addr TimerCommand)]) m
       (case m
         [(InTcpPacket packet)
          ;; RFC Errata 3305 notes that this acceptability test doesn't support all of the simultaneous
@@ -884,7 +884,7 @@
                                         [rcv-nxt Nat]
                                         [receive-buffer ReceiveBuffer]
                                         [registration-timer (Addr TimerCommand)]
-                                        [rxmt-timer (Addr TimerCommand)]) (m)
+                                        [rxmt-timer (Addr TimerCommand)]) m
       (case m
         [(InTcpPacket packet)
          ;; we don't need the handler just to process incoming packets, so we do it just like in Established
@@ -950,7 +950,7 @@
                                [rcv-nxt Nat]
                                [receive-buffer ReceiveBuffer]
                                [octet-stream (Addr TcpSessionEvent)]
-                               [rxmt-timer (Addr TimerCommand)]) (m)
+                               [rxmt-timer (Addr TimerCommand)]) m
       (case m
         [(InTcpPacket packet)
          (let ([new-receive-buffer
@@ -1049,7 +1049,7 @@
                            [close-type CloseType]
                            [closing-state ClosingState]
                            [octet-stream (Addr TcpSessionEvent)]
-                           [rxmt-timer (Addr TimerCommand)]) (m)
+                           [rxmt-timer (Addr TimerCommand)]) m
       (case m
         [(InTcpPacket packet)
          (let ([new-receive-buffer
@@ -1227,7 +1227,7 @@
                             [rcv-nxt Nat]
                             [receive-buffer ReceiveBuffer]
                             [octet-stream (Addr TcpSessionEvent)]
-                            [time-wait-timer (Addr TimerCommand)]) (m)
+                            [time-wait-timer (Addr TimerCommand)]) m
       (case m
         [(InTcpPacket packet)
          (let ([new-receive-buffer (process-incoming packet rcv-nxt receive-buffer snd-nxt)])
@@ -1265,7 +1265,7 @@
          ;; (send status-updates (ConnectionClosed))
          (halt-with-notification)]))
 
-    (define-state (Closed) (m)
+    (define-state (Closed) m
       (case m
         [(InTcpPacket packet)
          (send-to-ip (make-rst/global packet))
@@ -1303,7 +1303,7 @@
     ()
     (goto Ready (dict) (dict))
     (define-state (Ready [session-table (Dict SessionId (Addr PacketInputMessage))]
-                         [binding-table (Dict Nat (Addr PacketInputMessage))]) (m)
+                         [binding-table (Dict Nat (Addr PacketInputMessage))]) m
       (case m
         [(InPacket source-ip packet)
          (case (dict-ref session-table
@@ -2115,7 +2115,7 @@
                         [close-notifications (Addr (Union [SessionCloseNotification SessionId]))])
               ()
               (goto Init)
-              (define-state (Init) (status-updates)
+              (define-state (Init) status-updates
                 (let ([session (spawn session
                                       TcpSession
                                       (SessionId (InetSocketAddress 1234 50) 80)
@@ -2130,7 +2130,7 @@
                   ;; this makes the packet side of the session observable
                   (send session-packet-dest session)
                   (goto Done)))
-              (define-state (Done) (m) (goto Done)))
+              (define-state (Done) m (goto Done)))
             (let-actors ([launcher (spawn launcher
                                           Launcher
                                           session-packet-dest

@@ -54,7 +54,7 @@
 (goto Off 0 0)
 
 ;; State definitions
-(define-state (Off [sum Nat] [num-rdgs Nat]) (m)
+(define-state (Off [sum Nat] [num-rdgs Nat]) m
   (case m
     [(AddRdg temp resp)
      (send resp (variant NotOk))
@@ -66,7 +66,7 @@
     [(Enable) (goto On sum num-rdgs)]
     [(Shutdown) (goto Done)]))
 
-(define-state (On [sum Nat] [num-rdgs Nat]) (m)
+(define-state (On [sum Nat] [num-rdgs Nat]) m
   (case m
     [(AddRdg temp resp)
      (send resp (variant Ok))
@@ -78,7 +78,7 @@
     [(Enable) (goto On sum num-rdgs)]
     [(Shutdown) (goto Done)]))
 
-(define-state (Done) (m) (goto Done))
+(define-state (Done) m (goto Done))
 )
 
 (define-type ProcAddr (Addr (Union [Shutdown])))
@@ -86,7 +86,7 @@
 (define-actor ,ManagerMessage (Manager)
   ()
   (goto Managing (list))
-  (define-state (Managing [processors (List ProcAddr)]) (m)
+  (define-state (Managing [processors (List ProcAddr)]) m
     (case m
       [(MakeProc resp mdest)
        (case (< (length processors) 100)

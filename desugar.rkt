@@ -67,8 +67,8 @@
   (ActorDef (ad)
     (define-actor τ (a [x τ2] ...) (AI ...) e S ...))
   (StateDef (S)
-            (define-state (s [x τ] ...) (x2) e1 e* ...)
-            (define-state/timeout (s [x τ] ...) (x2) e1 e* ... tc))
+            (define-state (s [x τ] ...) x2 e1 e* ...)
+            (define-state/timeout (s [x τ] ...) x2 e1 e* ... tc))
   (TimeoutClause (tc) [timeout e2 e3 e4 ...])
   (ActorItem (AI)
     fd
@@ -180,10 +180,10 @@
 (define-language csa/single-exp-bodies
   (extends csa/wrapped-calls)
   (StateDef (S)
-            (- (define-state (s [x τ] ...) (x2) e1 e* ...)
-               (define-state/timeout (s [x τ] ...) (x2) e1 e* ... tc))
-            (+ (define-state (s [x τ] ...) (x2) e)
-               (define-state/timeout (s [x τ] ...) (x2) e1 tc)))
+            (- (define-state (s [x τ] ...) x2 e1 e* ...)
+               (define-state/timeout (s [x τ] ...) x2 e1 e* ... tc))
+            (+ (define-state (s [x τ] ...) x2 e)
+               (define-state/timeout (s [x τ] ...) x2 e1 tc)))
   (TimeoutClause (tc)
                  (- [timeout e2 e3 e4 ...])
                  (+ [timeout e2 e3]))
@@ -213,10 +213,10 @@
 
 (define-pass wrap-multi-exp-bodies : csa/wrapped-calls (P) -> csa/single-exp-bodies ()
   (StateDef : StateDef (S) -> StateDef ()
-            [(define-state (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e*] ...)
-             `(define-state (,s [,x ,τ] ...) (,x2) (begin ,e1 ,e* ...))]
-            [(define-state/timeout (,s [,x ,[τ]] ...) (,x2) ,[e1] ,[e*] ... ,[tc])
-             `(define-state/timeout (,s [,x ,τ] ...) (,x2) (begin ,e1 ,e* ...) ,tc)])
+            [(define-state (,s [,x ,[τ]] ...) ,x2 ,[e1] ,[e*] ...)
+             `(define-state (,s [,x ,τ] ...) ,x2 (begin ,e1 ,e* ...))]
+            [(define-state/timeout (,s [,x ,[τ]] ...) ,x2 ,[e1] ,[e*] ... ,[tc])
+             `(define-state/timeout (,s [,x ,τ] ...) ,x2 (begin ,e1 ,e* ...) ,tc)])
   (TimeoutClause : TimeoutClause (tc) -> TimeoutClause ()
                  [(timeout ,[e2] ,[e3] ,[e4] ...)
                   `(timeout ,e2 (begin ,e3 ,e4 ...))])
@@ -840,11 +840,11 @@
          `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
                        (,let-actors-kw ([,x3 ,e] ...) ,x4 ...))])
   (StateDef : StateDef (S defs-so-far) -> StateDef ()
-    [(define-state (,s [,x ,[τ]] ...) (,x2) ,[Exp : e0 defs-so-far -> e])
-     `(define-state (,s [,x ,τ] ...) (,x2) ,e)]
-    [(define-state/timeout (,s [,x ,[τ]] ...) (,x2) ,[Exp : e0 defs-so-far -> e]
+    [(define-state (,s [,x ,[τ]] ...) ,x2 ,[Exp : e0 defs-so-far -> e])
+     `(define-state (,s [,x ,τ] ...) ,x2 ,e)]
+    [(define-state/timeout (,s [,x ,[τ]] ...) ,x2 ,[Exp : e0 defs-so-far -> e]
        ,[TimeoutClause : tc0 defs-so-far -> tc])
-     `(define-state/timeout (,s [,x ,τ] ...) (,x2) ,e ,tc)])
+     `(define-state/timeout (,s [,x ,τ] ...) ,x2 ,e ,tc)])
   (TimeoutClause : TimeoutClause (tc defs-so-far) -> TimeoutClause ()
                  [(timeout ,[Exp : e1 defs-so-far -> e2]
                            ,[Exp : e3 defs-so-far -> e4])
@@ -868,7 +868,7 @@
        `(program (receptionists) (externals)
          (define-actor Nat (A [x Nat])
                  (goto S1)
-                 (define-state (S1) (m)
+                 (define-state (S1) m
                    (goto S1)))
          (let-actors ([a (spawn 1 A 5)]) a)))))
    `(program (receptionists) (externals)
@@ -877,7 +877,7 @@
                                 1
                                 Nat
                                 (goto S1)
-                                (define-state (S1) (m) (goto S1))))]) a)))
+                                (define-state (S1) m (goto S1))))]) a)))
 
   (test-equal? "inline actors 2"
    (unparse-csa/inlined-actors
@@ -886,11 +886,11 @@
        `(program (receptionists) (externals)
          (define-actor Nat (A [x Nat])
                  (goto S1)
-                 (define-state (S1) (m)
+                 (define-state (S1) m
                    (goto S1)))
          (define-actor Nat (B [y Nat])
            (goto S2)
-           (define-state (S2) (m)
+           (define-state (S2) m
              (begin
                (spawn 1 A 3)
                (goto S2))))
@@ -901,14 +901,14 @@
                                 2
                                 Nat
                                 (goto S2)
-                                (define-state (S2) (m)
+                                (define-state (S2) m
                                   (begin
                                     (let ([x 3])
                                       (spawn
                                        1
                                        Nat
                                        (goto S1)
-                                       (define-state (S1) (m)
+                                       (define-state (S1) m
                                          (goto S1))))
                                     (goto S2)))))])
                          a)))

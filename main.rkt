@@ -934,11 +934,11 @@
       (
        ;; single atomic actor
        [(addr child-loc 0)
-        (((define-state (B) (m) (goto B))) (goto B))]
+        (((define-state (B) m (goto B))) (goto B))]
        [(addr 1 0)
-        (((define-state (A) (m)
+        (((define-state (A) m
             (let ([child (spawn child-loc Nat (goto B)
-                                (define-state (B) (m) (goto B)))])
+                                (define-state (B) m (goto B)))])
               (begin
                 (send child abs-nat)
                 (goto A)))))
@@ -951,11 +951,11 @@
     (term
      ((;; a one-of of the spawned child
        [(addr child-loc 0)
-        (((define-state (B) (m) (goto B))) (goto B))]
+        (((define-state (B) m (goto B))) (goto B))]
        [(addr 1 0)
-        (((define-state (A) (m)
+        (((define-state (A) m
             (let ([child (spawn child-loc Nat (goto B)
-                                (define-state (B) (m) (goto B)))])
+                                (define-state (B) m (goto B)))])
               (begin
                 (send child abs-nat)
                 (goto A)))))
@@ -967,7 +967,7 @@
         (collective-addr child-loc)
         (
          ;; just one b#
-         (((define-state (B) (m) (goto B))) (goto B)))
+         (((define-state (B) m (goto B))) (goto B)))
         ))
       (
        ;; the messages
@@ -1356,7 +1356,7 @@
     (make-single-actor-config
      (term
       ((,addr-type (marked (addr 0 0) 0))
-       (((define-state (Always) (m) (goto Always)))
+       (((define-state (Always) m (goto Always)))
         (goto Always))))))
   (define ignore-all-config (make-ignore-all-config 'Nat))
   (define ignore-all-spec-instance
@@ -1380,7 +1380,7 @@
   (define static-response-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
+      (((define-state (Always [response-dest (Addr ,static-response-type)]) m
           (begin
            (send response-dest (variant Ack 0))
            (goto Always response-dest))))
@@ -1388,7 +1388,7 @@
   (define static-double-response-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
+      (((define-state (Always [response-dest (Addr ,static-response-type)]) m
           (begin
            (send response-dest (variant Ack 0))
            (send response-dest (variant Ack 0))
@@ -1451,7 +1451,7 @@
   (define pattern-matching-actor
     (term
      (((Union [A Nat] [B Nat]) (marked (addr 0 0) 0))
-      (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
+      (((define-state (Always [r (Union [A Nat] [B Nat])]) m
           (case m
             [(A x) (begin (send r (variant A x)) (goto Always r))]
             [(B y) (begin (send r (variant B 0)) (goto Always r))])))
@@ -1460,7 +1460,7 @@
   (define reverse-pattern-matching-actor
     (term
      (((Union [A Nat] [B Nat]) (marked (addr 0 0) 0))
-      (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
+      (((define-state (Always [r (Union [A Nat] [B Nat])]) m
           (case m
             [(A x) (begin (send r (variant B 0)) (goto Always r))]
             [(B y) (begin (send r (variant A y)) (goto Always r))])))
@@ -1469,7 +1469,7 @@
   (define partial-pattern-matching-actor
     (term
      (((Union [A Nat] [B Nat]) (marked (addr 0 0) 0))
-      (((define-state (Always [r (Union [A Nat] [B Nat])]) (m)
+      (((define-state (Always [r (Union [A Nat] [B Nat])]) m
           (case m
             [(A x) (begin (send r (variant A 0)) (goto Always r))]
             [(B y) (goto Always r)])))
@@ -1517,11 +1517,11 @@
   (define send-message-then-another
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (Init [r (Addr (Union [A] [B]))]) (m)
+      (((define-state (Init [r (Addr (Union [A] [B]))]) m
           (begin
            (send r (variant A))
            (goto SendOther r)))
-        (define-state (SendOther [r (Addr (Union [A] [B]))]) (m)
+        (define-state (SendOther [r (Addr (Union [A] [B]))]) m
           (begin
            (send r (variant A))
            (goto Done))
@@ -1529,7 +1529,7 @@
            (begin
             (send r (variant B))
             (goto Done))])
-        (define-state (Done) (m) (goto Done)))
+        (define-state (Done) m (goto Done)))
        (goto Init (marked (addr (env (Union [A] [B])) 0) 1))))))
 
   (define overlapping-patterns-spec
@@ -1572,7 +1572,7 @@
   (define request-response-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Always [i Nat]) (response-target)
+      (((define-state (Always [i Nat]) response-target
           (begin
            (send response-target i)
            (goto Always i))))
@@ -1580,11 +1580,11 @@
   (define respond-to-first-addr-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Init) (response-target)
+      (((define-state (Init) response-target
           (begin
            (send response-target 0)
            (goto HaveAddr 1 response-target)))
-        (define-state (HaveAddr [i Nat] [response-target (Addr Nat)]) (new-response-target)
+        (define-state (HaveAddr [i Nat] [response-target (Addr Nat)]) new-response-target
           (begin
            (send response-target i)
            (goto HaveAddr i response-target))))
@@ -1592,7 +1592,7 @@
   (define respond-to-first-addr-actor2
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Always [original-addr (Union (NoAddr) (Original (Addr Nat)))]) (response-target)
+      (((define-state (Always [original-addr (Union (NoAddr) (Original (Addr Nat)))]) response-target
           (begin
            (case original-addr
              [(NoAddr)
@@ -1607,18 +1607,18 @@
   (define delay-saving-address-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Init) (response-target)
+      (((define-state (Init) response-target
           (begin
            (send response-target 0)
            (goto HaveAddr 1 response-target)))
-        (define-state (HaveAddr [i Nat] [response-target (Addr Nat)]) (new-response-target)
+        (define-state (HaveAddr [i Nat] [response-target (Addr Nat)]) new-response-target
           (begin
            (send response-target i)
            (goto HaveAddr i new-response-target))))
        (goto Init)))))
   (define double-response-actor
     `(((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Always [i Nat]) (response-dest)
+      (((define-state (Always [i Nat]) response-dest
           (begin
            (send response-dest i)
            (send response-dest i)
@@ -1627,19 +1627,19 @@
   (define respond-once-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Init) (response-target)
+      (((define-state (Init) response-target
           (begin
            (send response-target 0)
            (goto NoMore)))
-        (define-state (NoMore) (new-response-target)
+        (define-state (NoMore) new-response-target
           (goto NoMore)))
        (goto Init)))))
   (define delayed-send-no-timeout-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (NoAddr) (response-target)
+      (((define-state (NoAddr) response-target
           (goto HaveAddr response-target))
-        (define-state (HaveAddr [response-target (Addr Nat)]) (new-response-target)
+        (define-state (HaveAddr [response-target (Addr Nat)]) new-response-target
           (begin
            (send response-target 1)
            (goto HaveAddr new-response-target))))
@@ -1647,9 +1647,9 @@
   (define delayed-send-with-timeout-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (NoAddr) (response-target)
+      (((define-state (NoAddr) response-target
           (goto HaveAddr response-target))
-        (define-state (HaveAddr [response-target (Addr Nat)]) (new-response-target)
+        (define-state (HaveAddr [response-target (Addr Nat)]) new-response-target
           (begin
            (send response-target 1)
            (goto HaveAddr new-response-target))
@@ -1709,7 +1709,7 @@
   (define (make-self-send-response-actor addr-number)
     (term
      (((Union [FromEnv (Addr Nat)]) (marked (addr self-send-loc ,addr-number) ,addr-number))
-      (((define-state (Always) (msg)
+      (((define-state (Always) msg
           (case msg
             [(FromEnv response-target)
              (begin
@@ -1731,7 +1731,7 @@
   (define from-env-wrapper
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Always [sender (Addr (Union [FromEnv (Addr Nat)]))]) (msg)
+      (((define-state (Always [sender (Addr (Union [FromEnv (Addr Nat)]))]) msg
           (begin
             (send sender (variant FromEnv msg))
             (goto Always sender))))
@@ -1752,11 +1752,11 @@
   (define reply-once-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (A) (r)
+      (((define-state (A) r
           (begin
             (send r 0)
             (goto B)))
-        (define-state (B) (r) (goto B)))
+        (define-state (B) r (goto B)))
        (goto A)))))
   (define maybe-reply-spec
     (term
@@ -1793,7 +1793,7 @@
   (define primitive-branch-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (S1 [dest (Addr (Union [NonZero] [Zero]))]) (i)
+      (((define-state (S1 [dest (Addr (Union [NonZero] [Zero]))]) i
           (begin
             (case (< 0 i)
               [(True) (send dest (variant NonZero))]
@@ -1837,7 +1837,7 @@
   (define div-by-one-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (Always [response-dest (Addr Nat)]) (n)
+      (((define-state (Always [response-dest (Addr Nat)]) n
           (begin
             (send response-dest (/ n 1))
             (goto Always response-dest))))
@@ -1845,7 +1845,7 @@
   (define div-by-zero-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (Always [response-dest (Addr Nat)]) (n)
+      (((define-state (Always [response-dest (Addr Nat)]) n
           (begin
             (send response-dest (/ n 0))
             (goto Always response-dest))))
@@ -1910,14 +1910,14 @@
   (define unobs-toggle-actor
     (term
      (((Union [FromObserver]) (marked (addr 0 0) 0))
-      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver)
              (begin
                (send r (variant TurningOn))
                (goto On r))]
             [(FromUnobservedEnvironment) (goto Off r)]))
-        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver) (goto On r)]
             [(FromUnobservedEnvironment)
@@ -1928,7 +1928,7 @@
   (define unobs-toggle-actor-wrong1
     (term
      (((Union [FromObserver]) (marked (addr 0 0) 0))
-      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver)
              (begin
@@ -1936,7 +1936,7 @@
                ;; Going to Off instead of On
                (goto Off r))]
             [(FromUnobservedEnvironment) (goto Off r)]))
-        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver) (goto On r)]
             [(FromUnobservedEnvironment)
@@ -1947,14 +1947,14 @@
   (define unobs-toggle-actor-wrong2
     (term
      (((Union [FromObserver]) (marked (addr 0 0) 0))
-      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver)
              (begin
                (send r (variant TurningOn))
                (goto On r))]
             [(FromUnobservedEnvironment) (goto On r)]))
-        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver) (goto On r)]
             [(FromUnobservedEnvironment)
@@ -1965,14 +1965,14 @@
   (define unobs-toggle-actor-wrong3
     (term
      (((Union [FromObserver]) (marked (addr 0 0) 0))
-      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver)
              (begin
                (send r (variant TurningOn))
                (goto On r))]
             [(FromUnobservedEnvironment) (goto Off r)]))
-        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver) (goto On r)]
             [(FromUnobservedEnvironment)
@@ -1983,14 +1983,14 @@
   (define unobs-toggle-actor-wrong4
     (term
      (((Union [FromObserver]) (marked (addr 0 0) 0))
-      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+      (((define-state (Off [r (Addr (Union [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver) (goto Off r)]
             [(FromUnobservedEnvironment)
              (begin
                (send r (variant TurningOn))
                (goto On r))]))
-        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) (m)
+        (define-state (On [r (Addr (Union [TurningOn] [TurningOff]))]) m
           (case m
             [(FromObserver) (goto On r)]
             [(FromUnobservedEnvironment)
@@ -2033,7 +2033,7 @@
   (define record-req-resp-actor
     (term
      (((Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]) (marked (addr 0 0) 0))
-      (((define-state (Always) (m)
+      (((define-state (Always) m
           (begin
             (send (: m dest) (: m msg))
             (goto Always))))
@@ -2041,7 +2041,7 @@
   (define record-req-wrong-resp-actor
     (term
      (((Record [dest (Addr (Union [A] [B]))] [msg (Union [A] [B])]) (marked (addr 0 0) 0))
-      (((define-state (Always) (m)
+      (((define-state (Always) m
           (begin
             (send (: m dest) (variant A))
             (goto Always))))
@@ -2062,7 +2062,7 @@
   (define static-response-let-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
+      (((define-state (Always [response-dest (Addr ,static-response-type)]) m
           (let ([new-r response-dest])
             (begin
               (send new-r (variant Ack 0))
@@ -2071,7 +2071,7 @@
   (define static-double-response-let-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (Always [response-dest (Addr ,static-response-type)]) (m)
+      (((define-state (Always [response-dest (Addr ,static-response-type)]) m
           (let ([new-r response-dest])
             (begin
               (send new-r (variant Ack 0))
@@ -2093,35 +2093,35 @@
   (define equal-actor-wrong1
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (A [dest (Addr ,static-response-type)]) (m)
+      (((define-state (A [dest (Addr ,static-response-type)]) m
           (begin
             (send dest (variant Ack 0))
             (case (= m 0)
               [(True) (goto A dest)]
               [(False) (goto B)])))
-        (define-state (B) (m) (goto B)))
+        (define-state (B) m (goto B)))
        (goto A ,static-response-dest)))))
   (define equal-actor-wrong2
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (A [dest (Addr ,static-response-type)]) (m)
+      (((define-state (A [dest (Addr ,static-response-type)]) m
           (begin
             (send dest (variant Ack 0))
             (case (= m 0)
               [(True) (goto B)]
               [(False) (goto A dest)])))
-        (define-state (B) (m) (goto B)))
+        (define-state (B) m (goto B)))
        (goto A ,static-response-dest)))))
     (define equal-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (A [dest (Addr ,static-response-type)]) (m)
+      (((define-state (A [dest (Addr ,static-response-type)]) m
           (begin
             (send dest (variant Ack 0))
             (case (= m 0)
               [(True) (goto B dest)]
               [(False) (goto A dest)])))
-        (define-state (B [dest (Addr ,static-response-type)]) (m)
+        (define-state (B [dest (Addr ,static-response-type)]) m
           (begin
             (send dest (variant Ack 0))
             (goto B dest))))
@@ -2145,7 +2145,7 @@
   (define loop-do-nothing-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (A) (m)
+      (((define-state (A) m
           (begin
             (for/fold ([folded-result 0])
                       ([i (list 1 2 3)])
@@ -2155,7 +2155,7 @@
   (define loop-send-unobs-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (A [r (Addr Nat)]) (m)
+      (((define-state (A [r (Addr Nat)]) m
           (begin
             (for/fold ([folded-result 0])
                       ([i (list 1 2 3)])
@@ -2165,7 +2165,7 @@
   (define send-before-loop-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (A) (r)
+      (((define-state (A) r
           (begin
             (send r 0)
             (for/fold ([folded-result 0])
@@ -2176,7 +2176,7 @@
   (define send-inside-loop-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (A) (r)
+      (((define-state (A) r
           (begin
             (for/fold ([folded-result 0])
                       ([r (list r)])
@@ -2186,7 +2186,7 @@
   (define send-after-loop-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (A) (r)
+      (((define-state (A) r
           (begin
             (for/fold ([folded-result 0])
                       ([i (list 1 2 3)])
@@ -2236,7 +2236,7 @@
   (define timeout-and-send-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
+      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) m
           (begin
             (send r (variant GotMessage))
             (goto A r))
@@ -2248,9 +2248,9 @@
   (define timeout-to-send-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
+      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) m
           (goto SendOnTimeout r))
-        (define-state (SendOnTimeout [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
+        (define-state (SendOnTimeout [r (Addr (Union (GotMessage) (GotTimeout)))]) m
           (begin
             (send r (variant GotMessage))
             (goto SendOnTimeout r))
@@ -2262,16 +2262,16 @@
   (define spawn-timeout-sender-actor
     (term
      ((Nat (marked (addr 0 0) 0))
-      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) (m)
+      (((define-state (A [r (Addr (Union (GotMessage) (GotTimeout)))]) m
           (begin
             (spawn 3 Nat (goto B)
-                   (define-state (B) (m)
+                   (define-state (B) m
                      (goto B)
                      [(timeout 5)
                       (begin
                         (send r (variant GotMessage))
                         (goto Done))])
-                   (define-state (Done) (m)
+                   (define-state (Done) m
                      (goto Done)))
             (goto A r))))
        (goto A ,timeout-response-address)))))
@@ -2299,7 +2299,7 @@
   (define static-response-actor2
     (term
      ((Nat (marked (addr 1 0) 1))
-      (((define-state (Always2 [response-dest (Addr ,static-response-type)]) (m)
+      (((define-state (Always2 [response-dest (Addr ,static-response-type)]) m
              (begin
                (send response-dest (variant Ack 0))
                (goto Always2 response-dest))))
@@ -2307,7 +2307,7 @@
   (define other-static-response-actor
     (term
      ((Nat (marked (addr 1 0) 1))
-      (((define-state (Always2 [response-dest (Addr ,static-response-type)]) (m)
+      (((define-state (Always2 [response-dest (Addr ,static-response-type)]) m
              (begin
                (send response-dest (variant Ack 0))
                (goto Always2 response-dest))))
@@ -2341,7 +2341,7 @@
   (define statically-delegating-responder-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (A [responder (Addr (Addr Nat))]) (m)
+      (((define-state (A [responder (Addr (Addr Nat))]) m
           (begin
             (send responder m)
             (goto A responder))))
@@ -2350,7 +2350,7 @@
   (define request-response-actor2
     (term
      (((Addr Nat) (marked (addr 1 0) 1))
-      (((define-state (Always) (response-target)
+      (((define-state (Always) response-target
           (begin
             (send response-target 0)
             (goto Always))))
@@ -2377,13 +2377,13 @@
   (define self-reveal-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
+      (((define-state (Init [r (Addr (Addr (Addr Nat)))]) x
           (goto Init r)
           [(timeout 5)
            (begin
              (send r (marked (addr 0 0)))
              (goto Running))])
-        (define-state (Running) (r)
+        (define-state (Running) r
           (begin
             (send r 1)
             (goto Running))))
@@ -2392,13 +2392,13 @@
   (define reveal-wrong-address-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
+      (((define-state (Init [r (Addr (Addr (Addr Nat)))]) x
           (goto Init r)
           [(timeout 5)
            (begin
              (send r (marked (addr 2 0)))
              (goto Running))])
-        (define-state (Running) (r)
+        (define-state (Running) r
           (begin
             (send r 1)
             (goto Running))))
@@ -2406,19 +2406,19 @@
   (define to-reveal-ignore-all-actor
     (term
      (((Addr Nat) (marked (addr 2 0) 2))
-      (((define-state (IgnoreAll) (r) (goto IgnoreAll)))
+      (((define-state (IgnoreAll) r (goto IgnoreAll)))
        (goto IgnoreAll)))))
 
   (define reveal-self-double-output-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Init [r (Addr (Addr (Addr Nat)))]) (x)
+      (((define-state (Init [r (Addr (Addr (Addr Nat)))]) x
           (goto Init r)
           [(timeout 5)
            (begin
              (send r (marked (addr 0 0)))
              (goto Running))])
-        (define-state (Running) (r)
+        (define-state (Running) r
           (begin
             (send r 1)
             (send r 1)
@@ -2450,14 +2450,14 @@
   (define echo-spawning-actor
     (term
      (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
-      (((define-state (Always) (response-target)
+      (((define-state (Always) response-target
           (begin
             (let ([child
                    (spawn
                     echo-spawn
                     (Addr Nat)
                     (goto EchoResponse)
-                    (define-state (EchoResponse) (echo-target)
+                    (define-state (EchoResponse) echo-target
                       (begin
                         (send echo-target 1)
                         (goto EchoResponse))))])
@@ -2469,14 +2469,14 @@
   (define double-response-spawning-actor
     (term
      (((Addr (Addr (Addr Nat))) (marked (addr 0 0)))
-      (((define-state (Always) (response-target)
+      (((define-state (Always) response-target
           (begin
             (let ([child
                    (spawn
                     double-response-spawn
                     (Addr Nat)
                     (goto DoubleResponse)
-                    (define-state (DoubleResponse) (echo-target)
+                    (define-state (DoubleResponse) echo-target
                       (begin
                         (send echo-target 1)
                         (send echo-target 1)
@@ -2518,13 +2518,13 @@
   (define unobs-fork-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Always [child-response (Addr (Addr Nat))] [never-use (Addr Nat)]) (m)
+      (((define-state (Always [child-response (Addr (Addr Nat))] [never-use (Addr Nat)]) m
           (let ([new-child
                  (spawn
                   child-loc
                   (Addr Nat)
                   (goto ChildAlways)
-                  (define-state (ChildAlways) (m)
+                  (define-state (ChildAlways) m
                     (begin
                       (send never-use 1)
                       (goto ChildAlways))))])
@@ -2568,13 +2568,13 @@
   (define spawn-and-retain
     (term
      (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
-      (((define-state (Always [maybe-child (Union [NoChild] [Child (Addr (Addr Nat))])]) (dest)
+      (((define-state (Always [maybe-child (Union [NoChild] [Child (Addr (Addr Nat))])]) dest
           (let ([new-child
                  (spawn
                   echo-spawn
                   (Addr Nat)
                   (goto EchoResponse)
-                  (define-state (EchoResponse) (echo-target)
+                  (define-state (EchoResponse) echo-target
                     (begin
                       (send echo-target 1)
                       (goto EchoResponse))))])
@@ -2592,13 +2592,13 @@
   (define spawn-and-retain-but-send-new
     (term
      (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
-      (((define-state (Always [maybe-child (Union [NoChild] [Child (Addr (Addr Nat))])]) (dest)
+      (((define-state (Always [maybe-child (Union [NoChild] [Child (Addr (Addr Nat))])]) dest
           (let ([new-child
                  (spawn
                   echo-spawn
                   (Addr Nat)
                   (goto EchoResponse)
-                  (define-state (EchoResponse) (echo-target)
+                  (define-state (EchoResponse) echo-target
                     (begin
                       (send echo-target 1)
                       (goto EchoResponse))))])
@@ -2629,19 +2629,19 @@
   (define spawn-self-revealing-echo
     (term
      (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
-      (((define-state (Always) (response-target)
+      (((define-state (Always) response-target
           (begin
             (spawn
              echo-spawn
              (Addr Nat)
              (goto Init response-target)
-             (define-state (Init [self-target (Addr (Addr (Addr Nat)))]) (response-target)
+             (define-state (Init [self-target (Addr (Addr (Addr Nat)))]) response-target
                (goto Init self-target)
                [(timeout 0)
                 (begin
                   (send self-target self)
                   (goto EchoResponse))])
-             (define-state (EchoResponse) (echo-target)
+             (define-state (EchoResponse) echo-target
                (begin
                  (send echo-target 1)
                  (goto EchoResponse))))
@@ -2676,12 +2676,12 @@
       (((define-state (Always [static-output (Addr ,static-response-type)]
                               [saved-internal (Union [None]
                                                      [First (Addr (Addr ,static-response-type))]
-                                                     [Second (Addr (Addr ,static-response-type))])]) (m)
+                                                     [Second (Addr (Addr ,static-response-type))])]) m
           (let ([new-child
                  (spawn child-loc
                         (Addr ,static-response-type)
                         (goto InternalAlways)
-                        (define-state (InternalAlways) (m)
+                        (define-state (InternalAlways) m
                           (begin
                             (send m (variant Ack 1))
                           (goto InternalAlways))))])
@@ -2711,12 +2711,12 @@
       (((define-state (Always [static-output (Addr ,static-response-type)]
                               [saved-internal (Union [None]
                                                      [First (Addr (Addr ,static-response-type))]
-                                                     [Second (Addr (Addr ,static-response-type))])]) (m)
+                                                     [Second (Addr (Addr ,static-response-type))])]) m
           (let ([new-child
                  (spawn child-loc
                         (Addr ,static-response-type)
                         (goto InternalAlways)
-                        (define-state (InternalAlways) (m)
+                        (define-state (InternalAlways) m
                           (begin
                             (send m (variant Ack 1))
                           (goto InternalAlways))))])
@@ -2759,18 +2759,18 @@
   (define self-send-responder-spawner
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Always) (dest)
+      (((define-state (Always) dest
           (begin
             (spawn child-loc
                    (Addr Nat)
                    (begin
                      (send self 1)
                      (goto AboutToSend dest))
-                   (define-state (AboutToSend [dest (Addr Nat)]) (m)
+                   (define-state (AboutToSend [dest (Addr Nat)]) m
                      (begin
                        (send dest 1)
                        (goto Done)))
-                   (define-state (Done) (m) (goto Done)))
+                   (define-state (Done) m (goto Done)))
             (goto Always))))
        (goto Always)))))
 
@@ -2786,7 +2786,7 @@
   (define (make-down-and-back-server child-behavior)
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Always [forwarding-server (Addr ,forwarding-type)]) (dest)
+      (((define-state (Always [forwarding-server (Addr ,forwarding-type)]) dest
           (begin
             (spawn child-loc ,@child-behavior)
             (goto Always forwarding-server))))
@@ -2796,13 +2796,13 @@
     (term
      (Nat
       (goto AboutToSend forwarding-server)
-      (define-state (AboutToSend [forwarding-server (Addr ,forwarding-type)]) (dummy)
+      (define-state (AboutToSend [forwarding-server (Addr ,forwarding-type)]) dummy
         (goto AboutToSend forwarding-server)
         [(timeout 0)
          (begin
            (send forwarding-server (record [result 1] [dest dest]))
            (goto Done))])
-      (define-state (Done) (dummy) (goto Done)))))
+      (define-state (Done) dummy (goto Done)))))
 
   (define self-send-forwarding-child
     (term
@@ -2810,16 +2810,16 @@
       (begin
         (send self 1)
         (goto AboutToSend forwarding-server))
-      (define-state (AboutToSend [forwarding-server (Addr ,forwarding-type)]) (trigger)
+      (define-state (AboutToSend [forwarding-server (Addr ,forwarding-type)]) trigger
         (begin
           (send forwarding-server (record [result 1] [dest dest]))
           (goto Done)))
-      (define-state (Done) (dummy) (goto Done)))))
+      (define-state (Done) dummy (goto Done)))))
 
   (define forwarding-server
     (term
      (((Record [result Nat] [dest (Addr Nat)]) (marked (addr 1 0) 1))
-      (((define-state (ServerAlways) (r)
+      (((define-state (ServerAlways) r
           (begin
             (send (: r dest) (: r result))
             (goto ServerAlways))))
@@ -2843,14 +2843,14 @@
   (define create-later-send-children-actor
     (term
      (((Addr (Addr Nat)) (marked (addr 1 0) 1))
-      (((define-state (Always [r (Addr Nat)]) (other-dest)
+      (((define-state (Always [r (Addr Nat)]) other-dest
           (begin
             (send other-dest
                   (spawn child-loc Nat
                          (goto Child1)
-                         (define-state (Child1) (dummy)
+                         (define-state (Child1) dummy
                            (goto Child2))
-                         (define-state (Child2) (dummy)
+                         (define-state (Child2) dummy
                            (begin
                              (send r (variant Ack 1))
                              (goto Child2)))))
@@ -2870,14 +2870,14 @@
   (define conflicts-only-test-actor
     (term
      (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
-      (((define-state (Always [maybe-forwarder (Union [None] [Forwarder (Addr (Addr Nat))])]) (dest)
+      (((define-state (Always [maybe-forwarder (Union [None] [Forwarder (Addr (Addr Nat))])]) dest
           (let ([forwarder
                  (case maybe-forwarder
                    [(None)
                     ;; The forwarder actor takes any address it's given and sends a message to it
                     (spawn forwarder-loc (Addr Nat)
                                   (goto Forwarding)
-                                  (define-state (Forwarding) (r)
+                                  (define-state (Forwarding) r
                                     (begin
                                       (send r 1)
                                       (goto Forwarding))))]
@@ -2890,7 +2890,7 @@
                     (spawn surfaced-loc
                            (Addr Nat)
                            (goto Responding)
-                           (define-state (Responding) (r)
+                           (define-state (Responding) r
                              (begin
                                (send forwarder r)
                                (goto Responding)))))
@@ -2907,22 +2907,22 @@
   (define worker-spawner
     (term
      (((Addr (Addr (Addr Nat))) (marked (addr 0 0) 0))
-      (((define-state (MasterLoop) (child-dest)
+      (((define-state (MasterLoop) child-dest
          (begin
            (spawn child-loc
                   (Addr Nat)
                   (goto Init)
-                  (define-state (Init) (m)
+                  (define-state (Init) m
                     (goto Init)
                     [(timeout 0)
                      (begin
                        (send child-dest self)
                        (goto Running))])
-                  (define-state (Running) (m)
+                  (define-state (Running) m
                     (begin
                       (send m 0)
                       (goto Done)))
-                  (define-state (Done) (m)
+                  (define-state (Done) m
                     (goto Done)))
            (goto MasterLoop))))
        (goto MasterLoop)))))
@@ -2951,13 +2951,13 @@
   (define ping-coercion-spawner
     (term
      (((Addr (Addr (Union [Ping (Addr (Union [Pong]))]))) (marked (addr 0 0) 0))
-      (((define-state (Always) (dest)
+      (((define-state (Always) dest
           (begin
             (send dest
                  (spawn 1
                         (Union [Ping (Addr (Union [Pong]))] [InternalOnly])
                         (goto Ready)
-                        (define-state (Ready) (msg)
+                        (define-state (Ready) msg
                           (begin
                             (case msg
                               [(Ping response-dest) (send response-dest (variant Pong))]
@@ -2991,7 +2991,7 @@
   ;; external message is never sent, the obligation is never fulfilled.
   (define new-spawn-impl-config
     (term (([(addr 1 0)
-             (((define-state (Start [target (Addr Nat)]) (m)
+             (((define-state (Start [target (Addr Nat)]) m
                  (case m
                    [(FromEnv)
                     (let ([parent (marked (addr 1 0))])
@@ -2999,19 +2999,19 @@
                         (spawn child-loc
                                (Addr (Union [FromChild]))
                                (goto Waiting)
-                               (define-state (Waiting) (m)
+                               (define-state (Waiting) m
                                  (goto Waiting)
                                  [(timeout 5)
                                   (begin
                                     (send parent (variant FromChild))
                                     (goto Done))])
-                               (define-state (Done) (m) (goto Done)))
+                               (define-state (Done) m (goto Done)))
                         (goto Start target)))]
                    [(FromChild)
                     (begin
                       (send target 1)
                       (goto ParentDone))]))
-               (define-state (ParentDone) (m) (goto ParentDone)))
+               (define-state (ParentDone) m (goto ParentDone)))
               (goto Start (marked (addr (env Nat) 2) 2)))])
            ()
            (((Union [FromEnv]) (marked (addr 1 0) 1))))))
@@ -3033,14 +3033,14 @@
   (define loop-spawn-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (Always) (response-target)
+      (((define-state (Always) response-target
           (begin
             (for/fold ([x 0])
                       ([y (list 1)])
               (spawn child
                      Nat
                      (goto ChildAlways)
-                     (define-state (ChildAlways) (x)
+                     (define-state (ChildAlways) x
                        (goto ChildAlways)
                        ([timeout 0]
                         (begin
@@ -3067,9 +3067,9 @@
   (define send-in-next-state-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (NoAddr) (response-target)
+      (((define-state (NoAddr) response-target
           (goto HaveAddr response-target))
-        (define-state (HaveAddr [response-target (Addr Nat)]) (x)
+        (define-state (HaveAddr [response-target (Addr Nat)]) x
           (begin
             (send response-target 0)
             (goto Done))
@@ -3077,7 +3077,7 @@
            (begin
              (send response-target 0)
              (goto Done))])
-        (define-state (Done) (x) (goto Done)))
+        (define-state (Done) x (goto Done)))
        (goto NoAddr)))))
 
   (test-valid-actor? send-in-next-state-actor)
@@ -3090,7 +3090,7 @@
   (define escape-actor
     (term
      (((Record [a (Addr Nat)] [b (Addr (Addr Nat))]) (marked (addr 0 0) 0))
-      (((define-state (Always) (m)
+      (((define-state (Always) m
            (begin
              (send (: m b) (: m a))
              (goto Always))))
@@ -3147,15 +3147,15 @@
   (define send-after-timeout-actor
     (term
      (((Addr Nat) (marked (addr 0 0) 0))
-      (((define-state (WaitingForRequest) (m)
+      (((define-state (WaitingForRequest) m
           (goto AboutToSend m))
-        (define-state (AboutToSend [dest (Addr Nat)]) (m)
+        (define-state (AboutToSend [dest (Addr Nat)]) m
           (goto AboutToSend dest)
           [(timeout 5)
            (begin
              (send dest 1)
              (goto Done))])
-        (define-state (Done) (m) (goto Done)))
+        (define-state (Done) m (goto Done)))
        (goto WaitingForRequest)))))
 
   (define reply-to-first-request-spec
@@ -3179,7 +3179,7 @@
   (define never-respond-with-self-actor
     (term
      (((Addr (Addr Nat)) (marked (addr 0 0) 0))
-      (((define-state (Always) (r) (goto Always)))
+      (((define-state (Always) r (goto Always)))
        (goto Always)))))
 
   (define new-self-obligations-spec
@@ -3245,7 +3245,7 @@
       null
       (term
        ([[Nat (marked (addr 0 0))]
-         (((define-state (Always [dest (Addr (Record [a (Union [A])] [b (Union [B])]))]) (m)
+         (((define-state (Always [dest (Addr (Record [a (Union [A])] [b (Union [B])]))]) m
              (goto Always dest)
              [(timeout 5)
               (begin

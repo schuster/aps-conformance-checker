@@ -931,7 +931,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; States
 
- (define-state (Init) (m)
+ (define-state (Init) m
    (case m
      [(Config config)
       (let ([metadata (reset-election-deadline/follower timer-manager self (initial-metadata))])
@@ -953,7 +953,7 @@
  (define-state (Follower [recently-contacted-by-leader MaybeLeader]
                          [metadata StateMetadata]
                          [replicated-log ReplicatedLog]
-                         [config ClusterConfiguration]) (m)
+                         [config ClusterConfiguration]) m
    (case m
      [(ClientMessage client command)
       (send client (LeaderIs recently-contacted-by-leader))
@@ -1012,7 +1012,7 @@
 
  (define-state (Candidate [m ElectionMeta]
                           [replicated-log ReplicatedLog]
-                          [config ClusterConfiguration]) (message)
+                          [config ClusterConfiguration]) message
    (case message
      [(ClientMessage client command)
       (send client (LeaderIs (NoLeader)))
@@ -1114,7 +1114,7 @@
                        [next-index (Dict RaftId Nat)]
                        [match-index (Dict RaftId Nat)]
                        [replicated-log ReplicatedLog]
-                       [config ClusterConfiguration]) (message)
+                       [config ClusterConfiguration]) message
    (case message
      [(ClientMessage client command)
       (let* ([entry (Entry command

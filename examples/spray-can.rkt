@@ -178,7 +178,7 @@
   (Sink)
   ()
   (goto Sink)
-  (define-state (Sink) (m) (goto Sink)))
+  (define-state (Sink) m (goto Sink)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Timer
@@ -197,12 +197,12 @@
            [expiration-target (Addr ExpirationMessage)])
     ()
     (goto Stopped)
-    (define-state (Stopped) (m)
+    (define-state (Stopped) m
       (case m
         [(Stop) (goto Stopped)]
         [(Start timeout-in-milliseconds)
          (goto Running timeout-in-milliseconds)]))
-    (define-state/timeout (Running [timeout-in-milliseconds Nat]) (m)
+    (define-state/timeout (Running [timeout-in-milliseconds Nat]) m
       (case m
         [(Stop) (goto Stopped)]
         [(Start new-timeout-in-milliseconds)
@@ -224,13 +224,13 @@
   (let ()
     (send app-layer (IncomingRequest request self))
     (goto AwaitingAppResponse))
-  (define-state/timeout (AwaitingAppResponse) (m)
+  (define-state/timeout (AwaitingAppResponse) m
     (send tcp-connection (Write m (spawn (write-response-EVICT ,desugared-sink-type ()) Sink)))
     (goto Done)
     (timeout ,RESPONSE-WAIT-TIME-IN-MS
       ;; don't notify the application layer here: just assume they'll watch for the stop notification
       (goto Done)))
-  (define-state (Done) (m) (goto Done)))
+  (define-state (Done) m (goto Done)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; HttpServerConnection
@@ -264,7 +264,7 @@
     (send app-listener (HttpConnected session-id self))
     (goto AwaitingRegistration))
 
-  (define-state/timeout (AwaitingRegistration) (m)
+  (define-state/timeout (AwaitingRegistration) m
     (case m
       [(ReceivedData data)
        ;; this shouldn't happen here yet, because we haven't registered with TCP
@@ -281,7 +281,7 @@
       (send tcp-session (Close (spawn (close-session-EVICT ,desugared-sink-type ()) Sink)))
       (goto Closed)))
 
-  (define-state (Running [held-data (List Byte)] [handler (Addr IncomingRequest)]) (m)
+  (define-state (Running [held-data (List Byte)] [handler (Addr IncomingRequest)]) m
     (case m
       [(ReceivedData data)
        (case (find-request-tail data)
@@ -304,7 +304,7 @@
             `(goto Running held-data new-handler)
             `(goto Running held-data handler))]))
 
-  (define-state (Closed) (m) (goto Closed)))
+  (define-state (Closed) m (goto Closed)))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; HttpListener
@@ -331,7 +331,7 @@
     (send bind-timer (Start ,BIND-WAIT-TIME-IN-MS))
     (goto Binding bind-timer))
 
-  (define-state (Binding [bind-timer (Addr TimerCommand)]) (m)
+  (define-state (Binding [bind-timer (Addr TimerCommand)]) m
     (case m
       ;; From TCP
       [(CommandFailed)
@@ -363,7 +363,7 @@
        (goto BindingAborted bind-timer (list commander))]))
 
   (define-state (BindingAborted [bind-timer (Addr TimerCommand)]
-                                [commanders (List (Addr HttpUnbindResponse))]) (m)
+                                [commanders (List (Addr HttpUnbindResponse))]) m
     (case m
       ;; From TCP
       [(CommandFailed)
@@ -397,7 +397,7 @@
        (goto BindingAborted bind-timer (cons commander commanders))]))
 
   (define-state (Unbinding [unbind-timer (Addr TimerCommand)]
-                           [commanders (List (Addr HttpUnbindResponse))]) (m)
+                           [commanders (List (Addr HttpUnbindResponse))]) m
     (case m
       ;; From TCP
       [(CommandFailed)
@@ -431,7 +431,7 @@
       ;; From Application Layer
       [(HttpUnbind commander)
        (goto Unbinding unbind-timer (cons commander commanders))]))
-  (define-state (Connected [tcp-listener (Addr TcpListenerCommand)]) (m)
+  (define-state (Connected [tcp-listener (Addr TcpListenerCommand)]) m
     (case m
       ;; From TCP
       [(CommandFailed)
@@ -456,7 +456,7 @@
       ;; From Application Layer
       [(HttpUnbind unbind-commander)
        (unbind tcp-listener (list unbind-commander))]))
-  (define-state (Closed) (m)
+  (define-state (Closed) m
     (case m
       ;; From TCP
       [(CommandFailed) (goto Closed)]
@@ -478,7 +478,7 @@
   (HttpManager [tcp (Addr TcpCommand)])
   ()
   (goto Managing)
-  (define-state (Managing) (m)
+  (define-state (Managing) m
     (case m
       [(HttpBind port commander listener)
        (spawn listener HttpListener port commander listener tcp)
@@ -497,11 +497,11 @@
                   [tcp (Addr TcpWriteOnlyCommanpd)])
         ()
         (goto Init)
-        (define-state/timeout (Init) (m) (goto Init)
+        (define-state/timeout (Init) m (goto Init)
           (timeout 0
                    (spawn request-handler RequestHandler (list 1 2 3) app-layer tcp)
                    (goto Done)))
-        (define-state (Done) (m) (goto Done)))
+        (define-state (Done) m (goto Done)))
       (let-actors ([launcher (spawn 1 Launcher app-layer tcp)])))))
 
 (define connection-program
@@ -513,12 +513,12 @@
         (Launcher [app-listener (Addr HttpListenerEvent)] [tcp-session (Addr TcpSessionCommand)])
         ()
         (goto Init)
-        (define-state/timeout (Init) (m) (goto Init)
+        (define-state/timeout (Init) m (goto Init)
           (timeout 0
                    (let ([session-id (SessionId (InetSocketAddress 1234 500) 80)])
                      (spawn connection HttpServerConnection session-id app-listener tcp-session)
                      (goto Done))))
-        (define-state (Done) (m) (goto Done)))
+        (define-state (Done) m (goto Done)))
       (let-actors ([launcher (spawn 1 Launcher app-listener tcp-session)])))))
 
 (define listener-program
@@ -534,11 +534,11 @@
                   [tcp (Addr TcpCommand)])
         ()
         (goto Init)
-        (define-state/timeout (Init) (m) (goto Init)
+        (define-state/timeout (Init) m (goto Init)
           (timeout 0
                    (spawn listener HttpListener 80 bind-commander app-listener tcp)
                    (goto Done)))
-        (define-state (Done) (m) (goto Done)))
+        (define-state (Done) m (goto Done)))
       (let-actors ([launcher (spawn 1 Launcher bind-commander app-listener tcp)])))))
 
 (define (make-manager-program bug1 bug2)
