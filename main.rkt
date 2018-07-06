@@ -50,20 +50,24 @@
                                     #:use-widen? [use-widen? #t]
                                     #:memoize-eval-handler? [memoize-eval-handler? #t]
                                     #:use-eviction? [use-eviction? #t]
+                                    #:use-detect-dead-observables? [use-detect-dead-observables? #t]
                                     #:stats-directory [stats-directory #f])
   (->* (csa-valid-program? aps-valid-spec?)
        (#:use-widen? boolean?
         #:memoize-eval-handler? boolean?
         #:use-eviction? boolean?
+        #:use-detect-dead-observables? boolean?
         #:stats-directory (or/c boolean? string?))
        boolean?)
   (parameterize ([USE-WIDEN? use-widen?]
                  [MEMOIZE-EVAL-HANDLER? memoize-eval-handler?]
-                 [USE-EVICTION? use-eviction?])
+                 [USE-EVICTION? use-eviction?]
+                 [USE-DETECT-DEAD-OBSERVABLES? use-detect-dead-observables?])
     (printf "OPTIMIZATIONS:\n")
     (printf "Widening: ~s\n" use-widen?)
     (printf "Memoize eval-handler: ~s\n" memoize-eval-handler?)
-    (printf "Eviction: ~s\n\n" use-eviction?)
+    (printf "Eviction: ~s\n" use-eviction?)
+    (printf "Dead-observable detection: ~s\n\n" use-detect-dead-observables?)
     (match-define (list impl-config spec-config) (instantiate-configs program specification))
     (check-conformance/config impl-config spec-config #:stats-directory stats-directory)))
 
@@ -290,7 +294,8 @@
          ;; been met, and the impl doesn't even know about the obligation addresses anymore, then the
          ;; impl is guaranteed to conform to the spec. We can ignore any further steps and just call
          ;; this a related pair.
-         [(and (aps#-completed-no-transition-psm? s)
+         [(and (USE-DETECT-DEAD-OBSERVABLES?)
+               (aps#-completed-no-transition-psm? s)
                (let ([known-markers (markers-in i)])
                  (for/and ([relevant-external (aps#-psm-mon-externals s)])
                    (not (member relevant-external known-markers)))))

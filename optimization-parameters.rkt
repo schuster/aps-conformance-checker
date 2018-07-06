@@ -5,9 +5,11 @@
 (provide
  USE-WIDEN?
  MEMOIZE-EVAL-HANDLER?
- USE-EVICTION?)
+ USE-EVICTION?
+ USE-DETECT-DEAD-OBSERVABLES?)
 
 (define USE-WIDEN? (make-parameter #t))
 (define MEMOIZE-EVAL-HANDLER? (make-parameter #t))
 (define USE-EVICTION? (make-parameter #t))
+(define USE-DETECT-DEAD-OBSERVABLES? (make-parameter #t))
 
