@@ -3130,7 +3130,7 @@
 ;;   (test-equal? "type-join on recs with different names"
 ;;     (term (type-join (rec A (Addr (Union [M A])))
 ;;                      (rec B (Addr (Union [N B])))))
-;;     ;; TODO: I think this test is wrong
+;;     ;; NOTE: I think this test is wrong
 ;;     (term (rec A1 (Addr (Union)))))
 
 ;;   (test-exn "type-join on recs with different numbers of 'unfoldings'"
@@ -4090,7 +4090,7 @@
             [else 'not-gteq])])])))
 
 (module+ test
-  ;; TODO: update these tests
+  ;; old tests
   ;; (define spawn-behavior-change-test-config
   ;;   (redex-let csa# ([i#
   ;;                     (term

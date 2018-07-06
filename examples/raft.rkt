@@ -8,7 +8,7 @@
  make-raft-spec
  raft-spec)
 
-;; TODO: refactor this program to use records like those in akka-raft
+;; NOTE: ideally, I'd refactor this program to use records like those in akka-raft
 
 (require
  redex/reduction-semantics
@@ -112,7 +112,6 @@
           (Timeout Nat)
           (SendHeartbeatTimeouts Nat))))
 
-;; TODO: write a check that alerts for any underscores in the spec (b/c those are invalid)
 (define (make-raft-spec bug1)
   (term
    (specification (receptionists [raft-server ,desugared-raft-message-type] [raft-server-unobs ,unobserved-interface-type])
@@ -143,15 +142,12 @@
        [(variant AppendEntries * * * * * (record [id *] [address leader]) *) ->
         ([obligation leader (variant AppendSuccessful * * *)])
         (goto Running)]
-       ;; TODO: break these out into separate states so that the append retry can only happen when in
-       ;; the leader state (and otherwise the leader must fall back to being a follower)
        [(variant AppendRejected * * (record [id *] [address member])) -> () (goto Running)]
        ;; APS PROTOCOL BUG: to replicate, comment out this case that sends an AppendEntries back (I
        ;; left this case out the first time around)
        ,@(if bug1
              '()
              '([(variant AppendRejected * * (record [id *] [address member])) ->
-                 ;; TODO: should I require that the self address is in this response?
                  ([obligation member (variant AppendEntries * * * * * * *)])
                  (goto Running)]))
        [(variant AppendSuccessful * * *) -> () (goto Running)]))))
@@ -165,11 +161,9 @@
 
 (define-type Unit (Record))
 (define-type Duration Nat) ; number of seconds
-;; TODO: move these into the core language
 (define-variant Boolean (True) (False))
 (define-constant true (variant True))
 (define-constant false (variant False))
-;; TODO: actually define Int
 (define-type Int Nat)
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -182,7 +176,7 @@
 
 (define-variant MaybeDictResult
   (Nothing)
-  (Just [val Nat])) ; TODO: come up with an accurate type
+  (Just [val Nat])) ; technically a type hack; doesn't matter for the desugaring anyway
 
 ;; ---------------------------------------------------------------------------------------------------
 
@@ -779,8 +773,6 @@
           [else 0])
         (replicated-log-commit rep-log (: entry index)))))
 
-  ;; TODO: consider making AppendEntries into a record to remove these long param lists and better
-  ;; match akka-raft
   (define-function (append-entries [term Nat]
                                    [prev-log-term Nat]
                                    [prev-log-index Nat]
@@ -1030,7 +1022,7 @@
         [(grant-vote?/candidate m replicated-log term candidate last-log-term last-log-index)
          (send (unfold ,desugared-raft-message-address-type (: candidate address))
                (VoteCandidate term self-id))
-         ;; TODO: (maybe akka-raft bug): this seems wrong that we stay in candidate instead of
+         ;; (maybe akka-raft bug): this seems wrong that we stay in candidate instead of
          ;; going to Follower. Some test should probably break this
          (goto Candidate (with-vote-for m term candidate) replicated-log config)]
         [else
@@ -1058,7 +1050,7 @@
               ;; initializeLeaderState here
               (let ([members (: config members)])
                 (let ([next-index
-                       ;; TODO: is the +1 here a correction for an akka-raft bug? (and same for the
+                       ;; is the +1 here a correction for an akka-raft bug? (and same for the
                        ;; lack of a -1 for match-index below)
                        (log-index-map-initialize members
                                                  (+ (replicated-log-last-index replicated-log) 1))]
@@ -1083,15 +1075,6 @@
       (let ([leader-is-ahead (>= term (: m current-term))])
         (cond
           [leader-is-ahead
-           ;; TODO: instead of doing the call to append-entries and
-           ;; the let, just do this self-send and Follower goto
-           ;; (send self msg)
-           ;; (let ([m (reset-election-deadline/candidate timer-manager self m)])
-           ;;   (goto Follower (Just leader-client)
-           ;;                         (for-follower/candidate m)
-           ;;                         replicated-log
-           ;;                         config))
-           ;; TODO: remove this code; replace with above
            (let ([recently-contacted-by-leader (JustLeader leader-client)])
              (append-entries term
                              prev-log-term
@@ -1169,12 +1152,6 @@
       (cond
         [(> term (: m current-term))
          (stop-heartbeat)
-         ;; TODO: do this self-send and step-down instead of the
-         ;; code below that copies the Follower code
-         ;;
-         ;; (send self msg)
-         ;; (step-down m replicated-log config)
-         ;; TODO: remove this entire let block
          (let ([m (reset-election-deadline/leader timer-manager self m)])
            (let ([recently-contacted-by-leader (JustLeader leader-client)])
              (append-entries term

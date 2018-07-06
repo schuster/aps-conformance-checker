@@ -150,7 +150,6 @@
        (send lim (StartTone (Dial)))
        (goto GettingFirstDigit)]
       [(Seize peer)
-       ;; TODO: need an unfold here
        (send (: peer address) (Seized))
        (send lim (StartRing))
        (goto RingingBSide peer)]

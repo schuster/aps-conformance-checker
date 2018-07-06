@@ -541,7 +541,6 @@
           (define-type ,T ,[τ])
           ,PI ...
           (,let-actors-kw ([,x3 ,e3] ...) ,x4 ...))
-         ;; TODO: do something more defensive for hash overwrites
          (hash-set! aliases-so-far T τ)
          (Prog (with-output-language (csa/inlined-records Prog)
                  `(,program-kw (,receptionists-kw [,x1 ,τ1] ...) (,externals-kw [,x2 ,τ2] ...)
@@ -855,60 +854,9 @@
         (match (hash-ref defs-so-far a #f)
           [#f (error 'inline-actors "Could not find match for actor ~s\n" a)]
           [(actor-record type formals formal-types body state-defs)
-           ;; TODO: do I need to rename variables here at all?
            ;; `(spawn (goto S-Bad1))
            `(let ([,formals ,e] ...) (spawn ,l ,type ,body ,state-defs ...))
-           ])
-
-        ;; ,spawn-exp
-        ;; (SpawnExp spawn-exp defs-so-far)
-        ]
-       ;; [(goto ,s ,[e0 defs-so-far -> e] ...)
-       ;;  `(goto ,s ,e)]
-       ;; [(send ,[e1 defs-so-far -> e11] ,[e2 defs-so-far e22])
-       ;;  `(send ,e1 ,e2)]
-       ;; [(begin ,[e0 defs-so-far])]
-
-       ;;        n
-       ;; b
-       ;; x
-       ;; (goto s e ...)
-       ;; (send e1 e2)
-       ;; spawn-exp
-       ;; (begin e1 e* ...)
-       ;; (f e ...)
-       ;; ;; (po e ...)
-       ;; (+ e ...)
-       ;; (- e ...)
-       ;; (let ([x e] ...) e2)
-       ;; (let* ([x e] ...) e2)
-
-       )
-  ;; (SpawnExp : SpawnExp (spawn-exp defs-so-far) -> SpawnExp ()
-  ;;      [(spawn ,a ,[Exp : e0 defs-so-far -> e] ...)
-  ;;       (match (hash-ref defs-so-far a)
-  ;;         [#f (error 'inline-actors "Could not find match for actor ~s\n" a)]
-  ;;         [(actor-record formals state-defs body)
-  ;;          ;; TODO: do I need to rename variables here at all?
-  ;;          ;; `(spawn (goto S-Bad1))
-  ;;          `(let (;; [,formals ,e] ...
-  ;;                 ) (spawn ,state-defs ... ,body))
-  ;;          ])]
-  ;;      [else "error in spawnexp"])
-
-  ;; TODO: figure out why this processor is necessary at all
-  ;; (SpawnExp2 : SpawnExp (spawn-exp) -> SpawnExp ()
-  ;;            [(spawn ,a ,e ...)
-  ;;             (error "this should never happen")
-
-  ;;       ;; (match (findf (lambda (rec) (eq? a (actor-recod-name rec))) defs-so-far)
-  ;;       ;;   [#f (error 'inline-actors "Could not find match for actor ~s\n" a)]
-  ;;       ;;   [(actor-record formals state-defs body)
-  ;;       ;;    ;; TODO: do I need to rename variables here at all?
-  ;;       ;;    `(let ([,formals ,e] ...) (spawn ,state-defs ... ,body))])
-  ;;            ]
-  ;; )
-
+           ])])
   ;; BUG: (?): shouldn't this be the default init statement?
   (Prog P (hash)))
 

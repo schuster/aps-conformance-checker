@@ -15,9 +15,6 @@
 ;; machine terminates. Otherwise, the handshake actor has the service create a new session and
 ;; auth-token, which are eventually returned to the user along with the server's address.
 
-;; TODO: maybe make a second version of this protocol that locks up the requester (will require some
-;; new tests to show the difference in the protocol)
-
 (provide
  authN-program
  authN-specification)
@@ -115,8 +112,6 @@
       ;; send/receive exactly once, for several messages in this sequence
       (send server (GetSessionInternal auth-token self))
       (goto WaitingForMaybeSession))
-    ;; TODO: try writing this in a different way where each stage gets a new actor, so as to avoid
-    ;; lots of the "this should never happen" messages
 
     ;; IDEA: with some sort of linear type system, we could do a lightweight typestate-like thing that
     ;; allows us to ignore certain messages once they've been received (because we know the only

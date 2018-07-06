@@ -345,7 +345,6 @@
     ;;   (send job-manager (RegisterTaskManager my-id 2 self))
     ;;   (goto AwaitingRegistration idle-runners))
     )
-  ;; TODO: fix type on idle-runners
   (define-state (Running [idle-runners (List (Addr TaskRunnerInput))]
                          [busy-runners (List BusyRunner)]) (m)
     (case m
