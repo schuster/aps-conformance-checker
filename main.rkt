@@ -582,7 +582,7 @@
   (match-define (list evicted-i evicted-s eviction-rename-map)
     (if (USE-EVICTION?)
         (evict-pair (config-pair-impl-config pair) (config-pair-spec-config pair))
-        (list (config-pair-impl-config pair) (config-pair-spec-config pair))))
+        (list (config-pair-impl-config pair) (config-pair-spec-config pair) null)))
   (display-step-line "Splitting a specification config")
   (define spec-config-components (split-psm evicted-s))
   ;; NOTE: unmark is built into blur here to avoid the performance penalty in traversing the AST twice
