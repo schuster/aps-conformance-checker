@@ -14,16 +14,18 @@
 
 (define ping-spec
   (quasiquote
-   (specification (receptionists [ping-server (Addr (Variant [Pong]))]) (externals)
+   (specification
      (mon-receptionist ping-server)
+     (mon-externals)
      (goto Always)
      (define-state (Always)
        [r -> [obligation r *] (goto Always)]))))
 
 (define no-send-ping-spec
   (quasiquote
-   (specification (receptionists [ping-server (Addr (Variant [Pong]))]) (externals)
+   (specification
      (mon-receptionist ping-server)
+     (mon-externals)
      (goto Always)
      (define-state (Always)
        [r -> (goto Always)]))))

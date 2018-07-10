@@ -135,8 +135,9 @@
       ))
 
   (define manager-spec
-    `(specification (receptionists [user-api ,ManagerUserAPI] [sys-api ,ManagerSysAPI]) (externals)
+    `(specification
        (mon-receptionist user-api)
+       (mon-externals)
        (goto Managing)
        (define-state (Managing)
          [(variant MakeProc resp mdest) -> (goto Managing)]

@@ -1187,8 +1187,9 @@
 ;; Specification
 
 (define task-manager-spec
-  `(specification (receptionists) (externals [job-manager ,desugared-tm-to-jm-type])
+  `(specification
      no-mon-receptionist
+     (mon-externals job-manager)
      (goto Init job-manager)
      (define-state (Init job-manager)
        [free ->
@@ -1241,10 +1242,9 @@
       [free -> [obligation dest (variant JobResultFailure)] (goto SendAnytime dest)])))
 
 (define job-manager-client-pov-spec
-  `(specification (receptionists [job-manager ,desugared-job-manager-command]
-                                 [job-manager-unobs (Variant [TaskManagerTerminated Nat])])
-                  (externals)
+  `(specification
      (mon-receptionist job-manager)
+     (mon-externals)
      (goto Running)
      (define-state (Running)
        [(variant CancelJob * dest) ->
@@ -1264,10 +1264,9 @@
       [free -> [obligation tm (variant CancelTask * *)] (goto SubmitOrCancelAnytime tm)])))
 
 (define job-manager-tm-pov-spec
-  `(specification (receptionists [job-manager ,desugared-tm-to-jm-type]
-                                 [job-manager-unobs (Variant ,@(cdr desugared-job-manager-command) [TaskManagerTerminated Nat])])
-                  (externals)
+  `(specification
      (mon-receptionist job-manager)
+     (mon-externals)
      (goto Running)
      (define-state (Running)
        [(variant RequestNextInputSplit * dest) ->

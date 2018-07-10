@@ -360,11 +360,9 @@
 
 ;; Specification from POV of another phone
 (define pots-spec
-  `(specification (receptionists [controller ,desugared-controller-message-type]
-                                 [controller-unobs ,desugared-controller-message-type])
-                  (externals [lim ,desugared-lim-message-type]
-                             [analyzer ,desugared-analyzer-message-type])
+  `(specification
      (mon-receptionist controller)
+     (mon-externals)
      (goto Idle)
 
      (define-state (Idle)

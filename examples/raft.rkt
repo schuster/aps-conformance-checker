@@ -114,9 +114,9 @@
 
 (define (make-raft-spec bug1)
   (term
-   (specification (receptionists [raft-server ,desugared-raft-message-type] [raft-server-unobs ,unobserved-interface-type])
-                  (externals)
+   (specification
      (mon-receptionist raft-server)
+     (mon-externals)
      (goto Init)
      (define-state (Init)
        [free -> (goto Running)]

@@ -496,8 +496,9 @@
                  (Addr ,desugared-refactor-result))))
 
 (define ensime-project-spec
-  `(specification (receptionists [project ,desugared-project-input]) (externals)
+  `(specification
      (mon-receptionist project)
+     (mon-externals)
      (goto AwaitingConnectionInfoReq)
      (define-state (AwaitingConnectionInfoReq)
        [(variant ConnectionInfoReq s) -> [obligation s (variant ConnectionInfo)] (goto HandleRequests)]

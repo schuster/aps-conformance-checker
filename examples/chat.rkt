@@ -317,8 +317,9 @@
        (goto ServerAlways)])))
 
 (define chat-spec
-  `(specification (receptionists [auth ,desugared-auth-command] [unobs-auth AuthCommand]) (externals)
+  `(specification
      (mon-receptionist auth)
+     (mon-externals)
      (goto AuthAlways)
      (define-state (AuthAlways)
        [(variant LogIn * * callback) ->

@@ -263,8 +263,9 @@
 ;; * if succeed, returned address responds to pings
 
 (define authN-specification
-  `(specification (receptionists [guard ,desugared-GetSessionType]) (externals)
+  `(specification
      (mon-receptionist guard)
+     (mon-externals)
      (goto Ready)
      (define-state (Ready)
        [(variant GetSession * reply-to) ->
@@ -276,14 +277,15 @@
 ;; Alternative Specifications
 
 (define worker-specification
-  `(specification (receptionists [worker ,desugared-AuthenticateType])
-                  (externals [reply-to ,desugared-GetSessionResultType])
+  `(specification
      (mon-receptionist worker)
+     (mon-externals)
      ,@worker-spec-behavior))
 
 (define server-specification
-  `(specification (receptionists [server ,desugared-SessionCommand]) (externals)
+  `(specification
      (mon-receptionist server)
+     (mon-externals)
      ,@server-spec-behavior))
 
 ;; ---------------------------------------------------------------------------------------------------

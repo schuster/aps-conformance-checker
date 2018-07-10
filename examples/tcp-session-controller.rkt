@@ -1325,22 +1325,9 @@
                            [payload *])))]))
 
 (define (make-session-wire-spec bug4)
-  `(specification (receptionists
-                   [session (Variant (OrderedTcpPacket ,desugared-tcp-packet-type))]
-                   [session-unobs (Variant
-                                   (Register (Addr ,desugared-tcp-session-event))
-                                   (Write (List Nat) (Addr ,desugared-write-response))
-                                   (Close (Addr (Variant [CommandFailed] [Closed])))
-                                   (ConfirmedClose (Addr (Variant [CommandFailed] [ConfirmedClosed])))
-                                   (Abort (Addr (Variant [CommandFailed] [Aborted])))
-                                   (InternalAbort)
-                                   (TheFinSeq Nat))])
-                  (externals [receive-buffer ,desugared-receive-buffer-command]
-                             [send-buffer ,desugared-send-buffer-command]
-                             [status-updates ,desugared-connection-status]
-                             [close-notifications
-                              (Variant [SessionCloseNotification ,desugared-session-id])])
+  `(specification
      (mon-receptionist session)
+     (mon-externals send-buffer)
      (goto SynSent send-buffer)
      (define-state (SynSent send-buffer)
        ;; APS PROTOCOL BUG: to replicate, remove from ANY of the following states the clause that

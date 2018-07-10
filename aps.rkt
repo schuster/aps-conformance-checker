@@ -25,9 +25,8 @@
 (define-extended-language aps
   csa-eval
   (spec
-   (specification (receptionists [x_rec τ] ...)
-                  (externals [x_ext τ] ...)
-                  mr
+   (specification mr
+                  (mon-externals x ...)
                   (goto φ x ...)
                   Φ ...))
   ;; monitored receptionist clause
@@ -179,10 +178,7 @@
                              [b (let () (spawn 2 (Record) (goto S2)))]
                              [c (let () (spawn 3 Nat      (goto S3)))])
                             a b)))
-    (define the-spec
-      `(specification (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Variant)])
-                      no-mon-receptionist
-                      (goto S1)))
+    (define the-spec `(specification no-mon-receptionist (mon-externals) (goto S1)))
     (check-true (redex-match? csa-eval P the-prog))
     (check-true (redex-match? aps spec the-spec))
     (check-equal?
@@ -219,9 +215,8 @@
 ;; external marker-bindings.
 (define-metafunction aps-eval
   instantiate-spec/mf : spec ([x mk] ...) ([x mk] ...) -> s
-  [(instantiate-spec/mf (specification (receptionists [x_rec _] ...)
-                                       (externals [x_cont _] ...)
-                                       mr
+  [(instantiate-spec/mf (specification mr
+                                       (mon-externals x_mon-ext ...)
                                        (goto φ x_arg ...)
                                        Φ ...)
                         ([x_rec mk_rec] ...)
@@ -229,21 +224,17 @@
    (;; monitired receptionist
     (resolve-mon-receptionist mr [x_rec mk_rec] ...)
     ;; monitored externals
-    ,(remove-duplicates (term (mk_state-arg ...)))
+    ((subst-n/aps-eval/u x_mon-ext [x_ext mk_ext] ...) ...)
     ;; current state
-    (goto φ mk_state-arg ...)
+    (goto φ (subst-n/aps-eval/u x_arg [x_ext mk_ext] ...) ...)
     ;; states
     (Φ ...)
     ;; obligations
-    ())
-   (where (mk_state-arg ...) ((subst-n/aps-eval/u x_arg [x_ext mk_ext] ...) ...))])
+    ())])
 
 (module+ test
   (test-case "instantiate spec"
-      (define the-spec
-      `(specification (receptionists [a Nat] [b (Record)]) (externals [d String] [e (Variant)])
-                      no-mon-receptionist
-                      (goto S1 d)))
+      (define the-spec `(specification no-mon-receptionist (mon-externals d) (goto S1 d)))
       (check-true (redex-match? aps spec the-spec))
       (check-equal?
        (term (instantiate-spec/mf ,the-spec
@@ -264,8 +255,7 @@
 
   (test-equal? "Instantiation does not substitute into state definitions"
     (term (instantiate-spec/mf
-           (specification (receptionists) (externals [a Nat])
-             no-mon-receptionist
+           (specification no-mon-receptionist (mon-externals)
              (goto A)
              (define-state (A)
                [free -> (goto B a)]))

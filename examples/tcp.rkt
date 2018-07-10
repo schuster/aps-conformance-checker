@@ -2276,11 +2276,8 @@
 
 (define session-spec
   `(specification
-    (receptionists [launcher (Addr ,desugared-connection-status)])
-    (externals [session-packet-dest (Addr (Variant [InTcpPacket ,desugared-tcp-packet-type]))]
-               [packets-out ,desugared-tcp-output]
-               [close-notifications (Variant [SessionCloseNotification ,desugared-session-id])])
     (mon-receptionist launcher)
+    (mon-externals)
     (goto Init)
     (define-state (Init)
       [status-updates ->
@@ -2295,10 +2292,9 @@
 ;;     (check-conformance (desugar tcp-session-program) session-spec)))
 
 (define (make-manager-spec active-open? bug3 bug4)
-  `(specification (receptionists [tcp (Variant [UserCommand ,desugared-user-command])]
-                                 [tcp-unobs (Variant [InPacket Nat ,desugared-tcp-packet-type])])
-                  (externals [packets-out ,desugared-tcp-output])
+  `(specification
      (mon-receptionist tcp)
+     (mon-externals)
      (goto Managing)
      (define-state (Managing)
        ,@(if active-open?

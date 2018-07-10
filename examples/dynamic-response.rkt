@@ -38,8 +38,9 @@
       input)))
 
 (define dynamic-response-spec
-  `(specification (receptionists [input ,request-type]) (externals)
+  `(specification
     (mon-receptionist input)
+    (mon-externals)
     (goto Always)
     (define-state (Always)
       [r -> [obligation r (variant A)] (goto Always)]

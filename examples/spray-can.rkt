@@ -957,10 +957,9 @@
       [(variant HttpRegister new-handler) -> (goto Closed)])))
 
 (define connection-spec
-  `(specification (receptionists)
-                  (externals [app-listener ,desugared-http-listener-event]
-                             [tcp-session ,desugared-tcp-session-command])
+  `(specification
      no-mon-receptionist
+     (mon-externals app-listener)
      (goto Init app-listener)
      (define-state (Init app-listener)
        [free ->
@@ -996,11 +995,9 @@
 
 ;; HttpListener check
 (define listener-spec
-  `(specification (receptionists)
-                  (externals [bind-commander ,desugared-http-bind-response]
-                             [app-listener ,desugared-http-listener-event]
-                             [tcp ,desugared-tcp-user-command])
+  `(specification
      no-mon-receptionist
+     (mon-externals bind-commander app-listener)
      (goto Init bind-commander app-listener)
      (define-state (Init bind-commander app-listener)
        [free ->
@@ -1010,9 +1007,9 @@
      (define-state (Done))))
 
 (define http-manager-spec
-  `(specification (receptionists [manager ,desugared-http-manager-command])
-                  (externals [tcp ,desugared-tcp-user-command])
+  `(specification
      (mon-receptionist manager)
+     (mon-externals)
      (goto Running)
      (define-state (Running)
        [(variant HttpBind * commander app-listener) ->
