@@ -1248,7 +1248,7 @@
      (goto Running)
      (define-state (Running)
        [(variant CancelJob * dest) ->
-        ([obligation dest (or (variant CancellationSuccess) (variant CancellationFailure))])
+        [obligation dest (or (variant CancellationSuccess) (variant CancellationFailure))]
         (goto Running)]
        ;; In the AI, the best we can say is that we might get any number of results back on this
        ;; address (because the abstraction never actually removes addresses from collections), so
@@ -1270,7 +1270,7 @@
      (goto Running)
      (define-state (Running)
        [(variant RequestNextInputSplit * dest) ->
-        ([obligation dest (variant NextInputSplit *)])
+        [obligation dest (variant NextInputSplit *)]
         (goto Running)]
        [(variant RegisterTaskManager * * tm) -> [fork ,@registered-tm-behavior] (goto Running)]
        [(variant UpdateTaskExecutionState * *) -> (goto Running)])))
