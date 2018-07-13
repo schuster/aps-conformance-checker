@@ -4543,6 +4543,11 @@
   (check-equal?
    (compare-value (term (variant A abs-nat))
                   (term (variant B abs-nat)))
+   'not-gteq)
+
+  (test-equal? "A lack of addresses does not make the address more abstract"
+   (compare-value (term (marked (addr 1 1)))
+                  (term (marked (addr 1 1) 1)))
    'not-gteq))
 
 (define (compare-value-sets vals1 vals2)
