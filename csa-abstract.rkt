@@ -1825,6 +1825,8 @@
     [(list 'marked addr markers ...)
      `[(marked ,addr ,@markers ,unused-marker)
        ,(add1 unused-marker)]]
+    [`(list-val ,_ ...) `[,ast ,unused-marker]]
+    [`(dict-val ,_ ...) `[,ast ,unused-marker]]
     [`(,ast1 ,ast-others ...)
      (match-define `[,m-ast1 ,mk1] (mark ast1 unused-marker))
      (match-define `[,m-rest ,mk-final] (mark ast-others mk1))
@@ -1843,7 +1845,17 @@
             (marked (addr (env Nat) 1) 1 3)
             abs-nat
             (begin abs-string (marked (addr (env Nat) 1) 4)))
-           5])))
+           5]))
+
+  (test-equal? "Don't mark addresses under dicts or lists"
+    (mark `(record [a (dict-val ((marked (collective-addr (env Nat) 0)))
+                                ((marked (collective-addr (env Nat) 0))))]
+                   [b (list-val (marked (collective-addr (env Nat) 0)))])
+          1)
+    `[(record [a (dict-val ((marked (collective-addr (env Nat) 0)))
+                           ((marked (collective-addr (env Nat) 0))))]
+              [b (list-val (marked (collective-addr (env Nat) 0)))])
+      1]))
 
 (define (unmark-addr marked)
   (match marked
