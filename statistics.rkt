@@ -20,6 +20,7 @@
 (define STAT-visited-pairs-count (stat 0))
 (define STAT-unique-impl-configs-count (stat 0))
 (define STAT-unique-spec-configs-count (stat 0))
+(define STAT-visited-prog-transitions-count (stat 0))
 
 ;; Eval-cache statistics
 (define STAT-num-eval-handler-calls (stat 0))
@@ -50,6 +51,7 @@
   (stat-set! STAT-visited-pairs-count 0)
   (stat-set! STAT-unique-impl-configs-count 0)
   (stat-set! STAT-unique-spec-configs-count 0)
+  (stat-set! STAT-visited-prog-transitions-count 0)
 
   (stat-set! STAT-num-eval-handler-calls 0)
   (stat-set! STAT-num-eval-handler-cache-hits 0)
@@ -77,6 +79,7 @@
   (printf "Visited pairs: ~s\n" (stat-value STAT-visited-pairs-count))
   (printf "Unique impl configs: ~s\n" (stat-value STAT-unique-impl-configs-count))
   (printf "Unique spec configs: ~s\n" (stat-value STAT-unique-spec-configs-count))
+  (printf "Visited program transitions: ~s\n" (stat-value STAT-visited-prog-transitions-count))
   (printf "Eval cache hits: ~s/~s\n"
           (stat-value STAT-num-eval-handler-cache-hits)
           (stat-value STAT-num-eval-handler-calls))

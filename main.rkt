@@ -312,6 +312,8 @@
              (define found-unmatchable-step? #f)
              (widen-printf "Finding matching s-steps for ~s i-steps\n" (length i-steps))
              (for ([i-step i-steps])
+               (stat-set! STAT-visited-prog-transitions-count
+                          (add1 (stat-value STAT-visited-prog-transitions-count)))
                ;; Debugging:
                ;; (printf "Impl step: ~s\n" (debug-impl-step i-step))
 
