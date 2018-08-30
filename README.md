@@ -16,11 +16,22 @@ Running the Model Checker
 The file main.rkt in this repository provides a function "check-conformance"
 that takes a CSA program and an APS specification (both represented as
 S-expressions) and returns true (#t) if the program conforms to the
-specification, or false (#f) otherwise.
+specification, or false (#f) otherwise. The function also prints various
+information about the check as it executes.
 
-The programs given in the examples directory are written in a syntactic sugar
-language on top of CSA. Such programs are desugared using the desugar function
-from desugar.rkt.
+The test cases used to evaluate the model checker are found in the examples/
+directory.
+
+All optimizations are enabled by default. They can be explicitly enabled or
+disabled with the following keyword arguments to check-conformance (some of
+these use old names for the optimizations):
+* #:use-widen? - for acceleration
+* #:use-eviction? - for eviction
+* #:memoize-eval-handler? - for memoization
+* #:use-detect-dead-observables? - for dead-marker detection
+
+The file example-check.rkt in this directory gives an example of running the
+checker on the stream-processing/weather-average example.
 
 File Overview
 =============
