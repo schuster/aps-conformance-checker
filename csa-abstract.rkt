@@ -1557,10 +1557,6 @@
            ,(merge-messages-into-packet-set (term any_packets) new-packets)
            any_recs))))
 
-;; Abstractly adds the set of new packets to the given set.
-(define (merge-messages-into-packet-set packet-set new-message-list)
-  (deduplicate-packets (append packet-set new-message-list)))
-
 (module+ test
   (test-equal? "merge-messages-into-config 1"
     (merge-messages-into-config (term (() () () ())) (list (term ((addr 0 0) abs-nat single))))
@@ -1597,6 +1593,174 @@
            (((addr 1 0) (marked (collective-addr (env Nat))) many)
             ((addr 1 0) (marked (addr (env Nat) 0)) single))
            ()))))
+
+;; Abstractly adds the set of new packets to the given set.
+(define (merge-messages-into-packet-set packet-set new-message-list)
+  (foldl merge-message-into-packet-set packet-set new-message-list))
+
+(module+ test
+  (test-equal? "merge-messages-into-packet-set simple test"
+    (merge-messages-into-packet-set
+     `([(addr 0 0) abs-nat single]
+       [(addr 1 1) (list-val (variant A)) single])
+     `([(addr 1 1) (list-val (variant B)) single]
+       [(addr 2 2) abs-string many]))
+    `([(addr 0 0) abs-nat single]
+      [(addr 1 1) (list-val (variant A) (variant B)) many]
+      [(addr 2 2) abs-string many])))
+
+(define (merge-message-into-packet-set message packet-set)
+  (match packet-set
+    [`()
+     (list message)]
+    [(list old-packet other-packets ...)
+     (match (try-merge old-packet message)
+       [#f (cons old-packet (merge-message-into-packet-set message other-packets))]
+       [merged (cons merged other-packets)])]))
+
+(module+ test
+  (test-equal? "merge-message-into-packet-set: no existing messages"
+    (merge-message-into-packet-set `[(addr 0 0) abs-nat single] '())
+    `([(addr 0 0) abs-nat single]))
+
+  (test-equal? "merge-message-into-packet-set: no message with matching address"
+    (merge-message-into-packet-set `[(addr 0 0) abs-nat single] '([(addr 1 1) abs-nat single]))
+    `([(addr 1 1) abs-nat single] [(addr 0 0) abs-nat single]))
+
+  (test-equal? "merge-message-into-packet-set: no message with mergeable value"
+    (merge-message-into-packet-set `[(addr 0 0) abs-string single] '([(addr 0 0) abs-nat single]))
+    `([(addr 0 0) abs-nat single] [(addr 0 0) abs-string single]))
+
+  (test-equal? "merge-message-into-packet-set: trivial mergeable value"
+    (merge-message-into-packet-set `[(addr 0 0) abs-nat single] '([(addr 0 0) abs-nat single]))
+    `([(addr 0 0) abs-nat many]))
+
+  (test-equal? "merge-message-into-packet-set: mergeable lists"
+    (merge-message-into-packet-set `[(addr 0 0) (list-val (variant B)) single]
+                                   '([(addr 0 0) (list-val (variant A)) single]))
+    `([(addr 0 0) (list-val (variant A) (variant B)) many])))
+
+(define (try-merge packet1 packet2)
+  (cond
+    [(equal? (csa#-message-packet-address packet1) (csa#-message-packet-address packet2))
+     (match (try-merge/val (csa#-message-packet-value packet1) (csa#-message-packet-value packet2))
+       [#f #f]
+       [merged `[,(csa#-message-packet-address packet1) ,merged many]])]
+    [else #f]))
+
+(module+ test
+  (test-false "try-merge: message does not have matching address"
+    (try-merge '[(addr 1 1) abs-nat single] `[(addr 0 0) abs-nat single]))
+
+  (test-false "try-merge: message does not have mergeable value"
+    (try-merge '[(addr 0 0) abs-nat single] `[(addr 0 0) abs-string single]))
+
+  (test-equal? "try-merge: trivial mergeable value"
+    (try-merge '[(addr 0 0) abs-nat single] `[(addr 0 0) abs-nat single])
+    `[(addr 0 0) abs-nat many])
+
+  (test-equal? "try-merge: mergeable lists"
+    (try-merge '[(addr 0 0) (list-val (variant A)) single]
+                               `[(addr 0 0) (list-val (variant B)) single])
+    `[(addr 0 0) (list-val (variant A) (variant B)) many]))
+
+(define (try-merge/val v1 v2)
+  (match `[,v1 ,v2]
+    [`[(marked ,_ ...) (marked ,_ ...)]
+     (if (equal? v1 v2) v1 #f)]
+    [`[(variant ,t1 ,vs1 ...) (variant ,t2 ,vs2 ...)]
+     (cond
+       [(and (equal? t1 t2) (equal? (length v1) (length v2)))
+        (define merged-vs (map try-merge/val vs1 vs2))
+        (if (andmap values merged-vs)
+            `(variant ,t1 ,@merged-vs)
+            #f)]
+       [else #f])]
+    [`[(record [,fs1 ,vs1] ...) (record [,fs2 ,vs2] ...)]
+     (cond
+       [(equal? fs1 fs2)
+        (define merged-vs (map try-merge/val vs1 vs2))
+        (if (andmap values merged-vs)
+            `(record ,@(map (lambda (f v) `[,f ,v]) fs1 merged-vs))
+            #f)]
+       [else #f])]
+    [`[(folded ,type1 ,v1) (folded ,type2 ,v2)]
+     (cond
+       [(equal? type1 type2)
+        (define mv (try-merge/val v1 v2))
+        (if mv `(folded ,type1 ,mv) #f)]
+       [else #f])]
+    [`[abs-nat abs-nat] `abs-nat]
+    [`[abs-string abs-string] `abs-string]
+    [`[(list-val ,vs1 ...) (list-val ,vs2 ...)]
+     `(list-val ,@(remove-duplicates (append vs1 vs2)))]
+    [`[(dict-val ,ks1 ,vs1) (dict-val ,ks2 ,vs2)]
+     `(dict-val ,(remove-duplicates (append ks1 ks2))
+                ,(remove-duplicates (append vs1 vs2)))]
+    [_ #f]))
+
+(module+ test
+  (test-false "try-merge/val: unmergeable value"
+    (try-merge/val `abs-nat `abs-string))
+
+  (test-equal? "try-merge/val: trivially mergeable"
+    (try-merge/val `abs-nat `abs-nat)
+    `abs-nat)
+
+  (test-equal? "try-merge/val: mergeable lists"
+    (try-merge/val '(list-val (variant A)) `(list-val (variant B)))
+    `(list-val (variant A) (variant B)))
+
+  (test-equal? "try-merge/val: mergeable dictionaries"
+    (try-merge/val '(dict-val ((variant A)) ((variant B)))
+                   `(dict-val ((variant C)) ((variant D))))
+    `(dict-val ((variant A) (variant C)) ((variant B) (variant D))))
+
+  (test-equal? "try-merge/val: same atomic addr"
+    (try-merge/val `(marked (addr 0 0)) `(marked (addr 0 0)))
+    `(marked (addr 0 0)))
+
+  (test-false "try-merge/val: same atomic addr, different markers"
+    (try-merge/val `(marked (addr 0 0)) `(marked (addr 0 0) 1)))
+
+  (test-equal? "try-merge/val: same collective addr"
+    (try-merge/val `(marked (collective-addr 0))
+                   `(marked (collective-addr 0)))
+    `(marked (collective-addr 0)))
+
+  (test-false "try-merge/val: different addrs"
+    (try-merge/val `(marked (addr 0 0)) `(marked (addr 0 1))))
+
+  (test-equal? "mergeable records"
+    (try-merge/val `(record [a (list-val (variant A))])
+                   `(record [a (list-val (variant B))]))
+    `(record [a (list-val (variant A) (variant B))]))
+
+  (test-false "unmergeable records"
+    (try-merge/val `(record [a (list-val (variant A))])
+                   `(record [b (list-val (variant B))])))
+
+  (test-equal? "mergeable variants"
+    (try-merge/val `(variant Z (list-val (variant A)))
+                   `(variant Z (list-val (variant B))))
+    `(variant Z (list-val (variant A) (variant B))))
+
+  (test-false "unmergeable variants"
+    (try-merge/val `(variant Z (list-val (variant A)))
+                   `(variant Q (list-val (variant B)))))
+
+  (test-equal? "merge lists with duplicates"
+    (try-merge/val `(list-val (variant A) (variant B))
+                   `(list-val (variant B) (variant C)))
+    `(list-val (variant A) (variant B) (variant C)))
+
+  (test-equal? "merge dictionaries with duplicates"
+    (try-merge/val `(dict-val [(variant A) (variant B)]
+                              [(variant C) (variant D)])
+                   `(dict-val [(variant E) (variant F)]
+                              [(variant G) (variant H)]))
+    `(dict-val [(variant A) (variant B) (variant E) (variant F)]
+               [(variant C) (variant D) (variant G) (variant H)])))
 
 (define (merge-new-actors config new-actors)
   (for/fold ([config config])
