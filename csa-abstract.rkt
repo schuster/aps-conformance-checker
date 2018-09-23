@@ -1431,19 +1431,9 @@
 ;; Adds a new output to an existing list of outputs, in sexp<? order, merging with existing outputs
 ;; and updating the multiplicity if needed
 (define (add-output existing-outputs new-output)
-  (match-define `[,new-addr ,new-val ,new-mult] new-output)
-  (match existing-outputs
-    [(list) (list new-output)]
-    [(list old-output existing-outputs ...)
-     (define new-output-without-mult `[,new-addr ,new-val])
-     (define old-output-without-mult
-       `[,(csa#-output-address old-output) ,(csa#-output-message old-output)])
-     (cond
-       [(equal? old-output-without-mult new-output-without-mult)
-        (cons `[,new-addr ,new-val many] existing-outputs)]
-       [(sexp<? new-output-without-mult old-output-without-mult)
-        (cons new-output (cons old-output existing-outputs))]
-       [else (cons old-output (add-output existing-outputs new-output))])]))
+  ;; NOTE: could probably replace this function with merge-message-into-packet-set, but that one
+  ;; doesn't do sorting, and I'd rather not find out whether that messes with performance or not
+  (sort (merge-message-into-packet-set new-output existing-outputs) sexp<?))
 
 (module+ test
   (test-equal? "Basic add-output test 1: already exists"
@@ -1465,7 +1455,12 @@
           `[(marked (addr 4 0)) abs-nat single]))
   (test-equal? "Must include collective-address outputs for the purpose of escaped addresses"
     (add-output `() `[(marked (collective-addr (env (Addr Nat)))) (marked (addr 2 0)) single])
-    `([(marked (collective-addr (env (Addr Nat)))) (marked (addr 2 0)) single])))
+    `([(marked (collective-addr (env (Addr Nat)))) (marked (addr 2 0)) single]))
+
+  (test-equal? "add-output: merge with existing values"
+    (add-output (list `[(marked (addr 1 1)) (list-val (variant A)) single])
+                `[(marked (addr 1 1)) (list-val (variant B)) single])
+    (list `[(marked (addr 1 1)) (list-val (variant A) (variant B)) many])))
 
 (define (add-spawn existing-spawns new-spawn)
   (if (member new-spawn existing-spawns)
