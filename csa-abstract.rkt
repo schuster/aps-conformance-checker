@@ -98,8 +98,8 @@
       (folded τ v#)
       abs-nat
       abs-string
-      (list-val v# ...)
-      (dict-val (v# ...) (v# ...)))
+      (list v# ...)
+      (dict (v# ...) (v# ...)))
   (e# (spawn any_location τ e# Q# ...)
       (spawning a# τ e# Q# ...)
       (goto q e# ...)
@@ -114,8 +114,10 @@
       (unfold τ e#)
       (primop e# ...)
       (printf string e# ...) ; for debugging only
+      ;; NOTE: list and dict really only take *open* values, but I'm not going to try to encode that
+      ;; constraint, just to save time
       (list e# ...)
-      (dict [e# e#] ...)
+      (dict (e# ...) (e# ...))
       (for/fold ([x e#]) ([x e#]) e#)
       (loop-context e#)
       x
@@ -143,9 +145,6 @@
       (unfold τ E#)
       (primop v# ... E# e# ...)
       (printf string v# ... E# e# ...)
-      (list v# ... E# e# ...)
-      (dict [v# v#] ... [E# e#] [e# e#] ...)
-      (dict [v# v#] ... [v# E#] [e# e#] ...)
       (for/fold ([x E#]) ([x e#]) e#)
       (for/fold ([x v#]) ([x E#]) e#)
       (loop-context E#))
@@ -206,10 +205,10 @@
   [(messages-of-type/mf (Addr τ))
    ((marked (collective-addr (env τ))))]
   [(messages-of-type/mf (List τ))
-   (,(normalize-collection (term (list-val v# ...))))
+   (,(normalize-collection (term (list v# ...))))
    (where (v# ...) (messages-of-type/mf τ))]
   [(messages-of-type/mf (Dict τ_1 τ_2))
-   (,(normalize-collection (term (dict-val (v#_keys ...) (v#_vals ...)))))
+   (,(normalize-collection (term (dict (v#_keys ...) (v#_vals ...)))))
    (where (v#_keys ...) (messages-of-type/mf τ_1))
    (where (v#_vals ...) (messages-of-type/mf τ_2))])
 
@@ -271,10 +270,10 @@
      (variant B abs-string (variant D))))
   (test-same-items? "messages-of-type 11"
    (term (messages-of-type/mf (List Nat)))
-   (list `(list-val abs-nat)))
+   (list `(list abs-nat)))
   (test-same-items? "messages-of-type 12"
    (term (messages-of-type/mf (Dict Nat (Variant [A] [B] [C]))))
-   (list `(dict-val (abs-nat) ((variant A) (variant B) [variant C])))))
+   (list `(dict (abs-nat) ((variant A) (variant B) [variant C])))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Evaluation
@@ -703,12 +702,16 @@
      (eval-and-then* args effects
        (lambda (vs effects)
          (match (cons op vs)
-           [`(list ,vs ...) (value-result (normalize-collection `(list-val ,@vs)) effects)]
-           [`(cons ,v (list-val ,existing-list-vals ...))
-            (value-result (normalize-collection `(list-val ,@existing-list-vals ,v)) effects)]
+           [`(list ,vs ...)
+            ;; NOTE: I think this *should* already be normalized at this point (because I allow only
+            ;; open values into lists, not anything that can reduce), but I'm leaving the normalize
+            ;; call here just in case it's not
+            (value-result (normalize-collection `(list ,@vs)) effects)]
+           [`(cons ,v (list ,existing-list-vals ...))
+            (value-result (normalize-collection `(list ,@existing-list-vals ,v)) effects)]
            [`(list-as-variant ,l)
             (match l
-              [`(list-val ,items ...)
+              [`(list ,items ...)
                (apply value-result
                       `(variant Empty)
                       (append (for/list ([item items]) `(variant Cons ,item ,l))
@@ -719,7 +722,7 @@
               ;; NOTE: we can just return the empty list of results if there are no items in the list:
               ;; we assume that that won't happen, and that therefore we only reached this state
               ;; through over-abstraction
-              [`(list-val ,items ...) (apply value-result (append items (list effects)))]
+              [`(list ,items ...) (apply value-result (append items (list effects)))]
               [_ (error 'eval-machine/internal "Bad list for list-ref: ~s\n" l)])]
            [`(remove ,_ ,l) (value-result l effects)]
            [`(length ,_) (value-result `abs-nat effects)]
@@ -730,25 +733,25 @@
            ;; (so that we don't lose a precise address)
            [`(append ,v1 ,v2)
             (value-result
-             (normalize-collection `(list-val ,@(list-values v1) ,@(list-values v2)))
+             (normalize-collection `(list ,@(list-values v1) ,@(list-values v2)))
              effects)]
-           [`(dict-ref (dict-val ,_ ,vals) ,k)
+           [`(dict-ref (dict ,_ ,vals) ,k)
             (if (address-free? k)
                 (apply value-result
                        `(variant Nothing)
                        (append (for/list ([val vals]) `(variant Just ,val))
                                (list effects)))
                 (one-stuck-result `(dict-ref ,(first vs) ,k) effects))]
-           [`(dict-keys (dict-val ,keys ,_))
-            (value-result `(list-val ,@keys) effects)]
-           [`(dict-values (dict-val ,_ ,values))
-            (value-result `(list-val ,@values) effects)]
-           [`(dict-set (dict-val ,keys ,vals) ,key ,val)
+           [`(dict-keys (dict ,keys ,_))
+            (value-result `(list ,@keys) effects)]
+           [`(dict-values (dict ,_ ,values))
+            (value-result `(list ,@values) effects)]
+           [`(dict-set (dict ,keys ,vals) ,key ,val)
             (if (address-free? key)
                 (value-result
-                 (normalize-collection `(dict-val ,(cons key keys) ,(cons val vals)))
+                 (normalize-collection `(dict ,(cons key keys) ,(cons val vals)))
                  effects)
-                (one-stuck-result `(dict-set (dict-val ,keys ,vals) ,key ,val) effects))]
+                (one-stuck-result `(dict-set (dict ,keys ,vals) ,key ,val) effects))]
            [`(dict-remove ,h ,k) (value-result h effects)]
            [`(dict-has-key? ,h ,k)
             (value-result `(variant True) `(variant False) effects)]
@@ -756,18 +759,14 @@
             (value-result `(variant True) `(variant False) effects)]
            [_ (error 'eval-machine/internal "Bad collection operation: ~s" `(,op ,@vs))]))
        (lambda (stucks) `(,op ,@stucks)))]
-    [`(dict ,kvps ...)
-     (eval-and-then* (append* (for/list ([kvp kvps]) (list (first kvp) (second kvp)))) effects
-       (lambda (results effects)
-         (match-define (list keys vals)
-           (let loop ([results results]
-                      [keys null]
-                      [vals null])
-             (match results
-               [(list) (list keys vals)]
-               [(list key val rest ...) (loop rest (cons key keys) (cons val vals))])))
-         (value-result (normalize-collection `(dict-val ,keys ,vals)) effects))
-       (lambda (stucks) (error 'eval-machine/internal "Stuck evaluating dict: ~s" `(dict ,@stucks))))]
+    [`(dict ,keys ,vals)
+     (eval-and-then* keys effects
+       (lambda (evaled-keys effects)
+         (eval-and-then* vals effects
+           (lambda (evaled-vals effects)
+             (value-result (normalize-collection `(dict ,evaled-keys ,evaled-vals)) effects))
+           (lambda (stucks) (error 'eval-machine/internal "Stuck evaluating dict: ~s" `(dict ,evaled-keys ,stucks)))))
+       (lambda (stucks) (error 'eval-machine/internal "Stuck evaluating dict: ~s" `(dict ,stucks ,vals))))]
     ;; Loops
     [`(for/fold ([,result-var ,result-exp])
                 ([,item-var ,item-exp])
@@ -814,7 +813,7 @@
              ;; above explain why). After evaluation complete, we set the loop-result to the full set
              ;; of resulting states.
              (hash-set! (loop-results) this-loop empty-eval-result)
-             (match-define `(list-val ,collection-members ...) items-val)
+             (match-define `(list ,collection-members ...) items-val)
              (define result-after-skipping (value-result result-val effects))
              (define final-results
                (for/fold ([full-result result-after-skipping])
@@ -876,7 +875,6 @@
      (eval-and-then* args effects
        (lambda (arg-vals effects) (value-result `(goto ,state-name ,@arg-vals) effects))
        (lambda (stucks) `(goto ,state-name ,@stucks)))]
-    [`(,(or 'list-val 'dict-val) ,_ ...) (value-result exp effects)]
     ;; Debugging
     [`(printf ,template ,args ...)
      (eval-and-then* args effects
@@ -1106,106 +1104,106 @@
   ;; list
   (check-exp-steps-to?
    (term (list (variant C) (variant B)))
-   (term (list-val (variant B) (variant C))))
+   (term (list (variant B) (variant C))))
   (check-exp-steps-to?
    (term (list))
-   (term (list-val)))
+   (term (list)))
   (check-exp-steps-to?
-   (term (cons (variant A) (list-val (variant B) (variant C))))
-   (term (list-val (variant A) (variant B) (variant C))))
+   (term (cons (variant A) (list (variant B) (variant C))))
+   (term (list (variant A) (variant B) (variant C))))
   (check-exp-steps-to?
-   (term (cons (variant A) (list-val)))
-   (term (list-val (variant A))))
+   (term (cons (variant A) (list)))
+   (term (list (variant A))))
   (check-exp-steps-to?
-   (term (cons (variant D) (list-val (variant B) (variant C))))
-   (term (list-val (variant B) (variant C) (variant D))))
+   (term (cons (variant D) (list (variant B) (variant C))))
+   (term (list (variant B) (variant C) (variant D))))
   (check-exp-steps-to?
-   (term (cons (variant B) (list-val (variant B) (variant C))))
-   (term (list-val (variant B) (variant C))))
+   (term (cons (variant B) (list (variant B) (variant C))))
+   (term (list (variant B) (variant C))))
   (check-exp-steps-to?
-   (term (remove (variant A) (list-val (variant A) (variant B))))
-   (term (list-val (variant A) (variant B))))
+   (term (remove (variant A) (list (variant A) (variant B))))
+   (term (list (variant A) (variant B))))
   (check-exp-steps-to-all?
-   `(list-ref (list-val) abs-nat)
+   `(list-ref (list) abs-nat)
    null)
   (check-exp-steps-to?
-   (term (append (list-val (variant A) (variant B))
-                        (list-val (variant C) (variant D))))
-   (term (list-val (variant A) (variant B) (variant C) (variant D))))
+   (term (append (list (variant A) (variant B))
+                        (list (variant C) (variant D))))
+   (term (list (variant A) (variant B) (variant C) (variant D))))
   (check-exp-steps-to?
-   (term (append (list-val (variant A) (variant B))
-                        (list-val (variant C) (variant B))))
-   (term (list-val (variant A) (variant B) (variant C))))
+   (term (append (list (variant A) (variant B))
+                        (list (variant C) (variant B))))
+   (term (list (variant A) (variant B) (variant C))))
   (check-exp-steps-to?
-   (term (append (list-val (variant C) (variant D))
-                        (list-val (variant A) (variant B))))
-   (term (list-val (variant A) (variant B) (variant C) (variant D))))
+   (term (append (list (variant C) (variant D))
+                        (list (variant A) (variant B))))
+   (term (list (variant A) (variant B) (variant C) (variant D))))
   (check-exp-steps-to?
-  (term (append (list-val (variant C) (variant D))
-                       (list-val (variant B) (variant A))))
-  (term (list-val (variant A) (variant B) (variant C) (variant D))))
-  (check-exp-steps-to? (term (append (list-val) (list-val))) (term (list-val)))
+  (term (append (list (variant C) (variant D))
+                       (list (variant B) (variant A))))
+  (term (list (variant A) (variant B) (variant C) (variant D))))
+  (check-exp-steps-to? (term (append (list) (list))) (term (list)))
   (check-exp-steps-to?
-   (term (append (list-val (variant A)) (list-val)))
-   (term (list-val (variant A))))
+   (term (append (list (variant A)) (list)))
+   (term (list (variant A))))
   (check-exp-steps-to?
-   (term (append (list-val) (list-val (variant A))))
-   (term (list-val (variant A))))
+   (term (append (list) (list (variant A))))
+   (term (list (variant A))))
   (check-exp-steps-to-all?
-   `(list-ref (list-val) abs-nat)
+   `(list-ref (list) abs-nat)
    null)
-  (check-exp-steps-to? `(list-copy (list-val abs-nat) abs-nat abs-nat)
-                       `(list-val abs-nat))
-  (check-exp-steps-to? `(take (list-val abs-nat) abs-nat)
-                       `(list-val abs-nat))
-  (check-exp-steps-to? `(drop (list-val abs-nat) abs-nat)
-                       `(list-val abs-nat))
+  (check-exp-steps-to? `(list-copy (list abs-nat) abs-nat abs-nat)
+                       `(list abs-nat))
+  (check-exp-steps-to? `(take (list abs-nat) abs-nat)
+                       `(list abs-nat))
+  (check-exp-steps-to? `(drop (list abs-nat) abs-nat)
+                       `(list abs-nat))
 
   ;; dict
   (check-exp-steps-to?
-   (term (dict [abs-nat (variant B)] [abs-nat (variant A)]))
-   (term (dict-val (abs-nat) ((variant A) (variant B)))))
+   (term (dict (abs-nat) ((variant B) (variant A))))
+   (term (dict (abs-nat) ((variant A) (variant B)))))
   (check-exp-steps-to?
-   (term (dict-set (dict-val (abs-nat) ((variant B) (variant C))) abs-nat (variant A)))
-   (term (dict-val (abs-nat) ((variant A) (variant B) (variant C)))))
+   (term (dict-set (dict (abs-nat) ((variant B) (variant C))) abs-nat (variant A)))
+   (term (dict (abs-nat) ((variant A) (variant B) (variant C)))))
   (check-exp-steps-to?
-   (term (dict-set (dict-val (abs-nat) ((variant C) (variant B))) abs-nat (variant A)))
-   (term (dict-val (abs-nat) ((variant A) (variant B) (variant C)))))
+   (term (dict-set (dict (abs-nat) ((variant C) (variant B))) abs-nat (variant A)))
+   (term (dict (abs-nat) ((variant A) (variant B) (variant C)))))
   (check-exp-steps-to?
-   (term (dict-set (dict-val () ()) abs-nat (variant A)))
-   (term (dict-val (abs-nat) ((variant A)))))
+   (term (dict-set (dict () ()) abs-nat (variant A)))
+   (term (dict (abs-nat) ((variant A)))))
   (check-exp-steps-to?
-   (term (dict-set (dict-val (abs-nat) ((variant B) (variant C))) abs-nat (variant D)))
-   (term (dict-val (abs-nat) ((variant B) (variant C) (variant D)))))
+   (term (dict-set (dict (abs-nat) ((variant B) (variant C))) abs-nat (variant D)))
+   (term (dict (abs-nat) ((variant B) (variant C) (variant D)))))
   (check-exp-steps-to?
-   (term (dict-set (dict-val (abs-nat) ((variant B) (variant C))) abs-nat (variant B)))
-   (term (dict-val (abs-nat) ((variant B) (variant C)))))
+   (term (dict-set (dict (abs-nat) ((variant B) (variant C))) abs-nat (variant B)))
+   (term (dict (abs-nat) ((variant B) (variant C)))))
   (check-exp-steps-to?
-   (term (dict-remove (dict-val (abs-nat) ((variant B) (variant C))) (variant B)))
-   (term (dict-val (abs-nat) ((variant B) (variant C)))))
-  (check-exp-steps-to? (term (dict-ref (dict-val () ()) abs-nat))
+   (term (dict-remove (dict (abs-nat) ((variant B) (variant C))) (variant B)))
+   (term (dict (abs-nat) ((variant B) (variant C)))))
+  (check-exp-steps-to? (term (dict-ref (dict () ()) abs-nat))
                        '(variant Nothing))
-  (check-exp-steps-to-all? (term (dict-empty? (dict-val (abs-nat) ((variant A) (variant B)))))
+  (check-exp-steps-to-all? (term (dict-empty? (dict (abs-nat) ((variant A) (variant B)))))
                            (list (term (variant True))
                                  (term (variant False))))
-  (check-exp-steps-to-all? (term (list-as-variant (list-val (variant A) (variant B))))
+  (check-exp-steps-to-all? (term (list-as-variant (list (variant A) (variant B))))
                            (list (term (variant Empty))
-                                 (term (variant Cons (variant A) (list-val (variant A) (variant B))))
-                                 (term (variant Cons (variant B) (list-val (variant A) (variant B))))))
-  (check-exp-steps-to? (term (dict-keys (dict-val ((variant A) (variant B)) (abs-nat))))
-                       (term (list-val (variant A) (variant B))))
-  (check-exp-steps-to? (term (dict-values (dict-val (abs-nat) ((variant A) (variant B)))))
-                       (term (list-val (variant A) (variant B))))
+                                 (term (variant Cons (variant A) (list (variant A) (variant B))))
+                                 (term (variant Cons (variant B) (list (variant A) (variant B))))))
+  (check-exp-steps-to? (term (dict-keys (dict ((variant A) (variant B)) (abs-nat))))
+                       (term (list (variant A) (variant B))))
+  (check-exp-steps-to? (term (dict (abs-nat) ((variant A) (variant B))))
+                       (term (dict (abs-nat) ((variant A) (variant B)))))
   (check-exp-steps-to-all? `(for/fold ([result (variant X)])
                                       ([item (list abs-nat)])
                               (variant Y))
                            (list `(variant X) `(variant Y)))
   (test-case "Seeing the same loop twice in different contexts returns all results"
     (check-exp-steps-to-all?
-     `(let ([a (list-ref (list-val (variant A) (variant B)) abs-nat)])
+     `(let ([a (list-ref (list (variant A) (variant B)) abs-nat)])
         (begin
           (for/fold ([dummy abs-nat])
-                    ([item (list-val abs-nat)])
+                    ([item (list abs-nat)])
             item)
           a))
      (list '(variant A) '(variant B))))
@@ -1214,7 +1212,7 @@
     (define terminal-exps
       (exp-reduce* `(for/fold ([result (variant X)])
                               ([item (list (variant A) (variant B) (variant C))])
-                      (case (list-ref (list-val (variant True) (variant False)) abs-nat)
+                      (case (list-ref (list (variant True) (variant False)) abs-nat)
                         [(True) item]
                         [(False) result]))))
     (check-equal? (length terminal-exps) (length (remove-duplicates terminal-exps))))
@@ -1238,7 +1236,7 @@
      (first
       (eval-machine
        `(for/fold ([dummy abs-nat])
-                  ([item (list-val abs-nat)])
+                  ([item (list abs-nat)])
           (begin
             (spawn loc Nat (goto Foo (variant A)))
             abs-nat))
@@ -1269,7 +1267,7 @@
      (first
       (eval-machine
        `(for/fold ([dummy (variant Unit)])
-                  ([item (list-val abs-nat)])
+                  ([item (list abs-nat)])
           (send (marked (addr 1 0)) item))
        empty-effects
        #f))
@@ -1282,7 +1280,7 @@
      (first
       (eval-machine
        `(for/fold ([dummy abs-nat])
-                  ([item (list-val abs-nat)])
+                  ([item (list abs-nat)])
           (begin
             (send (marked (collective-addr (env Nat))) (marked (addr 2 0)))
             abs-nat
@@ -1370,8 +1368,8 @@
     [`(folded ,_ ,v) (address-free? v)]
     [`abs-nat #t]
     [`abs-string #t]
-    [`(list-val ,vals ...) (andmap address-free? vals)]
-    [`(dict-val ,keys ,vals)
+    [`(list ,vals ...) (andmap address-free? vals)]
+    [`(dict ,keys ,vals)
      (and (andmap address-free? keys) (andmap address-free? vals))]
     [_ (error 'address-free? "Not a valid abstract value: ~s\n" v)]))
 
@@ -1391,10 +1389,10 @@
     (address-free? '(record [a abs-nat] [b abs-string])))
 
   (test-true "lists without addresses are address-free"
-    (address-free? '(list-val abs-nat)))
+    (address-free? '(list abs-nat)))
 
   (test-true "dictionaries without addresses are address-free"
-    (address-free? '(dict-val (abs-nat) (abs-string))))
+    (address-free? '(dict (abs-nat) (abs-string))))
 
   (test-false "addresses are not address-free"
     (address-free? `(marked (addr 1 0) 0)))
@@ -1406,27 +1404,27 @@
     (address-free? `(record [r (marked (addr 1 0) 0)])))
 
   (test-false "addresses inside lists are not address-free"
-    (address-free? `(list-val (marked (addr 1 0) 0))))
+    (address-free? `(list (marked (addr 1 0) 0))))
 
   (test-false "addresses inside dictionaries are not address-free"
-    (address-free? `(dict-val (abs-string) ((marked (addr 1 0) 0)))))
+    (address-free? `(dict (abs-string) ((marked (addr 1 0) 0)))))
 
   (test-false "folded types with addresses are not address-free"
     (address-free? '(folded (rec A (Addr A)) (marked (addr 1 0) 0)))))
 
 (define (list-values v)
   (match v
-    [`(list-val ,vs ...) vs]))
+    [`(list ,vs ...) vs]))
 
-;; Puts the given abstract collection value (a list or dict) and puts it into a canonical
-;; form
+;; Removes duplicates from the given abstract collection value (a list or dict) and puts it into a
+;; canonical form
 (define (normalize-collection v)
   (match v
-    [`(list-val ,vs ...)
-     `(list-val ,@(sort (remove-duplicates vs) sexp<?))]
-    [`(dict-val ,keys ,vals)
-     `(dict-val ,(sort (remove-duplicates keys) sexp<?)
-                ,(sort (remove-duplicates vals) sexp<?))]))
+    [`(list ,vs ...)
+     `(list ,@(sort (remove-duplicates vs) sexp<?))]
+    [`(dict ,keys ,vals)
+     `(dict ,(sort (remove-duplicates keys) sexp<?)
+            ,(sort (remove-duplicates vals) sexp<?))]))
 
 ;; Adds a new output to an existing list of outputs, in sexp<? order, merging with existing outputs
 ;; and updating the multiplicity if needed
@@ -1458,9 +1456,9 @@
     `([(marked (collective-addr (env (Addr Nat)))) (marked (addr 2 0)) single]))
 
   (test-equal? "add-output: merge with existing values"
-    (add-output (list `[(marked (addr 1 1)) (list-val (variant A)) single])
-                `[(marked (addr 1 1)) (list-val (variant B)) single])
-    (list `[(marked (addr 1 1)) (list-val (variant A) (variant B)) many])))
+    (add-output (list `[(marked (addr 1 1)) (list (variant A)) single])
+                `[(marked (addr 1 1)) (list (variant B)) single])
+    (list `[(marked (addr 1 1)) (list (variant A) (variant B)) many])))
 
 (define (add-spawn existing-spawns new-spawn)
   (if (member new-spawn existing-spawns)
@@ -1597,11 +1595,11 @@
   (test-equal? "merge-messages-into-packet-set simple test"
     (merge-messages-into-packet-set
      `([(addr 0 0) abs-nat single]
-       [(addr 1 1) (list-val (variant A)) single])
-     `([(addr 1 1) (list-val (variant B)) single]
+       [(addr 1 1) (list (variant A)) single])
+     `([(addr 1 1) (list (variant B)) single]
        [(addr 2 2) abs-string many]))
     `([(addr 0 0) abs-nat single]
-      [(addr 1 1) (list-val (variant A) (variant B)) many]
+      [(addr 1 1) (list (variant A) (variant B)) many]
       [(addr 2 2) abs-string many])))
 
 (define (merge-message-into-packet-set message packet-set)
@@ -1631,9 +1629,9 @@
     `([(addr 0 0) abs-nat many]))
 
   (test-equal? "merge-message-into-packet-set: mergeable lists"
-    (merge-message-into-packet-set `[(addr 0 0) (list-val (variant B)) single]
-                                   '([(addr 0 0) (list-val (variant A)) single]))
-    `([(addr 0 0) (list-val (variant A) (variant B)) many])))
+    (merge-message-into-packet-set `[(addr 0 0) (list (variant B)) single]
+                                   '([(addr 0 0) (list (variant A)) single]))
+    `([(addr 0 0) (list (variant A) (variant B)) many])))
 
 (define (try-merge packet1 packet2)
   (cond
@@ -1655,9 +1653,9 @@
     `[(addr 0 0) abs-nat many])
 
   (test-equal? "try-merge: mergeable lists"
-    (try-merge '[(addr 0 0) (list-val (variant A)) single]
-                               `[(addr 0 0) (list-val (variant B)) single])
-    `[(addr 0 0) (list-val (variant A) (variant B)) many]))
+    (try-merge '[(addr 0 0) (list (variant A)) single]
+                               `[(addr 0 0) (list (variant B)) single])
+    `[(addr 0 0) (list (variant A) (variant B)) many]))
 
 (define (try-merge/val v1 v2)
   (match `[,v1 ,v2]
@@ -1687,11 +1685,11 @@
        [else #f])]
     [`[abs-nat abs-nat] `abs-nat]
     [`[abs-string abs-string] `abs-string]
-    [`[(list-val ,vs1 ...) (list-val ,vs2 ...)]
-     `(list-val ,@(remove-duplicates (append vs1 vs2)))]
-    [`[(dict-val ,ks1 ,vs1) (dict-val ,ks2 ,vs2)]
-     `(dict-val ,(remove-duplicates (append ks1 ks2))
-                ,(remove-duplicates (append vs1 vs2)))]
+    [`[(list ,vs1 ...) (list ,vs2 ...)]
+     (normalize-collection `(list ,@(append vs1 vs2)))]
+    [`[(dict ,ks1 ,vs1) (dict ,ks2 ,vs2)]
+     (normalize-collection
+      `(dict ,(append ks1 ks2) ,(append vs1 vs2)))]
     [_ #f]))
 
 (module+ test
@@ -1703,13 +1701,17 @@
     `abs-nat)
 
   (test-equal? "try-merge/val: mergeable lists"
-    (try-merge/val '(list-val (variant A)) `(list-val (variant B)))
-    `(list-val (variant A) (variant B)))
+    (try-merge/val '(list (variant A)) `(list (variant B)))
+    `(list (variant A) (variant B)))
+
+    (test-equal? "try-merge/val: mergeable lists in other order (should get canonicalized)"
+    (try-merge/val `(list (variant B)) '(list (variant A)))
+    `(list (variant A) (variant B)))
 
   (test-equal? "try-merge/val: mergeable dictionaries"
-    (try-merge/val '(dict-val ((variant A)) ((variant B)))
-                   `(dict-val ((variant C)) ((variant D))))
-    `(dict-val ((variant A) (variant C)) ((variant B) (variant D))))
+    (try-merge/val '(dict ((variant A)) ((variant B)))
+                   `(dict ((variant C)) ((variant D))))
+    `(dict ((variant A) (variant C)) ((variant B) (variant D))))
 
   (test-equal? "try-merge/val: same atomic addr"
     (try-merge/val `(marked (addr 0 0)) `(marked (addr 0 0)))
@@ -1727,34 +1729,34 @@
     (try-merge/val `(marked (addr 0 0)) `(marked (addr 0 1))))
 
   (test-equal? "mergeable records"
-    (try-merge/val `(record [a (list-val (variant A))])
-                   `(record [a (list-val (variant B))]))
-    `(record [a (list-val (variant A) (variant B))]))
+    (try-merge/val `(record [a (list (variant A))])
+                   `(record [a (list (variant B))]))
+    `(record [a (list (variant A) (variant B))]))
 
   (test-false "unmergeable records"
-    (try-merge/val `(record [a (list-val (variant A))])
-                   `(record [b (list-val (variant B))])))
+    (try-merge/val `(record [a (list (variant A))])
+                   `(record [b (list (variant B))])))
 
   (test-equal? "mergeable variants"
-    (try-merge/val `(variant Z (list-val (variant A)))
-                   `(variant Z (list-val (variant B))))
-    `(variant Z (list-val (variant A) (variant B))))
+    (try-merge/val `(variant Z (list (variant A)))
+                   `(variant Z (list (variant B))))
+    `(variant Z (list (variant A) (variant B))))
 
   (test-false "unmergeable variants"
-    (try-merge/val `(variant Z (list-val (variant A)))
-                   `(variant Q (list-val (variant B)))))
+    (try-merge/val `(variant Z (list (variant A)))
+                   `(variant Q (list (variant B)))))
 
   (test-equal? "merge lists with duplicates"
-    (try-merge/val `(list-val (variant A) (variant B))
-                   `(list-val (variant B) (variant C)))
-    `(list-val (variant A) (variant B) (variant C)))
+    (try-merge/val `(list (variant A) (variant B))
+                   `(list (variant B) (variant C)))
+    `(list (variant A) (variant B) (variant C)))
 
   (test-equal? "merge dictionaries with duplicates"
-    (try-merge/val `(dict-val [(variant A) (variant B)]
+    (try-merge/val `(dict [(variant A) (variant B)]
                               [(variant C) (variant D)])
-                   `(dict-val [(variant E) (variant F)]
+                   `(dict [(variant E) (variant F)]
                               [(variant G) (variant H)]))
-    `(dict-val [(variant A) (variant B) (variant E) (variant F)]
+    `(dict [(variant A) (variant B) (variant E) (variant F)]
                [(variant C) (variant D) (variant G) (variant H)])))
 
 (define (merge-new-actors config new-actors)
@@ -1823,10 +1825,12 @@
                  ,@(map (lambda (s) (csa#-subst-n/Q# s non-self-bindings)) states)))]
     [`(goto ,s ,args ...) `(goto ,s ,@(map do-subst args))]
     [`(printf ,str ,args ...) `(printf ,str ,@(map do-subst args))]
-    [(list (and kw (or 'send 'begin (? primop?) 'list 'list-val 'loop-context)) args ...)
+    [(list (and kw (or 'send 'begin (? primop?) 'loop-context)) args ...)
      `(,kw ,@(map do-subst args))]
-    [`(dict-val ,args1 ,args2)
-     `(dict-val ,(map do-subst args1) ,(map do-subst args2))]
+    [`(list ,items ...)
+     (normalize-collection `(list ,@(map do-subst items)))]
+    [`(dict ,args1 ,args2)
+     (normalize-collection `(dict ,(map do-subst args1) ,(map do-subst args2)))]
     [`(let ([,new-vars ,new-vals] ...) ,body)
      (define new-let-bindings (map binding new-vars (map do-subst new-vals)))
      `(let ,new-let-bindings ,(csa#-subst-n body (shadow new-vars)))]
@@ -1838,8 +1842,6 @@
     [`(: ,e ,l) `(: ,(do-subst e) ,l)]
     [(list (and kw (or 'fold 'unfold 'folded)) type args ...)
      `(,kw ,type ,@(map do-subst args))]
-    [`(dict [,keys ,vals] ...)
-     `(dict ,@(map (lambda (k v) `[,(do-subst k) ,(do-subst v)]) keys vals))]
     [`(for/fold ([,x1 ,e1]) ([,x2 ,e2]) ,body)
      `(for/fold ([,x1 ,(do-subst e1)])
                 ([,x2 ,(do-subst e2)])
@@ -1875,8 +1877,9 @@
                 (term [(Cons p) (begin p x)]))
   (check-equal? (csa#-subst-n/case-clause `[(Cons p) (begin p x)] (list `[x abs-nat]))
                 (term [(Cons p) (begin p abs-nat)]))
-  (check-equal? (csa#-subst-n `(list abs-nat x) (list `[x abs-nat]))
-                (term (list abs-nat abs-nat)))
+  (test-equal? "subst test on list"
+    (csa#-subst-n `(list abs-nat x) (list `[x abs-nat]))
+    (term (list abs-nat)))
   (check-equal? (csa#-subst-n `(variant Foo abs-nat) (list `[a abs-nat]))
                 (term (variant Foo abs-nat)))
   (check-equal? (csa#-subst-n `(marked (addr 1 0)) (list `[x abs-nat]))
@@ -1919,11 +1922,23 @@
     (csa#-subst-n `(begin (let ([x abs-nat]) x) x) (list (binding 'x 'abs-string)))
     `(begin (let ([x abs-nat]) x) abs-string))
 
-    (test-equal? "let-binding test"
-      (csa#-subst-n `(let ([x abs-nat] [y abs-nat]) (begin a x y z))
-                    (list (binding 'x 'abs-string)
-                          (binding 'z 'abs-string)))
-      `(let ([x abs-nat] [y abs-nat]) (begin a x y abs-string)))
+  (test-equal? "let-binding test"
+    (csa#-subst-n `(let ([x abs-nat] [y abs-nat]) (begin a x y z))
+                  (list (binding 'x 'abs-string)
+                        (binding 'z 'abs-string)))
+    `(let ([x abs-nat] [y abs-nat]) (begin a x y abs-string)))
+
+  (test-equal? "subst into list does union"
+    (csa#-subst-n `(list abs-nat x) (list (binding 'x 'abs-nat)))
+    `(list abs-nat))
+
+  (test-equal? "subst into list does union; leaves distinctions"
+    (csa#-subst-n `(list abs-nat x y) (list (binding 'x 'abs-nat)))
+    `(list abs-nat y))
+
+  (test-equal? "subst into dict does union"
+    (csa#-subst-n `(dict (x abs-nat) (abs-nat x)) (list (binding 'x 'abs-nat)))
+    `(dict (abs-nat) (abs-nat)))
 
   (test-equal? "state-def subst 1"
     (csa#-subst-n/Q# `(define-state (A [x Nat] [y String]) m (begin x y z (goto A x y)))
@@ -1984,8 +1999,8 @@
     [(list 'marked addr markers ...)
      `[(marked ,addr ,@markers ,unused-marker)
        ,(add1 unused-marker)]]
-    [`(list-val ,_ ...) `[,ast ,unused-marker]]
-    [`(dict-val ,_ ...) `[,ast ,unused-marker]]
+    [`(list ,_ ...) `[,ast ,unused-marker]]
+    [`(dict ,_ ...) `[,ast ,unused-marker]]
     [`(,ast1 ,ast-others ...)
      (match-define `[,m-ast1 ,mk1] (mark ast1 unused-marker))
      (match-define `[,m-rest ,mk-final] (mark ast-others mk1))
@@ -2007,13 +2022,13 @@
            5]))
 
   (test-equal? "Don't mark addresses under dicts or lists"
-    (mark `(record [a (dict-val ((marked (collective-addr (env Nat) 0)))
-                                ((marked (collective-addr (env Nat) 0))))]
-                   [b (list-val (marked (collective-addr (env Nat) 0)))])
+    (mark `(record [a (dict ((marked (collective-addr (env Nat) 0)))
+                            ((marked (collective-addr (env Nat) 0))))]
+                   [b (list (marked (collective-addr (env Nat) 0)))])
           1)
-    `[(record [a (dict-val ((marked (collective-addr (env Nat) 0)))
-                           ((marked (collective-addr (env Nat) 0))))]
-              [b (list-val (marked (collective-addr (env Nat) 0)))])
+    `[(record [a (dict ((marked (collective-addr (env Nat) 0)))
+                       ((marked (collective-addr (env Nat) 0))))]
+              [b (list (marked (collective-addr (env Nat) 0)))])
       1]))
 
 (define (unmark-addr marked)
@@ -2119,15 +2134,11 @@
    (fold τ (abstract-e e (a ...)))]
   [(abstract-e (unfold τ e) (a ...))
    (unfold τ (abstract-e e (a ...)))]
-  [(abstract-e (list v ...) (a ...))
-   ,(normalize-collection (term (list-val (abstract-e v (a ...)) ...)))]
   [(abstract-e (list e ...) (a ...))
-   (list (abstract-e e (a ...)) ...)]
-  [(abstract-e (dict [v_key v_val] ...) (a ...))
-   ,(normalize-collection (term (dict-val ((abstract-e v_key (a ...)) ...)
-                                          ((abstract-e v_val (a ...)) ...))))]
+   ,(normalize-collection (term (list (abstract-e e (a ...)) ...)))]
   [(abstract-e (dict [e_key e_val] ...) (a ...))
-   (dict [(abstract-e e_key (a ...)) (abstract-e e_val (a ...))] ...)]
+   ,(normalize-collection (term (dict ((abstract-e e_key (a ...)) ...)
+                                      ((abstract-e e_val (a ...)) ...))))]
   [(abstract-e (for/fold ([x_1 e_1]) ([x_2 e_2]) e) (a ...))
    (for/fold ([x_1 (abstract-e e_1 (a ...))])
              ([x_2 (abstract-e e_2 (a ...))])
@@ -2147,25 +2158,25 @@
                   (variant Foo (marked (addr 1 0)) (marked (addr (env Nat) 2) 3))
                   (term (abstract-e (variant Foo (marked (addr 1 0)) (marked (addr (env Nat) 2) 3)) ()))))
   (test-equal? "abstract-e 3" (term (abstract-e (list 1 2) ()))
-               (term (list-val abs-nat)))
+               (term (list abs-nat)))
   (test-equal? "abstract-e 4"
     (term (abstract-e (list 1 (let () 1)) ()))
     (term (list abs-nat (let () abs-nat))))
   (test-equal? "abstract-e 5"
     (term (abstract-e (list (variant B) (variant A)) ()))
-    (term (list-val (variant A) (variant B))))
+    (term (list (variant A) (variant B))))
   (test-equal? "abstract-e 6"
     (term (abstract-e (dict [1 (variant B)] [2 (variant A)]) ()))
-    (term (dict-val (abs-nat) ((variant A) (variant B)))))
+    (term (dict (abs-nat) ((variant A) (variant B)))))
   (test-equal? "abstract-e 7"
     (term (abstract-e (dict [1 2] [3 4]) ()))
-    (term (dict-val (abs-nat) (abs-nat))))
+    (term (dict (abs-nat) (abs-nat))))
   (test-equal? "abstract-e 8"
     (term (abstract-e (dict) ()))
-    (term (dict-val () ())))
+    (term (dict () ())))
   (test-equal? "abstract-e 9"
-    (term (abstract-e (dict [1 (let ([x 1]) x)] [3 4]) ()))
-    (term (dict [abs-nat (let ([x abs-nat]) x)] [abs-nat abs-nat])))
+    (term (abstract-e (dict [1 x] [3 4]) ()))
+    (term (dict (abs-nat) (abs-nat x))))
   (test-equal? "Abstraction okay on folded"
     (term (abstract-e (folded ,recursive-record-address-type (marked (addr 1 0))) ()))
     `(folded ,recursive-record-address-type (marked (addr 1 0)))))
@@ -2431,16 +2442,10 @@
     [`(marked ,addr ,markers ...)
      (define new-markers (filter (lambda (m) (member m monitored-markers)) markers))
      `(marked ,(rename-addr-for-assimilation addr addrs-to-assimilate) ,@new-markers)]
-    [(list (and keyword (or 'list-val 'dict-val)) terms ...)
+    [(list (and keyword (or 'list 'dict)) terms ...)
      (define blurred-args
        (map (curryr rename-for-assimilation addrs-to-assimilate monitored-markers) terms))
      (normalize-collection `(,keyword ,@blurred-args))]
-    [`(dict-val ,keys ,vals)
-     (define blurred-keys
-       (map (curryr rename-for-assimilation addrs-to-assimilate monitored-markers) keys))
-     (define blurred-vals
-       (map (curryr rename-for-assimilation addrs-to-assimilate monitored-markers) vals))
-     (normalize-collection `(dict-val ,blurred-keys ,blurred-vals))]
     [(list terms ...)
      (map (curryr rename-for-assimilation addrs-to-assimilate monitored-markers) terms)]
     [_ some-term]))
@@ -2504,46 +2509,46 @@
   (test-equal? "blur test 3"
    (rename-for-assimilation
     (redex-let csa#
-        ([e# (term (dict-val (abs-nat)
-                             ((marked (collective-addr (env Nat)) 1)
-                              (marked (collective-addr (env Nat)) 2)
-                              (marked (collective-addr (env Nat)) 3)
-                              (marked (collective-addr (env Nat)) 4))))])
+        ([e# (term (dict (abs-nat)
+                         ((marked (collective-addr (env Nat)) 1)
+                          (marked (collective-addr (env Nat)) 2)
+                          (marked (collective-addr (env Nat)) 3)
+                          (marked (collective-addr (env Nat)) 4))))])
       (term e#))
     null
     '(1 3))
    ;; Some reordering happens as a result of normalize-collection
-   (term (dict-val (abs-nat)
-                   ((marked (collective-addr (env Nat)))
-                    (marked (collective-addr (env Nat)) 1)
-                    (marked (collective-addr (env Nat)) 3)))))
+   (term (dict (abs-nat)
+               ((marked (collective-addr (env Nat)))
+                (marked (collective-addr (env Nat)) 1)
+                (marked (collective-addr (env Nat)) 3)))))
 
   (test-equal? "blur test 4"
    (rename-for-assimilation
     (redex-let csa#
-        ([e# (term (list-val (marked (collective-addr (env Nat)) 1)
-                             (marked (collective-addr (env Nat)) 2)
-                             (marked (collective-addr (env Nat)) 3)
-                             (marked (collective-addr (env Nat)) 4)))])
+        ([e# (term (list (marked (collective-addr (env Nat)) 1)
+                         (marked (collective-addr (env Nat)) 2)
+                         (marked (collective-addr (env Nat)) 3)
+                         (marked (collective-addr (env Nat)) 4)))])
       (term e#))
     null
     null)
-   (term (list-val (marked (collective-addr (env Nat))))))
+   (term (list (marked (collective-addr (env Nat))))))
 
   (test-equal? "blur test 5"
    (rename-for-assimilation
     (redex-let csa#
-        ([e# (term (list-val (marked (collective-addr (env Nat)) 1)
-                             (marked (collective-addr (env Nat)) 2)
-                             (marked (collective-addr (env Nat)) 3)
-                             (marked (collective-addr (env Nat)) 4)))])
+        ([e# (term (list (marked (collective-addr (env Nat)) 1)
+                         (marked (collective-addr (env Nat)) 2)
+                         (marked (collective-addr (env Nat)) 3)
+                         (marked (collective-addr (env Nat)) 4)))])
       (term e#))
     null
     `(1 2 3 4))
-   (term (list-val (marked (collective-addr (env Nat)) 1)
-                   (marked (collective-addr (env Nat)) 2)
-                   (marked (collective-addr (env Nat)) 3)
-                   (marked (collective-addr (env Nat)) 4)))))
+   (term (list (marked (collective-addr (env Nat)) 1)
+               (marked (collective-addr (env Nat)) 2)
+               (marked (collective-addr (env Nat)) 3)
+               (marked (collective-addr (env Nat)) 4)))))
 
 (define (rename-addr-for-assimilation addr addrs-to-assimilate)
   (if (member addr addrs-to-assimilate)
@@ -2603,10 +2608,10 @@
     (term (((define-state (B) r (begin (send r abs-nat) (goto B)))) (goto B))))
   (define behavior3
     (term (((define-state (C [x (List Nat)]) r (begin (send r abs-nat) (goto C x))))
-           (goto C (list-val)))))
+           (goto C (list)))))
   (define behavior3-greater
     (term (((define-state (C [x (List Nat)]) r (begin (send r abs-nat) (goto C x))))
-           (goto C (list-val abs-nat)))))
+           (goto C (list abs-nat)))))
   (define add-blurred-behaviors-config1
     (term (() (((collective-addr 1) (,behavior1))) () ())))
 
@@ -3206,9 +3211,9 @@
      (ormap (curryr csa#-contains-marker? target-markers) vals)]
     [`(folded ,_ ,val)
      (csa#-contains-marker? val target-markers)]
-    [`(list-val ,vals ...)
+    [`(list ,vals ...)
      (ormap (curryr csa#-contains-marker? target-markers) vals)]
-    [`(dict-val ,keys ,vals)
+    [`(dict ,keys ,vals)
      (or (ormap (curryr csa#-contains-marker? target-markers) keys)
          (ormap (curryr csa#-contains-marker? target-markers) vals))]
     [_ #f]))
@@ -3543,8 +3548,8 @@
      (internal-addr-types (term (record [a (marked (addr 1 0) 1)]
                                         [b (marked (collective-addr (env Nat)) 2)]
                                         [c (marked (addr 3 1) 3)]
-                                        [d (list-val (marked (addr 2 0))
-                                                     (marked (collective-addr (env Nat)) 3))]))
+                                        [d (list (marked (addr 2 0))
+                                                 (marked (collective-addr (env Nat)) 3))]))
                           (term (Record [a (Addr Nat)]
                                         [b (Addr String)]
                                         [c (Addr String)]
@@ -3575,9 +3580,9 @@
      (get-types-and-merge-all (map list vs case-arg-types))]
     [(list `(record ,rec-fields ...) `(Record ,rec-field-types ...))
      (get-types-and-merge-all (map list (map second rec-fields) (map second rec-field-types)))]
-    [(list `(list-val ,vs ...) `(List ,type))
+    [(list `(list ,vs ...) `(List ,type))
      (get-types-and-merge-all (map (lambda (v) (list v type)) vs))]
-    [(list `(dict-val ,vs1 ,vs2) `(Dict ,type1 ,type2))
+    [(list `(dict ,vs1 ,vs2) `(Dict ,type1 ,type2))
      (merge-receptionists
       (get-types-and-merge-all (map (lambda (v) (list v type1)) vs1))
       (get-types-and-merge-all (map (lambda (v) (list v type2)) vs2)))]
@@ -3609,10 +3614,10 @@
      (addr-types `(folded ,type (marked (addr 1 1))) type)
      (term ([(Variant [A ,type]) (marked (addr 1 1))]))))
   (test-equal? "addr-types: list"
-    (addr-types `(list-val (marked (addr 1 1)) (marked (addr 2 2))) `(List (Addr (Record))))
+    (addr-types `(list (marked (addr 1 1)) (marked (addr 2 2))) `(List (Addr (Record))))
     (term ([(Record) (marked (addr 1 1))] [(Record) (marked (addr 2 2))])))
   (test-equal? "addr-types: dict"
-    (addr-types `(dict-val ((marked (addr 0 0))) ((marked (addr 1 1)) (marked (addr 2 2))))
+    (addr-types `(dict ((marked (addr 0 0))) ((marked (addr 1 1)) (marked (addr 2 2))))
                 `(Dict (Addr String) (Addr (Record))))
     (term ([String (marked (addr 0 0))]
            [(Record) (marked (addr 1 1))]
@@ -3999,13 +4004,9 @@
   (match some-term
     [`(marked ,address ,markers ...)
      `(marked ,(pseudo-blur-address address) ,@(filter (curryr < INIT-MESSAGE-MARKER) markers))]
-    [(list (and keyword (or 'list-val 'dict-val)) terms ...)
+    [(list (and keyword (or 'list 'dict)) terms ...)
      (define blurred-args (map pseudo-blur terms))
      (normalize-collection `(,keyword ,@blurred-args))]
-    [`(dict-val ,keys ,vals)
-     (define blurred-keys (map pseudo-blur keys))
-     (define blurred-vals (map pseudo-blur vals))
-     `(normalize-collection `(dict-val ,blurred-keys ,blurred-vals))]
     [(list terms ...) (map pseudo-blur terms)]
     [_ some-term]))
 
@@ -4096,11 +4097,11 @@
                             `(() (goto A)))
    'eq)
   (check-equal?
-   (compare-pseudo-behavior `[([(addr 1 0) (() (goto A (list-val)))])
+   (compare-pseudo-behavior `[([(addr 1 0) (() (goto A (list)))])
                               ()
                               ()]
                             `(addr 1 0)
-                            `(() (goto A (list-val abs-nat))))
+                            `(() (goto A (list abs-nat))))
    'gt)
   (check-equal?
    (compare-pseudo-behavior `[([(addr 1 0) (() (goto A))])
@@ -4139,20 +4140,20 @@
   (check-equal?
    (compare-pseudo-behavior `[()
                               ([(collective-addr 1)
-                                ([() (goto A (list-val))]
+                                ([() (goto A (list))]
                                  [() (goto B)])])
                               ()]
                             `(collective-addr 1)
-                            `(() (goto A (list-val abs-nat))))
+                            `(() (goto A (list abs-nat))))
    'gt)
   (check-equal?
    (compare-pseudo-behavior `[()
                               ([(collective-addr 1)
-                                ([() (goto A (list-val abs-nat))]
+                                ([() (goto A (list abs-nat))]
                                  [() (goto B)])])
                               ()]
                             `(collective-addr 1)
-                            `(() (goto A (list-val))))
+                            `(() (goto A (list))))
    'lt)
   (test-equal? "Blurred actor with different state defs (faking different constructor args)"
    (compare-pseudo-behavior `[()
@@ -4660,20 +4661,20 @@
                 'not-gteq)
   (check-equal? (compare-behavior (term (() (goto A (variant B)))) (term (() (goto A (variant B)))) #t)
                 'eq)
-  (check-equal? (compare-behavior (term (() (goto A (list-val (variant A) (variant B)))))
-                                  (term (() (goto A (list-val (variant B)))))
+  (check-equal? (compare-behavior (term (() (goto A (list (variant A) (variant B)))))
+                                  (term (() (goto A (list (variant B)))))
                                   #t)
                 'gt)
   (check-equal?
    (compare-behavior
-    (term (((define-state (A) m (goto A)))         (goto A (list-val (variant B)))))
-    (term (((define-state (A) m (goto A abs-nat))) (goto A (list-val (variant B)))))
+    (term (((define-state (A) m (goto A)))         (goto A (list (variant B)))))
+    (term (((define-state (A) m (goto A abs-nat))) (goto A (list (variant B)))))
     #t)
    'not-gteq)
   (check-equal?
    (compare-behavior
-    (term (((define-state (A) m (goto A)))         (goto A (list-val (variant B)))))
-    (term (((define-state (A) m (goto A abs-nat))) (goto A (list-val (variant B)))))
+    (term (((define-state (A) m (goto A)))         (goto A (list (variant B)))))
+    (term (((define-state (A) m (goto A abs-nat))) (goto A (list (variant B)))))
     #f)
    'eq))
 
@@ -4702,10 +4703,10 @@
      (if (equal? t1 t2)
          (compare-value v1 v2)
          'not-gteq)]
-    [(list (list 'list-val args1 ...) (list 'list-val args2 ...))
+    [(list (list 'list args1 ...) (list 'list args2 ...))
      (compare-value-sets args1 args2)]
-    [(list (list 'dict-val (list keys1 ...) (list vals1 ...))
-           (list 'dict-val (list keys2 ...) (list vals2 ...)))
+    [(list (list 'dict (list keys1 ...) (list vals1 ...))
+           (list 'dict (list keys2 ...) (list vals2 ...)))
      (comp-result-and (compare-value-sets keys1 keys2)
                       (compare-value-sets vals1 vals2))]
     [_ (if (equal? v1 v2) 'eq 'not-gteq)]))
@@ -4734,75 +4735,75 @@
 
 (module+ test
   (test-equal? "compare-value record 1"
-    (compare-value `(record [a (list-val abs-nat)] [b abs-nat])
-                   `(record [a (list-val)]         [b abs-nat]))
+    (compare-value `(record [a (list abs-nat)] [b abs-nat])
+                   `(record [a (list)]         [b abs-nat]))
     'gt)
   (test-equal? "compare-value record 2"
-    (compare-value `(record [a (list-val abs-nat)] [b abs-nat])
-                   `(record [a (list-val abs-nat)] [b abs-nat]))
+    (compare-value `(record [a (list abs-nat)] [b abs-nat])
+                   `(record [a (list abs-nat)] [b abs-nat]))
     'eq)
   (test-equal? "compare-value record 3"
-    (compare-value `(record [a (list-val (variant A))] [b abs-nat])
-                   `(record [a (list-val (variant B))] [b abs-nat]))
+    (compare-value `(record [a (list (variant A))] [b abs-nat])
+                   `(record [a (list (variant B))] [b abs-nat]))
     'not-gteq)
 
   (test-equal? "compare-value variant 1"
-    (compare-value `(variant A (list-val abs-nat) abs-nat)
-                   `(variant A (list-val) abs-nat))
+    (compare-value `(variant A (list abs-nat) abs-nat)
+                   `(variant A (list) abs-nat))
     'gt)
   (test-equal? "compare-value variant 2"
-    (compare-value `(variant A (list-val abs-nat) abs-nat)
-                   `(variant A (list-val abs-nat) abs-nat))
+    (compare-value `(variant A (list abs-nat) abs-nat)
+                   `(variant A (list abs-nat) abs-nat))
     'eq)
   (test-equal? "compare-value variant 3"
-    (compare-value `(variant A (list-val) abs-nat)
-                   `(variant A (list-val abs-nat) abs-nat))
+    (compare-value `(variant A (list) abs-nat)
+                   `(variant A (list abs-nat) abs-nat))
     'lt)
 
-  (test-equal? "compare-value list-val 1"
-    (compare-value '(list-val abs-nat)
-                   '(list-val))
+  (test-equal? "compare-value list 1"
+    (compare-value '(list abs-nat)
+                   '(list))
     'gt)
-  (test-equal? "compare-value list-val 2"
-    (compare-value '(list-val abs-nat)
-                   '(list-val abs-nat))
+  (test-equal? "compare-value list 2"
+    (compare-value '(list abs-nat)
+                   '(list abs-nat))
     'eq)
-  (test-equal? "compare-value list-val 3"
-    (compare-value '(list-val)
-                   '(list-val abs-nat))
+  (test-equal? "compare-value list 3"
+    (compare-value '(list)
+                   '(list abs-nat))
     'lt)
-  (test-equal? "compare-value list-val 4"
-    (compare-value '(list-val (variant A))
-                   '(list-val (variant B)))
+  (test-equal? "compare-value list 4"
+    (compare-value '(list (variant A))
+                   '(list (variant B)))
     'not-gteq)
 
-  (test-equal? "compare-value dict-val 1"
-    (compare-value '(dict-val () ())
-                   '(dict-val () ()))
+  (test-equal? "compare-value dict 1"
+    (compare-value '(dict () ())
+                   '(dict () ()))
     'eq)
-  (test-equal? "compare-value dict-val 2"
-    (compare-value '(dict-val (abs-nat) ((variant A)))
-                   '(dict-val () ()))
+  (test-equal? "compare-value dict 2"
+    (compare-value '(dict (abs-nat) ((variant A)))
+                   '(dict () ()))
     'gt)
-  (test-equal? "compare-value dict-val 3"
-    (compare-value '(dict-val (abs-nat) ((variant A) (variant B)))
-                   '(dict-val (abs-nat) ((variant A))))
+  (test-equal? "compare-value dict 3"
+    (compare-value '(dict (abs-nat) ((variant A) (variant B)))
+                   '(dict (abs-nat) ((variant A))))
     'gt)
-  (test-equal? "compare-value dict-val 4"
-    (compare-value '(dict-val ((variant A) (variant B)) (abs-nat))
-                   '(dict-val ((variant A)) (abs-nat)))
+  (test-equal? "compare-value dict 4"
+    (compare-value '(dict ((variant A) (variant B)) (abs-nat))
+                   '(dict ((variant A)) (abs-nat)))
     'gt)
-  (test-equal? "compare-value dict-val 5"
-    (compare-value '(dict-val (abs-nat) ((variant A)))
-                   '(dict-val (abs-nat) ((variant A) (variant B))))
+  (test-equal? "compare-value dict 5"
+    (compare-value '(dict (abs-nat) ((variant A)))
+                   '(dict (abs-nat) ((variant A) (variant B))))
     'lt)
-  (test-equal? "compare-value dict-val 6"
-    (compare-value '(dict-val ((variant A)) (abs-nat))
-                   '(dict-val ((variant A) (variant B)) (abs-nat)))
+  (test-equal? "compare-value dict 6"
+    (compare-value '(dict ((variant A)) (abs-nat))
+                   '(dict ((variant A) (variant B)) (abs-nat)))
     'lt)
-  (test-equal? "compare-value dict-val 7"
-    (compare-value '(dict-val ((variant A)) (abs-nat))
-                   '(dict-val ((variant B)) (abs-nat)))
+  (test-equal? "compare-value dict 7"
+    (compare-value '(dict ((variant A)) (abs-nat))
+                   '(dict ((variant B)) (abs-nat)))
     'not-gteq)
 
   (test-equal? "compare-value addresses 1"
