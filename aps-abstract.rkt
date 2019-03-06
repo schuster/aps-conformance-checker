@@ -2028,12 +2028,10 @@
                     (goto A))))
           (goto A)]])
        ()
-       ()
-       ([Nat (marked (addr 1 0))]
-        [String (marked (addr 2 0))])]
+       ([(addr 2 0) abs-string many])
+       ([Nat (marked (addr 1 0))])]
      `[() () (goto A) () ()]
-     `([(addr (EVICT Nat ()) 0) (collective-addr (env Nat))])
-     ))
+     `([(addr (EVICT Nat ()) 0) (collective-addr (env Nat))])))
 
   (test-equal? "don't evict a monitored receptionist"
     (evict-pair evict-test-config `[(1) () (goto A) () ()])
