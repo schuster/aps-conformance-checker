@@ -3691,10 +3691,14 @@
                           ([(0 3 1) (Addr String)]
                            [(0 4 1 1) (Record [a (Addr String)])]))
                  1))
-    (define collective-evictable-addr1
-      `(collective-addr (2-EVICT (Addr Nat)
-                                    ([(0 3 1) (Addr String)]
-                                     [(0 4 1 1) (Record [a (Addr String)])]))))
+  (define collective-evictable-addr1
+    `(collective-addr (2-EVICT (Addr Nat)
+                               ([(0 3 1) (Addr String)]
+                                [(0 4 1 1) (Record [a (Addr String)])]))))
+  (define evictable-variant-addr1
+    `(addr (3-EVICT (Addr Nat)
+                    ([(0 3 1) (Addr (Variant [A] [B]))]))
+           1))
   (define evictable1
     `[,evictable-addr1
       (((define-state (A [x (Variant [Foo (Addr Nat)])]) m
@@ -3709,6 +3713,12 @@
            (send (: (record [a (marked (addr 3 0))]) a) "foo")
            (goto A x)))
         (goto A (variant Foo (marked (addr 1 0))))])])
+  (define evictable-variant1
+    `[,evictable-variant-addr1
+      (((define-state (A) m
+          (send (marked (addr 3 0)) (variant A))
+          (goto A)))
+       (goto A))])
   (define non-evictable2-addr `(addr (3-EVICT Nat ()) 0))
   (define non-evictable2
     `[,non-evictable2-addr
@@ -3733,6 +3743,15 @@
       ;; ρ#
       ([Nat (marked ,non-evictable1-addr 1)])))
 
+  (define evict-variant-test-config
+    `((,evictable-variant1)
+      ;; β#
+      ()
+      ;; μ#
+      ()
+      ;; ρ#
+      ()))
+
   (define expected-precise-evicted-config
     `(([(addr 1 1) (() (goto S))]
        [(addr (3-EVICT Nat ()) 0)
@@ -3746,13 +3765,13 @@
       (,collective-evictable1)
       ;; μ#
       ([(addr (4-EVICT (Addr Nat) ()) 0) (marked (collective-addr (env Nat)) 3) single]
-       [,non-evictable2-addr (marked ,collective-evictable-addr1) many])
+       [,non-evictable2-addr (marked ,collective-evictable-addr1) many]
+       [(addr 2 0) abs-string many]
+       [(addr 3 0) abs-string many]
+       [(addr 1 0) abs-nat many]
+       [(addr 4 0) abs-nat many])
       ;; ρ#
-      ([Nat (marked ,non-evictable1-addr 1)]
-       [String (marked (addr 2 0))]
-       [String (marked (addr 3 0))]
-       [Nat (marked (addr 1 0))]
-       [Nat (marked (addr 4 0))])))
+      ([Nat (marked ,non-evictable1-addr 1)])))
 
     (define expected-blurred-evicted-config
       `((,non-evictable1
@@ -3764,12 +3783,22 @@
         ;; μ#
         ([,evictable-addr1 (marked (addr 4 0)) single]
          [(addr (4-EVICT (Addr Nat) ()) 0) (marked (collective-addr (env Nat)) 3) single]
-         [,non-evictable2-addr (marked (collective-addr (env (Addr Nat)))) many])
+         [,non-evictable2-addr (marked (collective-addr (env (Addr Nat)))) many]
+         [(addr 2 0) abs-string many]
+         [(addr 3 0) abs-string many]
+         [(addr 1 0) abs-nat many])
         ;; ρ#
-        ([Nat (marked ,non-evictable1-addr 1)]
-         [String (marked (addr 2 0))]
-         [String (marked (addr 3 0))]
-         [Nat (marked (addr 1 0))])))
+        ([Nat (marked ,non-evictable1-addr 1)])))
+
+    (define expected-evicted-variant-config
+      `(()
+        ;; β#
+        ()
+        ;; μ#
+        ([(addr 3 0) (variant A) many]
+         [(addr 3 0) (variant B) many])
+        ;; ρ#
+        ()))
 
   (test-equal? "Addresses to evict"
     (csa#-addrs-to-evict evict-test-config)
@@ -3817,8 +3846,6 @@
 
 ;; i# a# -> (list i# a#) Evicts the actor at the given address from the given config, returning the
 ;; new configuration and the new address for the evicted actor
-;;
-;; REFACTOR: I don't think I need to return the receptionists anymore
 (define (csa#-evict i addr)
   (match-define (list remaining-actors remaining-blurred-actors evicted-behavior)
     (cond
@@ -3836,40 +3863,43 @@
              (first (csa#-blurred-actor-behaviors to-evict)))]))
   (match-define `(,state-defs (goto ,state-name ,state-args ...)) evicted-behavior)
   (match-define `(,_ ,evicted-type ,state-defs-type-env) (address-location addr))
-  (define state-def-captured-receptionists
-    (for/fold ([receptionists null])
+  (define state-def-captured-internals
+    (for/fold ([internals null])
               ([env-binding state-defs-type-env])
       (match-define `(,path ,type) env-binding)
-      (merge-receptionists receptionists
+      (merge-receptionists internals
                            (internal-addr-types (sexp-by-path state-defs path) type))))
   (match-define `(define-state ,(list _ [list _ arg-types] ...) ,_ ...)
     (state-def-by-name state-defs state-name))
-  (define state-arg-captured-receptionists
-    (for/fold ([receptionists null])
+  (define state-arg-captured-internals
+    (for/fold ([internals null])
               ([arg state-args]
                [type arg-types])
-      (merge-receptionists receptionists (internal-addr-types arg type))))
+      (merge-receptionists internals (internal-addr-types arg type))))
   (define-values (evicted-packets non-evicted-packets)
     (partition (lambda (packet) (equal? addr (csa#-message-packet-address packet)))
                (csa#-config-message-packets i)))
-  (define message-captured-receptionists
-    (for/fold ([receptionists null])
+  (define message-captured-internals
+    (for/fold ([internals null])
               ([packet evicted-packets])
-      (merge-receptionists receptionists
+      (merge-receptionists internals
                            (internal-addr-types (csa#-message-packet-value packet) evicted-type))))
-  (define all-new-receptionists
+  (define all-known-internals
     (merge-receptionists
-     (merge-receptionists state-def-captured-receptionists state-arg-captured-receptionists)
-     message-captured-receptionists))
-  (define updated-receptionists
-    (merge-receptionists
-     (remove-receptionist (csa#-config-receptionists i) addr)
-     all-new-receptionists))
+     (merge-receptionists state-def-captured-internals state-arg-captured-internals)
+     message-captured-internals))
+  (define updated-packets
+    (for/fold ([packets non-evicted-packets])
+              ([internal all-known-internals])
+      (match-define `[,type (marked ,addr ,_ ...)] internal)
+      (for/fold ([packets packets])
+                ([message (csa#-messages-of-type type)])
+        (merge-message-into-packet-set `(,addr ,message many) packets))))
   (define new-address `(collective-addr (env ,evicted-type)))
   (list (csa#-rename-addresses `(,remaining-actors
                                  ,remaining-blurred-actors
-                                 ,non-evicted-packets
-                                 ,updated-receptionists)
+                                 ,updated-packets
+                                 ,(remove-receptionist (csa#-config-receptionists i) addr))
                                `([,addr ,new-address]))
         new-address))
 
@@ -3882,6 +3912,11 @@
   (test-equal? "csa#-evict collective address"
     (csa#-evict evict-test-config collective-evictable-addr1)
     (list expected-blurred-evicted-config
+          `(collective-addr (env (Addr Nat)))))
+
+  (test-equal? "csa#-evict actor with known internals with variant type"
+    (csa#-evict evict-variant-test-config evictable-variant-addr1)
+    (list expected-evicted-variant-config
           `(collective-addr (env (Addr Nat))))))
 
 (define (remove-receptionist receptionists addr-to-remove)
